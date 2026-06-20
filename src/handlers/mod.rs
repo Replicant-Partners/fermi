@@ -45,6 +45,7 @@ pub mod push;
 pub mod qr_codes;
 pub mod rabble_chat;
 pub mod rabble_workspace;
+pub mod relationships;
 pub mod social;
 pub mod streams;
 pub mod swarm_algorithms;

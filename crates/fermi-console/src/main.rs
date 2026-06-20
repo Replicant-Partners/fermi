@@ -428,6 +428,18 @@ struct FermiConsole {
     resolve_loading: bool,
     resolve_error: Option<String>,
 
+    // Cascade-after-resolve state. After a successful resolve, the cockpit
+    // queries `/api/forecast-relationships?forecast_id=<resolved>` to find
+    // any declared inter-forecast dependencies (e.g. WC sims mutex group).
+    // If any exist, the Resolve sheet stays open with a "Cascade to N
+    // forecasts" affordance per relationship; clicking propagates the
+    // resolution across siblings via the relationship's per-kind handler.
+    cascade_relationships: Vec<JsonValue>,
+    cascade_resolved_forecast_id: Option<String>,
+    cascade_resolved_outcome: Option<bool>,
+    cascade_loading: bool,
+    cascade_summary: Option<String>,
+
     // Toast notification (auto-dismiss after 3 s)
     // (message, icon, color)
     toast: Option<(String, &'static str, u32)>,
@@ -540,6 +552,11 @@ impl FermiConsole {
             resolve_outcome: None,
             resolve_loading: false,
             resolve_error: None,
+            cascade_relationships: Vec::new(),
+            cascade_resolved_forecast_id: None,
+            cascade_resolved_outcome: None,
+            cascade_loading: false,
+            cascade_summary: None,
             toast: None,
         };
 
@@ -2509,9 +2526,25 @@ impl FermiConsole {
             };
             match api.resolve_forecast(&forecast_id, &req).await {
                 Ok(resp) => {
+                    // After a successful resolve, look up any
+                    // forecast_relationships involving this forecast.
+                    // The Resolve sheet then surfaces a Cascade button
+                    // per relationship instead of closing immediately —
+                    // the operator gets one click to propagate the
+                    // resolution across siblings (e.g. WC mutex group:
+                    // Brazil eliminated → 47 survivors get probability
+                    // bumps proportional to their current p).
+                    let relationships = api
+                        .list_relationships_for_forecast(&forecast_id)
+                        .await
+                        .ok()
+                        .and_then(|v| v.get("relationships").cloned())
+                        .and_then(|v| v.as_array().cloned())
+                        .unwrap_or_default();
+
+                    let n_rel = relationships.len();
+
                     this.update(cx, |this, cx| {
-                        this.resolve_sheet_showing = false;
-                        this.resolve_forecast_id = None;
                         this.resolve_loading = false;
                         // Move forecast from active to resolved in local state
                         if let Some(pos) = this.active_forecasts.iter().position(|f| f.id == forecast_id) {
@@ -2521,9 +2554,22 @@ impl FermiConsole {
                             f.actual_outcome = Some(resp.actual_outcome);
                             this.resolved_forecasts.insert(0, f);
                         }
-                        // Invalidate portfolio caches so Brier scores refresh
                         this.portfolio_forecasts.clear();
                         this.portfolio_stats_cache.clear();
+
+                        if n_rel == 0 {
+                            // No relationships → close the sheet as before.
+                            this.resolve_sheet_showing = false;
+                            this.resolve_forecast_id = None;
+                        } else {
+                            // Stash for the cascade UI; keep the sheet
+                            // open so the operator sees the cascade
+                            // affordance immediately.
+                            this.cascade_relationships = relationships;
+                            this.cascade_resolved_forecast_id = Some(forecast_id.clone());
+                            this.cascade_resolved_outcome = Some(outcome);
+                            this.cascade_summary = None;
+                        }
                         cx.notify();
                     })
                     .ok();
@@ -2539,6 +2585,80 @@ impl FermiConsole {
             }
         })
         .detach();
+    }
+
+    /// Fire propagation on a relationship using the cascade-resolved
+    /// forecast as the trigger. Stashed state from submit_resolve carries
+    /// the trigger forecast id + outcome.
+    fn fire_cascade(&mut self, relationship_id: String, cx: &mut Context<Self>) {
+        let Some(trigger) = self.cascade_resolved_forecast_id.clone() else {
+            return;
+        };
+        let outcome = self.cascade_resolved_outcome;
+        self.cascade_loading = true;
+        self.cascade_summary = None;
+        let api = self.api.clone();
+
+        cx.spawn(async move |this, cx| {
+            let body = serde_json::json!({
+                "trigger_forecast_id": trigger,
+                "trigger_kind": "resolved",
+                "outcome": outcome,
+            });
+            match api.propagate_relationship(&relationship_id, &body).await {
+                Ok(resp) => {
+                    let n_updated = resp
+                        .get("n_updated")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let note = resp
+                        .get("note")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    this.update(cx, |this, cx| {
+                        this.cascade_loading = false;
+                        this.cascade_summary = Some(if note.is_empty() {
+                            format!("Cascaded to {} forecasts.", n_updated)
+                        } else {
+                            format!("Cascaded to {} forecasts. {}", n_updated, note)
+                        });
+                        // Keep the toast persistent here — operator
+                        // confirms by closing the sheet.
+                        // Refresh portfolio data so the UI shows the
+                        // new probabilities on the dashboard.
+                        this.portfolio_forecasts.clear();
+                        this.portfolio_stats_cache.clear();
+                        // If we're currently viewing the WC sims
+                        // portfolio, force-reload its forecast list.
+                        if let Some(pid) = this.selected_portfolio_id.clone() {
+                            this.fetch_portfolio_forecasts(pid, cx);
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => {
+                    this.update(cx, |this, cx| {
+                        this.cascade_loading = false;
+                        this.cascade_summary = Some(format!("Cascade failed: {}", e));
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Close the cascade affordance and finalize the resolve flow.
+    fn dismiss_cascade(&mut self, cx: &mut Context<Self>) {
+        self.resolve_sheet_showing = false;
+        self.resolve_forecast_id = None;
+        self.cascade_relationships.clear();
+        self.cascade_resolved_forecast_id = None;
+        self.cascade_resolved_outcome = None;
+        self.cascade_summary = None;
+        cx.notify();
     }
 
     /// Open a workspace forecast in the Composer. Creates a FRESH cockpit
@@ -5709,10 +5829,21 @@ impl FermiConsole {
             )
     }
 
-    fn render_resolve_sheet(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_resolve_sheet(&self, cx: &mut Context<Self>) -> AnyElement {
         let question = truncate(&self.resolve_forecast_question, 80);
         let selected = self.resolve_outcome;
         let has_selection = selected.is_some();
+
+        // Cascade mode: after a successful resolve, if we found
+        // relationships involving the resolved forecast, surface a
+        // "Cascade to N forecasts" button per relationship instead of
+        // the resolve form. Operator clicks → propagation fires →
+        // siblings get their probabilities updated.
+        let in_cascade_mode = self.cascade_resolved_forecast_id.is_some()
+            && !self.cascade_relationships.is_empty();
+        if in_cascade_mode {
+            return self.render_cascade_sheet(cx).into_any_element();
+        }
 
         div()
             .absolute()
@@ -5941,11 +6072,222 @@ impl FermiConsole {
                                     .child(if self.resolve_loading {
                                         "Resolving…"
                                     } else {
-                                        "Confirm"
-                                    }),
-                            ),
-                    ),
+                                         "Confirm"
+                                     }),
+                             ),
+                     ),
             )
+            .into_any_element()
+    }
+
+    /// Render the cascade affordance — shown after a resolve completes
+    /// AND the resolved forecast was part of one or more declared
+    /// relationships. Replaces the resolve form (operator's already
+    /// answered the outcome question; now they decide whether to
+    /// propagate).
+    fn render_cascade_sheet(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let outcome_label = match self.cascade_resolved_outcome {
+            Some(true) => "YES — it happened",
+            Some(false) => "NO — it didn't happen",
+            None => "—",
+        };
+        let trigger_short = self
+            .cascade_resolved_forecast_id
+            .as_deref()
+            .map(|s| s.chars().take(8).collect::<String>())
+            .unwrap_or_default();
+
+        let mut sheet = div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::rgba(0x0A0E1499))
+            .child({
+                let mut content = div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(20.0))
+                    .w(px(560.0))
+                    .p(px(28.0))
+                    .rounded(px(12.0))
+                    .bg(rgb(theme::BG_ELEVATED))
+                    .border_1()
+                    .border_color(rgb(theme::CYAN))
+                    // Header
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.0))
+                            .child(
+                                div()
+                                    .text_size(px(18.0))
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(rgb(theme::CYAN))
+                                    .child("Cascade resolution"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(theme::fg_faint())
+                                    .child(format!(
+                                        "Forecast {} resolved: {}. Propagate to siblings?",
+                                        trigger_short, outcome_label
+                                    )),
+                            ),
+                    );
+
+                // One card per relationship.
+                for rel in &self.cascade_relationships {
+                    let rel_id = rel
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let kind = rel
+                        .get("kind")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?")
+                        .to_string();
+                    let n_forecasts = rel
+                        .get("forecast_ids")
+                        .and_then(|v| v.as_array())
+                        .map(|a| a.len())
+                        .unwrap_or(0);
+                    let description = rel
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let n_siblings = n_forecasts.saturating_sub(1);
+                    let rel_id_for_click = rel_id.clone();
+
+                    content = content.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.0))
+                            .p(px(14.0))
+                            .rounded(px(8.0))
+                            .bg(rgb(theme::BG))
+                            .border_1()
+                            .border_color(rgb(theme::FG_FAINT))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.0))
+                                    .child(
+                                        div()
+                                            .text_size(px(11.0))
+                                            .text_color(rgb(theme::CYAN))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(kind.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(10.0))
+                                            .text_color(theme::fg_faint())
+                                            .child(format!(
+                                                "{} sibling forecast{}",
+                                                n_siblings,
+                                                if n_siblings == 1 { "" } else { "s" }
+                                            )),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(theme::fg_dim())
+                                    .child(if description.is_empty() {
+                                        "(no description)".to_string()
+                                    } else {
+                                        description
+                                    }),
+                            )
+                            .child({
+                                let is_loading = self.cascade_loading;
+                                div()
+                                    .id(SharedString::from(format!("cascade-fire-{}", rel_id)))
+                                    .px(px(14.0))
+                                    .py(px(7.0))
+                                    .rounded(px(6.0))
+                                    .border_1()
+                                    .border_color(rgb(theme::CYAN))
+                                    .bg(rgb(theme::BG_ACTIVE))
+                                    .text_size(px(11.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(theme::CYAN))
+                                    .when(!is_loading, |el| {
+                                        el.cursor_pointer()
+                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.fire_cascade(rel_id_for_click.clone(), cx);
+                                            }))
+                                    })
+                                    .child(if is_loading {
+                                        "Cascading…".to_string()
+                                    } else {
+                                        format!(
+                                            "→ Cascade to {} forecast{}",
+                                            n_siblings,
+                                            if n_siblings == 1 { "" } else { "s" }
+                                        )
+                                    })
+                            }),
+                    );
+                }
+
+                // Result summary (if cascade has fired)
+                if let Some(ref summary) = self.cascade_summary {
+                    content = content.child(
+                        div()
+                            .p(px(12.0))
+                            .rounded(px(6.0))
+                            .bg(rgb(theme::BG))
+                            .border_1()
+                            .border_color(rgb(theme::GREEN))
+                            .text_size(px(11.0))
+                            .text_color(rgb(theme::GREEN))
+                            .child(summary.clone()),
+                    );
+                }
+
+                // Done / Skip buttons
+                content = content.child(
+                    div()
+                        .flex()
+                        .gap(px(12.0))
+                        .justify_end()
+                        .child(
+                            div()
+                                .id("cascade-skip")
+                                .px(px(16.0))
+                                .py(px(8.0))
+                                .rounded(px(6.0))
+                                .border_1()
+                                .border_color(rgb(theme::FG_FAINT))
+                                .text_size(px(13.0))
+                                .text_color(theme::fg_dim())
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.dismiss_cascade(cx);
+                                }))
+                                .child(if self.cascade_summary.is_some() {
+                                    "Done"
+                                } else {
+                                    "Skip"
+                                }),
+                        ),
+                );
+
+                content
+            });
+        sheet = sheet.child(div());
+        sheet
     }
 }
 

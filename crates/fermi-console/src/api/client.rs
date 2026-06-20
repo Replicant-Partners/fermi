@@ -1359,6 +1359,46 @@ impl ApiClient {
         self.get(&format!("/api/forecasts/{}/timeline", forecast_id))
             .await
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Forecast relationships — generalized inter-forecast dependencies.
+    //
+    // The cockpit uses these to surface "Cascade to N forecasts" after
+    // a resolve, when the resolved forecast is part of one or more
+    // declared relationships (e.g. WC sims mutex group).
+    // ═══════════════════════════════════════════════════════════════
+
+    /// List relationships involving a given forecast. Returns
+    /// `{relationships: [{id, kind, forecast_ids, ...}], count}`.
+    pub async fn list_relationships_for_forecast(
+        &self,
+        forecast_id: &str,
+    ) -> Result<JsonValue, ApiError> {
+        self.get(&format!(
+            "/api/forecast-relationships?forecast_id={}",
+            forecast_id
+        ))
+        .await
+    }
+
+    /// Fire propagation on a relationship. The `req` body shape:
+    /// `{trigger_forecast_id, trigger_kind: "resolved" | "updated", outcome?}`.
+    /// Returns `{n_updated, deltas: [{forecast_id, previous_probability,
+    /// new_probability, delta_pp}], note?}`.
+    pub async fn propagate_relationship(
+        &self,
+        relationship_id: &str,
+        req: &JsonValue,
+    ) -> Result<JsonValue, ApiError> {
+        self.post(
+            &format!(
+                "/api/forecast-relationships/{}/propagate",
+                relationship_id
+            ),
+            req,
+        )
+        .await
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════

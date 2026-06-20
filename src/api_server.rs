@@ -2250,6 +2250,24 @@ async fn main() {
              "/api/benchmark/anchor-sweep",
              post(handlers::forecast_benchmark::anchor_sweep_handler),
          )
+         // ── Forecast relationships ─────────────────────────────────────
+         //
+         // Generalizes "when forecast A changes, forecast B should follow"
+         // beyond any single domain. Migration 150 + handlers/relationships.rs.
+         // First implementation: 'mutually_exclusive' (the WC sims case).
+         .route(
+             "/api/forecast-relationships",
+             post(handlers::relationships::create_relationship_handler)
+                 .get(handlers::relationships::list_relationships_handler),
+         )
+         .route(
+             "/api/forecast-relationships/:rel_id",
+             delete(handlers::relationships::delete_relationship_handler),
+         )
+         .route(
+             "/api/forecast-relationships/:rel_id/propagate",
+             post(handlers::relationships::propagate_relationship_handler),
+         )
          // ── Portfolio routes ───────────────────────────────────────────
         .route(
             "/api/portfolios",
