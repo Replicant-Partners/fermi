@@ -732,7 +732,7 @@ impl CockpitState {
                     log::info!(
                         "[sse] {} finding: {}",
                         agent_id,
-                        &text[..text.len().min(60)]
+                        text.chars().take(60).collect::<String>()
                     );
                     // Update the agent's latest_finding for the speech bubble
                     if let Some(run) = self.agent_runs.iter_mut().find(|r| {
@@ -1825,7 +1825,11 @@ impl CockpitState {
                             if let Ok(d) = serde_json::from_str::<JsonValue>(&data) {
                                 if let Some(finding) = d.get("finding").and_then(|v| v.as_str()) {
                                     if !finding.is_empty() {
-                                        log::info!("[composer] {} SSE evidence: {}", tracking_id, &finding[..finding.len().min(80)]);
+                                        log::info!(
+                                            "[composer] {} SSE evidence: {}",
+                                            tracking_id,
+                                            finding.chars().take(80).collect::<String>()
+                                        );
                                         let _ = sse_tx_clone.send(SseEvent::Finding {
                                             agent_id: tracking_for_sse.clone(),
                                             text: finding.to_string(),
@@ -5007,8 +5011,8 @@ impl CockpitState {
         let fpl = self.cached_fpl.clone();
         log::info!(
             "[sim] Generated FPL ({} chars):\n{}",
-            fpl.len(),
-            &fpl[..fpl.len().min(2000)]
+            fpl.chars().count(),
+            fpl.chars().take(2000).collect::<String>()
         );
         let start = std::time::Instant::now();
 
@@ -8714,8 +8718,11 @@ fn render_driver_card(
                                             .min_w(px(0.0))
                                             .child(format!(
                                                 "💬 {}",
-                                                if latest.len() > 100 {
-                                                    format!("{}…", &latest[..97])
+                                                if latest.chars().count() > 100 {
+                                                    format!(
+                                                        "{}…",
+                                                        latest.chars().take(97).collect::<String>()
+                                                    )
                                                 } else {
                                                     latest
                                                 }
@@ -10364,8 +10371,16 @@ fn render_driver_editor_and_evidence(
                             score_evidence_quality(ev);
                         let ev_id_toggle = ev.id.clone();
                         let summary_text = ev.summary.as_deref().unwrap_or("").to_string();
-                        let display_summary = if is_collapsed && summary_text.len() > 120 {
-                            format!("{}…", &summary_text[..117])
+                        // Char-aware truncation — `&str[..117]` panics if
+                        // byte 117 lands mid-codepoint. Agent output can
+                        // contain Unicode (em-dashes, 'Türkiye' etc.).
+                        let display_summary = if is_collapsed
+                            && summary_text.chars().count() > 120
+                        {
+                            format!(
+                                "{}…",
+                                summary_text.chars().take(117).collect::<String>()
+                            )
                         } else {
                             summary_text.clone()
                         };
@@ -13455,9 +13470,14 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                 .children(driver_ev.iter().map(|ev| {
                     let (eq_score, eq_label, eq_color) = score_evidence_quality(ev);
                     let summary = ev.summary.as_deref().unwrap_or("");
-                    // Show full summary up to 800 chars (was 300)
-                    let display_summary = if summary.len() > 800 {
-                        format!("{}…", &summary[..797])
+                    // Show full summary up to 800 chars. Char-aware
+                    // truncation (not byte slicing) — agent research often
+                    // contains multibyte UTF-8 (em-dashes, smart quotes,
+                    // 'Türkiye', etc.). `&summary[..797]` on a non-char
+                    // boundary panics: "byte index 797 is not a char
+                    // boundary; it is inside ‘…’".
+                    let display_summary = if summary.chars().count() > 800 {
+                        format!("{}…", summary.chars().take(797).collect::<String>())
                     } else {
                         summary.to_string()
                     };
@@ -13709,8 +13729,14 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                 )
                                 .when(ev.summary.is_some(), |el| {
                                     let s = ev.summary.as_deref().unwrap_or("");
-                                    let display = if s.len() > 500 {
-                                        format!("{}…", &s[..497])
+                                    // Char-aware: see comment near
+                                    // display_summary above. Same UTF-8
+                                    // boundary panic risk on agent output.
+                                    let display = if s.chars().count() > 500 {
+                                        format!(
+                                            "{}…",
+                                            s.chars().take(497).collect::<String>()
+                                        )
                                     } else {
                                         s.to_string()
                                     };

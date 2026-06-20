@@ -2190,7 +2190,11 @@ impl FermiConsole {
 
                     let bytes = resp.bytes().await.map_err(|e| format!("Failed to read body: {}", e))?;
                     let body = String::from_utf8_lossy(&bytes);
-                    log::debug!("[polymarket] Raw response ({} bytes): {}", bytes.len(), &body[..body.len().min(500)]);
+                    log::debug!(
+                        "[polymarket] Raw response ({} bytes): {}",
+                        bytes.len(),
+                        body.chars().take(500).collect::<String>()
+                    );
                     let data: serde_json::Value = serde_json::from_slice(&bytes)
                         .map_err(|e| format!("Bad response ({}): {}", e, body.chars().take(120).collect::<String>()))?;
                     let matches = data
@@ -6055,11 +6059,19 @@ impl Render for FermiConsole {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+/// Truncate a string to at most `max_chars` characters (NOT bytes).
+/// Char-aware to avoid UTF-8-boundary panics on agent / question text
+/// containing multibyte codepoints (em-dashes, smart quotes, 'Türkiye',
+/// 'Côte d'Ivoire', etc.). Byte-indexed slicing — the previous
+/// implementation, `&s[..max_len - 1]` — panics with "byte index N is
+/// not a char boundary" if the cutoff lands inside a multibyte codepoint.
+fn truncate(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
         s.to_string()
+    } else if max_chars == 0 {
+        "…".to_string()
     } else {
-        format!("{}…", &s[..max_len - 1])
+        format!("{}…", s.chars().take(max_chars - 1).collect::<String>())
     }
 }
 
