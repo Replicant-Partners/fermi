@@ -1,65 +1,23 @@
 {
   "forecast_id": "9c4713fe-57cb-4179-8187-9b710c46e0b5",
-  "current_version": 8,
-  "predicted_probability": 0.04056685143098711,
-  "inside_view_explanation": "Inside view: model evaluates to 4.1% (p5=2.8%, p95=5.6%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "current_version": 1,
+  "predicted_probability": 0.04042378793408506,
+  "inside_view_explanation": "Inside view: model evaluates to 4.0% (p5=2.8%, p95=5.5%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-06-19 16:16",
-      "probability": 0.019999999552965164,
-      "change_summary": "Initial: 2.0% base=2%, 6 drivers, 0 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-06-19 16:16",
-      "probability": 0.019999999552965164,
-      "change_summary": "2.0% (→), 6 drivers"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-06-19 16:16",
-      "probability": 0.019999999552965164,
-      "change_summary": "2.0% (→), 6 drivers"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-06-19 23:50",
-      "probability": 0.04031460154054392,
-      "change_summary": "4.0% (+2pp), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 5,
-      "timestamp": "2026-06-19 23:50",
-      "probability": 0.04056685143098711,
-      "change_summary": "4.1% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 6,
-      "timestamp": "2026-06-19 23:50",
-      "probability": 0.04056685143098711,
-      "change_summary": "4.1% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 7,
-      "timestamp": "2026-06-19 23:50",
-      "probability": 0.04056685143098711,
-      "change_summary": "4.1% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 8,
-      "timestamp": "2026-06-19 23:51",
-      "probability": 0.04056685143098711,
-      "change_summary": "4.1% (→), 6 drivers, 4 evidence"
+      "timestamp": "2026-06-20 07:04",
+      "probability": 0.04042378793408506,
+      "change_summary": "Initial: 4.0% base=2%, 6 drivers, 4 evidence"
     }
   ],
   "sim_results": {
-    "mean": 0.04056685143098711,
-    "median": 0.03978512067988059,
-    "p5": 0.02791320623267713,
-    "p95": 0.05635044237704531,
-    "std_dev": 0.008660659666720322,
+    "mean": 0.04042378793408506,
+    "median": 0.03984991934041243,
+    "p5": 0.027507088941534086,
+    "p95": 0.05534635657907387,
+    "std_dev": 0.008541899221332604,
     "iterations": 10000
   },
   "base_rate": {
@@ -191,7 +149,12 @@
     "confidence": "High",
     "price_change_1w": null,
     "url": "https://polymarket.com/event/world-cup-winner",
-    "price_history": []
+    "price_history": [
+      {
+        "t": 1781939052,
+        "p": 0.0045
+      }
+    ]
   },
   "workspace_id": "776e6dbc-2edb-4b13-a020-a5e4c7eba4ec"
 }
