@@ -1,25 +1,18 @@
 {
   "forecast_id": "9c4713fe-57cb-4179-8187-9b710c46e0b5",
   "current_version": 1,
-  "predicted_probability": 0.04042378793408506,
-  "inside_view_explanation": "Inside view: model evaluates to 4.0% (p5=2.8%, p95=5.5%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "predicted_probability": 0.04042378813028336,
+  "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-06-20 07:04",
-      "probability": 0.04042378793408506,
+      "timestamp": "2026-06-22 12:40",
+      "probability": 0.04042378813028336,
       "change_summary": "Initial: 4.0% base=2%, 6 drivers, 4 evidence"
     }
   ],
-  "sim_results": {
-    "mean": 0.04042378793408506,
-    "median": 0.03984991934041243,
-    "p5": 0.027507088941534086,
-    "p95": 0.05534635657907387,
-    "std_dev": 0.008541899221332604,
-    "iterations": 10000
-  },
+  "sim_results": null,
   "base_rate": {
     "reference_class": "FIFA World Cup winners 1930–2022",
     "historical_frequency": 0.0208,
@@ -149,12 +142,7 @@
     "confidence": "High",
     "price_change_1w": null,
     "url": "https://polymarket.com/event/world-cup-winner",
-    "price_history": [
-      {
-        "t": 1781939052,
-        "p": 0.0045
-      }
-    ]
+    "price_history": []
   },
   "workspace_id": "776e6dbc-2edb-4b13-a020-a5e4c7eba4ec"
 }
