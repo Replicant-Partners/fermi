@@ -674,6 +674,19 @@ async fn run_migrations(db: &PgPool) {
         // surfaces them with the right revision_trigger value instead of
         // the generic 'evidence_update'.
         "migrations/149_forecast_updates_trigger_kind.sql",
+        // ── Spec 24: forecast collaboration & sharing ─────────────────
+        //
+        // 150 (forecast_relationships) lands via ensure_critical_schema
+        // (the defensive boot-time block above) rather than this migration
+        // list — its author's choice. We don't duplicate the registration.
+        //
+        // 151: forecast_invites — unified pending-invite primitive for
+        // forecasts, portfolios, and teams. Spec 24 §3.1.1.
+        "migrations/151_forecast_invites.sql",
+        // 152: extend object_shares.object_type CHECK to include
+        // 'portfolio' so portfolios can be shared through the same
+        // mechanism as forecasts. Spec 24 §3.1.2.
+        "migrations/152_object_shares_portfolio.sql",
     ];
 
     for file in &migration_files {

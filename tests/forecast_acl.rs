@@ -38,6 +38,12 @@
 //!      roundtrip. We assert: a fresh row reports 0; after inserting one
 //!      `object_shares` row, it reports 1.
 //!
+//!   5. Sprint 2.1 migrations: `forecast_invites` table must exist with
+//!      the spec'd CHECK constraints, and `object_shares.object_type`
+//!      must include `'portfolio'`. We probe the schema directly so a
+//!      missing or partial migration trips this test rather than a
+//!      runtime 500 in production.
+//!
 //! Tests that need a live DB are marked `#[ignore]` so a vanilla
 //! `cargo test` passes without one.
 
@@ -706,4 +712,84 @@ async fn share_count_reflects_object_shares_rows() {
     );
 
     delete_test_forecast(&pool, &fid).await;
+}
+
+// ─── Sprint 2.1: migration 151 & 152 schema presence ─────────────────
+
+/// Assert the `forecast_invites` table exists with the spec'd CHECK
+/// constraints. The boot path in `src/api_server.rs` runs migrations on
+/// every start, so a missing or skipped 151 should show up here before
+/// any handler code starts depending on the table.
+#[tokio::test]
+#[ignore]
+async fn migration_151_forecast_invites_present() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let table_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.tables
+         WHERE table_schema = 'public' AND table_name = 'forecast_invites')",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("table existence probe");
+    assert!(
+        table_exists,
+        "forecast_invites table missing — migration 151 has not run. \
+         Boot the api-server once or apply migrations/151_forecast_invites.sql manually."
+    );
+
+    // The exactly-one-of-recipient invariant is the most error-prone
+    // part of the schema; assert it by name so a future drop+forget
+    // trips this test.
+    let invariant_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_constraint
+         WHERE conname = 'forecast_invites_recipient_exactly_one')",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("constraint existence probe");
+    assert!(
+        invariant_exists,
+        "forecast_invites_recipient_exactly_one CHECK is missing — \
+         migration 151 applied partially?"
+    );
+}
+
+/// Assert `object_shares.object_type` accepts `'portfolio'`. We test by
+/// behavior (insert + rollback) rather than parsing pg_constraint
+/// because the CHECK definition string ordering isn't stable across
+/// PostgreSQL versions.
+#[tokio::test]
+#[ignore]
+async fn migration_152_object_shares_accepts_portfolio() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    // Use a savepoint so the row never persists. We don't care about
+    // the data — only that the INSERT survives the CHECK constraint.
+    let mut tx = pool.begin().await.expect("begin tx");
+    let result = sqlx::query(
+        "INSERT INTO object_shares
+            (object_type, object_id, share_type, share_target, permission, granted_by)
+         VALUES ('portfolio', $1, 'user', $2, 'view', $3)",
+    )
+    .bind(format!("migration-152-probe-{}", unique_suffix()))
+    .bind("probe-target")
+    .bind("probe-granter")
+    .execute(&mut *tx)
+    .await;
+    tx.rollback().await.expect("rollback");
+
+    assert!(
+        result.is_ok(),
+        "object_shares CHECK does not accept 'portfolio' — \
+         migration 152 has not run. Boot the api-server once or apply \
+         migrations/152_object_shares_portfolio.sql manually. Error: {:?}",
+        result.err()
+    );
 }
