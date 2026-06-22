@@ -283,6 +283,48 @@ pub async fn resolve_workspace_handler(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // ── CASCADE QUEUE HOOK ───────────────────────────────────────────
+    //
+    // If this workspace is backed by a fermi_forecasts row, and that
+    // forecast is part of any non-archived relationships, queue a
+    // pending_cascade row per relationship. Operator-gate rule:
+    // every parameter mutation passes through a human. The queue
+    // shows in the console badge; operator reviews and Apply/Dismiss.
+    //
+    // We extract the outcome as a binary bool so the cascade can fire
+    // with trigger_kind='resolved' + outcome=true/false. Outcomes that
+    // aren't binary-scorable (multi-class, free-form) skip the queue
+    // since the mutex propagation needs a yes/no signal.
+    {
+        let pool_q = state.db.clone();
+        let owner = user_id.to_string();
+        let outcome_bin = extract_probability(&req.outcome).map(|p| p >= 0.5);
+        let ws_id_q = ws_uuid;
+        tokio::spawn(async move {
+            // Find the forecast linked to this workspace.
+            let forecast_id: Option<String> = sqlx::query_scalar(
+                "SELECT id FROM public.fermi_forecasts WHERE workspace_id = $1",
+            )
+            .bind(ws_id_q)
+            .fetch_optional(&pool_q)
+            .await
+            .ok()
+            .flatten();
+            let Some(fid) = forecast_id else {
+                return;
+            };
+            crate::handlers::pending_cascades::queue_pending_cascade(
+                &pool_q,
+                &fid,
+                "resolved",
+                outcome_bin,
+                "workspace_auto",
+                &owner,
+            )
+            .await;
+        });
+    }
+
     // ── BAYESOPS REFIT HOOK ──────────────────────────────────────────
     //
     // Per docs/specs/23_BAYESOPS_WORLD_CUP_DEMO.md §3, the resolved

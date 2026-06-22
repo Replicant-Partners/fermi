@@ -873,6 +873,29 @@ pub async fn resolve_forecast_handler(
         });
     }
 
+    // ── Queue cascade reviews for any relationships involving this
+    //    forecast. Operator-gate rule: every parameter mutation passes
+    //    through a human. We DON'T auto-propagate the cascade here;
+    //    instead we queue a pending_cascade row per relationship and
+    //    the operator reviews from the console queue.
+    {
+        let pool_q = pool.clone();
+        let trigger = forecast_id.clone();
+        let outcome = req.actual_outcome;
+        let owner = user_id.to_string();
+        tokio::spawn(async move {
+            crate::handlers::pending_cascades::queue_pending_cascade(
+                &pool_q,
+                &trigger,
+                "resolved",
+                Some(outcome),
+                "manual",
+                &owner,
+            )
+            .await;
+        });
+    }
+
     Ok(Json(json!({
         "forecast_id": forecast_id,
         "actual_outcome": req.actual_outcome,

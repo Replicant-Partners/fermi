@@ -837,6 +837,49 @@ async fn ensure_critical_schema(db: &PgPool) {
          "CREATE INDEX IF NOT EXISTS idx_relationships_forecast_ids \
           ON public.forecast_relationships USING gin (forecast_ids)"),
 
+        // ── 151: pending_cascades — operator-gated cascade queue.
+        //    When a forecast resolves (manually OR via upstream
+        //    workspace resolution), the server queues a pending_cascade
+        //    row for each non-archived relationship the resolved
+        //    forecast is part of. The operator reviews and applies
+        //    or dismisses from the console queue. Operator-gate rule:
+        //    nothing that mutates probabilities fires without a click.
+        ("pending_cascades.table",
+         "CREATE TABLE IF NOT EXISTS public.pending_cascades ( \
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(), \
+              relationship_id UUID NOT NULL REFERENCES public.forecast_relationships(id) ON DELETE CASCADE, \
+              trigger_forecast_id TEXT NOT NULL REFERENCES public.fermi_forecasts(id) ON DELETE CASCADE, \
+              trigger_kind TEXT NOT NULL, \
+              outcome BOOLEAN, \
+              source TEXT NOT NULL DEFAULT 'manual', \
+              status TEXT NOT NULL DEFAULT 'pending', \
+              owner_id TEXT NOT NULL, \
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
+              decided_at TIMESTAMPTZ, \
+              decided_by TEXT, \
+              notes TEXT, \
+              proposed_snapshot JSONB \
+          )"),
+        ("pending_cascades.idx_status",
+         "CREATE INDEX IF NOT EXISTS idx_pending_cascades_status \
+          ON public.pending_cascades(status)"),
+        ("pending_cascades.idx_owner",
+         "CREATE INDEX IF NOT EXISTS idx_pending_cascades_owner \
+          ON public.pending_cascades(owner_id, status, created_at DESC)"),
+        ("pending_cascades.idx_trigger",
+         "CREATE INDEX IF NOT EXISTS idx_pending_cascades_trigger \
+          ON public.pending_cascades(trigger_forecast_id)"),
+        ("pending_cascades.idx_relationship",
+         "CREATE INDEX IF NOT EXISTS idx_pending_cascades_relationship \
+          ON public.pending_cascades(relationship_id)"),
+        ("pending_cascades.drop_old_check",
+         "ALTER TABLE public.pending_cascades \
+          DROP CONSTRAINT IF EXISTS pending_cascades_status_check"),
+        ("pending_cascades.add_check",
+         "ALTER TABLE public.pending_cascades \
+          ADD CONSTRAINT pending_cascades_status_check \
+          CHECK (status IN ('pending', 'applied', 'dismissed', 'superseded'))"),
+
         ("forecast_commitments.table",
          "CREATE TABLE IF NOT EXISTS public.forecast_commitments ( \
               commitment_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), \
@@ -2313,6 +2356,24 @@ async fn main() {
          .route(
              "/api/forecast-relationships/:rel_id/propagate",
              post(handlers::relationships::propagate_relationship_handler),
+         )
+         // ── Pending cascades — operator-gated cascade queue ──────────
+         //
+         // When a forecast resolves, the server queues a pending_cascade
+         // row per non-archived relationship the forecast belongs to.
+         // Operator reviews the queue and Apply / Dismiss each entry.
+         // Operator-gate: no parameter mutation fires without a click.
+         .route(
+             "/api/pending-cascades",
+             get(handlers::pending_cascades::list_pending_cascades_handler),
+         )
+         .route(
+             "/api/pending-cascades/:cascade_id/apply",
+             post(handlers::pending_cascades::apply_pending_cascade_handler),
+         )
+         .route(
+             "/api/pending-cascades/:cascade_id/dismiss",
+             post(handlers::pending_cascades::dismiss_pending_cascade_handler),
          )
          // ── Portfolio routes ───────────────────────────────────────────
         .route(

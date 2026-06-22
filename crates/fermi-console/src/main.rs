@@ -440,6 +440,20 @@ struct FermiConsole {
     cascade_loading: bool,
     cascade_summary: Option<String>,
 
+    // Pending cascades queue — server-queued operator-gate reviews.
+    // When a forecast resolves (manually or via upstream workspace
+    // resolution), the server queues a pending_cascade row per
+    // relationship. We poll periodically + after every resolve so the
+    // badge stays fresh. Operator clicks the badge → review sheet
+    // opens → Apply / Dismiss each entry.
+    pending_cascades: Vec<JsonValue>,
+    pending_cascades_sheet_showing: bool,
+    pending_cascades_loading: bool,
+    /// Set of cascade IDs currently being applied or dismissed; UI
+    /// disables their buttons until the action completes so a
+    /// double-click can't double-fire.
+    cascade_action_in_flight: std::collections::HashSet<String>,
+
     // Toast notification (auto-dismiss after 3 s)
     // (message, icon, color)
     toast: Option<(String, &'static str, u32)>,
@@ -557,6 +571,10 @@ impl FermiConsole {
             cascade_resolved_outcome: None,
             cascade_loading: false,
             cascade_summary: None,
+            pending_cascades: Vec::new(),
+            pending_cascades_sheet_showing: false,
+            pending_cascades_loading: false,
+            cascade_action_in_flight: std::collections::HashSet::new(),
             toast: None,
         };
 
@@ -767,6 +785,9 @@ impl FermiConsole {
         self.fetch_leaderboard(cx);
         self.load_local_forecasts();
         self.fetch_workspace_forecasts(cx);
+        // Pending cascades queue — the operator's inbox of probability-
+        // mutating actions awaiting human approval.
+        self.fetch_pending_cascades(cx);
     }
 
     fn fetch_agents(&mut self, cx: &mut Context<Self>) {
@@ -1264,6 +1285,119 @@ impl FermiConsole {
         .detach();
     }
 
+    /// Poll the server for pending cascades. Refreshed on app startup,
+    /// after every resolve, and periodically while the badge is shown
+    /// (so a cascade queued by an upstream workspace resolution appears
+    /// without the operator having to do anything).
+    fn fetch_pending_cascades(&mut self, cx: &mut Context<Self>) {
+        self.pending_cascades_loading = true;
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| match api.list_pending_cascades().await {
+            Ok(resp) => {
+                let pending = resp
+                    .get("pending")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                this.update(cx, |this, cx| {
+                    this.pending_cascades = pending;
+                    this.pending_cascades_loading = false;
+                    cx.notify();
+                })
+                .ok();
+            }
+            Err(e) => {
+                log::warn!("[pending-cascades] fetch failed: {}", e);
+                this.update(cx, |this, cx| {
+                    this.pending_cascades_loading = false;
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    fn apply_pending_cascade(&mut self, cascade_id: String, cx: &mut Context<Self>) {
+        if !self.cascade_action_in_flight.insert(cascade_id.clone()) {
+            return; // already in flight
+        }
+        let api = self.api.clone();
+        let cid = cascade_id.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.apply_pending_cascade(&cid, None).await;
+            this.update(cx, |this, cx| {
+                this.cascade_action_in_flight.remove(&cid);
+                match result {
+                    Ok(resp) => {
+                        let n = resp
+                            .get("n_updated")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        this.toast = Some((
+                            format!("Cascade applied — {} forecasts updated.", n),
+                            "✓",
+                            theme::GREEN,
+                        ));
+                        // Refresh the queue + the dashboard data so
+                        // the new sibling probabilities show up.
+                        this.fetch_pending_cascades(cx);
+                        this.fetch_forecasts(cx);
+                        this.portfolio_forecasts.clear();
+                        this.portfolio_stats_cache.clear();
+                        if let Some(pid) = this.selected_portfolio_id.clone() {
+                            this.fetch_portfolio_forecasts(pid, cx);
+                        }
+                    }
+                    Err(e) => {
+                        this.toast = Some((
+                            format!("Apply failed: {}", e),
+                            "✗",
+                            theme::RED,
+                        ));
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn dismiss_pending_cascade(&mut self, cascade_id: String, cx: &mut Context<Self>) {
+        if !self.cascade_action_in_flight.insert(cascade_id.clone()) {
+            return;
+        }
+        let api = self.api.clone();
+        let cid = cascade_id.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.dismiss_pending_cascade(&cid, None).await;
+            this.update(cx, |this, cx| {
+                this.cascade_action_in_flight.remove(&cid);
+                match result {
+                    Ok(_) => {
+                        this.toast = Some((
+                            "Cascade dismissed.".into(),
+                            "○",
+                            theme::FG_DIM,
+                        ));
+                        this.fetch_pending_cascades(cx);
+                    }
+                    Err(e) => {
+                        this.toast = Some((
+                            format!("Dismiss failed: {}", e),
+                            "✗",
+                            theme::RED,
+                        ));
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn navigate(&mut self, panel: Panel, cx: &mut Context<Self>) {
         let changed = self.active_panel != panel;
         self.active_panel = panel;
@@ -1661,6 +1795,66 @@ impl FermiConsole {
                             .map(|panel| self.render_nav_item(*panel, cx)),
                     ),
             )
+            // Pending cascades badge — visible only when there's at least
+            // one entry awaiting operator review. Click → opens the
+            // queue review sheet.
+            .when(!self.pending_cascades.is_empty(), |el| {
+                let n = self.pending_cascades.len();
+                el.child(
+                    div()
+                        .id("pending-cascades-badge")
+                        .mt(px(8.0))
+                        .mx(px(8.0))
+                        .px(px(10.0))
+                        .py(px(8.0))
+                        .rounded(px(6.0))
+                        .border_1()
+                        .border_color(rgb(theme::GOLD))
+                        .bg(rgb(theme::BG_ELEVATED))
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.pending_cascades_sheet_showing = true;
+                            // Refresh before showing so the operator
+                            // sees the latest state, not a stale poll.
+                            this.fetch_pending_cascades(cx);
+                            cx.notify();
+                        }))
+                        .child(
+                            div()
+                                .text_size(px(14.0))
+                                .text_color(rgb(theme::GOLD))
+                                .child("⚠"),
+                        )
+                        .child(
+                            div()
+                                .flex_grow()
+                                .flex()
+                                .flex_col()
+                                .gap(px(1.0))
+                                .child(
+                                    div()
+                                        .text_size(px(11.0))
+                                        .text_color(rgb(theme::FG))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(format!(
+                                            "{} cascade{} pending",
+                                            n,
+                                            if n == 1 { "" } else { "s" }
+                                        )),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(theme::fg_dim())
+                                        .child("Review · Apply / Dismiss"),
+                                ),
+                        ),
+                )
+            })
             .child(
                 // Spacer
                 div().flex_grow(),
@@ -2570,6 +2764,10 @@ impl FermiConsole {
                             this.cascade_resolved_outcome = Some(outcome);
                             this.cascade_summary = None;
                         }
+                        // Refresh the pending-cascades badge so the
+                        // server-queued entry (from resolve_forecast_handler)
+                        // appears in the inbox count.
+                        this.fetch_pending_cascades(cx);
                         cx.notify();
                     })
                     .ok();
@@ -6080,6 +6278,360 @@ impl FermiConsole {
             .into_any_element()
     }
 
+    /// Render the operator-gated cascade queue. Surfaces every
+    /// pending_cascade row the server has queued for this user —
+    /// rows are created automatically by the resolve handler (manual
+    /// or workspace_auto). Operator sees the projected deltas and
+    /// Apply / Dismiss each entry.
+    fn render_pending_cascades_sheet(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let n = self.pending_cascades.len();
+        let loading = self.pending_cascades_loading;
+
+        let mut content = div()
+            .flex()
+            .flex_col()
+            .gap(px(16.0))
+            .w(px(720.0))
+            .max_h(px(640.0))
+            .p(px(24.0))
+            .rounded(px(12.0))
+            .bg(rgb(theme::BG_ELEVATED))
+            .border_1()
+            .border_color(rgb(theme::GOLD))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .child(
+                        div()
+                            .text_size(px(18.0))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(theme::GOLD))
+                            .child("Pending cascades"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(theme::fg_dim())
+                            .child(format!(
+                                "{} pending review · operator-gate enabled",
+                                n
+                            )),
+                    )
+                    .child(div().flex_grow())
+                    .child(
+                        div()
+                            .id("pending-cascades-close")
+                            .text_size(px(14.0))
+                            .text_color(theme::fg_dim())
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(theme::fg()))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.pending_cascades_sheet_showing = false;
+                                cx.notify();
+                            }))
+                            .child("✕ Close"),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(theme::fg_dim())
+                    .child(
+                        "Each entry below was queued by a forecast resolution. \
+                         Apply fires the propagation; Dismiss closes the entry \
+                         without changing any siblings."
+                            .to_string(),
+                    ),
+            );
+
+        if loading && self.pending_cascades.is_empty() {
+            content = content.child(
+                div()
+                    .py(px(24.0))
+                    .text_color(theme::fg_dim())
+                    .text_size(px(12.0))
+                    .child("Loading…"),
+            );
+        } else if self.pending_cascades.is_empty() {
+            content = content.child(
+                div()
+                    .py(px(24.0))
+                    .text_color(theme::fg_dim())
+                    .text_size(px(12.0))
+                    .child(
+                        "No cascades pending. Resolve a forecast that's part of \
+                         a relationship (e.g. WC sims mutex) to queue one."
+                            .to_string(),
+                    ),
+            );
+        } else {
+            // Scrollable list of cascade rows.
+            let list_id = "pending-cascades-list";
+            let mut list = div()
+                .id(list_id)
+                .flex()
+                .flex_col()
+                .gap(px(10.0))
+                .overflow_y_scroll();
+
+            for entry in &self.pending_cascades {
+                let cid = entry
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let in_flight = self.cascade_action_in_flight.contains(&cid);
+                let question = entry
+                    .get("trigger_question_text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("(no question)")
+                    .to_string();
+                let outcome = entry.get("outcome").and_then(|v| v.as_bool());
+                let outcome_label = match outcome {
+                    Some(true) => "YES",
+                    Some(false) => "NO",
+                    None => "—",
+                };
+                let outcome_color = match outcome {
+                    Some(true) => theme::GREEN,
+                    Some(false) => theme::RED,
+                    None => theme::FG_DIM,
+                };
+                let kind = entry
+                    .get("relationship_kind")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let source = entry
+                    .get("source")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let n_siblings = entry
+                    .get("n_siblings")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let proposed = entry
+                    .get("proposed_snapshot")
+                    .cloned()
+                    .unwrap_or(JsonValue::Null);
+                let deltas = proposed
+                    .get("deltas")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let n_projected = proposed
+                    .get("n_projected")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                // Pre-sort the top 5 by absolute delta — operator wants
+                // to see the biggest movers, not the smallest noise.
+                let mut top_deltas: Vec<&JsonValue> = deltas.iter().collect();
+                top_deltas.sort_by(|a, b| {
+                    let av = a.get("delta_pp").and_then(|v| v.as_f64()).unwrap_or(0.0).abs();
+                    let bv = b.get("delta_pp").and_then(|v| v.as_f64()).unwrap_or(0.0).abs();
+                    bv.partial_cmp(&av).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                top_deltas.truncate(5);
+
+                let cid_apply = cid.clone();
+                let cid_dismiss = cid.clone();
+
+                let mut row = div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.0))
+                    .p(px(14.0))
+                    .rounded(px(8.0))
+                    .bg(rgb(theme::BG))
+                    .border_1()
+                    .border_color(theme::fg_faint())
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(10.0))
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(rgb(theme::FG))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .flex_grow()
+                                    .child(truncate(&question, 60)),
+                            )
+                            .child(
+                                div()
+                                    .px(px(8.0))
+                                    .py(px(2.0))
+                                    .rounded(px(4.0))
+                                    .bg(rgb(theme::BG_ELEVATED))
+                                    .text_size(px(10.0))
+                                    .text_color(rgb(outcome_color))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(outcome_label.to_string()),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(10.0))
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_dim())
+                            .child(format!("kind: {}", kind))
+                            .child(format!("source: {}", source))
+                            .child(format!("affects: {} siblings", n_siblings))
+                            .child(format!("projected: {}", n_projected)),
+                    );
+
+                if !top_deltas.is_empty() {
+                    let label = if deltas.len() > top_deltas.len() {
+                        format!("Top movers ({} of {})", top_deltas.len(), deltas.len())
+                    } else {
+                        format!("Movers ({})", top_deltas.len())
+                    };
+                    row = row.child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_dim())
+                            .mt(px(2.0))
+                            .child(label),
+                    );
+                    let mut deltas_box = div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0));
+                    for d in &top_deltas {
+                        let fid = d
+                            .get("forecast_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?")
+                            .chars()
+                            .take(8)
+                            .collect::<String>();
+                        let prev = d
+                            .get("previous_probability")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0);
+                        let new_p = d
+                            .get("new_probability")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0);
+                        let dpp = d
+                            .get("delta_pp")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0);
+                        let arrow_color = if dpp > 0.0 {
+                            theme::GREEN
+                        } else if dpp < 0.0 {
+                            theme::RED
+                        } else {
+                            theme::FG_DIM
+                        };
+                        deltas_box = deltas_box.child(
+                            div()
+                                .flex()
+                                .gap(px(10.0))
+                                .text_size(px(10.0))
+                                .child(
+                                    div()
+                                        .w(px(70.0))
+                                        .text_color(theme::fg_dim())
+                                        .child(fid),
+                                )
+                                .child(
+                                    div()
+                                        .w(px(140.0))
+                                        .text_color(rgb(theme::FG))
+                                        .child(format!(
+                                            "{:.1}% → {:.1}%",
+                                            prev * 100.0,
+                                            new_p * 100.0
+                                        )),
+                                )
+                                .child(
+                                    div()
+                                        .text_color(rgb(arrow_color))
+                                        .font_weight(FontWeight::BOLD)
+                                        .child(format!(
+                                            "{}{:.2}pp",
+                                            if dpp >= 0.0 { "+" } else { "" },
+                                            dpp
+                                        )),
+                                ),
+                        );
+                    }
+                    row = row.child(deltas_box);
+                }
+
+                // Apply / Dismiss buttons
+                row = row.child(
+                    div()
+                        .flex()
+                        .gap(px(10.0))
+                        .mt(px(4.0))
+                        .child({
+                            let mut btn = div()
+                                .id(SharedString::from(format!("apply-{}", cid)))
+                                .px(px(14.0))
+                                .py(px(6.0))
+                                .rounded(px(6.0))
+                                .bg(if in_flight {
+                                    rgb(theme::BG_ELEVATED)
+                                } else {
+                                    rgb(theme::GREEN)
+                                })
+                                .text_color(if in_flight {
+                                    rgb(theme::FG_FAINT)
+                                } else {
+                                    rgb(theme::BG)
+                                })
+                                .text_size(px(11.0))
+                                .font_weight(FontWeight::SEMIBOLD);
+                            if !in_flight {
+                                btn = btn.cursor_pointer().hover(|s| s.opacity(0.85));
+                                btn = btn.on_click(cx.listener(move |this, _, _, cx| {
+                                    this.apply_pending_cascade(cid_apply.clone(), cx);
+                                }));
+                            }
+                            btn.child(if in_flight { "Applying…" } else { "✓ Apply" })
+                        })
+                        .child({
+                            let mut btn = div()
+                                .id(SharedString::from(format!("dismiss-{}", cid)))
+                                .px(px(14.0))
+                                .py(px(6.0))
+                                .rounded(px(6.0))
+                                .border_1()
+                                .border_color(rgb(theme::RED))
+                                .text_color(rgb(theme::RED))
+                                .text_size(px(11.0));
+                            if !in_flight {
+                                btn = btn.cursor_pointer().hover(|s| s.bg(rgb(theme::BG_HOVER)));
+                                btn = btn.on_click(cx.listener(move |this, _, _, cx| {
+                                    this.dismiss_pending_cascade(cid_dismiss.clone(), cx);
+                                }));
+                            }
+                            btn.child("✗ Dismiss")
+                        }),
+                );
+
+                list = list.child(row);
+            }
+            content = content.child(list);
+        }
+
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::rgba(0x0A0E1499))
+            .child(content)
+    }
+
     /// Render the cascade affordance — shown after a resolve completes
     /// AND the resolved forecast was part of one or more declared
     /// relationships. Replaces the resolve form (operator's already
@@ -6306,6 +6858,9 @@ impl Render for FermiConsole {
         let resolve_overlay = self
             .resolve_sheet_showing
             .then(|| self.render_resolve_sheet(cx).into_any_element());
+        let pending_cascades_overlay = self
+            .pending_cascades_sheet_showing
+            .then(|| self.render_pending_cascades_sheet(cx).into_any_element());
 
         div()
             .key_context("FermiConsole")
@@ -6359,6 +6914,8 @@ impl Render for FermiConsole {
             .children(commit_overlay)
             // Resolve sheet overlay
             .children(resolve_overlay)
+            // Pending cascades queue overlay (operator review)
+            .children(pending_cascades_overlay)
             // Toast notification overlay (bottom-right, auto-dismiss)
             .when(self.toast.is_some(), |el| {
                 if let Some((ref msg, icon, color)) = self.toast {

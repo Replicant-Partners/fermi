@@ -1399,6 +1399,46 @@ impl ApiClient {
         )
         .await
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Pending cascades — operator-gated cascade queue.
+    //
+    // When a forecast resolves (manually OR via upstream workspace
+    // resolution), the server queues a pending_cascade row per
+    // non-archived relationship. The console badge surfaces the
+    // count; the queue sheet lets the operator Apply/Dismiss each.
+    // ═══════════════════════════════════════════════════════════════
+
+    /// List pending cascades for the calling user. Returns
+    /// `{pending: [...], count, status}` where each entry includes the
+    /// trigger forecast, relationship info, and the dry-run projected
+    /// deltas (proposed_snapshot).
+    pub async fn list_pending_cascades(&self) -> Result<JsonValue, ApiError> {
+        self.get("/api/pending-cascades?status=pending").await
+    }
+
+    pub async fn apply_pending_cascade(
+        &self,
+        cascade_id: &str,
+        notes: Option<&str>,
+    ) -> Result<JsonValue, ApiError> {
+        let body = serde_json::json!({ "notes": notes });
+        self.post(&format!("/api/pending-cascades/{}/apply", cascade_id), &body)
+            .await
+    }
+
+    pub async fn dismiss_pending_cascade(
+        &self,
+        cascade_id: &str,
+        notes: Option<&str>,
+    ) -> Result<JsonValue, ApiError> {
+        let body = serde_json::json!({ "notes": notes });
+        self.post(
+            &format!("/api/pending-cascades/{}/dismiss", cascade_id),
+            &body,
+        )
+        .await
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════

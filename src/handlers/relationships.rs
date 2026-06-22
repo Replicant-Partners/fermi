@@ -281,10 +281,11 @@ pub async fn propagate_relationship_handler(
         ));
     }
 
-    // Dispatch by kind.
+    // Dispatch by kind. Manual cascade path always applies (dry_run=false)
+    // because the operator explicitly clicked Cascade on the resolve sheet.
     match kind.as_str() {
         "mutually_exclusive" => {
-            propagate_mutex(&forecast_ids, &parameters, &req, &state.db).await
+            propagate_mutex(&forecast_ids, &parameters, &req, &state.db, false).await
         }
         "logical_implies" | "conjunction" | "conditional" | "exhaustive_cover" => Err((
             StatusCode::NOT_IMPLEMENTED,
@@ -300,6 +301,35 @@ pub async fn propagate_relationship_handler(
         )),
     }
     .map(Json)
+}
+
+/// Public helper: dispatch propagation by relationship kind. Used by the
+/// queue-apply handler (`apply_pending_cascade_handler`) so the math
+/// lives in exactly one place. The handler above
+/// (`propagate_relationship_handler`) is for the manual-cascade button
+/// flow; this version takes the relationship row directly so the caller
+/// doesn't have to refetch.
+pub async fn dispatch_propagation(
+    kind: &str,
+    forecast_ids: &[String],
+    parameters: &JsonValue,
+    req: &PropagateRequest,
+    pool: &PgPool,
+    dry_run: bool,
+) -> Result<PropagateResult, (StatusCode, String)> {
+    match kind {
+        "mutually_exclusive" => {
+            propagate_mutex(forecast_ids, parameters, req, pool, dry_run).await
+        }
+        "logical_implies" | "conjunction" | "conditional" | "exhaustive_cover" => Err((
+            StatusCode::NOT_IMPLEMENTED,
+            format!("Kind '{}' not yet implemented", kind),
+        )),
+        other => Err((
+            StatusCode::BAD_REQUEST,
+            format!("Unknown kind: {}", other),
+        )),
+    }
 }
 
 /// Mutually-exclusive propagation.
@@ -328,6 +358,11 @@ async fn propagate_mutex(
     _parameters: &JsonValue,
     req: &PropagateRequest,
     pool: &PgPool,
+    // When true, compute deltas but skip writing to the DB. Used by
+    // queue_pending_cascade to populate `proposed_snapshot` without
+    // committing changes — the operator sees the projection BEFORE
+    // clicking Apply.
+    dry_run: bool,
 ) -> Result<PropagateResult, (StatusCode, String)> {
     // Read the current probability of every member (including the
     // trigger). We need the trigger's previous probability to know how
@@ -510,38 +545,44 @@ async fn propagate_mutex(
         req.trigger_forecast_id, req.trigger_kind
     );
     let mut written = 0usize;
-    for (fid, prev, new_p) in &updates {
-        let new_p_f32 = *new_p as f32;
-        let prev_f32 = *prev as f32;
-        // Insert into the updates table (the trigger fans out to spacetime).
-        let _ = sqlx::query(
-            "INSERT INTO public.fermi_forecast_updates
-                 (id, forecast_id, previous_probability, new_probability,
-                  reason, revision_trigger, created_at)
-             VALUES (gen_random_uuid()::text, $1, $2, $3, $4, 'cascade', NOW())",
-        )
-        .bind(fid)
-        .bind(prev_f32)
-        .bind(new_p_f32)
-        .bind(&reason)
-        .execute(pool)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if !dry_run {
+        for (fid, prev, new_p) in &updates {
+            let new_p_f32 = *new_p as f32;
+            let prev_f32 = *prev as f32;
+            // Insert into the updates table (the trigger fans out to spacetime).
+            let _ = sqlx::query(
+                "INSERT INTO public.fermi_forecast_updates
+                     (id, forecast_id, previous_probability, new_probability,
+                      reason, revision_trigger, created_at)
+                 VALUES (gen_random_uuid()::text, $1, $2, $3, $4, 'cascade', NOW())",
+            )
+            .bind(fid)
+            .bind(prev_f32)
+            .bind(new_p_f32)
+            .bind(&reason)
+            .execute(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-        // Update the forecast's current probability so subsequent reads
-        // see the cascaded value.
-        let _ = sqlx::query(
-            "UPDATE public.fermi_forecasts
-             SET predicted_probability = $1, updated_at = NOW()
-             WHERE id = $2",
-        )
-        .bind(new_p_f32)
-        .bind(fid)
-        .execute(pool)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            // Update the forecast's current probability so subsequent reads
+            // see the cascaded value.
+            let _ = sqlx::query(
+                "UPDATE public.fermi_forecasts
+                 SET predicted_probability = $1, updated_at = NOW()
+                 WHERE id = $2",
+            )
+            .bind(new_p_f32)
+            .bind(fid)
+            .execute(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-        written += 1;
+            written += 1;
+        }
+    } else {
+        // Dry-run: pretend we wrote each row so n_updated reflects what
+        // the apply path would do.
+        written = updates.len();
     }
 
     let deltas: Vec<DeltaEntry> = updates
