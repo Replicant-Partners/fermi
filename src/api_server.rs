@@ -1729,6 +1729,32 @@ async fn main() {
             "/api/teams/:team_id/members/:member_id",
             put(handlers::teams::update_member_role_handler),
         )
+        // Spec 24 §3.3 / Sprint 2.3a: invite someone to a team.
+        // Permission vocab here is the team role (owner|admin|member|
+        // viewer). The legacy POST /api/teams/:id/members stays for
+        // tooling that adds members directly without an invite step.
+        .route(
+            "/api/teams/:team_id/invites",
+            post(handlers::invites::invite_to_team_handler),
+        )
+        // ── Invite inbox + state-transition routes (Spec 24 §3.3) ──────
+        //
+        // The standalone /api/invites/:id verbs decouple the invite's
+        // lifecycle from the target — decline/revoke don't care whether
+        // it's a forecast/portfolio/team invite. Accept lands in
+        // Sprint 2.3b along with the by-token landing routes.
+        .route(
+            "/api/me/invites",
+            get(handlers::invites::list_my_invites_handler),
+        )
+        .route(
+            "/api/invites/:invite_id/decline",
+            post(handlers::invites::decline_invite_handler),
+        )
+        .route(
+            "/api/invites/:invite_id",
+            delete(handlers::invites::revoke_invite_handler),
+        )
         // Agent creation wizard helpers
         .route(
             "/api/ontology-templates",
@@ -2360,6 +2386,13 @@ async fn main() {
              "/api/forecasts/:forecast_id/shares/:share_id",
              delete(handlers::shares::revoke_forecast_share_handler),
          )
+         // Spec 24 §3.3 / Sprint 2.3a: invite someone to a forecast.
+         // The invitee discovers the invite via /api/me/invites and
+         // accepts in Sprint 2.3b. Permission vocab: view|edit|admin.
+         .route(
+             "/api/forecasts/:forecast_id/invites",
+             post(handlers::invites::invite_to_forecast_handler),
+         )
          // ── Forecast relationships ─────────────────────────────────────
          //
          // Generalizes "when forecast A changes, forecast B should follow"
@@ -2432,6 +2465,11 @@ async fn main() {
         .route(
             "/api/portfolios/:portfolio_id/shares/:share_id",
             delete(handlers::shares::revoke_portfolio_share_handler),
+        )
+        // Spec 24 §3.3 / Sprint 2.3a: invite someone to a portfolio.
+        .route(
+            "/api/portfolios/:portfolio_id/invites",
+            post(handlers::invites::invite_to_portfolio_handler),
         )
         // ── Leaderboard routes ─────────────────────────────────────────
         .route(

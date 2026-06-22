@@ -46,6 +46,7 @@ pub mod qr_codes;
 pub mod pending_cascades;
 pub mod rabble_chat;
 pub mod rabble_workspace;
+pub mod invites;
 pub mod relationships;
 pub mod shares;
 pub mod social;

@@ -53,6 +53,17 @@
 //!      for both target types, plus cross-target safety (a share on
 //!      forecast A must NOT be deletable from a forecast-B endpoint).
 //!
+//!   7. Sprint 2.3a invite state machine. We exercise the create /
+//!      list / decline / revoke transitions via the same SQL the
+//!      handlers ship (lifted from `src/handlers/invites.rs`). The
+//!      accept path is Sprint 2.3b. Covers:
+//!        - create → row with status='pending' + token-on-email-only
+//!        - GET /me/invites → only the invitee sees their own pending
+//!        - decline by invitee → status='declined', empty list
+//!        - decline twice → second is a no-op (already-terminal)
+//!        - revoke by inviter → status='revoked'
+//!        - cross-recipient: stranger cannot decline someone else's
+//!
 //! Tests that need a live DB are marked `#[ignore]` so a vanilla
 //! `cargo test` passes without one.
 
@@ -1078,4 +1089,346 @@ fn mixed_case(s: &str) -> String {
         .enumerate()
         .map(|(i, c)| if i % 2 == 0 { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() })
         .collect()
+}
+
+// ─── Sprint 2.3a: invite state machine ────────────────────────────────
+
+/// Lifted INSERT from `create_invite_row` in src/handlers/invites.rs.
+/// Returns the new invite id + token (if any). If the handler's SQL
+/// drifts this test must drift with it — same pressure as the other
+/// verbatim-SQL probes.
+async fn insert_test_invite(
+    pool: &PgPool,
+    target_type: &str,
+    target_id: &str,
+    permission: &str,
+    invitee_user_id: Option<&str>,
+    invitee_email: Option<&str>,
+    token: Option<&str>,
+    inviter_id: &str,
+) -> (Uuid, Option<String>) {
+    sqlx::query_as::<_, (Uuid, Option<String>)>(
+        "INSERT INTO forecast_invites
+            (target_type, target_id, permission, invitee_user_id, invitee_email,
+             token, inviter_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, token",
+    )
+    .bind(target_type)
+    .bind(target_id)
+    .bind(permission)
+    .bind(invitee_user_id)
+    .bind(invitee_email)
+    .bind(token)
+    .bind(inviter_id)
+    .fetch_one(pool)
+    .await
+    .expect("insert forecast_invites row")
+}
+
+async fn fetch_invite_status(pool: &PgPool, invite_id: Uuid) -> Option<String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT status FROM forecast_invites WHERE id = $1",
+    )
+    .bind(invite_id)
+    .fetch_optional(pool)
+    .await
+    .expect("fetch invite status")
+}
+
+/// Lifted from `list_my_invites_handler` — count invites visible to a
+/// caller. We assert by count rather than full payload comparison so
+/// the test isn't tied to row order or to other concurrent invites in
+/// the DB (the suite shares one Neon instance with other tests).
+async fn count_pending_invites_for(pool: &PgPool, user_id: &str) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM forecast_invites
+         WHERE invitee_user_id = $1 AND status = 'pending'",
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await
+    .expect("count pending invites")
+}
+
+async fn delete_invite(pool: &PgPool, invite_id: Uuid) {
+    let _ = sqlx::query("DELETE FROM forecast_invites WHERE id = $1")
+        .bind(invite_id)
+        .execute(pool)
+        .await;
+}
+
+/// Lifted UPDATE from `decline_invite_handler`. Returns rows_affected.
+async fn run_decline(pool: &PgPool, invite_id: Uuid, caller_user_id: &str) -> u64 {
+    sqlx::query(
+        "UPDATE forecast_invites
+            SET status = 'declined'
+          WHERE id = $1
+            AND status = 'pending'
+            AND invitee_user_id = $2",
+    )
+    .bind(invite_id)
+    .bind(caller_user_id)
+    .execute(pool)
+    .await
+    .expect("run_decline UPDATE")
+    .rows_affected()
+}
+
+/// Lifted UPDATE from `revoke_invite_handler` (the post-authority
+/// transition step). Caller-authority logic is in the handler; here we
+/// test that the SQL atomically transitions pending → revoked.
+async fn run_revoke(pool: &PgPool, invite_id: Uuid) -> u64 {
+    sqlx::query(
+        "UPDATE forecast_invites SET status = 'revoked'
+         WHERE id = $1 AND status = 'pending'",
+    )
+    .bind(invite_id)
+    .execute(pool)
+    .await
+    .expect("run_revoke UPDATE")
+    .rows_affected()
+}
+
+/// Full happy path: invite by user_id → status=pending →
+/// invitee sees it in their inbox → invitee declines → inbox empty.
+#[tokio::test]
+#[ignore]
+async fn invite_create_list_decline_lifecycle() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+
+    // Synthetic invitee — text user_id, no FK on invitee_user_id so a
+    // freshly-minted string is fine.
+    let invitee = format!("invite-test-invitee-{}", suffix);
+
+    // Inbox is empty before the invite.
+    let before = count_pending_invites_for(&pool, &invitee).await;
+    assert_eq!(before, 0, "invitee inbox starts empty");
+
+    let (invite_id, token) = insert_test_invite(
+        &pool,
+        "forecast",
+        &fid,
+        "view",
+        Some(&invitee),
+        None,
+        None,
+        &owner.to_string(),
+    )
+    .await;
+    assert!(token.is_none(), "user-id invites do not need a token");
+    assert_eq!(
+        fetch_invite_status(&pool, invite_id).await.as_deref(),
+        Some("pending"),
+        "freshly-inserted invite starts pending"
+    );
+
+    let after_create = count_pending_invites_for(&pool, &invitee).await;
+    assert_eq!(after_create, 1, "invitee sees one pending invite");
+
+    // Decline path.
+    let n = run_decline(&pool, invite_id, &invitee).await;
+    assert_eq!(n, 1, "decline must transition exactly one row");
+    assert_eq!(
+        fetch_invite_status(&pool, invite_id).await.as_deref(),
+        Some("declined"),
+    );
+
+    let after_decline = count_pending_invites_for(&pool, &invitee).await;
+    assert_eq!(after_decline, 0, "declined invite no longer in inbox");
+
+    // Cleanup.
+    delete_invite(&pool, invite_id).await;
+    delete_test_forecast(&pool, &fid).await;
+}
+
+/// Email-only invite path: token IS minted, inbox stays empty (until
+/// the email-claim resolver lands in Sprint 2.3c).
+#[tokio::test]
+#[ignore]
+async fn invite_email_only_mints_token_and_skips_inbox() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+    let email = format!("invite-{}@example.invalid", suffix);
+
+    // Mimic the handler: caller mints a token for email invites.
+    let token_str = format!("test-token-{}", suffix);
+    let (invite_id, token) = insert_test_invite(
+        &pool,
+        "forecast",
+        &fid,
+        "view",
+        None,
+        Some(&email),
+        Some(&token_str),
+        &owner.to_string(),
+    )
+    .await;
+    assert_eq!(
+        token.as_deref(),
+        Some(token_str.as_str()),
+        "email invites must store the token"
+    );
+
+    // Email invites do NOT surface in any user's inbox until the
+    // email-claim resolver maps the email to a user_id.
+    let by_user = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM forecast_invites
+         WHERE invitee_user_id IS NOT NULL AND id = $1",
+    )
+    .bind(invite_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(by_user, 0, "email-only invite has no user_id yet");
+
+    delete_invite(&pool, invite_id).await;
+    delete_test_forecast(&pool, &fid).await;
+}
+
+/// Decline twice: second decline is a no-op (UPDATE …
+/// WHERE status='pending' matches zero rows once the invite is
+/// terminal). The handler's no-rows-affected path then disambiguates
+/// to 404 or 409; we verify the SQL itself doesn't double-transition.
+#[tokio::test]
+#[ignore]
+async fn invite_double_decline_is_noop() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+    let invitee = format!("invite-double-{}", suffix);
+    let (invite_id, _) = insert_test_invite(
+        &pool,
+        "forecast",
+        &fid,
+        "view",
+        Some(&invitee),
+        None,
+        None,
+        &owner.to_string(),
+    )
+    .await;
+
+    assert_eq!(run_decline(&pool, invite_id, &invitee).await, 1);
+    assert_eq!(
+        run_decline(&pool, invite_id, &invitee).await,
+        0,
+        "second decline must affect zero rows"
+    );
+    assert_eq!(
+        fetch_invite_status(&pool, invite_id).await.as_deref(),
+        Some("declined"),
+        "status must remain 'declined' after second decline"
+    );
+
+    delete_invite(&pool, invite_id).await;
+    delete_test_forecast(&pool, &fid).await;
+}
+
+/// Cross-recipient: a stranger cannot decline someone else's invite.
+/// The SQL gate uses `invitee_user_id = $2` so a non-matching caller
+/// updates zero rows — the handler then returns 409/404. This is the
+/// only authority surface where the user-id is the gate itself
+/// (rather than a target-level check).
+#[tokio::test]
+#[ignore]
+async fn invite_decline_rejects_non_invitee() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+
+    let invitee = format!("invite-rightful-{}", suffix);
+    let stranger = format!("invite-stranger-{}", suffix);
+    let (invite_id, _) = insert_test_invite(
+        &pool,
+        "forecast",
+        &fid,
+        "view",
+        Some(&invitee),
+        None,
+        None,
+        &owner.to_string(),
+    )
+    .await;
+
+    assert_eq!(
+        run_decline(&pool, invite_id, &stranger).await,
+        0,
+        "stranger must not be able to decline someone else's invite"
+    );
+    assert_eq!(
+        fetch_invite_status(&pool, invite_id).await.as_deref(),
+        Some("pending"),
+        "status must still be pending after the stranger's failed decline"
+    );
+
+    // The rightful invitee can still decline.
+    assert_eq!(run_decline(&pool, invite_id, &invitee).await, 1);
+
+    delete_invite(&pool, invite_id).await;
+    delete_test_forecast(&pool, &fid).await;
+}
+
+/// Revoke path: pending → revoked, and a second revoke is a no-op.
+#[tokio::test]
+#[ignore]
+async fn invite_revoke_transitions_to_revoked() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+    let invitee = format!("invite-revoke-target-{}", suffix);
+    let (invite_id, _) = insert_test_invite(
+        &pool,
+        "forecast",
+        &fid,
+        "view",
+        Some(&invitee),
+        None,
+        None,
+        &owner.to_string(),
+    )
+    .await;
+
+    assert_eq!(run_revoke(&pool, invite_id).await, 1);
+    assert_eq!(
+        fetch_invite_status(&pool, invite_id).await.as_deref(),
+        Some("revoked"),
+    );
+    // Second revoke: no-op.
+    assert_eq!(run_revoke(&pool, invite_id).await, 0);
+
+    // Revoked invite no longer surfaces in any inbox.
+    assert_eq!(
+        count_pending_invites_for(&pool, &invitee).await,
+        0,
+        "revoked invite must disappear from invitee's inbox"
+    );
+
+    delete_invite(&pool, invite_id).await;
+    delete_test_forecast(&pool, &fid).await;
 }
