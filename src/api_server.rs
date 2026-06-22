@@ -2146,6 +2146,13 @@ async fn main() {
             "/api/users/collaborators",
             get(handlers::users::get_collaborators_handler),
         )
+        // Spec 24 §3.3: exact case-insensitive email lookup for the
+        // share-with autocomplete. Returns one user_id or 404 — no
+        // enumeration, no fuzzy match (use /search for that).
+        .route(
+            "/api/users/lookup",
+            get(handlers::users::lookup_user_by_email_handler),
+        )
         // Personal workspace (menagerie)
         .route(
             "/api/me/workspace",
@@ -2339,6 +2346,20 @@ async fn main() {
              "/api/benchmark/anchor-sweep",
              post(handlers::forecast_benchmark::anchor_sweep_handler),
          )
+         // ── Per-forecast sharing (Spec 24 §3.3) ────────────────────────
+         //
+         // Distinct from the generic /api/shares which performs zero
+         // authorization. These routes pin object_type='forecast' at the
+         // route level and gate writes on ownership of the forecast.
+         .route(
+             "/api/forecasts/:forecast_id/shares",
+             get(handlers::shares::list_forecast_shares_handler)
+                 .post(handlers::shares::create_forecast_share_handler),
+         )
+         .route(
+             "/api/forecasts/:forecast_id/shares/:share_id",
+             delete(handlers::shares::revoke_forecast_share_handler),
+         )
          // ── Forecast relationships ─────────────────────────────────────
          //
          // Generalizes "when forecast A changes, forecast B should follow"
@@ -2401,6 +2422,16 @@ async fn main() {
         .route(
             "/api/portfolios/:portfolio_id/forecasts/:forecast_id",
             delete(handlers::forecasts::remove_forecast_from_portfolio_handler),
+        )
+        // ── Per-portfolio sharing (Spec 24 §3.3) ───────────────────────
+        .route(
+            "/api/portfolios/:portfolio_id/shares",
+            get(handlers::shares::list_portfolio_shares_handler)
+                .post(handlers::shares::create_portfolio_share_handler),
+        )
+        .route(
+            "/api/portfolios/:portfolio_id/shares/:share_id",
+            delete(handlers::shares::revoke_portfolio_share_handler),
         )
         // ── Leaderboard routes ─────────────────────────────────────────
         .route(

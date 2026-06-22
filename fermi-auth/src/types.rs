@@ -143,10 +143,15 @@ pub enum ObjectType {
     Agent,
     Capability,
     Forecast,
+    /// Spec 24 §3.1.2 / migration 152 — portfolio-level sharing.
+    Portfolio,
     Index,
     Repo,
     File,
     /// Added migration 117 — workspace-level sharing for App workspaces.
+    /// Note: on the current Neon schema this value is NOT in the
+    /// object_shares CHECK constraint (migration 117 didn't take); the
+    /// enum keeps it for code-level use until that's fixed separately.
     Workspace,
 }
 
@@ -156,6 +161,7 @@ impl ObjectType {
             ObjectType::Agent => "agent",
             ObjectType::Capability => "capability",
             ObjectType::Forecast => "forecast",
+            ObjectType::Portfolio => "portfolio",
             ObjectType::Index => "index",
             ObjectType::Repo => "repo",
             ObjectType::File => "file",
@@ -169,6 +175,7 @@ impl ObjectType {
             "agent" => Some(ObjectType::Agent),
             "capability" => Some(ObjectType::Capability),
             "forecast" => Some(ObjectType::Forecast),
+            "portfolio" => Some(ObjectType::Portfolio),
             "index" => Some(ObjectType::Index),
             "repo" => Some(ObjectType::Repo),
             "file" => Some(ObjectType::File),

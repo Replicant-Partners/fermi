@@ -44,6 +44,15 @@
 //!      missing or partial migration trips this test rather than a
 //!      runtime 500 in production.
 //!
+//!   6. Sprint 2.2 share routes — the GET/POST/DELETE trio on
+//!      `/api/forecasts/:id/shares` and `/api/portfolios/:id/shares`.
+//!      We exercise the same `fermi_auth::teams::{share_object,
+//!      list_object_shares, revoke_share}` helpers the handlers call,
+//!      plus the lifted SQL of `verify_share_matches_target`. Covers
+//!      the full lifecycle (POST → GET sees it → DELETE → GET empty)
+//!      for both target types, plus cross-target safety (a share on
+//!      forecast A must NOT be deletable from a forecast-B endpoint).
+//!
 //! Tests that need a live DB are marked `#[ignore]` so a vanilla
 //! `cargo test` passes without one.
 
@@ -55,6 +64,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use fermi_auth::visibility::is_team_member;
+use fermi_auth::{teams, ObjectType, Permission, ShareType};
 
 /// Acquire a Neon pool. Returns `None` if `DATABASE_URL` isn't set so the
 /// test can early-return silently — matches the pattern in
@@ -792,4 +802,280 @@ async fn migration_152_object_shares_accepts_portfolio() {
          migrations/152_object_shares_portfolio.sql manually. Error: {:?}",
         result.err()
     );
+}
+
+// ─── Sprint 2.2: per-target share routes ──────────────────────────────
+
+/// Lift of `verify_share_matches_target` from src/handlers/shares.rs —
+/// if the handler's SQL drifts, this test must drift with it.
+async fn share_belongs_to_target(
+    pool: &PgPool,
+    share_id: Uuid,
+    object_type: &str,
+    object_id: &str,
+) -> bool {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM object_shares
+         WHERE id = $1 AND object_type = $2 AND object_id = $3)",
+    )
+    .bind(share_id)
+    .bind(object_type)
+    .bind(object_id)
+    .fetch_one(pool)
+    .await
+    .expect("verify_share_matches_target probe")
+}
+
+/// Full lifecycle for forecast shares:
+/// POST equivalent (teams::share_object) → list sees it →
+/// verify_share_matches_target succeeds → revoke → list is empty.
+#[tokio::test]
+#[ignore]
+async fn forecast_shares_full_lifecycle() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+
+    // Pre-state: zero shares.
+    let before = teams::list_object_shares(&pool, ObjectType::Forecast, &fid)
+        .await
+        .expect("list pre");
+    assert_eq!(before.len(), 0, "fresh forecast has no shares");
+
+    // POST equivalent — same call the handler makes.
+    let share_target = format!("share-target-{}", suffix);
+    let share = teams::share_object(
+        &pool,
+        ObjectType::Forecast,
+        &fid,
+        ShareType::User,
+        &share_target,
+        Permission::View,
+        &owner.to_string(),
+    )
+    .await
+    .expect("share_object");
+
+    // GET equivalent.
+    let listed = teams::list_object_shares(&pool, ObjectType::Forecast, &fid)
+        .await
+        .expect("list post");
+    assert_eq!(listed.len(), 1, "one share visible after POST");
+    assert_eq!(listed[0].id, share.id);
+    assert_eq!(listed[0].share_target, share_target);
+    assert_eq!(listed[0].permission, Permission::View);
+
+    // verify_share_matches_target — the guard that prevents
+    // cross-object DELETE attacks.
+    assert!(
+        share_belongs_to_target(&pool, share.id, "forecast", &fid).await,
+        "share must be claimed by its forecast"
+    );
+    assert!(
+        !share_belongs_to_target(&pool, share.id, "forecast", "some-other-forecast").await,
+        "share must NOT be claimed by a different forecast id"
+    );
+    assert!(
+        !share_belongs_to_target(&pool, share.id, "portfolio", &fid).await,
+        "share must NOT be claimed by the portfolio object_type"
+    );
+
+    // DELETE equivalent.
+    teams::revoke_share(&pool, share.id).await.expect("revoke");
+
+    let after = teams::list_object_shares(&pool, ObjectType::Forecast, &fid)
+        .await
+        .expect("list final");
+    assert_eq!(after.len(), 0, "no shares after revoke");
+
+    delete_test_forecast(&pool, &fid).await;
+}
+
+/// Same matrix against portfolios. Critically exercises the migration
+/// 152 path: object_type='portfolio' must round-trip cleanly through
+/// share_object / list_object_shares / revoke_share.
+#[tokio::test]
+#[ignore]
+async fn portfolio_shares_full_lifecycle() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let pid = insert_test_portfolio(&pool, owner, &suffix).await;
+
+    let before = teams::list_object_shares(&pool, ObjectType::Portfolio, &pid)
+        .await
+        .expect("list pre");
+    assert_eq!(before.len(), 0);
+
+    let share_target = format!("pf-share-target-{}", suffix);
+    let share = teams::share_object(
+        &pool,
+        ObjectType::Portfolio,
+        &pid,
+        ShareType::User,
+        &share_target,
+        Permission::Edit,
+        &owner.to_string(),
+    )
+    .await
+    .expect("share_object portfolio");
+
+    let listed = teams::list_object_shares(&pool, ObjectType::Portfolio, &pid)
+        .await
+        .expect("list post");
+    assert_eq!(listed.len(), 1);
+    // Round-trip of ObjectType through the helper is the subtle bit:
+    // list_object_shares calls ObjectType::from_str on the column value.
+    // For 'portfolio' to come back as ObjectType::Portfolio, the enum
+    // arm we added to fermi-auth/src/types.rs must be wired up.
+    assert_eq!(
+        listed[0].object_type,
+        ObjectType::Portfolio,
+        "object_type must round-trip as Portfolio — \
+         this proves the fermi-auth enum has the Portfolio variant"
+    );
+    assert_eq!(listed[0].permission, Permission::Edit);
+
+    teams::revoke_share(&pool, share.id).await.expect("revoke");
+    let after = teams::list_object_shares(&pool, ObjectType::Portfolio, &pid)
+        .await
+        .expect("list final");
+    assert_eq!(after.len(), 0);
+
+    delete_test_portfolio(&pool, &pid).await;
+}
+
+/// Repeat POST upgrades the existing share's permission rather than
+/// creating a duplicate (ON CONFLICT DO UPDATE in share_object).
+/// Important for the console UX: clicking "Make admin" on an existing
+/// "View" share is just another POST.
+#[tokio::test]
+#[ignore]
+async fn forecast_share_upsert_changes_permission() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+    let target = format!("upsert-target-{}", suffix);
+
+    let s1 = teams::share_object(
+        &pool,
+        ObjectType::Forecast,
+        &fid,
+        ShareType::User,
+        &target,
+        Permission::View,
+        &owner.to_string(),
+    )
+    .await
+    .expect("initial share");
+
+    let s2 = teams::share_object(
+        &pool,
+        ObjectType::Forecast,
+        &fid,
+        ShareType::User,
+        &target,
+        Permission::Admin,
+        &owner.to_string(),
+    )
+    .await
+    .expect("upsert share");
+
+    assert_eq!(s1.id, s2.id, "upsert must reuse the same row");
+
+    let listed = teams::list_object_shares(&pool, ObjectType::Forecast, &fid)
+        .await
+        .expect("list");
+    assert_eq!(listed.len(), 1, "no duplicate row");
+    assert_eq!(
+        listed[0].permission,
+        Permission::Admin,
+        "permission must be upgraded by the second POST"
+    );
+
+    teams::revoke_share(&pool, s2.id).await.expect("revoke");
+    delete_test_forecast(&pool, &fid).await;
+}
+
+// ─── Sprint 2.2: lookup_user_by_email ────────────────────────────────
+
+/// Lifted SQL from `lookup_user_by_email_handler` so the handler can
+/// drift the test if the column list or matching strategy changes.
+async fn lookup_by_email(pool: &PgPool, email: &str) -> Option<(String, Option<String>)> {
+    sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT user_id, display_name
+         FROM users
+         WHERE LOWER(email) = $1
+           AND user_id IS NOT NULL
+         LIMIT 1",
+    )
+    .bind(email.to_lowercase())
+    .fetch_optional(pool)
+    .await
+    .expect("lookup query")
+}
+
+/// Look up an existing user by their actual email; assert the user_id
+/// comes back. Then look up a nonsense email; assert None.
+#[tokio::test]
+#[ignore]
+async fn lookup_user_by_email_finds_existing_and_404s_others() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    // Borrow a real (email, user_id) pair so the assertion is honest.
+    // We don't trust .env to have a specific user — we just take the
+    // first one with a non-null email and user_id.
+    let real: Option<(String, String)> = sqlx::query_as(
+        "SELECT email, user_id FROM users
+         WHERE email IS NOT NULL AND user_id IS NOT NULL
+         ORDER BY created_at LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .expect("borrow real user");
+    let Some((email, expected_user_id)) = real else {
+        eprintln!("skip: no user with both email and user_id");
+        return;
+    };
+
+    // Hit: exact match (case-insensitive — the handler lowercases, and
+    // we test mixed-case to verify the lowering really happens).
+    let scrambled = mixed_case(&email);
+    let found = lookup_by_email(&pool, &scrambled).await;
+    assert_eq!(
+        found.as_ref().map(|(uid, _)| uid.as_str()),
+        Some(expected_user_id.as_str()),
+        "lookup must match case-insensitively"
+    );
+
+    // Miss: a guaranteed-nonexistent email.
+    let phantom = format!("does-not-exist-{}@example.invalid", unique_suffix());
+    let none = lookup_by_email(&pool, &phantom).await;
+    assert!(none.is_none(), "phantom email must not resolve");
+}
+
+/// Tiny helper: alternate uppercase/lowercase characters to verify the
+/// handler's LOWER() comparison actually matches.
+fn mixed_case(s: &str) -> String {
+    s.chars()
+        .enumerate()
+        .map(|(i, c)| if i % 2 == 0 { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() })
+        .collect()
 }

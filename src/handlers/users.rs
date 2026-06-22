@@ -263,3 +263,60 @@ pub async fn get_collaborators_handler(
 
     Ok(Json(json!({ "collaborators": collaborators })))
 }
+
+// ─── Exact email lookup (Spec 24 §3.3) ─────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct LookupParams {
+    email: Option<String>,
+}
+
+/// GET /api/users/lookup?email=alice@example.com
+///
+/// Spec 24 §3.3: the share UI calls this BEFORE deciding "instant share
+/// vs email invite." Exact case-insensitive email match; returns one
+/// user or 404. Does not enumerate, does not fuzzy-search — the
+/// existing `/api/users/search` covers fuzzy.
+///
+/// Returns the user's `user_id` (text) — the value that
+/// `object_shares.share_target` accepts directly when share_type='user'.
+/// Authenticated callers only (`auth_middleware`).
+pub async fn lookup_user_by_email_handler(
+    State(state): State<AppState>,
+    _principal: AuthPrincipal,
+    Query(params): Query<LookupParams>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let email = params
+        .email
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            "missing email query parameter".to_string(),
+        ))?
+        .to_lowercase();
+
+    // Strict equality, case-insensitive. We don't ILIKE — that opens an
+    // enumeration vector through trailing-wildcard-style probes.
+    let row = sqlx::query(
+        "SELECT user_id, display_name, avatar_url
+         FROM users
+         WHERE LOWER(email) = $1
+           AND user_id IS NOT NULL
+         LIMIT 1",
+    )
+    .bind(&email)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    match row {
+        None => Err((StatusCode::NOT_FOUND, "no user with that email".into())),
+        Some(r) => Ok(Json(json!({
+            "user_id":      r.try_get::<String, _>("user_id").unwrap_or_default(),
+            "display_name": r.try_get::<Option<String>, _>("display_name").ok().flatten(),
+            "avatar_url":   r.try_get::<Option<String>, _>("avatar_url").ok().flatten(),
+        }))),
+    }
+}
