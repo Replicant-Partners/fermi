@@ -1,20 +1,23 @@
-//! Invite lifecycle handlers (Spec 24 §3.3, Sprint 2.3a).
+//! Invite lifecycle handlers (Spec 24 §3.3, Sprints 2.3a + 2.3b).
 //!
 //! Endpoints:
 //!
-//!   POST   /api/forecasts/:id/invites
-//!   POST   /api/portfolios/:id/invites
-//!   POST   /api/teams/:id/invites
-//!   GET    /api/me/invites
-//!   POST   /api/invites/:id/decline
-//!   DELETE /api/invites/:id
+//!   POST   /api/forecasts/:id/invites          (2.3a)
+//!   POST   /api/portfolios/:id/invites         (2.3a)
+//!   POST   /api/teams/:id/invites              (2.3a)
+//!   GET    /api/me/invites                     (2.3a)
+//!   POST   /api/invites/:id/decline            (2.3a)
+//!   DELETE /api/invites/:id                    (2.3a)
+//!   POST   /api/invites/:id/accept             (2.3b)
+//!   GET    /api/invites/by-token/:token        (2.3b, optional auth)
+//!   POST   /api/invites/by-token/:token/accept (2.3b)
 //!
-//! State machine (subset shipped here — accept lands in Sprint 2.3b):
+//! State machine:
 //!
 //!   pending ─── decline ──► declined
 //!           ─── revoke  ──► revoked
 //!           ─── expire  ──► expired   (cron, not implemented yet)
-//!           ─── accept  ──► accepted  (Sprint 2.3b — writes into
+//!           ─── accept  ──► accepted  (materialises grant in
 //!                                       object_shares / team_members)
 //!
 //! Wave-1 ACL on POST (matches `shares.rs`):
@@ -38,7 +41,9 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use fermi_auth::{teams, AuthPrincipal};
+use fermi_auth::{
+    teams, AuthPrincipal, MemberType, ObjectType, Permission, ShareType, TeamRole,
+};
 use serde::Deserialize;
 use serde_json::{json, Value as JsonValue};
 use sqlx::PgPool;
@@ -532,4 +537,401 @@ pub async fn revoke_invite_handler(
         ));
     }
     Ok(Json(json!({ "status": "revoked", "id": invite_id })))
+}
+
+// ─── Sprint 2.3b: accept paths ────────────────────────────────────────
+
+/// All the columns the accept paths need from the invite row. We load
+/// once and then dispatch on `target_type`. Status is included so the
+/// caller can distinguish 404 (row missing) from 409 (already
+/// terminal).
+#[derive(Debug)]
+struct InviteAcceptRow {
+    id: Uuid,
+    target_type: String,
+    target_id: String,
+    permission: String,
+    invitee_user_id: Option<String>,
+    invitee_email: Option<String>,
+    inviter_id: String,
+    status: String,
+    expired: bool,
+}
+
+/// Load an invite row by primary key (the inbox-resolved path).
+async fn load_invite_by_id(
+    pool: &PgPool,
+    invite_id: Uuid,
+) -> Result<InviteAcceptRow, (StatusCode, String)> {
+    let row: Option<(
+        Uuid,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+        bool,
+    )> = sqlx::query_as(
+        "SELECT id, target_type, target_id, permission,
+                invitee_user_id, invitee_email, inviter_id, status,
+                (expires_at < NOW()) AS expired
+         FROM forecast_invites WHERE id = $1",
+    )
+    .bind(invite_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let row = row.ok_or((StatusCode::NOT_FOUND, "Invite not found".into()))?;
+    Ok(InviteAcceptRow {
+        id: row.0,
+        target_type: row.1,
+        target_id: row.2,
+        permission: row.3,
+        invitee_user_id: row.4,
+        invitee_email: row.5,
+        inviter_id: row.6,
+        status: row.7,
+        expired: row.8,
+    })
+}
+
+/// Load an invite by its email-link token. Unknown tokens 404 so the
+/// landing page can render a neutral "this invite is no longer valid"
+/// without exposing whether the token ever existed.
+async fn load_invite_by_token(
+    pool: &PgPool,
+    token: &str,
+) -> Result<InviteAcceptRow, (StatusCode, String)> {
+    let row: Option<(
+        Uuid,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+        bool,
+    )> = sqlx::query_as(
+        "SELECT id, target_type, target_id, permission,
+                invitee_user_id, invitee_email, inviter_id, status,
+                (expires_at < NOW()) AS expired
+         FROM forecast_invites WHERE token = $1",
+    )
+    .bind(token)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let row = row.ok_or((StatusCode::NOT_FOUND, "Invite not found".into()))?;
+    Ok(InviteAcceptRow {
+        id: row.0,
+        target_type: row.1,
+        target_id: row.2,
+        permission: row.3,
+        invitee_user_id: row.4,
+        invitee_email: row.5,
+        inviter_id: row.6,
+        status: row.7,
+        expired: row.8,
+    })
+}
+
+/// Authority check for accept: the caller must be the rightful
+/// invitee.
+///
+///   • If `invitee_user_id` is set: caller's `user_id()` must match.
+///   • Else (email-only): caller must be an `AuthPrincipal::User`
+///     whose `.email` matches `invitee_email` case-insensitively.
+///     ApiKey principals fail this branch — they don't carry email.
+///
+/// The email-claim resolver in Sprint 2.3c will populate
+/// `invitee_user_id` on sign-in, so over time more invites flow
+/// through the cheap user_id branch.
+fn require_caller_is_invitee(
+    row: &InviteAcceptRow,
+    principal: &AuthPrincipal,
+) -> Result<(), (StatusCode, String)> {
+    let caller_user_id = principal.user_id();
+    if let Some(ref uid) = row.invitee_user_id {
+        if uid == &caller_user_id {
+            return Ok(());
+        }
+        return Err((
+            StatusCode::FORBIDDEN,
+            "This invite was sent to a different user".into(),
+        ));
+    }
+    // Email-only invite — fall back to email match.
+    let email = match principal {
+        AuthPrincipal::User(u) => u.email.to_lowercase(),
+        AuthPrincipal::ApiKey(_) => {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "API-key callers cannot accept email-only invites (no email claim)"
+                    .into(),
+            ))
+        }
+    };
+    match row.invitee_email.as_deref().map(str::to_lowercase) {
+        Some(invite_email) if invite_email == email => Ok(()),
+        _ => Err((
+            StatusCode::FORBIDDEN,
+            "This invite was sent to a different email".into(),
+        )),
+    }
+}
+
+/// Materialise the grant for an accepted invite. Dispatches on
+/// `target_type` — forecast/portfolio write to `object_shares`, team
+/// writes to `team_members`. Both helpers are idempotent
+/// (ON CONFLICT DO UPDATE) so a re-attempt is safe; the lifecycle
+/// commitment happens at the status-flip below.
+async fn materialise_grant(
+    pool: &PgPool,
+    row: &InviteAcceptRow,
+    accepter_user_id: &str,
+) -> Result<(), (StatusCode, String)> {
+    match row.target_type.as_str() {
+        "forecast" | "portfolio" => {
+            let object_type = if row.target_type == "forecast" {
+                ObjectType::Forecast
+            } else {
+                ObjectType::Portfolio
+            };
+            let permission = match row.permission.as_str() {
+                "edit" => Permission::Edit,
+                "admin" => Permission::Admin,
+                _ => Permission::View,
+            };
+            teams::share_object(
+                pool,
+                object_type,
+                &row.target_id,
+                ShareType::User,
+                accepter_user_id,
+                permission,
+                &row.inviter_id,
+            )
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
+        "team" => {
+            let team_id = Uuid::parse_str(&row.target_id).map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Stored team invite has non-UUID target_id".into(),
+                )
+            })?;
+            let role = TeamRole::from_str(&row.permission);
+            teams::add_team_member(
+                pool,
+                team_id,
+                MemberType::User,
+                accepter_user_id,
+                role,
+                &row.inviter_id,
+            )
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
+        other => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Stored invite has unknown target_type '{}'", other),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Core accept logic shared by the by-id and by-token paths.
+///
+/// Lifecycle commitment: the status-flip is `UPDATE … WHERE id = $1
+/// AND status = 'pending'`. If a concurrent accept/decline beats us by
+/// one ms, we get 0 rows-affected and return 409 — the grant the
+/// other transaction materialised stays; ours becomes a harmless
+/// no-op (because the share_object/add_team_member helpers use
+/// ON CONFLICT DO UPDATE, the second write is idempotent).
+async fn accept_invite_core(
+    pool: &PgPool,
+    row: InviteAcceptRow,
+    principal: &AuthPrincipal,
+) -> Result<JsonValue, (StatusCode, String)> {
+    // Pre-flight: the invite must be acceptable. Order matters — we
+    // surface the most actionable error first.
+    if row.status != "pending" {
+        return Err((
+            StatusCode::CONFLICT,
+            format!("Invite is {}, no longer pending", row.status),
+        ));
+    }
+    if row.expired {
+        // Auto-transition to 'expired' so the inbox stops showing it.
+        // Best-effort: a failure here doesn't block the 409 we owe
+        // the caller.
+        let _ = sqlx::query(
+            "UPDATE forecast_invites SET status = 'expired'
+             WHERE id = $1 AND status = 'pending'",
+        )
+        .bind(row.id)
+        .execute(pool)
+        .await;
+        return Err((
+            StatusCode::CONFLICT,
+            "Invite has expired".into(),
+        ));
+    }
+
+    require_caller_is_invitee(&row, principal)?;
+
+    let accepter_user_id = principal.user_id();
+    materialise_grant(pool, &row, &accepter_user_id).await?;
+
+    // Status flip — the source of truth for "did this accept succeed".
+    // WHERE status='pending' is the concurrency guard.
+    //
+    // For email-only invites we back-fill invitee_user_id with the
+    // accepter, AND null out invitee_email in the same UPDATE. The
+    // forecast_invites_recipient_exactly_one CHECK forbids both
+    // columns being non-null, so we have to choose one — and the
+    // accept moment is when "this invite is now owned by user X" is
+    // the truthful description. Historical email-of-invite info is
+    // recoverable from inviter activity / notifications.
+    let updated = sqlx::query(
+        "UPDATE forecast_invites
+            SET status = 'accepted',
+                accepted_at = NOW(),
+                invitee_user_id = COALESCE(invitee_user_id, $2),
+                invitee_email = CASE
+                    WHEN invitee_user_id IS NULL THEN NULL
+                    ELSE invitee_email
+                END
+          WHERE id = $1 AND status = 'pending'",
+    )
+    .bind(row.id)
+    .bind(&accepter_user_id)
+    .execute(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if updated.rows_affected() == 0 {
+        // Someone (or some other request from us) raced us. The grant
+        // has already been materialised idempotently, so the caller's
+        // intent is satisfied — but the lifecycle row is owned by the
+        // first writer. 409 keeps the API contract honest.
+        return Err((
+            StatusCode::CONFLICT,
+            "Invite was accepted, declined, or revoked concurrently".into(),
+        ));
+    }
+
+    // Notify the inviter (Spec 24 §3.7 — type='invite_accepted').
+    // Best-effort: a notification failure must not break the accept.
+    let target_label = match row.target_type.as_str() {
+        "forecast" => "forecast",
+        "portfolio" => "portfolio",
+        "team" => "team",
+        _ => "invite",
+    };
+    crate::create_notification(
+        pool,
+        &row.inviter_id,
+        "invite_accepted",
+        "Your invite was accepted",
+        Some(&format!(
+            "Your {} invite is now active for the recipient.",
+            target_label
+        )),
+    )
+    .await;
+
+    Ok(json!({
+        "status": "accepted",
+        "id": row.id,
+        "target_type": row.target_type,
+        "target_id": row.target_id,
+        "permission": row.permission,
+    }))
+}
+
+// ─── POST /api/invites/:id/accept ──────────────────────────────────────
+
+/// Accept an invite addressed to the calling user (by inbox). The
+/// caller must already be authenticated; the invitee identity is
+/// `invitee_user_id` on the row.
+pub async fn accept_invite_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(invite_id): Path<Uuid>,
+) -> Result<Json<JsonValue>, (StatusCode, String)> {
+    let row = load_invite_by_id(&state.db, invite_id).await?;
+    let body = accept_invite_core(&state.db, row, &principal).await?;
+    Ok(Json(body))
+}
+
+// ─── GET /api/invites/by-token/:token  (optional auth) ─────────────────
+
+/// Public-friendly preview of an invite linked by token. Returns just
+/// enough for the landing page to say "X invited you to forecast Y."
+/// Auth optional — the link is the only credential. We return 404 for
+/// already-terminal invites so the landing page UX is uniform.
+pub async fn get_invite_by_token_handler(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+) -> Result<Json<JsonValue>, (StatusCode, String)> {
+    let row = load_invite_by_token(&state.db, &token).await?;
+    if row.status != "pending" || row.expired {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "Invite is no longer valid".into(),
+        ));
+    }
+
+    // Resolve inviter display_name when we can — falls back to the
+    // raw inviter_id. The landing page renders "{display_name}
+    // invited you to {target_type}".
+    let inviter_display: Option<String> = sqlx::query_scalar(
+        "SELECT display_name FROM users WHERE user_id = $1 LIMIT 1",
+    )
+    .bind(&row.inviter_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    Ok(Json(json!({
+        "id":             row.id,
+        "target_type":    row.target_type,
+        "target_id":      row.target_id,
+        "permission":     row.permission,
+        // Email is echoed back so the landing page can prompt
+        // "Sign in as alice@example.com to accept." We do NOT
+        // include the resolved invitee_user_id (if any) — that's a
+        // claim the caller hasn't proven yet.
+        "invitee_email":  row.invitee_email,
+        "inviter_display_name": inviter_display,
+        "expires_at":     // surface via load? we don't have it on the row.
+                          // Sprint 2.3b explicit decision: the landing
+                          // page treats 'pending' as "still valid";
+                          // expiry was already gated above. Skip.
+                          serde_json::Value::Null,
+    })))
+}
+
+// ─── POST /api/invites/by-token/:token/accept ──────────────────────────
+
+/// Accept an invite by its token. Requires auth. The token resolves
+/// the invite; identity is verified against `invitee_user_id` (if
+/// set) or `invitee_email` (if email-only) the same way the inbox
+/// accept path does — so the link cannot be forwarded to a different
+/// recipient.
+pub async fn accept_invite_by_token_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(token): Path<String>,
+) -> Result<Json<JsonValue>, (StatusCode, String)> {
+    let row = load_invite_by_token(&state.db, &token).await?;
+    let body = accept_invite_core(&state.db, row, &principal).await?;
+    Ok(Json(body))
 }

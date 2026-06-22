@@ -1330,6 +1330,14 @@ async fn main() {
             "/api/forecasts/public",
             get(handlers::forecasts::public_forecasts_handler),
         )
+        // Spec 24 §3.3 / Sprint 2.3b: invite preview by token. The
+        // landing page renders before the recipient signs in; the
+        // token is the credential. Auth-required accept variant is
+        // on the protected router as /api/invites/by-token/:token/accept.
+        .route(
+            "/api/invites/by-token/:token",
+            get(handlers::invites::get_invite_by_token_handler),
+        )
         // Per-agent MCP endpoints
         .route(
             "/mcp/agents/:agent_id",
@@ -1754,6 +1762,19 @@ async fn main() {
         .route(
             "/api/invites/:invite_id",
             delete(handlers::invites::revoke_invite_handler),
+        )
+        // Sprint 2.3b: accept + by-token. The by-token GET is on the
+        // public router (auth optional, since the link is the
+        // credential); the accept variants require auth so the caller's
+        // identity can be matched against the invite's intended
+        // recipient.
+        .route(
+            "/api/invites/:invite_id/accept",
+            post(handlers::invites::accept_invite_handler),
+        )
+        .route(
+            "/api/invites/by-token/:token/accept",
+            post(handlers::invites::accept_invite_by_token_handler),
         )
         // Agent creation wizard helpers
         .route(

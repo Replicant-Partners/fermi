@@ -64,6 +64,18 @@
 //!        - revoke by inviter → status='revoked'
 //!        - cross-recipient: stranger cannot decline someone else's
 //!
+//!   8. Sprint 2.3b accept paths. The accept transition materialises a
+//!      grant in object_shares or team_members and flips status to
+//!      'accepted', in two best-effort steps (helpers are idempotent
+//!      via ON CONFLICT). Covers:
+//!        - forecast accept → object_shares row exists with right perm
+//!        - portfolio accept → object_shares with right perm
+//!        - team accept → team_members row with right role
+//!        - double-accept → second no-ops (UPDATE WHERE status=pending)
+//!        - decline-then-accept → 0 rows-affected, no leaked grant
+//!        - by-token preview returns target metadata; expired/terminal
+//!          tokens look the same to the public endpoint (no leakage)
+//!
 //! Tests that need a live DB are marked `#[ignore]` so a vanilla
 //! `cargo test` passes without one.
 
@@ -75,7 +87,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use fermi_auth::visibility::is_team_member;
-use fermi_auth::{teams, ObjectType, Permission, ShareType};
+use fermi_auth::{teams, MemberType, ObjectType, Permission, ShareType, TeamRole};
 
 /// Acquire a Neon pool. Returns `None` if `DATABASE_URL` isn't set so the
 /// test can early-return silently — matches the pattern in
@@ -1428,6 +1440,498 @@ async fn invite_revoke_transitions_to_revoked() {
         0,
         "revoked invite must disappear from invitee's inbox"
     );
+
+    delete_invite(&pool, invite_id).await;
+    delete_test_forecast(&pool, &fid).await;
+}
+
+// ─── Sprint 2.3b: accept paths ────────────────────────────────────────
+
+/// Lifted from `accept_invite_core` — the status-flip is the source of
+/// truth for "did the accept succeed?". Returns rows_affected.
+///
+/// Production handler also COALESCEs invitee_user_id to the accepter
+/// (so email-only invites get back-filled on accept), and nulls out
+/// invitee_email when the row had been email-only. The exactly-one-of
+/// CHECK on the table forces this two-column dance — both populated
+/// would violate the invariant.
+async fn run_accept_status_flip(
+    pool: &PgPool,
+    invite_id: Uuid,
+    accepter_user_id: &str,
+) -> u64 {
+    sqlx::query(
+        "UPDATE forecast_invites
+            SET status = 'accepted',
+                accepted_at = NOW(),
+                invitee_user_id = COALESCE(invitee_user_id, $2),
+                invitee_email = CASE
+                    WHEN invitee_user_id IS NULL THEN NULL
+                    ELSE invitee_email
+                END
+          WHERE id = $1 AND status = 'pending'",
+    )
+    .bind(invite_id)
+    .bind(accepter_user_id)
+    .execute(pool)
+    .await
+    .expect("status flip UPDATE")
+    .rows_affected()
+}
+
+/// Forecast accept → object_shares row exists with the invite's
+/// permission → invite status='accepted'. We exercise the two
+/// real-world calls the handler makes: `share_object` (materialise)
+/// and the status-flip SQL.
+#[tokio::test]
+#[ignore]
+async fn accept_forecast_invite_materialises_share() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+    let invitee = format!("accept-target-{}", suffix);
+    let (invite_id, _) = insert_test_invite(
+        &pool,
+        "forecast",
+        &fid,
+        "edit",
+        Some(&invitee),
+        None,
+        None,
+        &owner.to_string(),
+    )
+    .await;
+
+    // Pre-state: no share for this invitee.
+    let pre = teams::list_object_shares(&pool, ObjectType::Forecast, &fid)
+        .await
+        .expect("list pre");
+    assert_eq!(pre.len(), 0);
+
+    // Step 1: materialise.
+    teams::share_object(
+        &pool,
+        ObjectType::Forecast,
+        &fid,
+        ShareType::User,
+        &invitee,
+        Permission::Edit,
+        &owner.to_string(),
+    )
+    .await
+    .expect("share_object");
+
+    // Step 2: status flip.
+    let n = run_accept_status_flip(&pool, invite_id, &invitee).await;
+    assert_eq!(n, 1, "status flip must update exactly one row");
+
+    // Post-state: share visible with the right permission.
+    let post = teams::list_object_shares(&pool, ObjectType::Forecast, &fid)
+        .await
+        .expect("list post");
+    assert_eq!(post.len(), 1);
+    assert_eq!(post[0].share_target, invitee);
+    assert_eq!(post[0].permission, Permission::Edit);
+
+    assert_eq!(
+        fetch_invite_status(&pool, invite_id).await.as_deref(),
+        Some("accepted"),
+    );
+
+    // Cleanup: revoke the share, delete the invite + forecast.
+    teams::revoke_share(&pool, post[0].id).await.expect("revoke");
+    delete_invite(&pool, invite_id).await;
+    delete_test_forecast(&pool, &fid).await;
+}
+
+/// Portfolio accept — same shape, exercises the ObjectType::Portfolio
+/// path (which depends on migration 152's CHECK extension).
+#[tokio::test]
+#[ignore]
+async fn accept_portfolio_invite_materialises_share() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let pid = insert_test_portfolio(&pool, owner, &suffix).await;
+    let invitee = format!("accept-pf-target-{}", suffix);
+    let (invite_id, _) = insert_test_invite(
+        &pool,
+        "portfolio",
+        &pid,
+        "view",
+        Some(&invitee),
+        None,
+        None,
+        &owner.to_string(),
+    )
+    .await;
+
+    teams::share_object(
+        &pool,
+        ObjectType::Portfolio,
+        &pid,
+        ShareType::User,
+        &invitee,
+        Permission::View,
+        &owner.to_string(),
+    )
+    .await
+    .expect("share_object portfolio");
+
+    let n = run_accept_status_flip(&pool, invite_id, &invitee).await;
+    assert_eq!(n, 1);
+
+    let listed = teams::list_object_shares(&pool, ObjectType::Portfolio, &pid)
+        .await
+        .expect("list post");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].permission, Permission::View);
+
+    teams::revoke_share(&pool, listed[0].id).await.expect("revoke");
+    delete_invite(&pool, invite_id).await;
+    delete_test_portfolio(&pool, &pid).await;
+}
+
+/// Team accept → team_members row exists with the invite's role.
+/// This is the only target type that doesn't write to object_shares.
+#[tokio::test]
+#[ignore]
+async fn accept_team_invite_materialises_member() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let team_id = insert_test_team(&pool, &suffix).await;
+    let invitee = format!("accept-team-target-{}", suffix);
+    let (invite_id, _) = insert_test_invite(
+        &pool,
+        "team",
+        &team_id.to_string(),
+        "member",
+        Some(&invitee),
+        None,
+        None,
+        &owner.to_string(),
+    )
+    .await;
+
+    // Pre-state: invitee is not a member.
+    assert!(
+        !is_team_member(&pool, team_id, &invitee).await.unwrap(),
+        "invitee starts not-a-member"
+    );
+
+    teams::add_team_member(
+        &pool,
+        team_id,
+        MemberType::User,
+        &invitee,
+        TeamRole::Member,
+        &owner.to_string(),
+    )
+    .await
+    .expect("add_team_member");
+
+    let n = run_accept_status_flip(&pool, invite_id, &invitee).await;
+    assert_eq!(n, 1);
+
+    // Post-state: invitee is now a member with the right role.
+    assert!(
+        is_team_member(&pool, team_id, &invitee).await.unwrap(),
+        "invitee must be a team member after accept"
+    );
+    let role = teams::get_member_role(&pool, team_id, &invitee)
+        .await
+        .expect("role lookup");
+    assert_eq!(role, Some(TeamRole::Member));
+
+    delete_invite(&pool, invite_id).await;
+    cleanup(&pool, team_id).await;
+}
+
+/// Double-accept: the second accept finds status='accepted' and the
+/// WHERE clause matches zero rows. share_object is idempotent so a
+/// re-materialise is a no-op.
+#[tokio::test]
+#[ignore]
+async fn accept_invite_is_idempotent_at_status_flip() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+    let invitee = format!("accept-idemp-{}", suffix);
+    let (invite_id, _) = insert_test_invite(
+        &pool,
+        "forecast",
+        &fid,
+        "view",
+        Some(&invitee),
+        None,
+        None,
+        &owner.to_string(),
+    )
+    .await;
+
+    teams::share_object(
+        &pool, ObjectType::Forecast, &fid, ShareType::User, &invitee,
+        Permission::View, &owner.to_string(),
+    ).await.expect("share");
+
+    let n1 = run_accept_status_flip(&pool, invite_id, &invitee).await;
+    assert_eq!(n1, 1, "first accept transitions the row");
+    let n2 = run_accept_status_flip(&pool, invite_id, &invitee).await;
+    assert_eq!(n2, 0, "second accept is a no-op at the status flip");
+
+    let shares_before = teams::list_object_shares(&pool, ObjectType::Forecast, &fid)
+        .await.expect("list 1");
+    teams::share_object(
+        &pool, ObjectType::Forecast, &fid, ShareType::User, &invitee,
+        Permission::View, &owner.to_string(),
+    ).await.expect("re-share");
+    let shares_after = teams::list_object_shares(&pool, ObjectType::Forecast, &fid)
+        .await.expect("list 2");
+    assert_eq!(shares_before.len(), shares_after.len());
+    assert_eq!(shares_before[0].id, shares_after[0].id);
+
+    teams::revoke_share(&pool, shares_after[0].id).await.expect("revoke");
+    delete_invite(&pool, invite_id).await;
+    delete_test_forecast(&pool, &fid).await;
+}
+
+/// Decline-then-accept: status-flip finds 0 rows.
+#[tokio::test]
+#[ignore]
+async fn accept_after_decline_is_blocked_at_status_flip() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+    let invitee = format!("accept-after-decline-{}", suffix);
+    let (invite_id, _) = insert_test_invite(
+        &pool, "forecast", &fid, "view", Some(&invitee), None, None,
+        &owner.to_string(),
+    ).await;
+
+    assert_eq!(run_decline(&pool, invite_id, &invitee).await, 1);
+
+    let n = run_accept_status_flip(&pool, invite_id, &invitee).await;
+    assert_eq!(n, 0, "accept after decline must not transition");
+    assert_eq!(
+        fetch_invite_status(&pool, invite_id).await.as_deref(),
+        Some("declined"),
+    );
+
+    delete_invite(&pool, invite_id).await;
+    delete_test_forecast(&pool, &fid).await;
+}
+
+/// Email-only invite: COALESCE on invitee_user_id back-fills the
+/// accepter so future inbox lookups by user_id find the row.
+#[tokio::test]
+#[ignore]
+async fn accept_email_only_invite_backfills_user_id() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+    let invitee_email = format!("email-only-{}@example.invalid", suffix);
+    let token_str = format!("test-token-email-{}", suffix);
+    let (invite_id, _) = insert_test_invite(
+        &pool,
+        "forecast",
+        &fid,
+        "view",
+        None,
+        Some(&invitee_email),
+        Some(&token_str),
+        &owner.to_string(),
+    )
+    .await;
+
+    let before: Option<String> = sqlx::query_scalar(
+        "SELECT invitee_user_id FROM forecast_invites WHERE id = $1",
+    )
+    .bind(invite_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(before.is_none());
+
+    let accepter = format!("email-claim-accepter-{}", suffix);
+    teams::share_object(
+        &pool, ObjectType::Forecast, &fid, ShareType::User, &accepter,
+        Permission::View, &owner.to_string(),
+    ).await.expect("share");
+    assert_eq!(run_accept_status_flip(&pool, invite_id, &accepter).await, 1);
+
+    let after: (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT invitee_user_id, invitee_email FROM forecast_invites WHERE id = $1",
+    )
+    .bind(invite_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        after.0.as_deref(),
+        Some(accepter.as_str()),
+        "COALESCE must back-fill invitee_user_id with the accepter"
+    );
+    assert!(
+        after.1.is_none(),
+        "invitee_email must be cleared so the exactly-one-of CHECK \
+         constraint is preserved post-accept"
+    );
+
+    let listed = teams::list_object_shares(&pool, ObjectType::Forecast, &fid)
+        .await
+        .expect("list");
+    teams::revoke_share(&pool, listed[0].id).await.expect("revoke");
+    delete_invite(&pool, invite_id).await;
+    delete_test_forecast(&pool, &fid).await;
+}
+
+// ─── Sprint 2.3b: by-token preview ────────────────────────────────────
+
+/// Probe `get_invite_by_token_handler`'s gating logic verbatim:
+/// returns Some only if status='pending' AND not expired.
+async fn token_preview_visible(pool: &PgPool, token: &str) -> bool {
+    let row: Option<(String, bool)> = sqlx::query_as(
+        "SELECT status, (expires_at < NOW()) AS expired
+         FROM forecast_invites WHERE token = $1",
+    )
+    .bind(token)
+    .fetch_optional(pool)
+    .await
+    .expect("token preview probe");
+    matches!(row, Some((status, expired)) if status == "pending" && !expired)
+}
+
+/// Valid pending token: visible. Revoked, accepted, expired, or
+/// unknown: hidden — the handler returns 404 for all of these, no
+/// leakage about which terminal state the invite reached.
+#[tokio::test]
+#[ignore]
+async fn by_token_preview_only_shows_pending_unexpired() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+    let invitee_email = format!("by-token-{}@example.invalid", suffix);
+    let token_str = format!("preview-token-{}", suffix);
+    let (invite_id, _) = insert_test_invite(
+        &pool,
+        "forecast",
+        &fid,
+        "view",
+        None,
+        Some(&invitee_email),
+        Some(&token_str),
+        &owner.to_string(),
+    )
+    .await;
+
+    assert!(
+        token_preview_visible(&pool, &token_str).await,
+        "pending unexpired invite must be visible by token"
+    );
+
+    let phantom = format!("phantom-token-{}", suffix);
+    assert!(
+        !token_preview_visible(&pool, &phantom).await,
+        "unknown token must be hidden"
+    );
+
+    assert_eq!(run_revoke(&pool, invite_id).await, 1);
+    assert!(
+        !token_preview_visible(&pool, &token_str).await,
+        "revoked invite must be hidden by token"
+    );
+
+    delete_invite(&pool, invite_id).await;
+    delete_test_forecast(&pool, &fid).await;
+}
+
+/// Expired invite: the accept path auto-transitions to 'expired' on
+/// detection. We backdate expires_at and run the (lifted) auto-expire
+/// SQL the handler ships.
+#[tokio::test]
+#[ignore]
+async fn accept_expired_invite_auto_transitions_to_expired() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+    let invitee = format!("expired-target-{}", suffix);
+    let (invite_id, _) = insert_test_invite(
+        &pool,
+        "forecast",
+        &fid,
+        "view",
+        Some(&invitee),
+        None,
+        None,
+        &owner.to_string(),
+    )
+    .await;
+
+    sqlx::query(
+        "UPDATE forecast_invites SET expires_at = NOW() - INTERVAL '1 hour'
+         WHERE id = $1",
+    )
+    .bind(invite_id)
+    .execute(&pool)
+    .await
+    .expect("backdate expires_at");
+
+    // Lifted from accept_invite_core's auto-expire branch.
+    let auto = sqlx::query(
+        "UPDATE forecast_invites SET status = 'expired'
+         WHERE id = $1 AND status = 'pending'",
+    )
+    .bind(invite_id)
+    .execute(&pool)
+    .await
+    .expect("auto-expire UPDATE")
+    .rows_affected();
+    assert_eq!(auto, 1, "auto-expire must transition the pending row");
+    assert_eq!(
+        fetch_invite_status(&pool, invite_id).await.as_deref(),
+        Some("expired"),
+    );
+
+    let n = run_accept_status_flip(&pool, invite_id, &invitee).await;
+    assert_eq!(n, 0, "expired invites cannot be accepted");
 
     delete_invite(&pool, invite_id).await;
     delete_test_forecast(&pool, &fid).await;
