@@ -676,9 +676,12 @@ async fn run_migrations(db: &PgPool) {
         "migrations/149_forecast_updates_trigger_kind.sql",
         // ── Spec 24: forecast collaboration & sharing ─────────────────
         //
-        // 150 (forecast_relationships) lands via ensure_critical_schema
-        // (the defensive boot-time block above) rather than this migration
-        // list — its author's choice. We don't duplicate the registration.
+        // 150: forecast_relationships — generalized inter-forecast
+        // cascade primitive. Spec 23 cascade-resolution extension. Also
+        // landed via ensure_critical_schema for defensive deploys;
+        // double-execution is safe (all statements are IF NOT EXISTS /
+        // ALTER ... DROP CONSTRAINT IF EXISTS).
+        "migrations/150_forecast_relationships.sql",
         //
         // 151: forecast_invites — unified pending-invite primitive for
         // forecasts, portfolios, and teams. Spec 24 §3.1.1.
@@ -687,6 +690,12 @@ async fn run_migrations(db: &PgPool) {
         // 'portfolio' so portfolios can be shared through the same
         // mechanism as forecasts. Spec 24 §3.1.2.
         "migrations/152_object_shares_portfolio.sql",
+        // 153: pending_cascades — operator-gated review queue for
+        // cascade propagation. Spec 23-extension. Previously numbered
+        // 151 (collided with forecast_invites); renamed to 153 on
+        // 2026-06-23 to give a clean monotonic ordering. Also landed
+        // via ensure_critical_schema; double-execution is safe.
+        "migrations/153_pending_cascades.sql",
     ];
 
     for file in &migration_files {

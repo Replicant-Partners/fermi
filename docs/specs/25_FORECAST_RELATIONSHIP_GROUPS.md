@@ -379,14 +379,19 @@ Across all paths, these invariants hold:
 
 ## 10. Migration path
 
+> **Note 2026-06-23**: the migration-number collision (two `151_*.sql`
+> files) has been resolved — `pending_cascades` is now mig 153,
+> `forecast_invites` stays at 151. Spec 25 migrations therefore start
+> at 154/155.
+
 The existing mig 150 (`forecast_relationships` with `forecast_ids TEXT[]`) is replaced by:
 
-- mig 152 — `relationship_groups` column on `fermi_forecasts` + `forecast_relationship_groups` table.
-- mig 153 — `pending_cascades` schema extensions: `applied_deltas`, `superseded_by`, ensure all 5 statuses are CHECK-valid.
+- **mig 154** — `relationship_groups` column on `fermi_forecasts` + `forecast_relationship_groups` table.
+- **mig 155** — `pending_cascades` schema extensions: `applied_deltas`, `superseded_by`, ensure all 5 statuses are CHECK-valid.
 
 The existing `forecast_relationships` table can be archived (rename + drop later) once the new groups table is populated. The existing WC mutex relationship (`90e1eea8-fdcb-...`) becomes a single `forecast_relationship_groups` row with `group_id='wc_2026_winner'`, and each of the 48 forecasts gets `'wc_2026_winner'` added to its `relationship_groups` array. Migration script in `scripts/world_cup/migrate_mutex_to_group.py`.
 
-`pending_cascades.relationship_id` semantically becomes the group_id at the application layer; the column type (UUID) is wrong for that and needs to migrate to TEXT. Mig 153 adds a new `group_id TEXT` column, backfills from the relationship_id → forecast_relationships.id → forecast_ids lookup (or just nulls for legacy rows since we don't have any with pre-existing data anyway), drops `relationship_id`.
+`pending_cascades.relationship_id` semantically becomes the group_id at the application layer; the column type (UUID) is wrong for that and needs to migrate to TEXT. Mig 155 adds a new `group_id TEXT` column, backfills from the relationship_id → forecast_relationships.id → forecast_ids lookup (or just nulls for legacy rows since we don't have any with pre-existing data anyway), drops `relationship_id`.
 
 ---
 
@@ -407,11 +412,11 @@ This spec is too big for one commit. Order:
 
 | Pass | What | Effort |
 |---|---|---|
-| 1 | Migration 152 — relationship_groups column + groups table | 30 min |
+| 1 | Migration 154 — relationship_groups column + groups table | 30 min |
 | 2 | Server: group CRUD + membership endpoints | 1 hour |
 | 3 | Server: refactor existing `propagate_mutex` into the new dispatch | 1 hour |
 | 4 | Implement `propagate_at_most_n` + `propagate_implies` | 2 hours |
-| 5 | Migration 153 — pending_cascades extensions for undo/supersede | 30 min |
+| 5 | Migration 155 — pending_cascades extensions for undo/supersede | 30 min |
 | 6 | Server: undo + requeue endpoints | 1 hour |
 | 7 | WC migration script: register existing mutex as group, tag the 48 forecasts | 30 min |
 | 8 | Console: pending-cascades sheet with Pending/Applied/All tabs + Undo + Re-queue | 2 hours |
