@@ -2893,6 +2893,14 @@ impl FermiConsole {
             // binds elo_current / gdp_per_capita_log / etc. into the
             // Executor's evaluation context.
             cockpit.load_workspace_params(cx);
+            // Load persisted schedules so the Schedules tab shows the
+            // 6 already-saved rows (gold On-demand active) instead of
+            // re-presenting them as drafts. Without this call,
+            // self.schedules is empty, fpl_declared_schedule_drafts
+            // dedup check returns nothing-already-persisted, and the
+            // tab shows '6 schedule drafts declared by FPL' + Save
+            // buttons even though the server has them.
+            cockpit.load_schedules(cx);
 
             // Set question and data from workspace params
             if let Some(ref wf) = wf {
@@ -3072,6 +3080,13 @@ impl FermiConsole {
                         // into the Executor.
                         if cockpit.workspace_id.is_some() {
                             cockpit.load_workspace_params(cx);
+                        }
+                        // Load persisted schedules so the Schedules tab
+                        // shows already-saved rows (gold active) rather
+                        // than re-presenting them as FPL drafts. Mirror
+                        // of the open_workspace_forecast path.
+                        if cockpit.forecast_id.is_some() {
+                            cockpit.load_schedules(cx);
                         }
 
                         // ── Polymarket hydration ────────────────────────
