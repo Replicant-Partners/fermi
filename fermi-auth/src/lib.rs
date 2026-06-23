@@ -1,6 +1,7 @@
 pub mod api_keys;
 pub mod credits;
 pub mod error;
+pub mod invites;
 pub mod jwt;
 pub mod middleware;
 pub mod oidc;

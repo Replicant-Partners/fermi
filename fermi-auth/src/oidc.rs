@@ -477,8 +477,35 @@ pub async fn sync_user(pool: &PgPool, user_info: &UserInfoResponse) -> Result<Us
         _ => AuthProvider::Email,
     };
 
+    // Spec 24 §3.8.1: claim any pending email-only invites addressed
+    // to this email by binding them to the now-known user_id. Runs
+    // for every OIDC sign-in (existing user OR new), since invites
+    // can have been created at any time. Idempotent: subsequent
+    // sign-ins back-fill zero rows because the WHERE clause requires
+    // invitee_user_id IS NULL.
+    //
+    // Best-effort: a failure here must not break sign-in. The user
+    // simply won't see their pending invites until they sign in
+    // again. We log via eprintln so the failure is visible in
+    // Railway logs but doesn't propagate.
+    let resolved_user_id = record
+        .user_id
+        .clone()
+        .unwrap_or_else(|| record.id.to_string());
+    match crate::invites::claim_pending_for_email(pool, &resolved_user_id, &record.email).await {
+        Ok(0) => {}
+        Ok(n) => eprintln!(
+            "[invites] sync_user: back-filled {} pending invite(s) for user_id={}",
+            n, resolved_user_id
+        ),
+        Err(e) => eprintln!(
+            "[invites] sync_user: claim_pending_for_email failed for user_id={}: {}",
+            resolved_user_id, e
+        ),
+    }
+
     Ok(User {
-        user_id: record.user_id.unwrap_or_else(|| record.id.to_string()),
+        user_id: resolved_user_id,
         email: record.email,
         display_name: record.display_name,
         role,

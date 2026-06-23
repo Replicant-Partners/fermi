@@ -76,6 +76,19 @@
 //!        - by-token preview returns target metadata; expired/terminal
 //!          tokens look the same to the public endpoint (no leakage)
 //!
+//!   9. Sprint 2.3c email-claim resolver. The OIDC and SIWE sign-in
+//!      flows call fermi_auth::invites::claim_pending_for_email so a
+//!      user who is invited by email *before* they have an account
+//!      finds the invite in their inbox on first sign-in. Covers:
+//!        - happy path: pending email invite → claim → user_id back-
+//!          filled, email nulled, status still 'pending', inbox shows it
+//!        - idempotency: second claim returns 0
+//!        - case-insensitivity: mixed-case email matches lowercase stored
+//!        - terminal invites are immutable history (declined, revoked,
+//!          accepted, expired untouched)
+//!        - empty user_id or email → defensive 0 (never UPDATE on a
+//!          wildcard match)
+//!
 //! Tests that need a live DB are marked `#[ignore]` so a vanilla
 //! `cargo test` passes without one.
 
@@ -1932,6 +1945,284 @@ async fn accept_expired_invite_auto_transitions_to_expired() {
 
     let n = run_accept_status_flip(&pool, invite_id, &invitee).await;
     assert_eq!(n, 0, "expired invites cannot be accepted");
+
+    delete_invite(&pool, invite_id).await;
+    delete_test_forecast(&pool, &fid).await;
+}
+
+// ─── Sprint 2.3c: email-claim resolver ────────────────────────────────
+
+/// Helper that calls the real production helper. The hook point in
+/// OIDC/SIWE is `fermi_auth::invites::claim_pending_for_email` — we
+/// call it directly here rather than mocking sign-in.
+async fn claim_for(pool: &PgPool, user_id: &str, email: &str) -> u64 {
+    fermi_auth::invites::claim_pending_for_email(pool, user_id, email)
+        .await
+        .expect("claim_pending_for_email")
+}
+
+/// Happy path: email-only invite created before the user exists.
+/// claim runs → invitee_user_id populated, invitee_email nulled,
+/// status still 'pending', invite now discoverable by inbox query.
+#[tokio::test]
+#[ignore]
+async fn email_claim_backfills_pending_invite() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+
+    let email = format!("claim-target-{}@example.invalid", suffix);
+    let token_str = format!("claim-token-{}", suffix);
+    let (invite_id, _) = insert_test_invite(
+        &pool,
+        "forecast",
+        &fid,
+        "view",
+        None,
+        Some(&email),
+        Some(&token_str),
+        &owner.to_string(),
+    )
+    .await;
+
+    let new_user = format!("claim-new-user-{}", suffix);
+
+    // Pre-state: not discoverable by user_id, IS discoverable by email.
+    assert_eq!(count_pending_invites_for(&pool, &new_user).await, 0);
+
+    // Run the resolver.
+    let n = claim_for(&pool, &new_user, &email).await;
+    assert_eq!(n, 1, "exactly one pending invite must be back-filled");
+
+    // Post-state: invitee_user_id populated, invitee_email nulled,
+    // status still pending, inbox query finds it.
+    let row: (Option<String>, Option<String>, String) = sqlx::query_as(
+        "SELECT invitee_user_id, invitee_email, status
+         FROM forecast_invites WHERE id = $1",
+    )
+    .bind(invite_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        row.0.as_deref(),
+        Some(new_user.as_str()),
+        "invitee_user_id must be back-filled"
+    );
+    assert!(
+        row.1.is_none(),
+        "invitee_email must be cleared (CHECK invariant)"
+    );
+    assert_eq!(row.2, "pending", "status must still be pending");
+
+    assert_eq!(
+        count_pending_invites_for(&pool, &new_user).await,
+        1,
+        "back-filled invite must now appear in the user's inbox"
+    );
+
+    delete_invite(&pool, invite_id).await;
+    delete_test_forecast(&pool, &fid).await;
+}
+
+/// Second claim for the same (user_id, email) pair → no-op (the
+/// WHERE clause requires invitee_user_id IS NULL).
+#[tokio::test]
+#[ignore]
+async fn email_claim_is_idempotent() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+    let email = format!("idemp-{}@example.invalid", suffix);
+    let (invite_id, _) = insert_test_invite(
+        &pool,
+        "forecast",
+        &fid,
+        "view",
+        None,
+        Some(&email),
+        Some(&format!("idemp-token-{}", suffix)),
+        &owner.to_string(),
+    )
+    .await;
+    let new_user = format!("idemp-user-{}", suffix);
+
+    assert_eq!(claim_for(&pool, &new_user, &email).await, 1);
+    assert_eq!(
+        claim_for(&pool, &new_user, &email).await,
+        0,
+        "second claim must be a no-op"
+    );
+
+    delete_invite(&pool, invite_id).await;
+    delete_test_forecast(&pool, &fid).await;
+}
+
+/// Case-insensitive match: invite stored lowercased, signed-in
+/// email arrives mixed-case → still matches. This guards against the
+/// failure mode "OAuth provider returned email with different casing
+/// than what the inviter typed."
+#[tokio::test]
+#[ignore]
+async fn email_claim_is_case_insensitive() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+
+    // Stored lowercased, the way create_invite_row does it.
+    let stored = format!("case-{}@example.invalid", suffix);
+    let (invite_id, _) = insert_test_invite(
+        &pool,
+        "forecast",
+        &fid,
+        "view",
+        None,
+        Some(&stored),
+        Some(&format!("case-token-{}", suffix)),
+        &owner.to_string(),
+    )
+    .await;
+
+    // Caller arrives with a wildly mixed-case version.
+    let arriving = mixed_case(&stored);
+    assert_ne!(stored, arriving, "test guard: mixed_case must differ");
+
+    let new_user = format!("case-user-{}", suffix);
+    assert_eq!(
+        claim_for(&pool, &new_user, &arriving).await,
+        1,
+        "case-insensitive comparison must match"
+    );
+
+    delete_invite(&pool, invite_id).await;
+    delete_test_forecast(&pool, &fid).await;
+}
+
+/// Terminal invites (declined/revoked/accepted/expired) are
+/// immutable history. The claim's `WHERE status='pending'` keeps
+/// them untouched even if a stale email match would otherwise hit.
+#[tokio::test]
+#[ignore]
+async fn email_claim_skips_terminal_invites() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+    let email = format!("terminal-{}@example.invalid", suffix);
+
+    // Insert a terminal invite (revoked) with the matching email.
+    // To do it cleanly given the recipient-exactly-one CHECK: insert
+    // as email-only pending, then revoke. The pre-revoke row has
+    // invitee_user_id=NULL, so the claim's "IS NULL" clause matches
+    // — except status='pending' is required, and we will UPDATE it
+    // to 'revoked' first.
+    let (invite_id, _) = insert_test_invite(
+        &pool,
+        "forecast",
+        &fid,
+        "view",
+        None,
+        Some(&email),
+        Some(&format!("terminal-token-{}", suffix)),
+        &owner.to_string(),
+    )
+    .await;
+    assert_eq!(run_revoke(&pool, invite_id).await, 1, "pre-flight revoke");
+
+    // Snapshot the row pre-claim.
+    let before: (Option<String>, Option<String>, String) = sqlx::query_as(
+        "SELECT invitee_user_id, invitee_email, status
+         FROM forecast_invites WHERE id = $1",
+    )
+    .bind(invite_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(before.2, "revoked");
+
+    // Run the claim — must do nothing.
+    let new_user = format!("terminal-user-{}", suffix);
+    let n = claim_for(&pool, &new_user, &email).await;
+    assert_eq!(n, 0, "terminal invites must not be back-filled");
+
+    // The row is byte-for-byte the same: still revoked, email intact.
+    let after: (Option<String>, Option<String>, String) = sqlx::query_as(
+        "SELECT invitee_user_id, invitee_email, status
+         FROM forecast_invites WHERE id = $1",
+    )
+    .bind(invite_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(after, before, "terminal row must be untouched");
+
+    delete_invite(&pool, invite_id).await;
+    delete_test_forecast(&pool, &fid).await;
+}
+
+/// Defensive guard: empty user_id or email returns 0 without
+/// running any UPDATE. The OIDC/SIWE callers always pass non-empty
+/// values, but a bug upstream must never become a mass UPDATE.
+#[tokio::test]
+#[ignore]
+async fn email_claim_refuses_empty_inputs() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+    let email = format!("guard-{}@example.invalid", suffix);
+    let (invite_id, _) = insert_test_invite(
+        &pool,
+        "forecast",
+        &fid,
+        "view",
+        None,
+        Some(&email),
+        Some(&format!("guard-token-{}", suffix)),
+        &owner.to_string(),
+    )
+    .await;
+
+    // Both empties: zero rows touched.
+    assert_eq!(claim_for(&pool, "", "").await, 0);
+    assert_eq!(claim_for(&pool, "some-user", "").await, 0);
+    assert_eq!(claim_for(&pool, "", &email).await, 0);
+
+    // The invite is still pending and email-only.
+    let row: (Option<String>, Option<String>, String) = sqlx::query_as(
+        "SELECT invitee_user_id, invitee_email, status
+         FROM forecast_invites WHERE id = $1",
+    )
+    .bind(invite_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(row.0.is_none(), "invitee_user_id must still be NULL");
+    assert!(row.1.is_some(), "invitee_email must still be set");
+    assert_eq!(row.2, "pending");
 
     delete_invite(&pool, invite_id).await;
     delete_test_forecast(&pool, &fid).await;

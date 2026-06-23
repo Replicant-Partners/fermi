@@ -602,6 +602,33 @@ pub async fn siwe_verify_handler(
     // Ensure wallet exists (onboarding grant is auto-applied inside get_or_create_wallet)
     let _ = get_or_create_wallet(&state.db, "user", &user.user_id).await;
 
+    // Spec 24 §3.8.1: SIWE callers usually have no email at sign-in
+    // (the row is created without one), so this branch is a no-op for
+    // pure-Ethereum accounts. It only fires for users who previously
+    // linked an email (via OIDC) and now happen to be signing in via
+    // SIWE — in that case the existing users row carries their email
+    // and we honour any pending invites addressed to it. Best-effort:
+    // failure does not block sign-in.
+    if !user.email.is_empty() {
+        match fermi_auth::invites::claim_pending_for_email(
+            &state.db,
+            &user.user_id,
+            &user.email,
+        )
+        .await
+        {
+            Ok(0) => {}
+            Ok(n) => eprintln!(
+                "[invites] siwe_verify: back-filled {} pending invite(s) for user_id={}",
+                n, user.user_id
+            ),
+            Err(e) => eprintln!(
+                "[invites] siwe_verify: claim_pending_for_email failed for user_id={}: {}",
+                user.user_id, e
+            ),
+        }
+    }
+
     // Issue JWT and set cookie
     let token = create_session_token(&user, &state.jwt_secret)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
