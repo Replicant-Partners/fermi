@@ -1,8 +1,8 @@
 {
   "forecast_id": "9f1adf4c-ad59-4c6a-bb80-06d78c430eae",
-  "current_version": 6,
-  "predicted_probability": 0.08456353843212128,
-  "inside_view_explanation": "",
+  "current_version": 7,
+  "predicted_probability": 0.08443106034235845,
+  "inside_view_explanation": "Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.2%). Outside view (base rate): 13.6%. Key drivers: is_more_appropriate_for_initial_anchoring_because, argentina_is_consistently_among_top_conmebol_teams, conmebol_structural_advantages.",
   "forecast_confidence": 0.5,
   "versions": [
     {
@@ -40,15 +40,28 @@
       "timestamp": "2026-06-25 02:45",
       "probability": 0.08456353843212128,
       "change_summary": "8.5% (→), 6 drivers, 4 evidence"
+    },
+    {
+      "version": 7,
+      "timestamp": "2026-06-25 02:46",
+      "probability": 0.08443106034235845,
+      "change_summary": "8.4% (→), 3 drivers, 5 evidence"
     }
   ],
-  "sim_results": null,
+  "sim_results": {
+    "mean": 0.08443106034235845,
+    "median": 0.08326782607516242,
+    "p5": 0.06080280637494282,
+    "p95": 0.1119784628563208,
+    "std_dev": 0.015447814479679616,
+    "iterations": 10000
+  },
   "base_rate": {
-    "reference_class": "FIFA World Cup winners 1930–2022",
-    "historical_frequency": 0.0208,
-    "sample_size": 22,
-    "source": "FIFA tournament archive — 22 prior World Cups",
-    "reasoning": "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via the six factor-derived drivers."
+    "reference_class": "22 tournaments = 13.6% base rate. however, using",
+    "historical_frequency": 0.136,
+    "sample_size": null,
+    "source": "macro_forecaster",
+    "reasoning": "```json\n{\n  \"reference_class\": \"Historical FIFA World Cup wins by CONMEBOL nations (1930-2022)\",\n  \"historical_frequency\": 0.45,\n  \"sample_size\": 22,\n  \"reasoning\": \"22 World Cups held 1930-2022. CONMEBOL nations (South American) won 10 times (Uruguay 2, Brazil 5, Argentina 3). Argentina specifically: 3 wins in 22 tournaments = 13.6% base rate. However, using the broader CONMEBOL reference class (45%) is more appropriate for initial anchoring because: (1) Argentina is consistently among top CONM"
   },
   "evidence": [
     {
@@ -139,6 +152,14 @@
         "Argentina plays all group-stage matches in the United States (no home crowd, no familiar infrastructure).",
         "However, Argentina has a massive diaspora fanbase in the U.S. — particularly in Miami, New York, and Texas. Dallas and Kansas City will likely feature significant pro-Argentina crowds, partially offsetting the lack of formal host status."
       ]
+    },
+    {
+      "id": "fermi_evidence_1782355547",
+      "source": "Agent: fermi (Claude API)",
+      "summary": "",
+      "relevance": 0.5,
+      "date": "2026-06-25",
+      "key_findings": []
     }
   ],
   "agents": [
