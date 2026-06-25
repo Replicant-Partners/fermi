@@ -1,53 +1,23 @@
 {
   "forecast_id": "9f1adf4c-ad59-4c6a-bb80-06d78c430eae",
-  "current_version": 6,
-  "predicted_probability": 0.08448922670458883,
-  "inside_view_explanation": "Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.1%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "current_version": 1,
+  "predicted_probability": 0.08442730833542314,
+  "inside_view_explanation": "Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.2%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-06-25 03:50",
-      "probability": 0.0921054258942604,
-      "change_summary": "Initial: 9.2% base=2%, 6 drivers, 6 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-06-25 03:50",
-      "probability": 0.08440845080639639,
-      "change_summary": "8.4% (-1pp), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-06-25 03:50",
-      "probability": 0.08440845080639639,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-06-25 03:50",
-      "probability": 0.08440845080639639,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 5,
-      "timestamp": "2026-06-25 03:50",
-      "probability": 0.08440845080639639,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 6,
-      "timestamp": "2026-06-25 03:50",
-      "probability": 0.08448922670458883,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
+      "timestamp": "2026-06-25 03:52",
+      "probability": 0.08442730833542314,
+      "change_summary": "Initial: 8.4% base=2%, 6 drivers, 6 evidence"
     }
   ],
   "sim_results": {
-    "mean": 0.08448922670458883,
-    "median": 0.08342552522785948,
-    "p5": 0.061283016193548014,
-    "p95": 0.11112691388901545,
-    "std_dev": 0.015315112211727856,
+    "mean": 0.08442730833542314,
+    "median": 0.0833104185799908,
+    "p5": 0.06108131388231825,
+    "p95": 0.11226065160282143,
+    "std_dev": 0.015544527793262632,
     "iterations": 10000
   },
   "base_rate": {
