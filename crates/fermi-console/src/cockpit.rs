@@ -5595,22 +5595,31 @@ impl CockpitState {
                             agent_id: None,
                             evidence_added: None,
                         };
-                        match api.update_probability(&fid, &req).await {
-                            Ok(resp) => {
-                                // The server recomposes mutex-group
-                                // eliminations into the displayed value.
-                                // Adopt it so re-running the sim keeps the
-                                // eliminations priced in instead of
-                                // visually dropping back to the standalone
-                                // Monte-Carlo mean.
+                        // Run the HTTP call on the tokio runtime. GPUI's
+                        // executor doesn't drive tokio's I/O reactor, so
+                        // awaiting reqwest directly inside cx.spawn fires the
+                        // request but never resumes after the response — which
+                        // left the displayed value stuck on the raw Monte-Carlo
+                        // mean after Ctrl+R (the recomposed value only appeared
+                        // after a manual save/refetch). Awaiting the tokio
+                        // JoinHandle is reactor-free, so GPUI can drive it.
+                        let outcome =
+                            tokio::spawn(async move { api.update_probability(&fid, &req).await })
+                                .await;
+                        match outcome {
+                            Ok(Ok(resp)) => {
+                                // Server recomposes mutex-group eliminations
+                                // into the displayed value; adopt it so a
+                                // re-sim keeps eliminations priced in instead
+                                // of dropping back to the standalone mean.
                                 let recomposed = resp
                                     .get("recomposed_probability")
                                     .and_then(|v| v.as_f64());
                                 match recomposed {
                                     Some(p) if (p - new_prob).abs() > 1e-6 => {
                                         log::info!(
-                                            "[sim-persist] {} standalone {:.4} → recomposed {:.4} (eliminations priced in)",
-                                            fid, new_prob, p
+                                            "[sim-persist] standalone {:.4} → recomposed {:.4} (eliminations priced in)",
+                                            new_prob, p
                                         );
                                         this.update(cx, |state, cx| {
                                             state.predicted_probability = p;
@@ -5619,16 +5628,17 @@ impl CockpitState {
                                         .ok();
                                     }
                                     _ => log::info!(
-                                        "[sim-persist] forecast {} probability persisted to {:.4}",
-                                        fid, new_prob
+                                        "[sim-persist] probability persisted to {:.4}",
+                                        new_prob
                                     ),
                                 }
                             }
-                            Err(e) => log::warn!(
-                                "[sim-persist] update_probability failed for {}: {} — \
-                                 dashboard + trajectory will show stale value until next sim",
-                                fid, e
+                            Ok(Err(e)) => log::warn!(
+                                "[sim-persist] update_probability failed: {} — \
+                                 display shows stale value until next sim",
+                                e
                             ),
+                            Err(e) => log::warn!("[sim-persist] tokio join error: {}", e),
                         }
                     })
                     .detach();
