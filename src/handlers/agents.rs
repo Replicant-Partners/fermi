@@ -2340,7 +2340,11 @@ pub async fn get_agent_dependencies_handler(
 /// Used by `moe_router_strategist` Stage 0 via the `get_agent_calibration` MCP tool.
 pub async fn get_agent_calibration_handler(
     State(state): State<AppState>,
-    _principal: AuthPrincipal,
+    // Optional: this route sits under optional_auth_middleware, and the
+    // handler doesn't use the principal anyway. Requiring AuthPrincipal here
+    // made the route 401 with "missing authentication context" — which broke
+    // the moe_router_strategist's get_agent_calibration read path.
+    _principal: Option<AuthPrincipal>,
     Path(agent_id): Path<String>,
     Query(q): Query<CalibrationQuery>,
 ) -> Result<Json<Value>, (StatusCode, String)> {

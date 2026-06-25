@@ -954,6 +954,111 @@ pub async fn resolve_forecast_handler(
     })))
 }
 
+/// Feed a resolved forecast's Brier score to the MoE strategist.
+///
+/// Writes one `forecast_calibration` eval_signal per agent that contributed
+/// to the forecast (score = 1 - brier, so 1.0 = perfect calibration). This
+/// is the "BrierEvaluator" output that `get_agent_calibration` reads and
+/// `moe_router_strategist` Stage 0 consumes.
+///
+/// Why this exists as a standalone fn: both resolution paths (the API
+/// /resolve handler AND the polymarket oracle, which is the path real WC
+/// results actually take) must feed the strategist. Previously only the
+/// API handler had any feedback — and even that read `agents_used` with the
+/// wrong key (`agent_id` vs the stored `name`), so nothing ever landed.
+/// Here we resolve agent NAMES → agent_ids and write signals keyed by id.
+///
+/// Idempotent per (agent, forecast): re-resolving won't duplicate signals.
+/// Best-effort — callers spawn it; failures are logged, never fatal.
+pub async fn record_forecast_calibration_signals(
+    pool: &sqlx::PgPool,
+    forecast_id: &str,
+    brier_score: f64,
+) {
+    let calibration = (1.0 - brier_score.clamp(0.0, 1.0)).clamp(0.0, 1.0);
+
+    // agents_used entries look like {"name": "macro_data_agent", ...}.
+    let agents_used: Vec<JsonValue> = match sqlx::query(
+        "SELECT agents_used FROM fermi_forecasts WHERE id = $1",
+    )
+    .bind(forecast_id)
+    .fetch_optional(pool)
+    .await
+    {
+        Ok(Some(row)) => row
+            .try_get::<JsonValue, _>("agents_used")
+            .ok()
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default(),
+        _ => return,
+    };
+
+    if agents_used.is_empty() {
+        tracing::info!(
+            forecast = %forecast_id,
+            "[brier-moe] no agents_used recorded; no calibration signals emitted"
+        );
+        return;
+    }
+
+    let rationale = format!("forecast {} resolved (brier={:.4})", forecast_id, brier_score);
+
+    for entry in &agents_used {
+        // Accept either {"name": ...} (current schema) or {"agent_id": ...}.
+        let agent_id: Option<uuid::Uuid> = if let Some(name) =
+            entry.get("name").and_then(|v| v.as_str())
+        {
+            sqlx::query_scalar::<_, uuid::Uuid>(
+                "SELECT agent_id FROM agents WHERE agent_name = $1 LIMIT 1",
+            )
+            .bind(name)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+        } else {
+            entry
+                .get("agent_id")
+                .and_then(|v| v.as_str())
+                .and_then(|s| uuid::Uuid::parse_str(s).ok())
+        };
+
+        let Some(aid) = agent_id else { continue };
+
+        // INSERT ... WHERE NOT EXISTS → idempotent per (agent, forecast).
+        let res = sqlx::query(
+            "INSERT INTO eval_signals
+                  (agent_id, evaluator_name, evaluator_version, evaluator_tier,
+                   dimension, score, confidence, rationale, created_at)
+             SELECT $1, 'brier_forecast_resolver', 'v1', 'dimensional',
+                    'forecast_calibration', $2, 1.0, $3, NOW()
+              WHERE NOT EXISTS (
+                  SELECT 1 FROM eval_signals
+                   WHERE agent_id = $1
+                     AND dimension = 'forecast_calibration'
+                     AND rationale = $3
+              )",
+        )
+        .bind(aid)
+        .bind(calibration)
+        .bind(&rationale)
+        .execute(pool)
+        .await;
+
+        match res {
+            Ok(r) if r.rows_affected() > 0 => tracing::info!(
+                agent = %aid, forecast = %forecast_id, calibration = calibration,
+                "[brier-moe] forecast_calibration signal recorded"
+            ),
+            Ok(_) => {} // already existed — idempotent skip
+            Err(e) => tracing::warn!(
+                agent = %aid, error = %e,
+                "[brier-moe] failed to record calibration signal"
+            ),
+        }
+    }
+}
+
 /// POST /api/forecasts/:id/void
 ///
 /// Voids a forecast (cancels it without resolution). No Brier score computed.

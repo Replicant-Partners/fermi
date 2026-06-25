@@ -1149,6 +1149,18 @@ pub async fn check_resolutions_handler(
                         &user_id,
                     )
                     .await;
+
+                    // Feed the Brier outcome to the MoE strategist: one
+                    // forecast_calibration eval_signal per contributing agent
+                    // (score = 1 - brier). This is the path get_agent_calibration
+                    // reads. Without it, real (oracle) resolutions computed a
+                    // brier but never fed the strategist.
+                    crate::handlers::forecasts::record_forecast_calibration_signals(
+                        &state.db,
+                        &forecast_id,
+                        brier,
+                    )
+                    .await;
                 }
 
                 results.push(json!({

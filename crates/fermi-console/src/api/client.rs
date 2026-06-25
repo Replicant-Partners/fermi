@@ -539,6 +539,12 @@ pub struct Team {
     pub slug: String,
     pub description: Option<String>,
     pub owner_id: String,
+    /// Which vertical created this team (`fermi_forecast`, `rabble_swarm`,
+    /// `kask_simops`, …). ABW is shared substrate, so `/api/teams` returns
+    /// every vertical's teams; the console filters to `fermi_forecast`.
+    /// `default`s to None against API builds that don't yet return it.
+    #[serde(default)]
+    pub origin: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -572,6 +578,12 @@ pub struct CreateTeamRequest {
     pub slug: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Tag the team with the fermi vertical so it's distinguishable from
+    /// rabble/kask/etc workspaces in `/api/teams`. The server's
+    /// `create_team_handler` already reads this (defaults to
+    /// `bestiary_workspace` when omitted).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 /// Body for `POST /api/teams/:id/members` (direct add, back-compat path).

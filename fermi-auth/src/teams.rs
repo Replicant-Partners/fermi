@@ -16,11 +16,11 @@ pub async fn create_team(
     owner_id: &str,
     origin: &str,
 ) -> Result<Team, AuthError> {
-    let row = sqlx::query_as::<_, (Uuid, String, String, Option<String>, String)>(
+    let row = sqlx::query_as::<_, (Uuid, String, String, Option<String>, String, Option<String>)>(
         r#"
         INSERT INTO teams (name, slug, description, owner_id, origin)
         VALUES ($1, $2, $3, $4, $5)
-        RETURNING id, name, slug, description, owner_id
+        RETURNING id, name, slug, description, owner_id, origin
         "#,
     )
     .bind(name)
@@ -38,6 +38,7 @@ pub async fn create_team(
         slug: row.2,
         description: row.3,
         owner_id: row.4,
+        origin: row.5,
     };
 
     // Auto-add owner as team member with 'owner' role
@@ -55,9 +56,9 @@ pub async fn create_team(
 }
 
 pub async fn get_user_teams(pool: &PgPool, user_id: &str) -> Result<Vec<Team>, AuthError> {
-    let rows = sqlx::query_as::<_, (Uuid, String, String, Option<String>, String)>(
+    let rows = sqlx::query_as::<_, (Uuid, String, String, Option<String>, String, Option<String>)>(
         r#"
-        SELECT t.id, t.name, t.slug, t.description, t.owner_id
+        SELECT t.id, t.name, t.slug, t.description, t.owner_id, t.origin
         FROM teams t
         JOIN team_members tm ON t.id = tm.team_id
         WHERE tm.member_id = $1 AND tm.member_type = 'user'
@@ -77,14 +78,15 @@ pub async fn get_user_teams(pool: &PgPool, user_id: &str) -> Result<Vec<Team>, A
             slug: r.2,
             description: r.3,
             owner_id: r.4,
+            origin: r.5,
         })
         .collect())
 }
 
 pub async fn get_team(pool: &PgPool, team_id: Uuid) -> Result<Team, AuthError> {
-    let row = sqlx::query_as::<_, (Uuid, String, String, Option<String>, String)>(
+    let row = sqlx::query_as::<_, (Uuid, String, String, Option<String>, String, Option<String>)>(
         r#"
-        SELECT id, name, slug, description, owner_id
+        SELECT id, name, slug, description, owner_id, origin
         FROM teams WHERE id = $1
         "#,
     )
@@ -100,6 +102,7 @@ pub async fn get_team(pool: &PgPool, team_id: Uuid) -> Result<Team, AuthError> {
         slug: row.2,
         description: row.3,
         owner_id: row.4,
+        origin: row.5,
     })
 }
 

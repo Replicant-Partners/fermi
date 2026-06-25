@@ -303,6 +303,10 @@ pub struct Team {
     pub slug: String,
     pub description: Option<String>,
     pub owner_id: String,
+    /// Which vertical created the team (`fermi_forecast`, `rabble_swarm`,
+    /// `kask_simops`, …). ABW is shared substrate; consumers scope by this.
+    #[serde(default)]
+    pub origin: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
