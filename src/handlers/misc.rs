@@ -47,12 +47,25 @@ pub async fn waitlist_handler(
 }
 
 pub async fn health(State(state): State<AppState>) -> Json<Value> {
+    // Git commit of the running build, so a deploy can be verified from
+    // outside without auth. Railway injects RAILWAY_GIT_COMMIT_SHA at
+    // runtime; fall back to a couple of common CI names and to a
+    // build-time capture (GIT_SHA env at compile) otherwise.
+    let commit = std::env::var("RAILWAY_GIT_COMMIT_SHA")
+        .or_else(|_| std::env::var("GIT_SHA"))
+        .or_else(|_| std::env::var("SOURCE_VERSION"))
+        .ok()
+        .or_else(|| option_env!("GIT_SHA").map(|s| s.to_string()))
+        .unwrap_or_else(|| "unknown".to_string());
+    let commit_short: String = commit.chars().take(12).collect();
+
     Json(json!({
         "status": "ok",
         "service": "Agent Bestiary",
         "description": "A naturalist's catalogue of dreaming agents",
         "version": "1.0.0",
         "api_version": "v1",
+        "commit": commit_short,
         "embeddings": {
             "model_id": state.embedder.model_id(),
             "model_version": state.embedder.model_version(),
