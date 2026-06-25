@@ -1,24 +1,25 @@
 {
   "forecast_id": "863c1d58-c435-430c-b0fa-eb158adbafb7",
-  "current_version": 2,
-  "predicted_probability": 0.028684886172413823,
-  "inside_view_explanation": "",
+  "current_version": 1,
+  "predicted_probability": 0.028642512301769178,
+  "inside_view_explanation": "Inside view: model evaluates to 2.9% (p5=1.9%, p95=4.0%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-06-19 01:53",
-      "probability": 0.028684886172413823,
+      "timestamp": "2026-06-25 06:44",
+      "probability": 0.028642512301769178,
       "change_summary": "Initial: 2.9% base=2%, 6 drivers, 4 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-06-19 01:53",
-      "probability": 0.028684886172413823,
-      "change_summary": "2.9% (→), 6 drivers, 4 evidence"
     }
   ],
-  "sim_results": null,
+  "sim_results": {
+    "mean": 0.028642512301769178,
+    "median": 0.028039053354020856,
+    "p5": 0.019134485893954934,
+    "p95": 0.040221589916216494,
+    "std_dev": 0.006447279738216733,
+    "iterations": 10000
+  },
   "base_rate": {
     "reference_class": "FIFA World Cup winners 1930–2022",
     "historical_frequency": 0.0208,
