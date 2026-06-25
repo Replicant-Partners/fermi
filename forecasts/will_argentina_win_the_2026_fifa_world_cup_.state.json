@@ -1,85 +1,18 @@
 {
   "forecast_id": "9f1adf4c-ad59-4c6a-bb80-06d78c430eae",
-  "current_version": 11,
-  "predicted_probability": 0.08443450759697704,
-  "inside_view_explanation": "Inside view: model evaluates to 8.4% (p5=6.2%, p95=11.2%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "current_version": 1,
+  "predicted_probability": 0.09383352845907213,
+  "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-06-25 10:07",
-      "probability": 0.0939365840837066,
+      "timestamp": "2026-06-25 17:52",
+      "probability": 0.09383352845907213,
       "change_summary": "Initial: 9.4% base=2%, 6 drivers, 6 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-06-25 10:07",
-      "probability": 0.0939365840837066,
-      "change_summary": "9.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-06-25 10:07",
-      "probability": 0.0939365840837066,
-      "change_summary": "9.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-06-25 10:07",
-      "probability": 0.0939365840837066,
-      "change_summary": "9.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 5,
-      "timestamp": "2026-06-25 10:07",
-      "probability": 0.0939365840837066,
-      "change_summary": "9.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 6,
-      "timestamp": "2026-06-25 10:07",
-      "probability": 0.08406813753655613,
-      "change_summary": "8.4% (-1pp), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 7,
-      "timestamp": "2026-06-25 10:08",
-      "probability": 0.08461956312287175,
-      "change_summary": "8.5% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 8,
-      "timestamp": "2026-06-25 10:08",
-      "probability": 0.08461956312287175,
-      "change_summary": "8.5% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 9,
-      "timestamp": "2026-06-25 10:08",
-      "probability": 0.08461956312287175,
-      "change_summary": "8.5% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 10,
-      "timestamp": "2026-06-25 10:08",
-      "probability": 0.08461956312287175,
-      "change_summary": "8.5% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 11,
-      "timestamp": "2026-06-25 10:08",
-      "probability": 0.08443450759697704,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
     }
   ],
-  "sim_results": {
-    "mean": 0.08443450759697704,
-    "median": 0.08317319750772184,
-    "p5": 0.0617163965565698,
-    "p95": 0.1118302546922592,
-    "std_dev": 0.015218241948531799,
-    "iterations": 10000
-  },
+  "sim_results": null,
   "base_rate": {
     "reference_class": "FIFA World Cup winners 1930–2022",
     "historical_frequency": 0.0208,
