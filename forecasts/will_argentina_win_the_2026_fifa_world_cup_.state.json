@@ -1,67 +1,24 @@
 {
   "forecast_id": "9f1adf4c-ad59-4c6a-bb80-06d78c430eae",
-  "current_version": 7,
-  "predicted_probability": 0.08443106034235845,
-  "inside_view_explanation": "Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.2%). Outside view (base rate): 13.6%. Key drivers: is_more_appropriate_for_initial_anchoring_because, argentina_is_consistently_among_top_conmebol_teams, conmebol_structural_advantages.",
+  "current_version": 1,
+  "predicted_probability": 0.0921054258942604,
+  "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-06-25 02:45",
-      "probability": 0.08456353843212128,
-      "change_summary": "Initial: 8.5% base=2%, 6 drivers, 4 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-06-25 02:45",
-      "probability": 0.08456353843212128,
-      "change_summary": "8.5% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-06-25 02:45",
-      "probability": 0.08456353843212128,
-      "change_summary": "8.5% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-06-25 02:45",
-      "probability": 0.08456353843212128,
-      "change_summary": "8.5% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 5,
-      "timestamp": "2026-06-25 02:45",
-      "probability": 0.08456353843212128,
-      "change_summary": "8.5% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 6,
-      "timestamp": "2026-06-25 02:45",
-      "probability": 0.08456353843212128,
-      "change_summary": "8.5% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 7,
-      "timestamp": "2026-06-25 02:46",
-      "probability": 0.08443106034235845,
-      "change_summary": "8.4% (→), 3 drivers, 5 evidence"
+      "timestamp": "2026-06-25 03:50",
+      "probability": 0.0921054258942604,
+      "change_summary": "Initial: 9.2% base=2%, 6 drivers, 6 evidence"
     }
   ],
-  "sim_results": {
-    "mean": 0.08443106034235845,
-    "median": 0.08326782607516242,
-    "p5": 0.06080280637494282,
-    "p95": 0.1119784628563208,
-    "std_dev": 0.015447814479679616,
-    "iterations": 10000
-  },
+  "sim_results": null,
   "base_rate": {
-    "reference_class": "22 tournaments = 13.6% base rate. however, using",
-    "historical_frequency": 0.136,
-    "sample_size": null,
-    "source": "macro_forecaster",
-    "reasoning": "```json\n{\n  \"reference_class\": \"Historical FIFA World Cup wins by CONMEBOL nations (1930-2022)\",\n  \"historical_frequency\": 0.45,\n  \"sample_size\": 22,\n  \"reasoning\": \"22 World Cups held 1930-2022. CONMEBOL nations (South American) won 10 times (Uruguay 2, Brazil 5, Argentina 3). Argentina specifically: 3 wins in 22 tournaments = 13.6% base rate. However, using the broader CONMEBOL reference class (45%) is more appropriate for initial anchoring because: (1) Argentina is consistently among top CONM"
+    "reference_class": "FIFA World Cup winners 1930–2022",
+    "historical_frequency": 0.0208,
+    "sample_size": 22,
+    "source": "FIFA tournament archive — 22 prior World Cups",
+    "reasoning": "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via the six factor-derived drivers."
   },
   "evidence": [
     {
@@ -108,25 +65,24 @@
     {
       "id": "football_analyst_0",
       "source": "Agent: football_analyst",
-      "summary": "Perfect! Now I have comprehensive data. Let me compile the squad quality evidence for Argentina's 2026 World Cup forecast.\n\n---\n\n## SQUAD QUALITY EVIDENCE: ARGENTINA AT 2026 FIFA WORLD CUP\n\n### FACTOR X4 — SQUAD QUALITY INDEX RESEARCH\n\n**[BASE RATE]** World Cup winners historically field squads valued in the top 5 globally. The 2022 Argentina squad was valued at ~€650M (4th globally). Champions typically have 75%+ of squad in Big-5 European leagues and top-10 players averaging €60M+ market value.\n\n**[MARKET VALUE ABSOLUTE]** Argentina's 2026 squad is valued at **€807.5 million** (Transfermarkt, June 2026), ranking **7th globally** among World Cup participants. This represents a +24% increase from their 2022 championship squad (€650M), but they are significantly outvalued by:\n- France: €1.52 billion (1.88× Argentina)\n- England: €1.36 billion (1.68× Argentina)  \n- Spain: €1.22 billion (1.51× Argentina)\n- Portugal: €1.01 billion (1.25× Argentina)\n- Germany: €947 million (1.17× Argentina)\n- Brazil: €928 million (1.15× Argentina)\n\n**[MARKET VALUE CONCENTRATION]** Top-5 player concentration analysis reveals **moderate concentration risk**:\n- **Top 3 players**: Lautaro Martínez (€110M), Julián Álvarez (€90M), Enzo Fernández (€80M) = **€280M** (34.7% of squad value)\n- **Lionel Messi**: Now valued at only €14.2M at age 38 (MLS depreciation), down from €50M+ in 2022\n- **Top-5 concentration**: Estimated ~€350-380M = **43-47% of total squad value** — higher than ideal (optimal: 35-40%)\n- **Implication**: Heavy reliance on 3-5 core players; injury to Lautaro or Álvarez would severely impact attacking output\n\n**[BIG-5 LEAGUE REPRESENTATION]** Argentina fields **17 of 26 players (65.4%)** in Europe's Big-5 leagues:\n- **La Liga**: 7 players (26.9%) — largest single league representation (Atlético Madrid alone sends 6 players)\n- **Premier League**: 5 players (19.2%) — Emiliano Martínez, Lisandro Martínez, Romero, Fernández, Mac Allister\n- **Ligue 1**: 5 players (19.2%) — Rulli, Balerdi, Medina, Tagliafico, Barco\n- **Serie A**: 1 player (3.8%) — Lautaro Martínez (Inter)\n- **Bundesliga**: 1 player (3.8%) — Palacios (Bayer Leverkusen)\n- **Outside Big-5**: 9 players (34.6%) — includes Messi (MLS), Paredes (Boca), Montiel (River Plate), Otamendi (Benfica)\n\n**Comparative context**: Top contenders average 75-85% Big-5 representation. Argentina's 65.4% is **below elite standard**, dragged down by MLS/South American-based veterans and aging stars returning home.\n\n**[AGE PROFILE & PEAK WINDOW]** Average squad age: **27.04-28.62 years** (sources vary; median estimate ~27.8 years):\n- **Peak age range (24-29)**: ~15 players (58%)\n- **30+ veterans**: 9 players (35%) — includes Messi (38), Otamendi (38), Paredes (32), Di María retired\n- **Under-24 emerging talent**: 3 players (12%) — Barco, Almada, Simeone\n- **Goalkeeper age concern**: All 3 GKs are 32+ (Emiliano Martínez 33, Rulli 34, Musso 32)\n\n**Assessment**: Squad is at the **tail end of its peak window**. Core 2022 winners (Messi, Otamendi, De Paul, Paredes) are 4 years older. This is likely Argentina's **final elite cycle** with this generation. Age profile is **above optimal** for a World Cup winner (ideal: 26.5-27.5 years).\n\n**[SQUAD DEPTH ANALYSIS]** Position-by-position depth quality:\n\n- **Goalkeeper**: Elite starter (Emiliano Martínez, top-3 globally) but **thin depth** — Rulli and Musso are solid but aging backups. No elite young GK in pipeline.\n  \n- **Defense**: **Strong depth** at center-back (Romero, Lisandro Martínez, Otamendi, Balerdi, Medina — 5 quality options). Full-backs adequate but not elite (Molina, Tagliafico, Montiel). Depth score: **7.5/10**.\n\n- **Midfield**: **Elite depth** — arguably the squad's greatest strength. Mac Allister, Fernández, De Paul, Paredes, Palacios, Lo Celso all capable of starting. Mix of creativity, ball-winning, and box-to-box profiles. Depth score: **9/10**.\n\n- **Attack**: **Moderate depth with concentration risk**. Elite strikers (Lautaro, Álvarez) but **heavy reliance on aging Messi** for creativity. Almada, Nico González, Simeone are promising but unproven at World Cup level. Loss of Di María (retired 2024) removes a proven big-game performer. Depth score: **6.5/10**.\n\n**Overall squad depth score: 7.3/10** — strong in midfield and defense, vulnerable in attack if Messi underperforms or Lautaro/Álvarez injured.\n\n**[TOURNAMENT EXPERIENCE]** **18 of 26 players (69%)** were part of the 2022 World Cup-winning squad — exceptional continuity and championship DNA. Only 8 debutants. This is a **massive intangible advantage**: squad knows how to win knockout matches, handle pressure, and execute Scaloni's system.\n\n**[COMPARATIVE SQUAD QUALITY vs. TOP CONTENDERS]**\n\n| Team | Market Value | Big-5 % | Avg Age | Depth Score | X4 Rank |\n|------|-------------|---------|---------|-------------|---------|\n| France | €1.52B | ~82% | 26.1 | 9/10 | 1st |\n| England | €1.36B | ~88% | 26.8 | 8.5/10 | 2nd |\n| Spain | €1.22B | ~92% | 25.9 | 8/10 | 3rd |\n| Brazil | €928M | ~78% | 27.3 | 7.5/10 | 5th |\n| **Argentina** | **€808M** | **65%** | **27.8** | **7.3/10** | **6th-7th** |\n\nArgentina ranks **6th-7th in raw squad quality** among realistic title contenders, behind France, England, Spain, Portugal, and roughly level with Brazil/Germany.\n\n---\n\n### X4 FACTOR SYNTHESIS\n\n**[X4 SIGNAL]** Squad market value €807.5M ranks 7th globally (0.53× France, 0.87× Brazil). Big-5 league representation 65.4% is **below elite standard** (vs. 75-85% for top contenders). Market value concentration: top-5 players = ~47% of squad value (high concentration risk). Average age 27.8 years — **at tail end of peak window**, with 35% of squad 30+. Squad depth strong in midfield (9/10) and defense (7.5/10), but vulnerable in attack (6.5/10) due to Messi age (38) and reliance on Lautaro/Álvarez duo.\n\n**[X4 COMPARATIVE]** Argentina's X4 profile is **above tournament median** but **below the elite tier**. France, England, and Spain all field younger, deeper, and more valuable squads with higher Big-5 representation. Argentina's key X4 advantages: (1) **elite midfield depth** — best in the tournament, (2) **championship experience** — 69% of squad won 2022 WC, (3) **tactical cohesion** under Scaloni. Key X4 weaknesses: (1) **aging attack** — Messi 38, limited proven depth behind Lautaro/Álvarez, (2) **low Big-5 %** — 9 players outside elite competition, (3) **concentration risk** — top-3 players = 35% of value.\n\n**[X4 TRAJECTORY]** This is Argentina's **final elite cycle** with this generation. Squad quality has **peaked and is now declining** due to age. 2026 represents the **last realistic window** for this core to win. Post-2026, expect significant drop-off as Messi, Otamendi, Paredes, and other 30+ veterans retire or decline sharply.\n\n**[X4 HISTORICAL CONTEXT]** Argentina's X4 profile mirrors **Italy 2006** (aging squad, 7th in market value, won on experience + tactical cohesion) more than **France 2018** (young, deep, 2nd in value). Historical precedent: **only 2 of last 8 World Cup winners** (Italy 2006, Argentina 2022) ranked outside top-5 in squad value. Both had exceptional intangibles (tactical mastery, championship mentality). Argentina 2026 needs to replicate that formula.\n\n**[MULTIPLIER]** Suggested p50: **0.85** (p5: 0.65, p95: 1.10) — Squad quality (X4) is **below elite tier** but compensated by intangibles (experience, midfield depth, Scaloni system). Market value rank (7th), age profile (tail of peak), and Big-5 % (65%) all suggest Argentina is **not the strongest squad on paper**, justifying 15% downward adjustment from a neutral X4 prior. Upper bound (1.10) reflects championship experience premium; lower bound (0.65) reflects concentration risk and age-related decline scenarios.\n\n---\n\n**CONFIDENCE IN FINDINGS: 0.88** — High confidence due to comprehensive Transfermarkt data, detailed squad breakdowns, and comparative analysis across all major contenders. Uncertainty stems from intangible factors (Messi's final tournament motivation, Scaloni's tactical adjustments) that don't fully show in market value metrics.\n\n**RELEVANCE SCORE: 0.95** — Squad quality is a **primary driver** of World Cup success. X4 directly addresses the forecast question and provides quantitative basis for probabilistic adjustment.",
+      "summary": "# TACTICAL EFFICIENCY EVIDENCE — ARGENTINA 2026 WORLD CUP\n\n## FACTOR X5 — TACTICAL EFFICIENCY ANALYSIS\n\nBased on API-Football data and tactical analysis, here is the evidence for Argentina's tactical efficiency heading into the 2026 FIFA World Cup:\n\n---\n\n### KEY FINDINGS\n\n**[BASE RATE]** World Cup winners typically demonstrate elite tactical efficiency across multiple dimensions: shot conversion >15%, defensive duels won >55%, set-piece goals >25% of total, pressing intensity PPDA <10 in knockout stages.\n\n**[X5 SIGNAL — SHOT CONVERSION RATE]** Argentina Copa America 2024: 9 goals from limited shots across 6 group/knockout matches = elite conversion efficiency. Messi World Cup 2026 shot conversion: 21.9% (per Squawka) — top quartile among tournament participants. Team averaged 1.5 goals/game in Copa 2024 with clinical finishing, particularly in knockout phases (2-0 vs Canada SF, 1-0 AET vs Colombia final).\n\n**[X5 SIGNAL — DEFENSIVE DUELS]** Copa America 2024 data shows Argentina defensive duels won at approximately 52.5% (calculated from Tagliafico 21/40 = 52.5% in 448 minutes). CONMEBOL qualifying: **10 goals conceded in 18 matches** (0.56 GA/game) — best defensive record in South American qualifying. World Cup 2026 group stage: **0 goals conceded vs Algeria** (no shots on target allowed). Defensive solidity anchored by Romero-Otamendi partnership and Martinez in goal.\n\n**[X5 SIGNAL — PRESSING INTENSITY]** Tactical analysis indicates Argentina employs **moderate-to-selective pressing** (estimated PPDA 9-11 range based on tactical reports). Formation flexibility: 4-4-2 out of possession creates two compact banks of four, prioritizing defensive structure over high-press aggression. Julián Álvarez described as \"pressing machine that sets defensive tone from the front\" — counter-pressing in final third rather than sustained high press. This is tactical efficiency through intelligent pressing zones, not volume.\n\n**[X5 SIGNAL — SET-PIECE EFFICIENCY]** Limited granular data available, but Copa America 2024 showed **38.46% of goals scored in 106-120' minute band** (5 of 13 goals in extra time/late periods) — indicates set-piece and dead-ball proficiency in high-pressure moments. Argentina's aerial presence moderate (Romero, Otamendi strong in box), but set-piece goals not a primary weapon compared to open-play efficiency. Estimated set-piece contribution: 20-25% of goals (below elite benchmark of 30%+).\n\n**[MATCH STATS]** Copa America 2024 tournament performance: 6 matches, 5W-1D-0L, 9 GF, 1 GA. Clean sheets: 5 of 6 matches (83.3% clean sheet rate). Failed to score: 0 matches. Penalty shootout vs Ecuador (4-2 win) demonstrates mental resilience. Formation: primarily 4-4-2 (5 of 6 matches), occasional 4-3-3 (1 match) — tactical consistency with flexibility.\n\n**[TACTICAL MATCHUP]** Scaloni's tactical adaptability is a force multiplier: \"rarely plays same formation twice consecutively, adapting shape based on opponent weaknesses\" (The Hard Tackle). 4-3-3 for midfield control vs possession teams; 4-4-2 diamond to clog central areas vs direct opponents. This **tactical chameleon approach** enhances efficiency by exploiting specific opponent vulnerabilities rather than imposing single system.\n\n**[INJURY IMPACT]** Emiliano Martínez finger injury concern pre-tournament, but confirmed fully recovered for WC2026. Martinez save percentage 2024-25 club season: 125 saves, 13 clean sheets in 44 appearances (Aston Villa). His penalty-saving prowess (Copa 2024 QF shootout, WC 2022 final) adds 5-10% win probability in knockout ties that reach penalties.\n\n**[FACTOR]** Argentina's tactical efficiency profile shows **elite shot conversion (21.9%), world-class defensive organization (0.56 GA/game in qualifying), moderate pressing intensity (PPDA ~9-11), and tactical flexibility as primary weapon**. The weakest dimension is set-piece reliance (20-25% vs 30%+ elite benchmark), but this is offset by open-play clinical finishing and defensive solidity. Scaloni's adaptive approach maximizes efficiency by tailoring tactics to opponent rather than rigid system adherence.\n\n---\n\n### CONFIDENCE ASSESSMENT\n\n**Relevance to forecast: 0.92** — Tactical efficiency (X5) is a critical discriminator in knockout tournaments where margins are thin. Argentina's defensive record and shot conversion are elite; pressing intensity is moderate but strategically deployed.\n\n**Confidence in findings: 0.78** — High confidence in defensive metrics (CONMEBOL qualifying data robust: 10 GA in 18 matches). Moderate confidence in shot conversion (Copa 2024 sample size small, but Messi individual rate 21.9% well-documented). Lower confidence in pressing intensity (PPDA not directly available, estimated from tactical reports). Set-piece data incomplete.\n\n**Data quality notes:** API-Football Copa America 2024 data complete for results/goals but lacks granular shot/xG data. CONMEBOL qualifying defensive record (10 GA/18 matches) is gold-standard evidence. Tactical analysis from multiple expert sources (Tactical Football Analysis, World Soccer Talk, The Athletic) provides triangulated qualitative assessment.\n\n---\n\n### FACTOR-MODE MULTIPLIER\n\n**[MULTIPLIER]** Suggested p50: **1.20** (p5: 0.85, p95: 1.60) — Argentina's X5 tactical efficiency sits in top quartile of WC2026 field via elite shot conversion (21.9%), best-in-CONMEBOL defensive record (0.56 GA/game), and Scaloni's tactical adaptability; moderate pressing intensity and below-elite set-piece reliance prevent higher multiplier, but defensive solidity + clinical finishing are tournament-winning attributes.\n\n**Rationale:** The 1.20 multiplier reflects Argentina's **elite execution efficiency** (converting chances at 21.9%, defending at 0.56 GA/game) combined with **tactical flexibility** that allows them to optimize matchups. This is not a team that dominates via single tactical dimension (like Spain possession or Germany pressing), but rather one that **maximizes output from inputs** — the essence of tactical efficiency. The p5 of 0.85 accounts for risk that moderate pressing intensity leaves them vulnerable to elite possession teams (Spain, Germany) who can bypass their mid-block. The p95 of 1.60 reflects upside if Martinez repeats penalty heroics and Messi's shot conversion sustains at 20%+ through knockout rounds.",
       "relevance": 0.5,
-      "date": "2026-06-18",
+      "date": "2026-06-25",
       "key_findings": [
-        "[BASE RATE]** World Cup winners historically field squads valued in the top 5 globally. The 2022 Argentina squad was valued at ~€650M (4th globally). Champions typically have 75%+ of squad in Big-5 European leagues and top-10 players averaging €60M+ market value.",
-        "[MARKET VALUE ABSOLUTE]** Argentina's 2026 squad is valued at **€807.5 million** (Transfermarkt, June 2026), ranking **7th globally** among World Cup participants. This represents a +24% increase from their 2022 championship squad (€650M), but they are significantly outvalued by:",
-        "France: €1.52 billion (1.88× Argentina)",
-        "England: €1.36 billion (1.68× Argentina)",
-        "Spain: €1.22 billion (1.51× Argentina)",
-        "Portugal: €1.01 billion (1.25× Argentina)",
-        "Germany: €947 million (1.17× Argentina)",
-        "Brazil: €928 million (1.15× Argentina)",
-        "[MARKET VALUE CONCENTRATION]** Top-5 player concentration analysis reveals **moderate concentration risk**:",
-        "**Top 3 players**: Lautaro Martínez (€110M), Julián Álvarez (€90M), Enzo Fernández (€80M) = **€280M** (34.7% of squad value)",
-        "**Lionel Messi**: Now valued at only €14.2M at age 38 (MLS depreciation), down from €50M+ in 2022",
-        "**Top-5 concentration**: Estimated ~€350-380M = **43-47% of total squad value** — higher than ideal (optimal: 35-40%)",
-        "**Implication**: Heavy reliance on 3-5 core players; injury to Lautaro or Álvarez would severely impact attacking output",
-        "[BIG-5 LEAGUE REPRESENTATION]** Argentina fields **17 of 26 players (65.4%)** in Europe's Big-5 leagues:",
-        "**La Liga**: 7 players (26.9%) — largest single league representation (Atlético Madrid alone sends 6 players)"
+        "[BASE RATE]** World Cup winners typically demonstrate elite tactical efficiency across multiple dimensions: shot conversion >15%, defensive duels won >55%, set-piece goals >25% of total, pressing intensity PPDA <10 in knockout stages.",
+        "[X5 SIGNAL — SHOT CONVERSION RATE]** Argentina Copa America 2024: 9 goals from limited shots across 6 group/knockout matches = elite conversion efficiency. Messi World Cup 2026 shot conversion: 21.9% (per Squawka) — top quartile among tournament participants. Team averaged 1.5 goals/game in Copa 2024 with clinical finishing, particularly in knockout phases (2-0 vs Canada SF, 1-0 AET vs Colombia final).",
+        "[X5 SIGNAL — DEFENSIVE DUELS]** Copa America 2024 data shows Argentina defensive duels won at approximately 52.5% (calculated from Tagliafico 21/40 = 52.5% in 448 minutes). CONMEBOL qualifying: **10 goals conceded in 18 matches** (0.56 GA/game) — best defensive record in South American qualifying. World Cup 2026 group stage: **0 goals conceded vs Algeria** (no shots on target allowed). Defensive solidity anchored by Romero-Otamendi partnership and Martinez in goal.",
+        "[X5 SIGNAL — PRESSING INTENSITY]** Tactical analysis indicates Argentina employs **moderate-to-selective pressing** (estimated PPDA 9-11 range based on tactical reports). Formation flexibility: 4-4-2 out of possession creates two compact banks of four, prioritizing defensive structure over high-press aggression. Julián Álvarez described as \"pressing machine that sets defensive tone from the front\" — counter-pressing in final third rather than sustained high press. This is tactical efficiency through intelligent pressing zones, not volume.",
+        "[X5 SIGNAL — SET-PIECE EFFICIENCY]** Limited granular data available, but Copa America 2024 showed **38.46% of goals scored in 106-120' minute band** (5 of 13 goals in extra time/late periods) — indicates set-piece and dead-ball proficiency in high-pressure moments. Argentina's aerial presence moderate (Romero, Otamendi strong in box), but set-piece goals not a primary weapon compared to open-play efficiency. Estimated set-piece contribution: 20-25% of goals (below elite benchmark of 30%+).",
+        "[MATCH STATS]** Copa America 2024 tournament performance: 6 matches, 5W-1D-0L, 9 GF, 1 GA. Clean sheets: 5 of 6 matches (83.3% clean sheet rate). Failed to score: 0 matches. Penalty shootout vs Ecuador (4-2 win) demonstrates mental resilience. Formation: primarily 4-4-2 (5 of 6 matches), occasional 4-3-3 (1 match) — tactical consistency with flexibility.",
+        "[TACTICAL MATCHUP]** Scaloni's tactical adaptability is a force multiplier: \"rarely plays same formation twice consecutively, adapting shape based on opponent weaknesses\" (The Hard Tackle). 4-3-3 for midfield control vs possession teams; 4-4-2 diamond to clog central areas vs direct opponents. This **tactical chameleon approach** enhances efficiency by exploiting specific opponent vulnerabilities rather than imposing single system.",
+        "[INJURY IMPACT]** Emiliano Martínez finger injury concern pre-tournament, but confirmed fully recovered for WC2026. Martinez save percentage 2024-25 club season: 125 saves, 13 clean sheets in 44 appearances (Aston Villa). His penalty-saving prowess (Copa 2024 QF shootout, WC 2022 final) adds 5-10% win probability in knockout ties that reach penalties.",
+        "[FACTOR]** Argentina's tactical efficiency profile shows **elite shot conversion (21.9%), world-class defensive organization (0.56 GA/game in qualifying), moderate pressing intensity (PPDA ~9-11), and tactical flexibility as primary weapon**. The weakest dimension is set-piece reliance (20-25% vs 30%+ elite benchmark), but this is offset by open-play clinical finishing and defensive solidity. Scaloni's adaptive approach maximizes efficiency by tailoring tactics to opponent rather than rigid system adherence.",
+        "Relevance to forecast: 0.92** — Tactical efficiency (X5) is a critical discriminator in knockout tournaments where margins are thin. Argentina's defensive record and shot conversion are elite; pressing intensity is moderate but strategically deployed.",
+        "Confidence in findings: 0.78** — High confidence in defensive metrics (CONMEBOL qualifying data robust: 10 GA in 18 matches). Moderate confidence in shot conversion (Copa 2024 sample size small, but Messi individual rate 21.9% well-documented). Lower confidence in pressing intensity (PPDA not directly available, estimated from tactical reports). Set-piece data incomplete.",
+        "Data quality notes:** API-Football Copa America 2024 data complete for results/goals but lacks granular shot/xG data. CONMEBOL qualifying defensive record (10 GA/18 matches) is gold-standard evidence. Tactical analysis from multiple expert sources (Tactical Football Analysis, World Soccer Talk, The Athletic) provides triangulated qualitative assessment.",
+        "[MULTIPLIER]** Suggested p50: **1.20** (p5: 0.85, p95: 1.60) — Argentina's X5 tactical efficiency sits in top quartile of WC2026 field via elite shot conversion (21.9%), best-in-CONMEBOL defensive record (0.56 GA/game), and Scaloni's tactical adaptability; moderate pressing intensity and below-elite set-piece reliance prevent higher multiplier, but defensive solidity + clinical finishing are tournament-winning attributes.",
+        "Rationale:** The 1.20 multiplier reflects Argentina's **elite execution efficiency** (converting chances at 21.9%, defending at 0.56 GA/game) combined with **tactical flexibility** that allows them to optimize matchups. This is not a team that dominates via single tactical dimension (like Spain possession or Germany pressing), but rather one that **maximizes output from inputs** — the essence of tactical efficiency. The p5 of 0.85 accounts for risk that moderate pressing intensity leaves them vulnerable to elite possession teams (Spain, Germany) who can bypass their mid-block. The p95 of 1.60 reflects upside if Martinez repeats penalty heroics and Messi's shot conversion sustains at 20%+ through knockout rounds."
       ]
     },
     {
@@ -155,6 +111,14 @@
     },
     {
       "id": "fermi_evidence_1782355547",
+      "source": "Agent: fermi (Claude API)",
+      "summary": "",
+      "relevance": 0.5,
+      "date": "2026-06-25",
+      "key_findings": []
+    },
+    {
+      "id": "fermi_evidence_1782355605",
       "source": "Agent: fermi (Claude API)",
       "summary": "",
       "relevance": 0.5,
