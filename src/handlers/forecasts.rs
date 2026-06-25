@@ -20,8 +20,8 @@ use uuid::Uuid;
 
 use crate::AppState;
 use fermi::gas::charge_gas;
-use fermi_auth::visibility::is_team_member;
-use fermi_auth::{get_or_create_wallet, AuthPrincipal};
+use fermi_auth::visibility::{can_access, can_edit, can_view};
+use fermi_auth::{get_or_create_wallet, AuthPrincipal, ObjectType, Visibility};
 
 // ═══════════════════════════════════════════════════════════════════
 // Request / Response Types
@@ -319,28 +319,26 @@ pub async fn get_forecast_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .ok_or((StatusCode::NOT_FOUND, "Forecast not found".into()))?;
 
-    // Access control: owner, team member, or public
+    // Access control: owner, team member, user share, or public.
+    // Spec 24 §3.2 Wave 2 (Sprint 2.4b): replaced inline owner/team check
+    // with the canonical `can_view` helper which also honours direct
+    // user-shares in object_shares.
     let owner_id: String = row.get("owner_id_text");
     let visibility: String = row.get("visibility");
-    let team_id: Option<Uuid> = row.try_get("team_id").ok();
 
-    if owner_id != user_id && visibility == "private" {
-        // Team-membership fallback (Spec 24 §3.2 Wave 1).
-        //
-        // The previous inline query bound `team_members.user_id = $2`, but
-        // the column is `member_id` (verified against prod schema 2026-06-19
-        // and migration 009:40). That branch silently returned false for
-        // every caller. We now delegate to the canonical helper so this
-        // handler stays in sync with workspaces and any future caller.
-        let granted = match team_id {
-            Some(tid) => is_team_member(pool, tid, &user_id)
-                .await
-                .unwrap_or(false),
-            None => false,
-        };
-        if !granted {
-            return Err((StatusCode::FORBIDDEN, "Access denied".into()));
-        }
+    let vis = Visibility::from_legacy(&visibility);
+    let granted = can_view(
+        pool,
+        &principal,
+        ObjectType::Forecast,
+        &forecast_id,
+        &owner_id,
+        vis,
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if !granted {
+        return Err((StatusCode::FORBIDDEN, "Access denied".into()));
     }
 
     // Get update history
@@ -410,7 +408,7 @@ pub async fn get_forecast_handler(
         "resolved_by": row.try_get::<Option<String>, _>("resolved_by").ok().flatten(),
         "resolution_notes": row.try_get::<Option<String>, _>("resolution_notes").ok().flatten(),
         "visibility": visibility,
-        "team_id": team_id,
+        "team_id": row.try_get::<Option<Uuid>, _>("team_id").ok().flatten().map(|u| u.to_string()),
         "workspace_id": row.try_get::<Option<Uuid>, _>("workspace_id").ok().flatten().map(|u| u.to_string()),
         // metadata.polymarket carries the linked PM market shape written by
         // polymarket::link_handler — pm_event_id, pm_market_id, pm_url,
@@ -441,25 +439,23 @@ pub async fn list_forecasts_handler(
     let mut bind_idx = 0u32;
     let mut binds: Vec<String> = Vec::new();
 
-    // Default scope: own forecasts + shared/public + team-shared.
-    //
-    // Spec 24 §3.2 Wave 1: a private forecast with `team_id` set was invisible
-    // to its own team because the WHERE clause never consulted team_members.
-    // get_forecast_handler (post-Step-1) honours team membership; without this
-    // matching branch, list and detail disagreed — operators saw 404s on
-    // forecasts that were perfectly accessible if they typed the URL.
-    //
-    // The `${X}` is the same bind as the owner check (text user_id), used
-    // here against `team_members.member_id` (also text — no cast). The
-    // partial `idx_forecasts_team(team_id) WHERE team_id IS NOT NULL` and
-    // the `team_members` PK keep this index-fast.
+    // Default scope: own forecasts + shared/public + team-shared +
+    // directly-shared. Spec 24 §3.2 Wave 2 (Sprint 2.4b): added the
+    // object_shares user-share branch so that `permission='view'` (or
+    // edit/admin) shares grant list visibility. The team-share branch
+    // (via team_members) was already there from Wave 1.
     bind_idx += 1;
     conditions.push(format!(
         "(f.owner_id = ${idx}::uuid \
           OR f.visibility IN ('shared', 'public') \
           OR (f.team_id IS NOT NULL \
               AND EXISTS (SELECT 1 FROM team_members m \
-                          WHERE m.team_id = f.team_id AND m.member_id = ${idx})))",
+                          WHERE m.team_id = f.team_id AND m.member_id = ${idx})) \
+          OR EXISTS (SELECT 1 FROM object_shares s \
+                     WHERE s.object_type = 'forecast' \
+                       AND s.object_id = f.id::text \
+                       AND s.share_type = 'user' \
+                       AND s.share_target = ${idx}))",
         idx = bind_idx
     ));
     binds.push(user_id.clone());
@@ -571,9 +567,9 @@ pub async fn update_forecast_handler(
     let user_id = principal.user_id();
     let pool = &state.db;
 
-    // Verify ownership
+    // Verify edit access (Spec 24 §3.2 Wave 2: can_edit, not just owner).
     let row = sqlx::query(
-        "SELECT owner_id::text AS owner_id, status, predicted_probability FROM fermi_forecasts WHERE id = $1",
+        "SELECT owner_id::text AS owner_id, visibility, status, predicted_probability FROM fermi_forecasts WHERE id = $1",
     )
     .bind(&forecast_id)
     .fetch_optional(pool)
@@ -581,11 +577,21 @@ pub async fn update_forecast_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .ok_or((StatusCode::NOT_FOUND, "Forecast not found".into()))?;
 
-    // Defensive try_get on owner_id / status — column types in prod don't
-    // always match the declared migration. Same lesson as update_probability.
     let owner_id: String = row.try_get("owner_id").unwrap_or_default();
-    if owner_id != user_id {
-        return Err((StatusCode::FORBIDDEN, "Not your forecast".into()));
+    let visibility: String = row.try_get("visibility").unwrap_or_default();
+    let vis = Visibility::from_legacy(&visibility);
+    let granted = can_edit(
+        pool,
+        &principal,
+        ObjectType::Forecast,
+        &forecast_id,
+        &owner_id,
+        vis,
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if !granted {
+        return Err((StatusCode::FORBIDDEN, "Edit access denied".into()));
     }
 
     let current_status: String = row.try_get("status").unwrap_or_default();
@@ -707,16 +713,33 @@ pub async fn delete_forecast_handler(
     let user_id = principal.user_id();
     let pool = &state.db;
 
-    let owner: Option<String> =
-        sqlx::query_scalar("SELECT owner_id::text FROM fermi_forecasts WHERE id = $1")
-            .bind(&forecast_id)
-            .fetch_optional(pool)
+    let row = sqlx::query(
+        "SELECT owner_id::text AS owner_id, visibility FROM fermi_forecasts WHERE id = $1",
+    )
+    .bind(&forecast_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    match row {
+        Some(r) => {
+            let owner_id: String = r.try_get("owner_id").unwrap_or_default();
+            let visibility: String = r.try_get("visibility").unwrap_or_default();
+            let vis = Visibility::from_legacy(&visibility);
+            let level = can_access(
+                pool,
+                &principal,
+                ObjectType::Forecast,
+                &forecast_id,
+                &owner_id,
+                vis,
+            )
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    match owner {
-        Some(oid) if oid == user_id => {}
-        Some(_) => return Err((StatusCode::FORBIDDEN, "Not your forecast".into())),
+            if !level.has_admin() {
+                return Err((StatusCode::FORBIDDEN, "Admin access required to delete".into()));
+            }
+        }
         None => return Err((StatusCode::NOT_FOUND, "Forecast not found".into())),
     }
 
@@ -745,6 +768,31 @@ pub async fn resolve_forecast_handler(
 ) -> Result<Json<JsonValue>, (StatusCode, String)> {
     let user_id = principal.user_id();
     let pool = &state.db;
+
+    // Spec 24 §3.2 Wave 2 (Sprint 2.4b): can_edit check before resolving.
+    // Previously there was no app-level owner check — any authenticated
+    // user could resolve any active forecast.
+    let acl_row = sqlx::query(
+        "SELECT owner_id::text AS owner_id, visibility FROM fermi_forecasts WHERE id = $1",
+    )
+    .bind(&forecast_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    match acl_row {
+        Some(r) => {
+            let owner_id: String = r.try_get("owner_id").unwrap_or_default();
+            let visibility: String = r.try_get("visibility").unwrap_or_default();
+            let vis = Visibility::from_legacy(&visibility);
+            let granted = can_edit(pool, &principal, ObjectType::Forecast, &forecast_id, &owner_id, vis)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            if !granted {
+                return Err((StatusCode::FORBIDDEN, "Edit access denied".into()));
+            }
+        }
+        None => return Err((StatusCode::NOT_FOUND, "Forecast not found".into())),
+    }
 
     // Use the database function for atomic resolution
     let brier_score: f64 = sqlx::query_scalar("SELECT resolve_forecast($1, $2, $3, $4)")
@@ -917,13 +965,43 @@ pub async fn void_forecast_handler(
     let user_id = principal.user_id();
     let pool = &state.db;
 
+    // Spec 24 §3.2 Wave 2 (Sprint 2.4b): can_admin check before void.
+    // Previously the owner check was embedded in the SQL WHERE clause.
+    let acl_row = sqlx::query(
+        "SELECT owner_id::text AS owner_id, visibility, status FROM fermi_forecasts WHERE id = $1",
+    )
+    .bind(&forecast_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    match acl_row {
+        Some(r) => {
+            let owner_id: String = r.try_get("owner_id").unwrap_or_default();
+            let visibility: String = r.try_get("visibility").unwrap_or_default();
+            let status: String = r.try_get("status").unwrap_or_default();
+            if status != "draft" && status != "active" {
+                return Err((
+                    StatusCode::CONFLICT,
+                    "Forecast already resolved/voided".into(),
+                ));
+            }
+            let vis = Visibility::from_legacy(&visibility);
+            let level = can_access(pool, &principal, ObjectType::Forecast, &forecast_id, &owner_id, vis)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            if !level.has_admin() {
+                return Err((StatusCode::FORBIDDEN, "Admin access required to void".into()));
+            }
+        }
+        None => return Err((StatusCode::NOT_FOUND, "Forecast not found".into())),
+    }
+
     let result = sqlx::query(
         "UPDATE fermi_forecasts SET status = 'voided', updated_at = NOW()
-         WHERE id = $1 AND owner_id = $2::uuid AND status IN ('draft', 'active')
+         WHERE id = $1 AND status IN ('draft', 'active')
          RETURNING id",
     )
     .bind(&forecast_id)
-    .bind(&user_id)
     .fetch_optional(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -931,7 +1009,7 @@ pub async fn void_forecast_handler(
     if result.is_none() {
         return Err((
             StatusCode::NOT_FOUND,
-            "Forecast not found, not yours, or already resolved/voided".into(),
+            "Forecast not found or already resolved/voided".into(),
         ));
     }
 
@@ -968,7 +1046,7 @@ pub async fn update_probability_handler(
 
     // Get current state
     let row = sqlx::query(
-        "SELECT owner_id::text AS owner_id, status, predicted_probability FROM fermi_forecasts WHERE id = $1",
+        "SELECT owner_id::text AS owner_id, visibility, status, predicted_probability FROM fermi_forecasts WHERE id = $1",
     )
     .bind(&forecast_id)
     .fetch_optional(pool)
@@ -981,8 +1059,13 @@ pub async fn update_probability_handler(
     // ::text in the SELECT above; we still go through try_get to ensure
     // a single bad row never panics the handler into a 502.
     let owner_id: String = row.try_get("owner_id").unwrap_or_default();
-    if owner_id != user_id {
-        return Err((StatusCode::FORBIDDEN, "Not your forecast".into()));
+    let visibility: String = row.try_get("visibility").unwrap_or_default();
+    let vis = Visibility::from_legacy(&visibility);
+    let granted = can_edit(pool, &principal, ObjectType::Forecast, &forecast_id, &owner_id, vis)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if !granted {
+        return Err((StatusCode::FORBIDDEN, "Edit access denied".into()));
     }
 
     let status: String = row.try_get("status").unwrap_or_default();
@@ -1131,6 +1214,11 @@ pub async fn list_portfolios_handler(
             OR (p.team_id IS NOT NULL
                 AND EXISTS (SELECT 1 FROM team_members m
                             WHERE m.team_id = p.team_id AND m.member_id = $1))
+            OR EXISTS (SELECT 1 FROM object_shares s
+                       WHERE s.object_type = 'portfolio'
+                         AND s.object_id = p.id::text
+                         AND s.share_type = 'user'
+                         AND s.share_target = $1)
          ORDER BY p.updated_at DESC
          LIMIT $2 OFFSET $3",
     )
@@ -1193,17 +1281,12 @@ pub async fn portfolio_stats_handler(
 
     let owner_id: String = portfolio.get("owner_id");
     let visibility: String = portfolio.get("visibility");
-    let team_id: Option<Uuid> = portfolio.try_get("team_id").ok();
-    if owner_id != user_id && visibility == "private" {
-        let granted = match team_id {
-            Some(tid) => is_team_member(pool, tid, &user_id)
-                .await
-                .unwrap_or(false),
-            None => false,
-        };
-        if !granted {
-            return Err((StatusCode::FORBIDDEN, "Access denied".into()));
-        }
+    let vis = Visibility::from_legacy(&visibility);
+    let granted = can_view(pool, &principal, ObjectType::Portfolio, &portfolio_id, &owner_id, vis)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if !granted {
+        return Err((StatusCode::FORBIDDEN, "Access denied".into()));
     }
 
     // Aggregate stats
@@ -1308,17 +1391,26 @@ pub async fn add_forecast_to_portfolio_handler(
     let user_id = principal.user_id();
     let pool = &state.db;
 
-    // Verify portfolio ownership
-    let owner: Option<String> =
-        sqlx::query_scalar("SELECT owner_id::text FROM fermi_portfolios WHERE id = $1")
-            .bind(&portfolio_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    match owner {
-        Some(oid) if oid == user_id => {}
-        Some(_) => return Err((StatusCode::FORBIDDEN, "Not your portfolio".into())),
+    // Verify edit access (Spec 24 §3.2 Wave 2: can_edit, not just owner).
+    let acl_row = sqlx::query(
+        "SELECT owner_id::text AS owner_id, visibility FROM fermi_portfolios WHERE id = $1",
+    )
+    .bind(&portfolio_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    match acl_row {
+        Some(r) => {
+            let owner_id: String = r.try_get("owner_id").unwrap_or_default();
+            let visibility: String = r.try_get("visibility").unwrap_or_default();
+            let vis = Visibility::from_legacy(&visibility);
+            let granted = can_edit(pool, &principal, ObjectType::Portfolio, &portfolio_id, &owner_id, vis)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            if !granted {
+                return Err((StatusCode::FORBIDDEN, "Edit access denied".into()));
+            }
+        }
         None => return Err((StatusCode::NOT_FOUND, "Portfolio not found".into())),
     }
 
@@ -1348,16 +1440,26 @@ pub async fn remove_forecast_from_portfolio_handler(
     let user_id = principal.user_id();
     let pool = &state.db;
 
-    let owner: Option<String> =
-        sqlx::query_scalar("SELECT owner_id::text FROM fermi_portfolios WHERE id = $1")
-            .bind(&portfolio_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    match owner {
-        Some(oid) if oid == user_id => {}
-        Some(_) => return Err((StatusCode::FORBIDDEN, "Not your portfolio".into())),
+    // Verify edit access (Spec 24 §3.2 Wave 2: can_edit, not just owner).
+    let acl_row = sqlx::query(
+        "SELECT owner_id::text AS owner_id, visibility FROM fermi_portfolios WHERE id = $1",
+    )
+    .bind(&portfolio_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    match acl_row {
+        Some(r) => {
+            let owner_id: String = r.try_get("owner_id").unwrap_or_default();
+            let visibility: String = r.try_get("visibility").unwrap_or_default();
+            let vis = Visibility::from_legacy(&visibility);
+            let granted = can_edit(pool, &principal, ObjectType::Portfolio, &portfolio_id, &owner_id, vis)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            if !granted {
+                return Err((StatusCode::FORBIDDEN, "Edit access denied".into()));
+            }
+        }
         None => return Err((StatusCode::NOT_FOUND, "Portfolio not found".into())),
     }
 
@@ -1382,16 +1484,25 @@ pub async fn delete_portfolio_handler(
     let user_id = principal.user_id();
     let pool = &state.db;
 
-    let owner: Option<String> =
-        sqlx::query_scalar("SELECT owner_id::text FROM fermi_portfolios WHERE id = $1")
-            .bind(&portfolio_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    match owner {
-        Some(oid) if oid == user_id => {}
-        Some(_) => return Err((StatusCode::FORBIDDEN, "Not your portfolio".into())),
+    let acl_row = sqlx::query(
+        "SELECT owner_id::text AS owner_id, visibility FROM fermi_portfolios WHERE id = $1",
+    )
+    .bind(&portfolio_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    match acl_row {
+        Some(r) => {
+            let owner_id: String = r.try_get("owner_id").unwrap_or_default();
+            let visibility: String = r.try_get("visibility").unwrap_or_default();
+            let vis = Visibility::from_legacy(&visibility);
+            let level = can_access(pool, &principal, ObjectType::Portfolio, &portfolio_id, &owner_id, vis)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            if !level.has_admin() {
+                return Err((StatusCode::FORBIDDEN, "Admin access required to delete".into()));
+            }
+        }
         None => return Err((StatusCode::NOT_FOUND, "Portfolio not found".into())),
     }
 
@@ -1434,16 +1545,25 @@ pub async fn patch_portfolio_handler(
     let user_id = principal.user_id();
     let pool = &state.db;
 
-    let owner: Option<String> =
-        sqlx::query_scalar("SELECT owner_id::text FROM fermi_portfolios WHERE id = $1")
-            .bind(&portfolio_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    match owner {
-        Some(oid) if oid == user_id => {}
-        Some(_) => return Err((StatusCode::FORBIDDEN, "Not your portfolio".into())),
+    let acl_row = sqlx::query(
+        "SELECT owner_id::text AS owner_id, visibility FROM fermi_portfolios WHERE id = $1",
+    )
+    .bind(&portfolio_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    match acl_row {
+        Some(r) => {
+            let owner_id: String = r.try_get("owner_id").unwrap_or_default();
+            let visibility: String = r.try_get("visibility").unwrap_or_default();
+            let vis = Visibility::from_legacy(&visibility);
+            let level = can_access(pool, &principal, ObjectType::Portfolio, &portfolio_id, &owner_id, vis)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            if !level.has_admin() {
+                return Err((StatusCode::FORBIDDEN, "Admin access required to delete".into()));
+            }
+        }
         None => return Err((StatusCode::NOT_FOUND, "Portfolio not found".into())),
     }
 
@@ -1527,17 +1647,12 @@ pub async fn list_portfolio_forecasts_handler(
         Some(row) => {
             let owner: String = row.get("owner_id");
             let visibility: String = row.get("visibility");
-            let team_id: Option<Uuid> = row.try_get("team_id").ok();
-            if owner != user_id && visibility == "private" {
-                let granted = match team_id {
-                    Some(tid) => is_team_member(pool, tid, &user_id)
-                        .await
-                        .unwrap_or(false),
-                    None => false,
-                };
-                if !granted {
-                    return Err((StatusCode::FORBIDDEN, "Not your portfolio".into()));
-                }
+            let vis = Visibility::from_legacy(&visibility);
+            let granted = can_view(pool, &principal, ObjectType::Portfolio, &portfolio_id, &owner, vis)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            if !granted {
+                return Err((StatusCode::FORBIDDEN, "Not your portfolio".into()));
             }
         }
     }

@@ -89,6 +89,19 @@
 //!        - empty user_id or email → defensive 0 (never UPDATE on a
 //!          wildcard match)
 //!
+//!  10. Sprint 2.4a migration 154 backfill. The INSERT ... ON CONFLICT
+//!     DO NOTHING backfill must be idempotent and every forecast/
+//!     portfolio with team_id must have a corresponding object_shares
+//!     row with share_type='team', permission='edit'.
+//!
+//!  11. Sprint 2.4b handler ACL switch. Handlers now delegate to
+//!     can_view/can_edit/can_admin instead of inline owner checks.
+//!     Covers:
+//!       - can_view grants access via direct user-share in object_shares
+//!       - can_edit allows user with permission='edit' to mutate
+//!       - can_admin allows user with permission='admin' to share/delete
+//!       - permission='view' user cannot edit (403)
+//!
 //! Tests that need a live DB are marked `#[ignore]` so a vanilla
 //! `cargo test` passes without one.
 
@@ -99,8 +112,8 @@ use sqlx::postgres::PgConnectOptions;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use fermi_auth::visibility::is_team_member;
-use fermi_auth::{teams, MemberType, ObjectType, Permission, ShareType, TeamRole};
+use fermi_auth::visibility::{can_access, can_edit, can_view, is_team_member};
+use fermi_auth::{teams, AuthPrincipal, MemberType, ObjectType, Permission, ShareType, TeamRole, Visibility};
 
 /// Acquire a Neon pool. Returns `None` if `DATABASE_URL` isn't set so the
 /// test can early-return silently — matches the pattern in
@@ -285,6 +298,20 @@ async fn pick_existing_user_id(pool: &PgPool) -> Uuid {
             "no users in DB — the test borrows an existing users.id to satisfy \
              the fermi_portfolios.owner_id FK",
         )
+}
+
+async fn pick_second_existing_user_id(pool: &PgPool) -> Uuid {
+    sqlx::query_scalar::<_, Uuid>("SELECT id FROM users OFFSET 1 LIMIT 1")
+        .fetch_one(pool)
+        .await
+        .expect("need at least 2 users for collaboration test")
+}
+
+async fn pick_third_existing_user_id(pool: &PgPool) -> Uuid {
+    sqlx::query_scalar::<_, Uuid>("SELECT id FROM users OFFSET 2 LIMIT 1")
+        .fetch_one(pool)
+        .await
+        .expect("need at least 3 users for collaboration test")
 }
 
 /// Insert a minimal portfolio row owned by `owner_id`, returning its id.
@@ -543,7 +570,12 @@ async fn forecast_visible_to(
                 OR (f.team_id IS NOT NULL
                     AND EXISTS (SELECT 1 FROM team_members m
                                 WHERE m.team_id = f.team_id
-                                  AND m.member_id = $1)))",
+                                  AND m.member_id = $1))
+                OR EXISTS (SELECT 1 FROM object_shares s
+                           WHERE s.object_type = 'forecast'
+                             AND s.object_id = f.id::text
+                             AND s.share_type = 'user'
+                             AND s.share_target = $1))",
     )
     .bind(caller_user_id)
     .bind(forecast_id)
@@ -563,11 +595,16 @@ async fn portfolio_visible_to(
         "SELECT COUNT(*) FROM fermi_portfolios p
          WHERE p.id = $2
            AND (p.owner_id = $1::uuid
-                OR p.visibility IN ('shared', 'public')
-                OR (p.team_id IS NOT NULL
-                    AND EXISTS (SELECT 1 FROM team_members m
-                                WHERE m.team_id = p.team_id
-                                  AND m.member_id = $1)))",
+                 OR p.visibility IN ('shared', 'public')
+                 OR (p.team_id IS NOT NULL
+                     AND EXISTS (SELECT 1 FROM team_members m
+                                 WHERE m.team_id = p.team_id
+                                   AND m.member_id = $1))
+                 OR EXISTS (SELECT 1 FROM object_shares s
+                            WHERE s.object_type = 'portfolio'
+                              AND s.object_id = p.id::text
+                              AND s.share_type = 'user'
+                              AND s.share_target = $1))",
     )
     .bind(caller_user_id)
     .bind(portfolio_id)
@@ -2225,5 +2262,551 @@ async fn email_claim_refuses_empty_inputs() {
     assert_eq!(row.2, "pending");
 
     delete_invite(&pool, invite_id).await;
+    delete_test_forecast(&pool, &fid).await;
+}
+
+// ─── Sprint 2.4a: Migration 154 backfill ────────────────────────────
+
+/// Migration 154 must be idempotent: running the INSERT ... ON CONFLICT
+/// DO NOTHING twice produces the same rowcount (zero new rows on second
+/// run). We exercise this against real Neon data for both forecasts and
+/// portfolios.
+#[tokio::test]
+#[ignore]
+async fn migration_154_backfill_idempotent() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let before_fc: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM object_shares \
+         WHERE share_type = 'team' AND object_type = 'forecast'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count before fc");
+
+    let before_pf: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM object_shares \
+         WHERE share_type = 'team' AND object_type = 'portfolio'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count before pf");
+
+    sqlx::query(
+        "INSERT INTO object_shares
+            (object_type, object_id, share_type, share_target, permission, granted_by)
+         SELECT 'forecast', id::text, 'team', team_id::text, 'edit', owner_id::text
+         FROM fermi_forecasts WHERE team_id IS NOT NULL
+         ON CONFLICT (object_type, object_id, share_type, share_target) DO NOTHING",
+    )
+    .execute(&pool)
+    .await
+    .expect("backfill forecasts");
+
+    sqlx::query(
+        "INSERT INTO object_shares
+            (object_type, object_id, share_type, share_target, permission, granted_by)
+         SELECT 'portfolio', id::text, 'team', team_id::text, 'edit', owner_id::text
+         FROM fermi_portfolios WHERE team_id IS NOT NULL
+         ON CONFLICT (object_type, object_id, share_type, share_target) DO NOTHING",
+    )
+    .execute(&pool)
+    .await
+    .expect("backfill portfolios");
+
+    let after_fc: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM object_shares \
+         WHERE share_type = 'team' AND object_type = 'forecast'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count after fc");
+
+    let after_pf: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM object_shares \
+         WHERE share_type = 'team' AND object_type = 'portfolio'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count after pf");
+
+    sqlx::query(
+        "INSERT INTO object_shares
+            (object_type, object_id, share_type, share_target, permission, granted_by)
+         SELECT 'forecast', id::text, 'team', team_id::text, 'edit', owner_id::text
+         FROM fermi_forecasts WHERE team_id IS NOT NULL
+         ON CONFLICT (object_type, object_id, share_type, share_target) DO NOTHING",
+    )
+    .execute(&pool)
+    .await
+    .expect("backfill forecasts second run");
+
+    sqlx::query(
+        "INSERT INTO object_shares
+            (object_type, object_id, share_type, share_target, permission, granted_by)
+         SELECT 'portfolio', id::text, 'team', team_id::text, 'edit', owner_id::text
+         FROM fermi_portfolios WHERE team_id IS NOT NULL
+         ON CONFLICT (object_type, object_id, share_type, share_target) DO NOTHING",
+    )
+    .execute(&pool)
+    .await
+    .expect("backfill portfolios second run");
+
+    let after2_fc: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM object_shares \
+         WHERE share_type = 'team' AND object_type = 'forecast'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count after second fc");
+
+    let after2_pf: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM object_shares \
+         WHERE share_type = 'team' AND object_type = 'portfolio'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count after second pf");
+
+    assert_eq!(
+        after_fc, after2_fc,
+        "second backfill run must not add forecast team-shares"
+    );
+    assert_eq!(
+        after_pf, after2_pf,
+        "second backfill run must not add portfolio team-shares"
+    );
+
+    let _ = before_fc;
+    let _ = before_pf;
+}
+
+/// Every forecast/portfolio that has team_id set must have a matching
+/// object_shares row after migration 154. We also verify the row's
+/// fields match: share_type='team', permission='edit',
+/// share_target=team_id::text.
+#[tokio::test]
+#[ignore]
+async fn migration_154_backfill_matches_team_id() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let fc_no_team: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM fermi_forecasts f
+         WHERE f.team_id IS NOT NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM object_shares os
+             WHERE os.object_type = 'forecast'
+               AND os.object_id = f.id::text
+               AND os.share_type = 'team'
+               AND os.share_target = f.team_id::text
+           )",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("forecast mismatch count");
+
+    assert_eq!(
+        fc_no_team, 0,
+        "every forecast with team_id must have a matching object_shares row \
+         (found {} without)",
+        fc_no_team
+    );
+
+    let pf_no_team: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM fermi_portfolios p
+         WHERE p.team_id IS NOT NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM object_shares os
+             WHERE os.object_type = 'portfolio'
+               AND os.object_id = p.id::text
+               AND os.share_type = 'team'
+               AND os.share_target = p.team_id::text
+           )",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("portfolio mismatch count");
+
+    assert_eq!(
+        pf_no_team, 0,
+        "every portfolio with team_id must have a matching object_shares row \
+         (found {} without)",
+        pf_no_team
+    );
+
+    let wrong_perm: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM object_shares os
+         JOIN fermi_forecasts f ON os.object_id = f.id::text
+         WHERE os.object_type = 'forecast'
+           AND os.share_type = 'team'
+           AND os.permission != 'edit'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("wrong permission count");
+
+    assert_eq!(
+        wrong_perm, 0,
+        "all backfilled forecast team-shares must have permission='edit' \
+         (found {} with different permission)",
+        wrong_perm
+    );
+}
+
+// ─── Sprint 2.4b: Handler ACL switch (can_view/can_edit/can_admin) ──
+
+/// A direct user-share in object_shares grants list + detail access
+/// via the new object_shares EXISTS branch in list handlers and the
+/// can_view helper in detail handlers. We insert a private forecast
+/// owned by one user, create an object_shares row granting a second
+/// user view access, and verify the second user can see the forecast
+/// via the list WHERE clause.
+#[tokio::test]
+#[ignore]
+async fn can_view_grants_via_user_share() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+    let viewer_id = pick_second_existing_user_id(&pool).await.to_string();
+
+    // Grant view access via object_shares
+    sqlx::query(
+        "INSERT INTO object_shares
+            (object_type, object_id, share_type, share_target, permission, granted_by)
+         VALUES ('forecast', $1, 'user', $2, 'view', $3)",
+    )
+    .bind(&fid)
+    .bind(&viewer_id)
+    .bind(owner.to_string())
+    .execute(&pool)
+    .await
+    .expect("insert object_shares row");
+
+    // The list WHERE clause now includes the user-share branch.
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM fermi_forecasts f
+         WHERE f.id = $2
+           AND (f.owner_id = $1::uuid
+                OR f.visibility IN ('shared', 'public')
+                OR (f.team_id IS NOT NULL
+                    AND EXISTS (SELECT 1 FROM team_members m
+                                WHERE m.team_id = f.team_id AND m.member_id = $1))
+                OR EXISTS (SELECT 1 FROM object_shares s
+                           WHERE s.object_type = 'forecast'
+                             AND s.object_id = f.id::text
+                             AND s.share_type = 'user'
+                             AND s.share_target = $1))",
+    )
+    .bind(&viewer_id)
+    .bind(&fid)
+    .fetch_one(&pool)
+    .await
+    .expect("count");
+
+    assert_eq!(n, 1, "viewer with user-share must see the forecast in list");
+
+    // can_view must return true for the viewer
+    let principal = fermi_auth::AuthPrincipal::User(fermi_auth::User {
+        user_id: viewer_id.clone(),
+        email: format!("{}@test", viewer_id),
+        display_name: None,
+        role: fermi_auth::UserRole::Viewer,
+        auth_provider: fermi_auth::AuthProvider::Email,
+        github_username: None,
+        google_id: None,
+        ethereum_address: None,
+        ens_name: None,
+    });
+    let granted = fermi_auth::visibility::can_view(
+        &pool,
+        &principal,
+        fermi_auth::ObjectType::Forecast,
+        &fid,
+        &owner.to_string(),
+        fermi_auth::Visibility::Private,
+    )
+    .await
+    .expect("can_view call");
+    assert!(granted, "can_view must return true for user-share holder");
+
+    // Cleanup
+    sqlx::query("DELETE FROM object_shares WHERE share_target = $1 AND object_id = $2")
+        .bind(&viewer_id)
+        .bind(&fid)
+        .execute(&pool)
+        .await
+        .ok();
+    delete_test_forecast(&pool, &fid).await;
+}
+
+/// A user with permission='edit' via object_shares can update the
+/// forecast probability; a user with permission='view' cannot (403).
+#[tokio::test]
+#[ignore]
+async fn can_edit_collaborator_can_update_probability() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+    let editor_id = pick_second_existing_user_id(&pool).await.to_string();
+    let viewer_id = pick_third_existing_user_id(&pool).await.to_string();
+
+    // Grant edit and view permissions
+    sqlx::query(
+        "INSERT INTO object_shares
+            (object_type, object_id, share_type, share_target, permission, granted_by)
+         VALUES ('forecast', $1, 'user', $2, 'edit', $3)",
+    )
+    .bind(&fid)
+    .bind(&editor_id)
+    .bind(owner.to_string())
+    .execute(&pool)
+    .await
+    .expect("insert edit share");
+
+    sqlx::query(
+        "INSERT INTO object_shares
+            (object_type, object_id, share_type, share_target, permission, granted_by)
+         VALUES ('forecast', $1, 'user', $2, 'view', $3)",
+    )
+    .bind(&fid)
+    .bind(&viewer_id)
+    .bind(owner.to_string())
+    .execute(&pool)
+    .await
+    .expect("insert view share");
+
+    // Verify can_edit returns true for editor
+    let editor_principal = fermi_auth::AuthPrincipal::User(fermi_auth::User {
+        user_id: editor_id.clone(),
+        email: format!("{}@test", editor_id),
+        display_name: None,
+        role: fermi_auth::UserRole::Viewer,
+        auth_provider: fermi_auth::AuthProvider::Email,
+        github_username: None,
+        google_id: None,
+        ethereum_address: None,
+        ens_name: None,
+    });
+    let can_edit_result = fermi_auth::visibility::can_edit(
+        &pool,
+        &editor_principal,
+        fermi_auth::ObjectType::Forecast,
+        &fid,
+        &owner.to_string(),
+        fermi_auth::Visibility::Private,
+    )
+    .await
+    .expect("can_edit call for editor");
+    assert!(can_edit_result, "editor must have can_edit");
+
+    // Verify can_edit returns false for view-only user
+    let viewer_principal = fermi_auth::AuthPrincipal::User(fermi_auth::User {
+        user_id: viewer_id.clone(),
+        email: format!("{}@test", viewer_id),
+        display_name: None,
+        role: fermi_auth::UserRole::Viewer,
+        auth_provider: fermi_auth::AuthProvider::Email,
+        github_username: None,
+        google_id: None,
+        ethereum_address: None,
+        ens_name: None,
+    });
+    let can_edit_view = fermi_auth::visibility::can_edit(
+        &pool,
+        &viewer_principal,
+        fermi_auth::ObjectType::Forecast,
+        &fid,
+        &owner.to_string(),
+        fermi_auth::Visibility::Private,
+    )
+    .await
+    .expect("can_edit call for viewer");
+    assert!(!can_edit_view, "view-only user must NOT have can_edit");
+
+    // Cleanup
+    sqlx::query("DELETE FROM object_shares WHERE object_id = $1 AND share_target IN ($2, $3)")
+        .bind(&fid)
+        .bind(&editor_id)
+        .bind(&viewer_id)
+        .execute(&pool)
+        .await
+        .ok();
+    delete_test_forecast(&pool, &fid).await;
+}
+
+/// A user with permission='admin' via object_shares can create further
+/// shares; a non-admin user cannot.
+#[tokio::test]
+#[ignore]
+async fn can_admin_collaborator_can_share() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+    let admin_id = pick_second_existing_user_id(&pool).await.to_string();
+    let viewer_id = pick_third_existing_user_id(&pool).await.to_string();
+
+    // Grant admin and view permissions
+    sqlx::query(
+        "INSERT INTO object_shares
+            (object_type, object_id, share_type, share_target, permission, granted_by)
+         VALUES ('forecast', $1, 'user', $2, 'admin', $3)",
+    )
+    .bind(&fid)
+    .bind(&admin_id)
+    .bind(owner.to_string())
+    .execute(&pool)
+    .await
+    .expect("insert admin share");
+
+    sqlx::query(
+        "INSERT INTO object_shares
+            (object_type, object_id, share_type, share_target, permission, granted_by)
+         VALUES ('forecast', $1, 'user', $2, 'view', $3)",
+    )
+    .bind(&fid)
+    .bind(&viewer_id)
+    .bind(owner.to_string())
+    .execute(&pool)
+    .await
+    .expect("insert view share");
+
+    // Verify can_access returns Admin for admin user
+    let admin_principal = fermi_auth::AuthPrincipal::User(fermi_auth::User {
+        user_id: admin_id.clone(),
+        email: format!("{}@test", admin_id),
+        display_name: None,
+        role: fermi_auth::UserRole::Viewer,
+        auth_provider: fermi_auth::AuthProvider::Email,
+        github_username: None,
+        google_id: None,
+        ethereum_address: None,
+        ens_name: None,
+    });
+    let level = fermi_auth::visibility::can_access(
+        &pool,
+        &admin_principal,
+        fermi_auth::ObjectType::Forecast,
+        &fid,
+        &owner.to_string(),
+        fermi_auth::Visibility::Private,
+    )
+    .await
+    .expect("can_access call for admin");
+    assert!(level.has_admin(), "admin-share holder must have can_admin");
+
+    // Verify can_access does NOT return Admin for view-only user
+    let viewer_principal = fermi_auth::AuthPrincipal::User(fermi_auth::User {
+        user_id: viewer_id.clone(),
+        email: format!("{}@test", viewer_id),
+        display_name: None,
+        role: fermi_auth::UserRole::Viewer,
+        auth_provider: fermi_auth::AuthProvider::Email,
+        github_username: None,
+        google_id: None,
+        ethereum_address: None,
+        ens_name: None,
+    });
+    let view_level = fermi_auth::visibility::can_access(
+        &pool,
+        &viewer_principal,
+        fermi_auth::ObjectType::Forecast,
+        &fid,
+        &owner.to_string(),
+        fermi_auth::Visibility::Private,
+    )
+    .await
+    .expect("can_access call for viewer");
+    assert!(!view_level.has_admin(), "view-share holder must NOT have can_admin");
+
+    // Cleanup
+    sqlx::query("DELETE FROM object_shares WHERE object_id = $1 AND share_target IN ($2, $3)")
+        .bind(&fid)
+        .bind(&admin_id)
+        .bind(&viewer_id)
+        .execute(&pool)
+        .await
+        .ok();
+    delete_test_forecast(&pool, &fid).await;
+}
+
+/// An admin-share holder CAN delete the forecast (the spec puts delete
+/// under can_admin). Verify the can_access helper returns admin level
+/// for the admin-share holder, confirming the ACL is correct.
+#[tokio::test]
+#[ignore]
+async fn admin_share_holder_can_delete() {
+    let Some(pool) = try_pool().await else {
+        eprintln!("skip: DATABASE_URL not set");
+        return;
+    };
+
+    let suffix = unique_suffix();
+    let owner = pick_existing_user_id(&pool).await;
+    let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
+    let admin_id = pick_second_existing_user_id(&pool).await.to_string();
+
+    sqlx::query(
+        "INSERT INTO object_shares
+            (object_type, object_id, share_type, share_target, permission, granted_by)
+         VALUES ('forecast', $1, 'user', $2, 'admin', $3)",
+    )
+    .bind(&fid)
+    .bind(&admin_id)
+    .bind(owner.to_string())
+    .execute(&pool)
+    .await
+    .expect("insert admin share");
+
+    let admin_principal = fermi_auth::AuthPrincipal::User(fermi_auth::User {
+        user_id: admin_id.clone(),
+        email: format!("{}@test", admin_id),
+        display_name: None,
+        role: fermi_auth::UserRole::Viewer,
+        auth_provider: fermi_auth::AuthProvider::Email,
+        github_username: None,
+        google_id: None,
+        ethereum_address: None,
+        ens_name: None,
+    });
+    let level = fermi_auth::visibility::can_access(
+        &pool,
+        &admin_principal,
+        fermi_auth::ObjectType::Forecast,
+        &fid,
+        &owner.to_string(),
+        fermi_auth::Visibility::Private,
+    )
+    .await
+    .expect("can_access call");
+    assert!(level.has_admin(), "admin-share holder must have can_admin for delete");
+
+    // Cleanup
+    sqlx::query("DELETE FROM object_shares WHERE object_id = $1 AND share_target = $2")
+        .bind(&fid)
+        .bind(&admin_id)
+        .execute(&pool)
+        .await
+        .ok();
     delete_test_forecast(&pool, &fid).await;
 }

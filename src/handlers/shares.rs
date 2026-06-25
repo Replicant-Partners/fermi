@@ -16,13 +16,10 @@
 //! the target — closer to where the bug class lives (someone shares a
 //! forecast they don't own).
 //!
-//! Wave-1 authorization (today): only the owner of the target can create
-//! or revoke shares. Anyone with `can_view` access to the target can list
-//! its shares (so collaborators can see who else has access).
-//!
-//! Wave-2 (Sprint 2.4) will widen the create/revoke gate to `can_admin`
+//! Wave-2 authorization (Sprint 2.4): create/revoke gated on `can_admin`
 //! via `fermi_auth::visibility::can_access`, letting team admins manage
 //! shares on team-owned objects without owning every individual row.
+//! Anyone with `can_view` access to the target can list its shares.
 //!
 //! Schema-drift note: the principal's `user_id()` returns
 //! `users.user_id` (text), but `fermi_forecasts.owner_id` and
@@ -36,7 +33,8 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use fermi_auth::{teams, AuthPrincipal, ObjectType, Permission, ShareType};
+use fermi_auth::visibility::{can_access, can_view};
+use fermi_auth::{teams, AuthPrincipal, ObjectType, Permission, ShareType, Visibility};
 use serde::Deserialize;
 use serde_json::{json, Value as JsonValue};
 use sqlx::PgPool;
@@ -276,24 +274,17 @@ async fn portfolio_acl_row(
     Ok(row)
 }
 
-/// View-ACL = owner | not-private | team member of target's team. Same
-/// matrix as `get_forecast_handler` (post-Step-1).
+/// View-ACL via can_view (Spec 24 §3.2 Wave 2: honours user-shares too).
 async fn require_view_access_to_forecast(
     pool: &PgPool,
     forecast_id: &str,
     principal: &AuthPrincipal,
 ) -> Result<(), (StatusCode, String)> {
-    let (owner_id, visibility, team_id) = forecast_acl_row(pool, forecast_id).await?;
-    let user_id = principal.user_id();
-    if owner_id == user_id || visibility != "private" {
-        return Ok(());
-    }
-    let granted = match team_id {
-        Some(tid) => fermi_auth::visibility::is_team_member(pool, tid, &user_id)
-            .await
-            .unwrap_or(false),
-        None => false,
-    };
+    let (owner_id, visibility, _team_id) = forecast_acl_row(pool, forecast_id).await?;
+    let vis = Visibility::from_legacy(&visibility);
+    let granted = can_view(pool, principal, ObjectType::Forecast, forecast_id, &owner_id, vis)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     if granted {
         Ok(())
     } else {
@@ -306,17 +297,11 @@ async fn require_view_access_to_portfolio(
     portfolio_id: &str,
     principal: &AuthPrincipal,
 ) -> Result<(), (StatusCode, String)> {
-    let (owner_id, visibility, team_id) = portfolio_acl_row(pool, portfolio_id).await?;
-    let user_id = principal.user_id();
-    if owner_id == user_id || visibility != "private" {
-        return Ok(());
-    }
-    let granted = match team_id {
-        Some(tid) => fermi_auth::visibility::is_team_member(pool, tid, &user_id)
-            .await
-            .unwrap_or(false),
-        None => false,
-    };
+    let (owner_id, visibility, _team_id) = portfolio_acl_row(pool, portfolio_id).await?;
+    let vis = Visibility::from_legacy(&visibility);
+    let granted = can_view(pool, principal, ObjectType::Portfolio, portfolio_id, &owner_id, vis)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     if granted {
         Ok(())
     } else {
@@ -324,18 +309,23 @@ async fn require_view_access_to_portfolio(
     }
 }
 
-/// Admin-ACL = owner (Wave 1). Wave 2 expands to `can_admin` via
-/// object_shares so team admins can manage shares too.
+/// Admin-ACL via can_access (Spec 24 §3.2 Wave 2: can_admin via
+/// object_shares so team admins can manage shares too).
 async fn require_admin_access_to_forecast(
     pool: &PgPool,
     forecast_id: &str,
     principal: &AuthPrincipal,
 ) -> Result<(), (StatusCode, String)> {
-    let (owner_id, _v, _t) = forecast_acl_row(pool, forecast_id).await?;
-    if owner_id != principal.user_id() {
-        return Err((StatusCode::FORBIDDEN, "Not your forecast".into()));
+    let (owner_id, visibility, _t) = forecast_acl_row(pool, forecast_id).await?;
+    let vis = Visibility::from_legacy(&visibility);
+    let level = can_access(pool, principal, ObjectType::Forecast, forecast_id, &owner_id, vis)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if level.has_admin() {
+        Ok(())
+    } else {
+        Err((StatusCode::FORBIDDEN, "Admin access required".into()))
     }
-    Ok(())
 }
 
 async fn require_admin_access_to_portfolio(
@@ -343,11 +333,16 @@ async fn require_admin_access_to_portfolio(
     portfolio_id: &str,
     principal: &AuthPrincipal,
 ) -> Result<(), (StatusCode, String)> {
-    let (owner_id, _v, _t) = portfolio_acl_row(pool, portfolio_id).await?;
-    if owner_id != principal.user_id() {
-        return Err((StatusCode::FORBIDDEN, "Not your portfolio".into()));
+    let (owner_id, visibility, _t) = portfolio_acl_row(pool, portfolio_id).await?;
+    let vis = Visibility::from_legacy(&visibility);
+    let level = can_access(pool, principal, ObjectType::Portfolio, portfolio_id, &owner_id, vis)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if level.has_admin() {
+        Ok(())
+    } else {
+        Err((StatusCode::FORBIDDEN, "Admin access required".into()))
     }
-    Ok(())
 }
 
 /// Guard against a malicious DELETE that names a share_id pointing at a

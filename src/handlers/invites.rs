@@ -20,8 +20,8 @@
 //!           ─── accept  ──► accepted  (materialises grant in
 //!                                       object_shares / team_members)
 //!
-//! Wave-1 ACL on POST (matches `shares.rs`):
-//!   • forecast/portfolio: caller must own the target row.
+//! Wave-2 ACL on POST (Sprint 2.4, matches `shares.rs`):
+//!   • forecast/portfolio: caller must have `can_admin` access.
 //!   • team: caller must be team owner or admin (TeamRole::can_invite).
 //!
 //! The `permission` column on `forecast_invites` accepts both share
@@ -41,8 +41,9 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use fermi_auth::visibility::{can_access, can_view};
 use fermi_auth::{
-    teams, AuthPrincipal, MemberType, ObjectType, Permission, ShareType, TeamRole,
+    teams, AuthPrincipal, MemberType, ObjectType, Permission, ShareType, TeamRole, Visibility,
 };
 use serde::Deserialize;
 use serde_json::{json, Value as JsonValue};
@@ -93,41 +94,59 @@ fn mint_invite_token() -> String {
 
 // ─── ACL helpers — same shapes as src/handlers/shares.rs ───────────────
 
-async fn require_owner_of_forecast(
+async fn require_admin_of_forecast(
     pool: &PgPool,
     forecast_id: &str,
     principal: &AuthPrincipal,
 ) -> Result<(), (StatusCode, String)> {
-    let owner: Option<String> = sqlx::query_scalar(
-        "SELECT owner_id::text FROM fermi_forecasts WHERE id = $1",
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT owner_id::text, visibility FROM fermi_forecasts WHERE id = $1",
     )
     .bind(forecast_id)
     .fetch_optional(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    match owner {
+    match row {
         None => Err((StatusCode::NOT_FOUND, "Forecast not found".into())),
-        Some(oid) if oid == principal.user_id() => Ok(()),
-        Some(_) => Err((StatusCode::FORBIDDEN, "Not your forecast".into())),
+        Some((owner_id, visibility)) => {
+            let vis = Visibility::from_legacy(&visibility);
+            let level = can_access(pool, principal, ObjectType::Forecast, forecast_id, &owner_id, vis)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            if level.has_admin() {
+                Ok(())
+            } else {
+                Err((StatusCode::FORBIDDEN, "Admin access required".into()))
+            }
+        }
     }
 }
 
-async fn require_owner_of_portfolio(
+async fn require_admin_of_portfolio(
     pool: &PgPool,
     portfolio_id: &str,
     principal: &AuthPrincipal,
 ) -> Result<(), (StatusCode, String)> {
-    let owner: Option<String> = sqlx::query_scalar(
-        "SELECT owner_id::text FROM fermi_portfolios WHERE id = $1",
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT owner_id::text, visibility FROM fermi_portfolios WHERE id = $1",
     )
     .bind(portfolio_id)
     .fetch_optional(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    match owner {
+    match row {
         None => Err((StatusCode::NOT_FOUND, "Portfolio not found".into())),
-        Some(oid) if oid == principal.user_id() => Ok(()),
-        Some(_) => Err((StatusCode::FORBIDDEN, "Not your portfolio".into())),
+        Some((owner_id, visibility)) => {
+            let vis = Visibility::from_legacy(&visibility);
+            let level = can_access(pool, principal, ObjectType::Portfolio, portfolio_id, &owner_id, vis)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            if level.has_admin() {
+                Ok(())
+            } else {
+                Err((StatusCode::FORBIDDEN, "Admin access required".into()))
+            }
+        }
     }
 }
 
@@ -293,7 +312,7 @@ pub async fn invite_to_forecast_handler(
     Path(forecast_id): Path<String>,
     Json(body): Json<InviteRequest>,
 ) -> Result<(StatusCode, Json<JsonValue>), (StatusCode, String)> {
-    require_owner_of_forecast(&state.db, &forecast_id, &principal).await?;
+    require_admin_of_forecast(&state.db, &forecast_id, &principal).await?;
     let invite = create_invite_row(
         &state.db,
         "forecast",
@@ -313,7 +332,7 @@ pub async fn invite_to_portfolio_handler(
     Path(portfolio_id): Path<String>,
     Json(body): Json<InviteRequest>,
 ) -> Result<(StatusCode, Json<JsonValue>), (StatusCode, String)> {
-    require_owner_of_portfolio(&state.db, &portfolio_id, &principal).await?;
+    require_admin_of_portfolio(&state.db, &portfolio_id, &principal).await?;
     let invite = create_invite_row(
         &state.db,
         "portfolio",

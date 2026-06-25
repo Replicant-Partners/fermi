@@ -690,6 +690,14 @@ async fn run_migrations(db: &PgPool) {
         // 'portfolio' so portfolios can be shared through the same
         // mechanism as forecasts. Spec 24 §3.1.2.
         "migrations/152_object_shares_portfolio.sql",
+        // 154: backfill object_shares rows for forecasts/portfolios that
+        // already have team_id set, so the can_access / can_view helpers
+        // (Sprint 2.4b) see the team share through the canonical path.
+        // Without this, switching handlers from inline team_id checks to
+        // object_shares-based ACL would silently deny access to existing
+        // team-shared content. ON CONFLICT DO NOTHING → idempotent.
+        // Spec 24 §3.2 Wave 2 step 5.
+        "migrations/154_forecasts_object_shares_backfill.sql",
         // 153: pending_cascades — operator-gated review queue for
         // cascade propagation. Spec 23-extension. Previously numbered
         // 151 (collided with forecast_invites); renamed to 153 on
