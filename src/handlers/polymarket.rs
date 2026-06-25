@@ -1132,6 +1132,23 @@ pub async fn check_resolutions_handler(
                     }))
                     .execute(&state.db)
                     .await;
+
+                    // Queue a cascade review for any relationship group this
+                    // forecast belongs to (mutex/at_most_n). The oracle is the
+                    // REAL elimination path — without this hook, resolutions
+                    // here never queued cascades and siblings never rebalanced
+                    // (only the API /resolve handler had the hook, and nothing
+                    // routes real WC results through it). Operator-gated: we
+                    // queue; the operator reviews + applies in the console.
+                    crate::handlers::pending_cascades::queue_pending_cascade(
+                        &state.db,
+                        &forecast_id,
+                        "resolved",
+                        Some(actual_outcome),
+                        "polymarket_oracle",
+                        &user_id,
+                    )
+                    .await;
                 }
 
                 results.push(json!({

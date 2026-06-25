@@ -724,6 +724,7 @@ async fn run_migrations(db: &PgPool) {
         // this constraint going forward — add new object types HERE.
         "migrations/157_object_shares_complete_object_type.sql",
         "migrations/158_forecast_sim_probability.sql",
+        "migrations/159_pending_cascades_relationship_id_nullable.sql",
     ];
 
     for file in &migration_files {

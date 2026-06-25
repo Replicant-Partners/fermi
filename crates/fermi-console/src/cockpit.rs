@@ -6474,7 +6474,10 @@ impl CockpitState {
             return;
         }
         let api = self.api.clone();
+        let total = targets.len();
         cx.spawn(async move |this, cx| {
+            let mut ok = 0usize;
+            let mut failures: Vec<String> = Vec::new();
             for (raw, permission) in targets {
                 let is_email = raw.contains('@');
                 let resolved = if is_email {
@@ -6482,28 +6485,50 @@ impl CockpitState {
                 } else {
                     Some(raw.clone())
                 };
-                match resolved {
+                let res = match resolved {
                     Some(user_id) => {
                         let body = ShareRequest {
                             share_type: "user".into(),
                             share_target: user_id,
                             permission: Some(permission),
                         };
-                        let _ = api.add_forecast_share(&fid, &body).await;
+                        api.add_forecast_share(&fid, &body).await.map(|_| ())
                     }
                     None => {
                         let body = InviteRequest {
                             invitee_user_id: None,
-                            invitee_email: Some(raw),
+                            invitee_email: Some(raw.clone()),
                             permission,
                             message: None,
                         };
-                        let _ = api.invite_to_forecast(&fid, &body).await;
+                        api.invite_to_forecast(&fid, &body).await.map(|_| ())
+                    }
+                };
+                match res {
+                    Ok(()) => ok += 1,
+                    Err(e) => {
+                        log::error!("[publish-share] {} failed: {}", raw, e);
+                        failures.push(format!("{} ({})", raw, e));
                     }
                 }
             }
-            // Refresh the Access tab list so the new grants are visible.
+            // Surface the outcome — a silent swallow here is exactly the
+            // "I shared and nothing happened" failure mode.
             this.update(cx, |state, cx| {
+                if !failures.is_empty() {
+                    state.publish_status = Some(format!(
+                        "Published, but {}/{} share(s) failed: {}",
+                        failures.len(),
+                        total,
+                        failures.join("; ")
+                    ));
+                    state
+                        .pending_toasts
+                        .push(format!("{} share(s) failed — see publish status", failures.len()));
+                } else if ok > 0 {
+                    state.pending_toasts.push(format!("Shared with {}", ok));
+                }
+                // Refresh the Access tab list so the new grants are visible.
                 state.shares_loaded_for = None;
                 state.load_shares(cx);
                 cx.notify();
