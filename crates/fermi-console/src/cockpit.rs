@@ -37,8 +37,8 @@ use fermi::ast::{
 };
 
 use crate::api::client::{
-    AgentExecutionResult, ApiClient, CreateForecastRequest, ForecastSchedule,
-    UpsertScheduleRequest,
+    AgentExecutionResult, ApiClient, CreateForecastRequest, ForecastSchedule, InviteRequest,
+    ShareEntry, ShareRequest, UpsertScheduleRequest,
 };
 use crate::text_input::TextInput;
 use crate::theme;
@@ -76,6 +76,9 @@ pub enum RightTab {
     /// upstream resolution, and market poll. The "spacetime" view from
     /// the spec, scoped to this forecast.
     Trajectory,
+    /// Spec 24 §3.5.2: who can see/edit this forecast. Lists object_shares
+    /// rows and lets the owner add (by user/email) or revoke collaborators.
+    Access,
 }
 
 /// A live event from an SSE agent execution stream.
@@ -247,6 +250,22 @@ pub struct CockpitState {
     pub forecast_id: Option<String>,
     pub publish_status: Option<String>,
     pub api: Arc<ApiClient>,
+
+    // ── Access / sharing (Spec 24 §3.5.2) ─────────────────────────
+    /// Current object_shares rows for this forecast (Access tab).
+    pub shares: Vec<ShareEntry>,
+    pub shares_loading: bool,
+    /// Target input for "add collaborator" (email or user_id).
+    pub share_input: Entity<TextInput>,
+    /// Permission to grant on add: view | edit | admin (cycle chip).
+    pub share_permission: String,
+    pub share_add_loading: bool,
+    pub share_error: Option<String>,
+    /// Loaded-shares marker so we only auto-fetch once per forecast_id.
+    pub shares_loaded_for: Option<String>,
+    /// Share targets collected in the commit sheet (target, permission),
+    /// applied right after the forecast row is created/updated on publish.
+    pub pending_publish_shares: Vec<(String, String)>,
     pub registry: Arc<AgentRegistry>,
     pub cached_fpl: String,
     pub inside_view_explanation: String,
@@ -499,6 +518,9 @@ impl CockpitState {
                 .with_placeholder("What does this evidence say?")
                 .with_label("Summary")
         });
+        let share_input = cx.new(|cx| {
+            TextInput::new(cx).with_placeholder("email or user id…")
+        });
         let (tx, rx) = std_mpsc::channel::<SseEvent>();
         let s = Self {
             program: Program::empty(),
@@ -548,6 +570,14 @@ impl CockpitState {
             forecast_id: None,
             publish_status: None,
             api,
+            shares: Vec::new(),
+            shares_loading: false,
+            share_input,
+            share_permission: "view".into(),
+            share_add_loading: false,
+            share_error: None,
+            shares_loaded_for: None,
+            pending_publish_shares: Vec::new(),
             registry,
             cached_fpl: String::new(),
             inside_view_explanation: String::new(),
@@ -4790,12 +4820,52 @@ impl CockpitState {
                         .parse::<f64>()
                         .unwrap_or(1.2);
                     let unit = self.editor_unit.read(cx).text().to_string();
-                    driver.distribution = Some(Distribution::Triangular {
-                        p5: Expression::Number(p5),
-                        p50: Expression::Number(p50),
-                        p95: Expression::Number(p95),
-                    });
+
+                    // Param-indirection bridge (post-Option-2 team-prior
+                    // template). Workspace-backed forecasts define each
+                    // driver as `triangular(socio_p5, socio_p50, socio_p95)`
+                    // — the triple is bound from workspace params, and
+                    // run_simulation PRESERVES that FPL verbatim (see
+                    // cached_fpl_is_richer_than_ast) instead of regenerating
+                    // it from this AST. If we only overwrote the AST with
+                    // literals, the edit would never reach the executed FPL
+                    // and the sim wouldn't move — the regression behind
+                    // "editing distributions only makes minor changes".
+                    //
+                    // So when the loaded distribution references param names,
+                    // KEEP the identifiers in the AST and mirror the edited
+                    // values into workspace_params under those names.
+                    // run_simulation's set_params then binds them and the
+                    // preserved FPL picks them up. The editor was pre-filled
+                    // from these same params on focus, so an un-edited save
+                    // round-trips the existing values without clobbering.
+                    let param_refs: Option<(String, String, String)> =
+                        match &driver.distribution {
+                            Some(Distribution::Triangular {
+                                p5: Expression::Identifier(a),
+                                p50: Expression::Identifier(b),
+                                p95: Expression::Identifier(c),
+                            }) => Some((a.clone(), b.clone(), c.clone())),
+                            _ => None,
+                        };
+
+                    if param_refs.is_none() {
+                        // Literal-args distribution (legacy hand-authored
+                        // FPL): regeneration is safe, write literals.
+                        driver.distribution = Some(Distribution::Triangular {
+                            p5: Expression::Number(p5),
+                            p50: Expression::Number(p50),
+                            p95: Expression::Number(p95),
+                        });
+                    }
                     driver.unit = if unit.is_empty() { None } else { Some(unit) };
+
+                    // driver's borrow ends above; apply param mirroring.
+                    if let Some((a, b, c)) = param_refs {
+                        self.workspace_params.insert(a, serde_json::json!(p5));
+                        self.workspace_params.insert(b, serde_json::json!(p50));
+                        self.workspace_params.insert(c, serde_json::json!(p95));
+                    }
                 }
                 DriverType::Binary => {
                     let prob = self
@@ -6242,6 +6312,182 @@ impl CockpitState {
         cx.notify();
     }
 
+    // ── Access / sharing (Spec 24 §3.5.2) ──────────────────────────────
+
+    /// Fetch the current shares for this forecast into the Access tab.
+    pub fn load_shares(&mut self, cx: &mut Context<Self>) {
+        let Some(fid) = self.forecast_id.clone() else {
+            return;
+        };
+        self.shares_loading = true;
+        self.share_error = None;
+        self.shares_loaded_for = Some(fid.clone());
+        cx.notify();
+
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.list_forecast_shares(&fid).await;
+            this.update(cx, |state, cx| {
+                state.shares_loading = false;
+                match result {
+                    Ok(resp) => state.shares = resp.shares,
+                    Err(e) => state.share_error = Some(e.to_string()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Add a collaborator from the share input. Email targets are resolved
+    /// via `/api/users/lookup`: a hit becomes an instant user-share, a miss
+    /// becomes a pending email invite. Non-email input is treated as a
+    /// `user_id` and shared directly.
+    pub fn add_share_from_input(&mut self, cx: &mut Context<Self>) {
+        let Some(fid) = self.forecast_id.clone() else {
+            self.share_error = Some("Publish the forecast first (Ctrl+P).".into());
+            cx.notify();
+            return;
+        };
+        let raw = self.share_input.read(cx).text().trim().to_string();
+        if raw.is_empty() {
+            return;
+        }
+        self.share_add_loading = true;
+        self.share_error = None;
+        cx.notify();
+
+        let api = self.api.clone();
+        let permission = self.share_permission.clone();
+        let share_input = self.share_input.clone();
+        cx.spawn(async move |this, cx| {
+            let is_email = raw.contains('@');
+            // Resolve emails to a user_id when an account exists.
+            let resolved_user = if is_email {
+                api.lookup_user(&raw).await.ok().flatten().map(|u| u.user_id)
+            } else {
+                Some(raw.clone())
+            };
+
+            let result: Result<String, String> = match resolved_user {
+                Some(user_id) => {
+                    // Known principal → direct user share.
+                    let body = ShareRequest {
+                        share_type: "user".into(),
+                        share_target: user_id,
+                        permission: Some(permission.clone()),
+                    };
+                    api.add_forecast_share(&fid, &body)
+                        .await
+                        .map(|_| "Shared".to_string())
+                        .map_err(|e| e.to_string())
+                }
+                None => {
+                    // Unknown email → pending email invite.
+                    let body = InviteRequest {
+                        invitee_user_id: None,
+                        invitee_email: Some(raw.clone()),
+                        permission: permission.clone(),
+                        message: None,
+                    };
+                    api.invite_to_forecast(&fid, &body)
+                        .await
+                        .map(|_| "Invite sent".to_string())
+                        .map_err(|e| e.to_string())
+                }
+            };
+
+            this.update(cx, |state, cx| {
+                state.share_add_loading = false;
+                match result {
+                    Ok(_) => {
+                        share_input.update(cx, |inp, cx| inp.set_text("", cx));
+                        state.load_shares(cx);
+                    }
+                    Err(e) => state.share_error = Some(e),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Revoke a share by its object_shares id, then refresh the list.
+    pub fn revoke_share(&mut self, share_id: String, cx: &mut Context<Self>) {
+        let Some(fid) = self.forecast_id.clone() else {
+            return;
+        };
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.revoke_forecast_share(&fid, &share_id).await;
+            this.update(cx, |state, cx| {
+                match result {
+                    Ok(()) => state.load_shares(cx),
+                    Err(e) => state.share_error = Some(e.to_string()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Apply commit-sheet share targets to a freshly-published forecast.
+    /// Each (target, permission) is resolved the same way the Access tab
+    /// resolves a manual add: emails hit `/api/users/lookup` (instant share
+    /// on hit, pending email invite on miss); anything else is a user_id
+    /// share. Runs in one background task so the Commit click stays snappy.
+    pub fn apply_publish_shares(
+        &mut self,
+        fid: String,
+        targets: Vec<(String, String)>,
+        cx: &mut Context<Self>,
+    ) {
+        if targets.is_empty() {
+            return;
+        }
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            for (raw, permission) in targets {
+                let is_email = raw.contains('@');
+                let resolved = if is_email {
+                    api.lookup_user(&raw).await.ok().flatten().map(|u| u.user_id)
+                } else {
+                    Some(raw.clone())
+                };
+                match resolved {
+                    Some(user_id) => {
+                        let body = ShareRequest {
+                            share_type: "user".into(),
+                            share_target: user_id,
+                            permission: Some(permission),
+                        };
+                        let _ = api.add_forecast_share(&fid, &body).await;
+                    }
+                    None => {
+                        let body = InviteRequest {
+                            invitee_user_id: None,
+                            invitee_email: Some(raw),
+                            permission,
+                            message: None,
+                        };
+                        let _ = api.invite_to_forecast(&fid, &body).await;
+                    }
+                }
+            }
+            // Refresh the Access tab list so the new grants are visible.
+            this.update(cx, |state, cx| {
+                state.shares_loaded_for = None;
+                state.load_shares(cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     pub fn publish_forecast(&mut self, visibility: String, cx: &mut Context<Self>) {
         self.save_focused_driver(cx);
         // Same guard as run_simulation — never regenerate cached_fpl from
@@ -6394,6 +6640,12 @@ impl CockpitState {
                         });
                         // Load any existing schedules now that we have a forecast_id
                         state.load_schedules(cx);
+                        // Apply any share targets collected in the commit sheet
+                        // now that the forecast row (and its id) exists.
+                        if !state.pending_publish_shares.is_empty() {
+                            let targets = std::mem::take(&mut state.pending_publish_shares);
+                            state.apply_publish_shares(fid.clone(), targets, cx);
+                        }
                         cx.notify();
                     })
                     .ok();
@@ -6864,6 +7116,9 @@ impl Render for CockpitState {
                                 }
                                 RightTab::Trajectory => {
                                     render_trajectory_tab(self, cx).into_any_element()
+                                }
+                                RightTab::Access => {
+                                    render_access_tab(self, cx).into_any_element()
                                 }
                             }),
                     )
@@ -11602,6 +11857,7 @@ fn render_tab_bar(active: RightTab, cx: &mut Context<CockpitState>) -> impl Into
         (RightTab::Wiki, "Wiki"),
         (RightTab::Schedules, "Schedules"),
         (RightTab::Trajectory, "Trajectory"),
+        (RightTab::Access, "Access"),
     ];
 
     div()
@@ -11653,9 +11909,191 @@ fn render_tab_bar(active: RightTab, cx: &mut Context<CockpitState>) -> impl Into
                     if t == RightTab::Trajectory {
                         this.load_timeline(cx);
                     }
+                    if t == RightTab::Access {
+                        // Lazy-load shares once per forecast_id.
+                        if this.shares_loaded_for != this.forecast_id {
+                            this.load_shares(cx);
+                        }
+                    }
                     cx.notify();
                 }))
                 .child(label.to_string())
+        }))
+}
+
+/// Spec 24 §3.5.2 — the cockpit "Access" tab. Lists who can see/edit this
+/// forecast and lets the owner add (by user_id or email) or revoke
+/// collaborators at view/edit/admin granularity.
+fn render_access_tab(
+    state: &CockpitState,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let container = div()
+        .id("access-tab")
+        .flex()
+        .flex_col()
+        .gap(px(12.0))
+        .p(px(16.0))
+        .overflow_y_scroll();
+
+    // Gate on a published forecast — shares attach to a forecast row.
+    if state.forecast_id.is_none() {
+        return container.child(
+            div()
+                .p(px(8.0))
+                .text_size(px(11.0))
+                .text_color(rgb(theme::FG_DIM))
+                .child(
+                    "Publish this forecast first (Ctrl+P) to share it with people or teams.",
+                ),
+        );
+    }
+
+    let perm = state.share_permission.clone();
+
+    container
+        .child(
+            div()
+                .text_size(px(13.0))
+                .font_weight(FontWeight::BOLD)
+                .text_color(rgb(theme::CYAN))
+                .child("🔗 Access"),
+        )
+        .child(
+            div()
+                .text_size(px(10.0))
+                .text_color(rgb(theme::FG_DIM))
+                .child(
+                    "Add by email (sends an invite if they have no account) or user id. \
+                     Share with a whole team from the Teams panel.",
+                ),
+        )
+        // Add-collaborator row
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(div().flex_grow().child(state.share_input.clone()))
+                // Permission cycle chip
+                .child(
+                    div()
+                        .id("share-perm")
+                        .px(px(10.0))
+                        .py(px(6.0))
+                        .rounded(px(4.0))
+                        .bg(rgb(theme::BG_ACTIVE))
+                        .text_size(px(11.0))
+                        .text_color(rgb(theme::GOLD))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                        .on_click(cx.listener(|this, _, _w, cx| {
+                            this.share_permission = match this.share_permission.as_str() {
+                                "view" => "edit",
+                                "edit" => "admin",
+                                _ => "view",
+                            }
+                            .into();
+                            cx.notify();
+                        }))
+                        .child(perm),
+                )
+                .child(
+                    div()
+                        .id("share-add")
+                        .px(px(12.0))
+                        .py(px(6.0))
+                        .rounded(px(4.0))
+                        .bg(rgb(theme::CYAN))
+                        .text_size(px(11.0))
+                        .text_color(rgb(theme::BG))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .cursor_pointer()
+                        .hover(|s| s.opacity(0.85))
+                        .on_click(cx.listener(|this, _, _w, cx| {
+                            this.add_share_from_input(cx);
+                        }))
+                        .child(if state.share_add_loading { "Adding…" } else { "Add" }),
+                ),
+        )
+        // Error line
+        .when(state.share_error.is_some(), |el| {
+            el.child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(rgb(theme::RED))
+                    .child(state.share_error.clone().unwrap_or_default()),
+            )
+        })
+        // Shares list header
+        .child(
+            div()
+                .text_size(px(11.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(theme::FG_DIM))
+                .child(if state.shares_loading {
+                    "Loading shares…".to_string()
+                } else {
+                    format!("Shared with ({})", state.shares.len())
+                }),
+        )
+        .when(state.shares.is_empty() && !state.shares_loading, |el| {
+            el.child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(rgb(theme::FG_FAINT))
+                    .child("Private — not shared with anyone yet."),
+            )
+        })
+        // Share rows
+        .children(state.shares.iter().map(|s| {
+            let sid = s.id.clone();
+            let icon = if s.share_type == "team" { "👥" } else { "🧑" };
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .px(px(10.0))
+                .py(px(7.0))
+                .rounded(px(6.0))
+                .bg(rgb(theme::BG_ELEVATED))
+                .child(div().text_size(px(12.0)).child(icon))
+                .child(
+                    div()
+                        .flex_grow()
+                        .overflow_hidden()
+                        .text_size(px(11.0))
+                        .text_color(rgb(theme::FG))
+                        .child(s.share_target.clone()),
+                )
+                .child(
+                    div()
+                        .px(px(8.0))
+                        .py(px(2.0))
+                        .rounded(px(4.0))
+                        .bg(rgb(theme::BG_ACTIVE))
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::GOLD))
+                        .child(s.permission.clone()),
+                )
+                .child(
+                    div()
+                        .id(ElementId::Name(format!("revoke-{}", sid).into()))
+                        .px(px(6.0))
+                        .py(px(2.0))
+                        .rounded(px(4.0))
+                        .text_size(px(12.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::RED)))
+                        .on_click(cx.listener({
+                            let sid = sid.clone();
+                            move |this, _, _w, cx| {
+                                this.revoke_share(sid.clone(), cx);
+                            }
+                        }))
+                        .child("✕"),
+                )
         }))
 }
 

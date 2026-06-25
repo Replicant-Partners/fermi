@@ -132,6 +132,11 @@ pub struct Forecast {
     pub resolution_notes: Option<String>,
     pub visibility: String,
     pub team_id: Option<String>,
+    /// COUNT of `object_shares` rows targeting this forecast (Spec 24
+    /// §3.5.6). Not currently returned by the main list projection, so
+    /// `default`s to None — the badge treats None as 0.
+    #[serde(default)]
+    pub share_count: Option<i64>,
     /// The ABW workspace this forecast is backed by, when set. Populated by
     /// the server JOIN in get_forecast_handler. The cockpit needs this to
     /// fire workspace-scoped endpoints (BayesOps state, refit, set output).
@@ -487,6 +492,151 @@ pub struct AuthMe {
     pub user_id: String,
     pub display_name: Option<String>,
     pub email: Option<String>,
+}
+
+// ── Collaboration: shares / teams / invites (Spec 24) ──────────────
+
+/// One `object_shares` row, as returned by the per-target share list
+/// endpoints. Mirrors `fermi_auth::types::ObjectShare`; the enum fields
+/// arrive as lowercase strings (`"user"|"team"`, `"view"|"edit"|"admin"`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareEntry {
+    pub id: String,
+    pub object_type: String,
+    pub object_id: String,
+    pub share_type: String,
+    pub share_target: String,
+    pub permission: String,
+    pub granted_by: String,
+}
+
+/// Response envelope for `GET /api/{forecasts|portfolios}/:id/shares`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareListResponse {
+    #[serde(default)]
+    pub shares: Vec<ShareEntry>,
+    #[serde(default)]
+    pub count: usize,
+}
+
+/// Body for `POST /api/{forecasts|portfolios}/:id/shares`
+/// (`handlers::shares::CreateShareRequest`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareRequest {
+    /// `"user"` or `"team"`.
+    pub share_type: String,
+    /// For `user`: the recipient's `user_id`. For `team`: the team UUID.
+    pub share_target: String,
+    /// `"view"|"edit"|"admin"`. Server defaults to `"view"` when omitted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Team {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+    pub description: Option<String>,
+    pub owner_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamListResponse {
+    #[serde(default)]
+    pub teams: Vec<Team>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMember {
+    pub team_id: String,
+    pub member_type: String,
+    pub member_id: String,
+    pub role: String,
+    pub joined_at: Option<String>,
+}
+
+/// Response for `GET /api/teams/:id` — the team plus its members.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamDetail {
+    pub team: Team,
+    #[serde(default)]
+    pub members: Vec<TeamMember>,
+}
+
+/// Body for `POST /api/teams`. `slug` must pass server slug validation
+/// (lowercase, no path separators).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateTeamRequest {
+    pub name: String,
+    pub slug: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// Body for `POST /api/teams/:id/members` (direct add, back-compat path).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddMemberRequest {
+    pub member_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub member_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+}
+
+/// Body for `POST /api/{forecasts|portfolios|teams}/:id/invites`
+/// (`handlers::invites::InviteRequest`). Exactly one of
+/// `invitee_user_id` / `invitee_email` must be set.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InviteRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invitee_user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invitee_email: Option<String>,
+    /// `"view"|"edit"|"admin"` for forecast/portfolio;
+    /// `"owner"|"admin"|"member"|"viewer"` for team.
+    pub permission: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// One pending invite from `GET /api/me/invites`. The server omits the
+/// token deliberately (the invitee sees the row in their inbox already).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Invite {
+    pub id: String,
+    pub target_type: String,
+    pub target_id: String,
+    pub permission: String,
+    #[serde(default)]
+    pub invitee_user_id: Option<String>,
+    #[serde(default)]
+    pub invitee_email: Option<String>,
+    pub inviter_id: String,
+    #[serde(default)]
+    pub message: Option<String>,
+    pub status: String,
+    pub expires_at: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InviteListResponse {
+    #[serde(default)]
+    pub invites: Vec<Invite>,
+    #[serde(default)]
+    pub count: usize,
+}
+
+/// Result of `GET /api/users/lookup?email=…`. `None` (404 → mapped to
+/// `Ok(None)`) means "no account with that email → send an email invite."
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserSummary {
+    pub user_id: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1438,6 +1588,200 @@ impl ApiClient {
             &body,
         )
         .await
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Collaboration — forecast/portfolio sharing (Spec 24 §3.4)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// List the `object_shares` rows on a forecast. Caller must be able
+    /// to view the forecast.
+    pub async fn list_forecast_shares(
+        &self,
+        forecast_id: &str,
+    ) -> Result<ShareListResponse, ApiError> {
+        self.get(&format!("/api/forecasts/{}/shares", forecast_id))
+            .await
+    }
+
+    /// Add a share to a forecast (caller must have admin access).
+    /// Idempotent server-side: repeat POSTs upgrade/downgrade the grant.
+    pub async fn add_forecast_share(
+        &self,
+        forecast_id: &str,
+        body: &ShareRequest,
+    ) -> Result<ShareEntry, ApiError> {
+        self.post(&format!("/api/forecasts/{}/shares", forecast_id), body)
+            .await
+    }
+
+    /// Revoke a forecast share by its `object_shares` id.
+    pub async fn revoke_forecast_share(
+        &self,
+        forecast_id: &str,
+        share_id: &str,
+    ) -> Result<(), ApiError> {
+        self.delete(&format!(
+            "/api/forecasts/{}/shares/{}",
+            forecast_id, share_id
+        ))
+        .await
+    }
+
+    pub async fn list_portfolio_shares(
+        &self,
+        portfolio_id: &str,
+    ) -> Result<ShareListResponse, ApiError> {
+        self.get(&format!("/api/portfolios/{}/shares", portfolio_id))
+            .await
+    }
+
+    pub async fn add_portfolio_share(
+        &self,
+        portfolio_id: &str,
+        body: &ShareRequest,
+    ) -> Result<ShareEntry, ApiError> {
+        self.post(&format!("/api/portfolios/{}/shares", portfolio_id), body)
+            .await
+    }
+
+    pub async fn revoke_portfolio_share(
+        &self,
+        portfolio_id: &str,
+        share_id: &str,
+    ) -> Result<(), ApiError> {
+        self.delete(&format!(
+            "/api/portfolios/{}/shares/{}",
+            portfolio_id, share_id
+        ))
+        .await
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Collaboration — teams (Spec 24 §3.4)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// List teams the authenticated user belongs to (typed wrapper over
+    /// the existing `list_teams` which returns raw JSON).
+    pub async fn list_my_teams(&self) -> Result<TeamListResponse, ApiError> {
+        self.get("/api/teams").await
+    }
+
+    /// Get a team plus its member roster.
+    pub async fn get_team_detail(&self, team_id: &str) -> Result<TeamDetail, ApiError> {
+        self.get(&format!("/api/teams/{}", team_id)).await
+    }
+
+    /// Create a new team. Returns the created team as raw JSON (the
+    /// server's response carries extra composition fields).
+    pub async fn create_team(&self, body: &CreateTeamRequest) -> Result<JsonValue, ApiError> {
+        self.post("/api/teams", body).await
+    }
+
+    /// Directly add a member to a team (owner/admin only). For unknown
+    /// users prefer `invite_to_team`.
+    pub async fn add_team_member(
+        &self,
+        team_id: &str,
+        body: &AddMemberRequest,
+    ) -> Result<JsonValue, ApiError> {
+        self.post(&format!("/api/teams/{}/members", team_id), body)
+            .await
+    }
+
+    /// Remove a member from a team.
+    pub async fn remove_team_member(
+        &self,
+        team_id: &str,
+        member_id: &str,
+    ) -> Result<(), ApiError> {
+        self.delete(&format!("/api/teams/{}/members/{}", team_id, member_id))
+            .await
+    }
+
+    /// Change a member's role (owner/admin only).
+    pub async fn update_team_member_role(
+        &self,
+        team_id: &str,
+        member_id: &str,
+        role: &str,
+    ) -> Result<JsonValue, ApiError> {
+        self.put(
+            &format!("/api/teams/{}/members/{}", team_id, member_id),
+            &json!({ "role": role }),
+        )
+        .await
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Collaboration — invites (Spec 24 §3.4)
+    // ═══════════════════════════════════════════════════════════════
+
+    pub async fn invite_to_forecast(
+        &self,
+        forecast_id: &str,
+        body: &InviteRequest,
+    ) -> Result<JsonValue, ApiError> {
+        self.post(&format!("/api/forecasts/{}/invites", forecast_id), body)
+            .await
+    }
+
+    pub async fn invite_to_portfolio(
+        &self,
+        portfolio_id: &str,
+        body: &InviteRequest,
+    ) -> Result<JsonValue, ApiError> {
+        self.post(&format!("/api/portfolios/{}/invites", portfolio_id), body)
+            .await
+    }
+
+    pub async fn invite_to_team(
+        &self,
+        team_id: &str,
+        body: &InviteRequest,
+    ) -> Result<JsonValue, ApiError> {
+        self.post(&format!("/api/teams/{}/invites", team_id), body)
+            .await
+    }
+
+    /// List the calling user's pending invites (the Inbox feed).
+    pub async fn list_my_invites(&self) -> Result<InviteListResponse, ApiError> {
+        self.get("/api/me/invites").await
+    }
+
+    /// Accept an invite. Materialises the grant server-side.
+    pub async fn accept_invite(&self, invite_id: &str) -> Result<JsonValue, ApiError> {
+        self.post(&format!("/api/invites/{}/accept", invite_id), &json!({}))
+            .await
+    }
+
+    /// Decline an invite.
+    pub async fn decline_invite(&self, invite_id: &str) -> Result<JsonValue, ApiError> {
+        self.post(&format!("/api/invites/{}/decline", invite_id), &json!({}))
+            .await
+    }
+
+    /// Revoke an invite (inviter or team admin).
+    pub async fn revoke_invite(&self, invite_id: &str) -> Result<(), ApiError> {
+        self.delete(&format!("/api/invites/{}", invite_id)).await
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Collaboration — user lookup (Spec 24 §3.4)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Exact, case-insensitive email lookup for the share typeahead.
+    /// Returns `Ok(None)` when no account exists (→ send an email invite)
+    /// and `Ok(Some(user))` for an instant share.
+    pub async fn lookup_user(&self, email: &str) -> Result<Option<UserSummary>, ApiError> {
+        match self
+            .get_with_query::<UserSummary>("/api/users/lookup", &[("email".into(), email.into())])
+            .await
+        {
+            Ok(u) => Ok(Some(u)),
+            Err(ApiError::NotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 }
 

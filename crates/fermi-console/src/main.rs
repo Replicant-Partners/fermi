@@ -10,9 +10,10 @@ mod composer;
 mod text_input;
 
 use api::client::{
-    ApiClient, ApiConfig, CalibrationData, CreatePortfolioRequest, Forecast,
-    ForecastQuery, LeaderboardEntry, LeaderboardQuery, MyStats,
-    PatchPortfolioRequest, Portfolio, PortfolioForecast, PortfolioStats,
+    ApiClient, ApiConfig, CalibrationData, CreatePortfolioRequest, CreateTeamRequest, Forecast,
+    ForecastQuery, Invite, InviteRequest, LeaderboardEntry, LeaderboardQuery, MyStats,
+    PatchPortfolioRequest, Portfolio, PortfolioForecast, PortfolioStats, ShareEntry, ShareRequest,
+    Team, TeamDetail,
 };
 use std::collections::{HashMap, HashSet};
 use cockpit::CockpitState;
@@ -60,6 +61,7 @@ fn build_menus() -> Vec<Menu> {
                 MenuItem::action("Agent Fleet           Ctrl+3", ShowAgentFleet),
                 MenuItem::action("Composer              Ctrl+4", ShowComposer),
                 MenuItem::action("Leaderboard           Ctrl+5", ShowLeaderboard),
+                MenuItem::action("Teams                 Ctrl+6", ShowTeams),
                 MenuItem::separator(),
                 MenuItem::action("Toggle FPL Source     Ctrl+E", ToggleFplSource),
             ],
@@ -171,6 +173,7 @@ actions!(
         ShowAgentFleet,
         ShowComposer,
         ShowLeaderboard,
+        ShowTeams,
         NewForecast,
         RunSimulation,
         ToggleCommandPalette,
@@ -195,6 +198,7 @@ enum Panel {
     AgentFleet,
     Composer,
     Leaderboard,
+    Teams,
 }
 
 /// Ordering options for the portfolio detail's forecast list. Each maps to
@@ -243,6 +247,7 @@ impl Panel {
             Panel::AgentFleet => "Agent Fleet",
             Panel::Composer => "Composer",
             Panel::Leaderboard => "Leaderboard",
+            Panel::Teams => "Teams",
         }
     }
 
@@ -253,6 +258,7 @@ impl Panel {
             Panel::AgentFleet => "⚙",
             Panel::Composer => "✎",
             Panel::Leaderboard => "⚑",
+            Panel::Teams => "👥",
         }
     }
 
@@ -263,6 +269,7 @@ impl Panel {
             Panel::AgentFleet => "Ctrl+3",
             Panel::Composer => "Ctrl+4",
             Panel::Leaderboard => "Ctrl+5",
+            Panel::Teams => "Ctrl+6",
         }
     }
 
@@ -273,6 +280,7 @@ impl Panel {
             Panel::AgentFleet,
             Panel::Composer,
             Panel::Leaderboard,
+            Panel::Teams,
         ]
     }
 }
@@ -406,6 +414,15 @@ struct FermiConsole {
     portfolio_rename_id: Option<String>,
     portfolio_rename_input: Entity<TextInput>,
     portfolio_confirm_delete_id: Option<String>,
+    // ── Portfolio Access panel (Spec 24 §3.5.3) ───────────────────
+    portfolio_share_showing: bool,
+    portfolio_shares: Vec<ShareEntry>,
+    portfolio_shares_loading: bool,
+    portfolio_share_input: Entity<TextInput>,
+    portfolio_share_permission: String,
+    portfolio_share_error: Option<String>,
+    /// Which portfolio the loaded `portfolio_shares` belong to.
+    portfolio_shares_loaded_for: Option<String>,
     /// Sort mode for the portfolio detail's forecast rows.
     portfolio_sort_mode: PortfolioSortMode,
     /// Free-text filter for the portfolio detail. The entity owns the
@@ -419,6 +436,13 @@ struct FermiConsole {
     commit_sheet_visibility: String,
     commit_sheet_question: String,
     commit_sheet_probability: f64,
+    /// Spec 24 §3.5.1: collaborators to share with on commit. Each entry is
+    /// (target, permission); target is an email or user_id. Applied after
+    /// the forecast row is written, so one Commit click is one logical op.
+    commit_share_targets: Vec<(String, String)>,
+    commit_share_input: Entity<TextInput>,
+    /// Permission for the next "add" — view | edit | admin (cycle chip).
+    commit_share_permission: String,
 
     // Resolve sheet (record actual outcome of an active forecast)
     resolve_sheet_showing: bool,
@@ -453,6 +477,36 @@ struct FermiConsole {
     /// disables their buttons until the action completes so a
     /// double-click can't double-fire.
     cascade_action_in_flight: std::collections::HashSet<String>,
+
+    // ── Teams panel (Spec 24 §3.5.4) ──────────────────────────────
+    /// Teams the user belongs to (left pane of Panel::Teams).
+    teams: Vec<Team>,
+    teams_loading: bool,
+    /// The team selected in the left pane; drives the right-pane detail.
+    selected_team_id: Option<String>,
+    /// Loaded detail (team + members) for `selected_team_id`.
+    selected_team_detail: Option<TeamDetail>,
+    team_detail_loading: bool,
+    /// "Create team" modal state.
+    team_create_showing: bool,
+    team_create_name_input: Entity<TextInput>,
+    team_create_slug_input: Entity<TextInput>,
+    team_create_loading: bool,
+    team_create_error: Option<String>,
+    /// Inline "+ Invite member" row state inside the team detail pane.
+    team_invite_showing: bool,
+    team_invite_input: Entity<TextInput>,
+    /// Selected team role for the pending invite (owner/admin/member/viewer).
+    team_invite_role: String,
+    team_invite_loading: bool,
+    team_action_error: Option<String>,
+
+    // ── Inbox: pending invites (Spec 24 §3.5.5) ───────────────────
+    inbox_invites: Vec<Invite>,
+    inbox_loading: bool,
+    inbox_sheet_showing: bool,
+    /// Invite IDs with an accept/decline in flight (disables their buttons).
+    inbox_action_in_flight: std::collections::HashSet<String>,
 
     // Toast notification (auto-dismiss after 3 s)
     // (message, icon, color)
@@ -500,6 +554,26 @@ impl FermiConsole {
             TextInput::new(cx)
                 .with_placeholder("Filter forecasts (team, tag, free text)…")
                 .with_label("Filter")
+        });
+
+        let team_create_name_input = cx.new(|cx| {
+            TextInput::new(cx)
+                .with_placeholder("Team name…")
+                .with_label("Team name")
+        });
+        let team_create_slug_input = cx.new(|cx| {
+            TextInput::new(cx)
+                .with_placeholder("team-slug (lowercase, no spaces)")
+                .with_label("Slug")
+        });
+        let team_invite_input = cx.new(|cx| {
+            TextInput::new(cx).with_placeholder("email or user id…")
+        });
+        let commit_share_input = cx.new(|cx| {
+            TextInput::new(cx).with_placeholder("Add person by email or user id…")
+        });
+        let portfolio_share_input = cx.new(|cx| {
+            TextInput::new(cx).with_placeholder("email or user id…")
         });
 
         let mut console = Self {
@@ -554,12 +628,22 @@ impl FermiConsole {
             portfolio_rename_id: None,
             portfolio_rename_input,
             portfolio_confirm_delete_id: None,
+            portfolio_share_showing: false,
+            portfolio_shares: Vec::new(),
+            portfolio_shares_loading: false,
+            portfolio_share_input,
+            portfolio_share_permission: "view".into(),
+            portfolio_share_error: None,
+            portfolio_shares_loaded_for: None,
             portfolio_sort_mode: PortfolioSortMode::RecentActivity,
             portfolio_filter_input,
             commit_sheet_showing: false,
             commit_sheet_visibility: "private".into(),
             commit_sheet_question: String::new(),
             commit_sheet_probability: 0.5,
+            commit_share_targets: Vec::new(),
+            commit_share_input,
+            commit_share_permission: "view".into(),
             resolve_sheet_showing: false,
             resolve_forecast_id: None,
             resolve_forecast_question: String::new(),
@@ -575,6 +659,25 @@ impl FermiConsole {
             pending_cascades_sheet_showing: false,
             pending_cascades_loading: false,
             cascade_action_in_flight: std::collections::HashSet::new(),
+            teams: Vec::new(),
+            teams_loading: false,
+            selected_team_id: None,
+            selected_team_detail: None,
+            team_detail_loading: false,
+            team_create_showing: false,
+            team_create_name_input,
+            team_create_slug_input,
+            team_create_loading: false,
+            team_create_error: None,
+            team_invite_showing: false,
+            team_invite_input,
+            team_invite_role: "member".into(),
+            team_invite_loading: false,
+            team_action_error: None,
+            inbox_invites: Vec::new(),
+            inbox_loading: false,
+            inbox_sheet_showing: false,
+            inbox_action_in_flight: std::collections::HashSet::new(),
             toast: None,
         };
 
@@ -788,6 +891,8 @@ impl FermiConsole {
         // Pending cascades queue — the operator's inbox of probability-
         // mutating actions awaiting human approval.
         self.fetch_pending_cascades(cx);
+        // Collaboration inbox — pending forecast/portfolio/team invites.
+        self.fetch_my_invites(cx);
     }
 
     fn fetch_agents(&mut self, cx: &mut Context<Self>) {
@@ -854,6 +959,556 @@ impl FermiConsole {
             }
         })
         .detach();
+    }
+
+    // ── Teams (Spec 24 §3.5.4) ─────────────────────────────────────────
+
+    /// Fetch the user's teams for the left pane. Auto-selects the first
+    /// team (and loads its detail) when none is selected yet.
+    fn fetch_teams(&mut self, cx: &mut Context<Self>) {
+        self.teams_loading = true;
+        let api = self.api.clone();
+
+        cx.spawn(async move |this, cx| match api.list_my_teams().await {
+            Ok(resp) => {
+                this.update(cx, |this, cx| {
+                    this.teams = resp.teams;
+                    this.teams_loading = false;
+                    // Keep the current selection if it's still present,
+                    // otherwise default to the first team.
+                    let still_valid = this
+                        .selected_team_id
+                        .as_ref()
+                        .map(|id| this.teams.iter().any(|t| &t.id == id))
+                        .unwrap_or(false);
+                    if !still_valid {
+                        this.selected_team_id = this.teams.first().map(|t| t.id.clone());
+                        this.selected_team_detail = None;
+                    }
+                    if let Some(id) = this.selected_team_id.clone() {
+                        this.fetch_team_detail(&id, cx);
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+            Err(e) => {
+                log::error!("Failed to fetch teams: {}", e);
+                this.update(cx, |this, cx| {
+                    this.teams_loading = false;
+                    this.team_action_error = Some(e.to_string());
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Load the member roster for one team into the right pane.
+    fn fetch_team_detail(&mut self, team_id: &str, cx: &mut Context<Self>) {
+        self.team_detail_loading = true;
+        let api = self.api.clone();
+        let team_id = team_id.to_string();
+
+        cx.spawn(async move |this, cx| match api.get_team_detail(&team_id).await {
+            Ok(detail) => {
+                this.update(cx, |this, cx| {
+                    // Ignore stale responses if the user clicked away.
+                    if this.selected_team_id.as_deref() == Some(detail.team.id.as_str()) {
+                        this.selected_team_detail = Some(detail);
+                    }
+                    this.team_detail_loading = false;
+                    cx.notify();
+                })
+                .ok();
+            }
+            Err(e) => {
+                log::error!("Failed to fetch team detail: {}", e);
+                this.update(cx, |this, cx| {
+                    this.team_detail_loading = false;
+                    this.team_action_error = Some(e.to_string());
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    fn select_team(&mut self, team_id: String, cx: &mut Context<Self>) {
+        if self.selected_team_id.as_deref() == Some(team_id.as_str()) {
+            return;
+        }
+        self.selected_team_id = Some(team_id.clone());
+        self.selected_team_detail = None;
+        self.team_invite_showing = false;
+        self.team_action_error = None;
+        self.fetch_team_detail(&team_id, cx);
+        cx.notify();
+    }
+
+    /// Create a team from the modal inputs, then refresh the team list.
+    fn create_team_from_input(&mut self, cx: &mut Context<Self>) {
+        let name = self.team_create_name_input.read(cx).text().trim().to_string();
+        let slug = self.team_create_slug_input.read(cx).text().trim().to_string();
+        if name.is_empty() || slug.is_empty() {
+            self.team_create_error = Some("Name and slug are required".into());
+            cx.notify();
+            return;
+        }
+        self.team_create_loading = true;
+        self.team_create_error = None;
+        cx.notify();
+
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let req = CreateTeamRequest {
+                name,
+                slug,
+                description: None,
+            };
+            match api.create_team(&req).await {
+                Ok(team_json) => {
+                    let new_id = team_json
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    this.update(cx, |this, cx| {
+                        this.team_create_loading = false;
+                        this.team_create_showing = false;
+                        this.team_create_error = None;
+                        if let Some(id) = new_id {
+                            this.selected_team_id = Some(id);
+                            this.selected_team_detail = None;
+                        }
+                        this.fetch_teams(cx);
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => {
+                    this.update(cx, |this, cx| {
+                        this.team_create_loading = false;
+                        this.team_create_error = Some(e.to_string());
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Invite a member to the selected team. If the input is an email we
+    /// send it as `invitee_email` (server resolves to a user / queues a
+    /// pending invite); otherwise we treat it as a `user_id`.
+    fn invite_team_member_from_input(&mut self, cx: &mut Context<Self>) {
+        let Some(team_id) = self.selected_team_id.clone() else {
+            return;
+        };
+        let raw = self.team_invite_input.read(cx).text().trim().to_string();
+        if raw.is_empty() {
+            return;
+        }
+        self.team_invite_loading = true;
+        self.team_action_error = None;
+        cx.notify();
+
+        let role = self.team_invite_role.clone();
+        let api = self.api.clone();
+        let invite_input = self.team_invite_input.clone();
+        cx.spawn(async move |this, cx| {
+            let is_email = raw.contains('@');
+            let req = InviteRequest {
+                invitee_user_id: (!is_email).then(|| raw.clone()),
+                invitee_email: is_email.then(|| raw.clone()),
+                permission: role,
+                message: None,
+            };
+            let result = api.invite_to_team(&team_id, &req).await;
+            this.update(cx, |this, cx| {
+                this.team_invite_loading = false;
+                match result {
+                    Ok(_) => {
+                        this.team_invite_showing = false;
+                        invite_input.update(cx, |inp, cx| inp.set_text("", cx));
+                        this.show_toast("Invite sent", "✓", theme::GREEN, cx);
+                        this.fetch_team_detail(&team_id, cx);
+                    }
+                    Err(e) => {
+                        this.team_action_error = Some(e.to_string());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Remove a member from the selected team, then refresh the roster.
+    fn remove_team_member(&mut self, member_id: String, cx: &mut Context<Self>) {
+        let Some(team_id) = self.selected_team_id.clone() else {
+            return;
+        };
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.remove_team_member(&team_id, &member_id).await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(()) => {
+                        this.show_toast("Member removed", "✓", theme::GREEN, cx);
+                        this.fetch_team_detail(&team_id, cx);
+                    }
+                    Err(e) => this.team_action_error = Some(e.to_string()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    // ── Inbox / invites (Spec 24 §3.5.5) ───────────────────────────────
+
+    fn fetch_my_invites(&mut self, cx: &mut Context<Self>) {
+        self.inbox_loading = true;
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| match api.list_my_invites().await {
+            Ok(resp) => {
+                this.update(cx, |this, cx| {
+                    this.inbox_invites = resp.invites;
+                    this.inbox_loading = false;
+                    cx.notify();
+                })
+                .ok();
+            }
+            Err(e) => {
+                log::error!("Failed to fetch invites: {}", e);
+                this.update(cx, |this, cx| {
+                    this.inbox_loading = false;
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    fn accept_invite(&mut self, invite_id: String, cx: &mut Context<Self>) {
+        if !self.inbox_action_in_flight.insert(invite_id.clone()) {
+            return; // already in flight
+        }
+        cx.notify();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.accept_invite(&invite_id).await;
+            this.update(cx, |this, cx| {
+                this.inbox_action_in_flight.remove(&invite_id);
+                match result {
+                    Ok(_) => {
+                        this.show_toast("Invite accepted", "✓", theme::GREEN, cx);
+                        // Refresh inbox + content the grant now exposes.
+                        this.fetch_my_invites(cx);
+                        this.fetch_forecasts(cx);
+                        this.fetch_portfolios(cx);
+                    }
+                    Err(e) => this.show_toast(format!("Accept failed: {}", e), "✕", theme::RED, cx),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn decline_invite(&mut self, invite_id: String, cx: &mut Context<Self>) {
+        if !self.inbox_action_in_flight.insert(invite_id.clone()) {
+            return;
+        }
+        cx.notify();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.decline_invite(&invite_id).await;
+            this.update(cx, |this, cx| {
+                this.inbox_action_in_flight.remove(&invite_id);
+                match result {
+                    Ok(_) => {
+                        this.show_toast("Invite declined", "✓", theme::FG_DIM, cx);
+                        this.fetch_my_invites(cx);
+                    }
+                    Err(e) => {
+                        this.show_toast(format!("Decline failed: {}", e), "✕", theme::RED, cx)
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    // ── Portfolio Access panel (Spec 24 §3.5.3) ────────────────────────
+
+    /// Toggle the portfolio Access panel, loading shares on open.
+    fn toggle_portfolio_share(&mut self, cx: &mut Context<Self>) {
+        self.portfolio_share_showing = !self.portfolio_share_showing;
+        self.portfolio_share_error = None;
+        if self.portfolio_share_showing {
+            if let Some(pid) = self.selected_portfolio_id.clone() {
+                if self.portfolio_shares_loaded_for.as_deref() != Some(pid.as_str()) {
+                    self.load_portfolio_shares(&pid, cx);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn load_portfolio_shares(&mut self, portfolio_id: &str, cx: &mut Context<Self>) {
+        self.portfolio_shares_loading = true;
+        self.portfolio_share_error = None;
+        self.portfolio_shares_loaded_for = Some(portfolio_id.to_string());
+        cx.notify();
+        let api = self.api.clone();
+        let pid = portfolio_id.to_string();
+        cx.spawn(async move |this, cx| {
+            let result = api.list_portfolio_shares(&pid).await;
+            this.update(cx, |this, cx| {
+                this.portfolio_shares_loading = false;
+                match result {
+                    Ok(resp) => {
+                        // Ignore if the user switched portfolios meanwhile.
+                        if this.selected_portfolio_id.as_deref() == Some(pid.as_str()) {
+                            this.portfolio_shares = resp.shares;
+                        }
+                    }
+                    Err(e) => this.portfolio_share_error = Some(e.to_string()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn add_portfolio_share_from_input(&mut self, cx: &mut Context<Self>) {
+        let Some(pid) = self.selected_portfolio_id.clone() else {
+            return;
+        };
+        let raw = self.portfolio_share_input.read(cx).text().trim().to_string();
+        if raw.is_empty() {
+            return;
+        }
+        self.portfolio_share_error = None;
+        cx.notify();
+        let api = self.api.clone();
+        let permission = self.portfolio_share_permission.clone();
+        let input = self.portfolio_share_input.clone();
+        cx.spawn(async move |this, cx| {
+            let is_email = raw.contains('@');
+            let resolved = if is_email {
+                api.lookup_user(&raw).await.ok().flatten().map(|u| u.user_id)
+            } else {
+                Some(raw.clone())
+            };
+            let result: Result<String, String> = match resolved {
+                Some(user_id) => {
+                    let body = ShareRequest {
+                        share_type: "user".into(),
+                        share_target: user_id,
+                        permission: Some(permission),
+                    };
+                    api.add_portfolio_share(&pid, &body)
+                        .await
+                        .map(|_| "Shared".into())
+                        .map_err(|e| e.to_string())
+                }
+                None => {
+                    let body = InviteRequest {
+                        invitee_user_id: None,
+                        invitee_email: Some(raw.clone()),
+                        permission,
+                        message: None,
+                    };
+                    api.invite_to_portfolio(&pid, &body)
+                        .await
+                        .map(|_| "Invite sent".into())
+                        .map_err(|e| e.to_string())
+                }
+            };
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(_) => {
+                        input.update(cx, |inp, cx| inp.set_text("", cx));
+                        this.portfolio_shares_loaded_for = None;
+                        this.load_portfolio_shares(&pid, cx);
+                    }
+                    Err(e) => this.portfolio_share_error = Some(e),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn revoke_portfolio_share(&mut self, share_id: String, cx: &mut Context<Self>) {
+        let Some(pid) = self.selected_portfolio_id.clone() else {
+            return;
+        };
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.revoke_portfolio_share(&pid, &share_id).await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(()) => {
+                        this.portfolio_shares_loaded_for = None;
+                        this.load_portfolio_shares(&pid, cx);
+                    }
+                    Err(e) => this.portfolio_share_error = Some(e.to_string()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Renders the collapsible portfolio Access panel (Spec 24 §3.5.3).
+    fn render_portfolio_access_panel(&self, cx: &Context<Self>) -> impl IntoElement {
+        let perm = self.portfolio_share_permission.clone();
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .px(px(14.0))
+            .py(px(10.0))
+            .border_b_1()
+            .border_color(theme::fg_faint())
+            .bg(theme::bg())
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme::cyan())
+                    .child("🔗 Access"),
+            )
+            // Add row
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(div().flex_grow().child(self.portfolio_share_input.clone()))
+                    .child(
+                        div()
+                            .id("pf-share-perm")
+                            .px(px(10.0))
+                            .py(px(6.0))
+                            .rounded(px(4.0))
+                            .bg(rgb(theme::BG_ACTIVE))
+                            .text_size(px(11.0))
+                            .text_color(theme::gold())
+                            .cursor_pointer()
+                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                            .on_click(cx.listener(|this, _, _w, cx| {
+                                this.portfolio_share_permission =
+                                    match this.portfolio_share_permission.as_str() {
+                                        "view" => "edit",
+                                        "edit" => "admin",
+                                        _ => "view",
+                                    }
+                                    .into();
+                                cx.notify();
+                            }))
+                            .child(perm),
+                    )
+                    .child(
+                        div()
+                            .id("pf-share-add")
+                            .px(px(12.0))
+                            .py(px(6.0))
+                            .rounded(px(4.0))
+                            .bg(rgb(theme::BLUE))
+                            .text_size(px(11.0))
+                            .text_color(rgb(theme::BG))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .cursor_pointer()
+                            .hover(|s| s.opacity(0.85))
+                            .on_click(cx.listener(|this, _, _w, cx| {
+                                this.add_portfolio_share_from_input(cx);
+                            }))
+                            .child("Add"),
+                    ),
+            )
+            .when(self.portfolio_share_error.is_some(), |el| {
+                el.child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(theme::red())
+                        .child(self.portfolio_share_error.clone().unwrap_or_default()),
+                )
+            })
+            .child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(theme::fg_dim())
+                    .child(if self.portfolio_shares_loading {
+                        "Loading shares…".to_string()
+                    } else {
+                        format!("Shared with ({})", self.portfolio_shares.len())
+                    }),
+            )
+            .children(self.portfolio_shares.iter().map(|s| {
+                let sid = s.id.clone();
+                let icon = if s.share_type == "team" { "👥" } else { "🧑" };
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .px(px(10.0))
+                    .py(px(6.0))
+                    .rounded(px(6.0))
+                    .bg(theme::bg_elevated())
+                    .child(div().text_size(px(12.0)).child(icon))
+                    .child(
+                        div()
+                            .flex_grow()
+                            .overflow_hidden()
+                            .text_size(px(11.0))
+                            .text_color(theme::fg())
+                            .child(s.share_target.clone()),
+                    )
+                    .child(
+                        div()
+                            .px(px(8.0))
+                            .py(px(2.0))
+                            .rounded(px(4.0))
+                            .bg(theme::bg_active())
+                            .text_size(px(10.0))
+                            .text_color(theme::gold())
+                            .child(s.permission.clone()),
+                    )
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("pf-share-rm-{}", sid)))
+                            .px(px(6.0))
+                            .py(px(2.0))
+                            .rounded(px(4.0))
+                            .text_size(px(12.0))
+                            .text_color(theme::fg_dim())
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::bg_hover()).text_color(theme::red()))
+                            .on_click(cx.listener({
+                                let sid = sid.clone();
+                                move |this, _, _w, cx| {
+                                    this.revoke_portfolio_share(sid.clone(), cx);
+                                }
+                            }))
+                            .child("✕"),
+                    )
+            }))
     }
 
     fn load_local_forecasts(&mut self) {
@@ -1434,6 +2089,7 @@ impl FermiConsole {
             match panel {
                 Panel::AgentFleet => self.fetch_agents(cx),
                 Panel::Leaderboard => self.fetch_leaderboard(cx),
+                Panel::Teams => self.fetch_teams(cx),
                 _ => {}
             }
         }
@@ -1561,19 +2217,47 @@ impl FermiConsole {
             }
             self.commit_sheet_question = question;
             self.commit_sheet_probability = cockpit.read(cx).predicted_probability;
+            // The picker is binary now (private | public); coerce any legacy
+            // "team" value so a stale tile selection can't slip through.
+            if self.commit_sheet_visibility != "public" {
+                self.commit_sheet_visibility = "private".into();
+            }
+            self.commit_share_targets.clear();
+            self.commit_share_input
+                .update(cx, |inp, cx| inp.set_text("", cx));
+            self.commit_share_permission = "view".into();
             self.commit_sheet_showing = true;
             cx.notify();
         }
+    }
+
+    /// Append the current share-input value to the pending share list.
+    fn add_commit_share_target(&mut self, cx: &mut Context<Self>) {
+        let raw = self.commit_share_input.read(cx).text().trim().to_string();
+        if raw.is_empty() {
+            return;
+        }
+        let perm = self.commit_share_permission.clone();
+        // De-dupe by target; last permission wins.
+        self.commit_share_targets.retain(|(t, _)| t != &raw);
+        self.commit_share_targets.push((raw, perm));
+        self.commit_share_input
+            .update(cx, |inp, cx| inp.set_text("", cx));
+        cx.notify();
     }
 
     /// Called when the user confirms in the commit sheet.
     fn do_commit_forecast(&mut self, cx: &mut Context<Self>) {
         self.commit_sheet_showing = false;
         let visibility = self.commit_sheet_visibility.clone();
+        let shares = std::mem::take(&mut self.commit_share_targets);
 
         if let Some(ref cockpit) = self.cockpit {
             let cockpit = cockpit.clone();
             cockpit.update(cx, |cockpit, cx| {
+                // Hand the share list to the cockpit so it can apply the
+                // grants once the forecast row (and its id) exists.
+                cockpit.pending_publish_shares = shares;
                 cockpit.publish_forecast(visibility, cx);
             });
 
@@ -1609,10 +2293,16 @@ impl FermiConsole {
                     crate::cockpit::RightTab::Fpl => crate::cockpit::RightTab::Wiki,
                     crate::cockpit::RightTab::Wiki => crate::cockpit::RightTab::Schedules,
                     crate::cockpit::RightTab::Schedules => crate::cockpit::RightTab::Trajectory,
-                    crate::cockpit::RightTab::Trajectory => crate::cockpit::RightTab::Edit,
+                    crate::cockpit::RightTab::Trajectory => crate::cockpit::RightTab::Access,
+                    crate::cockpit::RightTab::Access => crate::cockpit::RightTab::Edit,
                 };
                 if cockpit.right_tab == crate::cockpit::RightTab::Trajectory {
                     cockpit.load_timeline(cx);
+                }
+                if cockpit.right_tab == crate::cockpit::RightTab::Access
+                    && cockpit.shares_loaded_for != cockpit.forecast_id
+                {
+                    cockpit.load_shares(cx);
                 }
             });
             cx.notify();
@@ -1677,6 +2367,9 @@ impl FermiConsole {
         cx: &mut Context<Self>,
     ) {
         self.navigate(Panel::Leaderboard, cx);
+    }
+    fn on_show_teams(&mut self, _: &ShowTeams, _w: &mut Window, cx: &mut Context<Self>) {
+        self.navigate(Panel::Teams, cx);
     }
 
     // ── Sidebar ───────────────────────────────────────────────────────────
@@ -1852,6 +2545,59 @@ impl FermiConsole {
                                         .text_color(theme::fg_dim())
                                         .child("Review · Apply / Dismiss"),
                                 ),
+                        ),
+                )
+            })
+            // Inbox — pending collaboration invites (Spec 24 §3.5.5). Shown
+            // when connected; the badge count drives attention.
+            .when(self.connected, |el| {
+                let n = self.inbox_invites.len();
+                let has = n > 0;
+                el.child(
+                    div()
+                        .id("inbox-badge")
+                        .mt(px(8.0))
+                        .mx(px(8.0))
+                        .px(px(10.0))
+                        .py(px(8.0))
+                        .rounded(px(6.0))
+                        .border_1()
+                        .border_color(if has {
+                            rgb(theme::CYAN)
+                        } else {
+                            rgb(theme::FG_FAINT)
+                        })
+                        .bg(rgb(theme::BG_ELEVATED))
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.inbox_sheet_showing = true;
+                            this.fetch_my_invites(cx);
+                            cx.notify();
+                        }))
+                        .child(
+                            div()
+                                .text_size(px(14.0))
+                                .text_color(if has {
+                                    rgb(theme::CYAN)
+                                } else {
+                                    rgb(theme::FG_DIM)
+                                })
+                                .child("📥"),
+                        )
+                        .child(
+                            div()
+                                .flex_grow()
+                                .text_size(px(11.0))
+                                .text_color(rgb(theme::FG))
+                                .child(if has {
+                                    format!("Inbox · {} pending", n)
+                                } else {
+                                    "Inbox".to_string()
+                                }),
                         ),
                 )
             })
@@ -3752,8 +4498,40 @@ impl FermiConsole {
                                                         .text_color(rgb(theme::CYAN))
                                                         .child(format!("avg Brier {:.3}", avg_brier.unwrap())),
                                                 )
-                                            }),
+                                            })
+                                            // Push the Share chip to the right edge.
+                                            .child(div().flex_grow())
+                                            // 🔗 Share toggle (Spec 24 §3.5.3)
+                                            .child(
+                                                div()
+                                                    .id("portfolio-share-btn")
+                                                    .px(px(10.0))
+                                                    .py(px(3.0))
+                                                    .rounded(px(4.0))
+                                                    .border_1()
+                                                    .border_color(if self.portfolio_share_showing {
+                                                        rgb(theme::CYAN)
+                                                    } else {
+                                                        rgb(theme::FG_FAINT)
+                                                    })
+                                                    .text_size(px(11.0))
+                                                    .text_color(if self.portfolio_share_showing {
+                                                        rgb(theme::CYAN)
+                                                    } else {
+                                                        rgb(theme::FG_DIM)
+                                                    })
+                                                    .cursor_pointer()
+                                                    .hover(|s| s.bg(theme::bg_hover()))
+                                                    .on_click(cx.listener(|this, _, _w, cx| {
+                                                        this.toggle_portfolio_share(cx);
+                                                    }))
+                                                    .child("🔗 Share"),
+                                            ),
                                     )
+                                    // Access panel (collapsible)
+                                    .when(self.portfolio_share_showing, |el| {
+                                        el.child(self.render_portfolio_access_panel(cx))
+                                    })
                                     // Stats + calibration curve (when stats fetched)
                                     .when(self.portfolio_stats_cache.contains_key(&pid), |el| {
                                         let stats = self.portfolio_stats_cache.get(&pid).unwrap().clone();
@@ -3959,6 +4737,25 @@ impl FermiConsole {
                                                 if n > 0 { Some(format!("{}× 7d", n)) } else { None }
                                             });
 
+                                            // Sharing badge (Spec 24 §3.5.6): public > team > shared > private.
+                                            let pf_vis = f.visibility.as_deref().unwrap_or("private");
+                                            let pf_has_team = f
+                                                .team_id
+                                                .as_deref()
+                                                .map(|s| !s.is_empty())
+                                                .unwrap_or(false);
+                                            let pf_shares = f.share_count.unwrap_or(0);
+                                            let share_badge: Option<(&'static str, gpui::Hsla)> =
+                                                if pf_vis == "public" {
+                                                    Some(("🌐", theme::cyan()))
+                                                } else if pf_has_team {
+                                                    Some(("👥", theme::blue()))
+                                                } else if pf_shares > 0 {
+                                                    Some(("🔗", theme::gold()))
+                                                } else {
+                                                    None
+                                                };
+
                                             let fid_click = fid.clone();
                                             div()
                                                 .id(SharedString::from(format!("pf-row-{}", fid)))
@@ -4030,6 +4827,16 @@ impl FermiConsole {
                                                             .text_color(delta_color)
                                                             .font_weight(FontWeight::SEMIBOLD)
                                                             .child(delta_str.unwrap()),
+                                                    )
+                                                })
+                                                // Sharing badge (icon-only; tooltip-free for density)
+                                                .when(share_badge.is_some(), move |el| {
+                                                    let (icon, color) = share_badge.unwrap();
+                                                    el.child(
+                                                        div()
+                                                            .text_size(px(10.0))
+                                                            .text_color(color)
+                                                            .child(icon),
                                                     )
                                                 })
                                                 // Status badge (compact)
@@ -5231,12 +6038,24 @@ impl FermiConsole {
                             .bg(theme::bg_active())
                             .child(forecast.status.clone()),
                     )
-                    // Visibility badge (Live forecasts only)
+                    // Visibility badge (Live forecasts only). Spec 24 §3.5.6:
+                    // read visibility + team_id + share_count, not the dead
+                    // "team" visibility literal.
                     .when(forecast.status == "active", |el| {
-                        let (icon, label, color) = match forecast.visibility.as_str() {
-                            "public" => ("🌐", "public", theme::CYAN),
-                            "team" => ("👥", "team", theme::BLUE),
-                            _ => ("🔒", "private", theme::FG_DIM),
+                        let share_count = forecast.share_count.unwrap_or(0);
+                        let has_team = forecast
+                            .team_id
+                            .as_deref()
+                            .map(|s| !s.is_empty())
+                            .unwrap_or(false);
+                        let (icon, label, color) = if forecast.visibility == "public" {
+                            ("🌐", "public".to_string(), theme::CYAN)
+                        } else if has_team {
+                            ("👥", "team".to_string(), theme::BLUE)
+                        } else if share_count > 0 {
+                            ("🔗", format!("shared · {}", share_count), theme::GOLD)
+                        } else {
+                            ("🔒", "private".to_string(), theme::FG_DIM)
                         };
                         el.child(
                             div()
@@ -5509,6 +6328,639 @@ impl FermiConsole {
     }
 
     // ── Leaderboard Panel ─────────────────────────────────────────────────
+
+    // ── Teams panel (Spec 24 §3.5.4) ───────────────────────────────────
+
+    fn render_teams_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected_id = self.selected_team_id.clone();
+
+        div()
+            .id("teams-panel")
+            .flex()
+            .flex_col()
+            .size_full()
+            // Header
+            .child(
+                div()
+                    .px(px(24.0))
+                    .py(px(16.0))
+                    .border_b_1()
+                    .border_color(theme::fg_faint())
+                    .flex()
+                    .items_center()
+                    .gap(px(12.0))
+                    .child(
+                        div()
+                            .text_size(px(20.0))
+                            .text_color(theme::blue())
+                            .font_weight(FontWeight::BOLD)
+                            .child("👥 Teams"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(theme::fg_dim())
+                            .child(format!("{} teams", self.teams.len())),
+                    )
+                    .when(self.teams_loading, |el| {
+                        el.child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(theme::blue())
+                                .child("⟳ Loading…"),
+                        )
+                    })
+                    .child(div().flex_grow())
+                    .child(
+                        div()
+                            .id("team-new-btn")
+                            .px(px(12.0))
+                            .py(px(5.0))
+                            .rounded(px(4.0))
+                            .bg(theme::blue())
+                            .text_size(px(11.0))
+                            .text_color(rgb(theme::BG))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .cursor_pointer()
+                            .hover(|s| s.opacity(0.85))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.team_create_showing = true;
+                                this.team_create_error = None;
+                                this.team_create_name_input
+                                    .update(cx, |inp, cx| inp.set_text("", cx));
+                                this.team_create_slug_input
+                                    .update(cx, |inp, cx| inp.set_text("", cx));
+                                this.team_create_name_input.read(cx).focus(window);
+                                cx.notify();
+                            }))
+                            .child("+ New Team"),
+                    ),
+            )
+            // Two-pane body
+            .child(
+                div()
+                    .flex()
+                    .flex_grow()
+                    .overflow_hidden()
+                    // ── Left: team list ──────────────────────────────
+                    .child(
+                        div()
+                            .id("teams-list")
+                            .flex()
+                            .flex_col()
+                            .w(px(260.0))
+                            .h_full()
+                            .border_r_1()
+                            .border_color(theme::fg_faint())
+                            .overflow_y_scroll()
+                            .when(self.teams.is_empty() && !self.teams_loading, |el| {
+                                el.child(
+                                    div()
+                                        .p(px(20.0))
+                                        .text_size(px(12.0))
+                                        .text_color(theme::fg_dim())
+                                        .child(
+                                            "No teams yet. Create one to share forecasts with a group.",
+                                        ),
+                                )
+                            })
+                            .children(self.teams.iter().map(|team| {
+                                let is_sel = selected_id.as_deref() == Some(team.id.as_str());
+                                let tid = team.id.clone();
+                                div()
+                                    .id(SharedString::from(format!("team-{}", team.id)))
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(2.0))
+                                    .px(px(14.0))
+                                    .py(px(10.0))
+                                    .cursor_pointer()
+                                    .border_l_2()
+                                    .border_color(if is_sel {
+                                        rgb(theme::BLUE)
+                                    } else {
+                                        rgb(theme::BG)
+                                    })
+                                    .when(is_sel, |el| el.bg(theme::bg_active()))
+                                    .when(!is_sel, |el| {
+                                        el.hover(|s| s.bg(theme::bg_hover()))
+                                    })
+                                    .on_click(cx.listener(move |this, _, _w, cx| {
+                                        this.select_team(tid.clone(), cx);
+                                    }))
+                                    .child(
+                                        div()
+                                            .text_size(px(13.0))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(theme::fg())
+                                            .child(team.name.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(10.0))
+                                            .text_color(theme::fg_faint())
+                                            .child(format!("@{}", team.slug)),
+                                    )
+                            })),
+                    )
+                    // ── Right: selected team detail ───────────────────
+                    .child(self.render_team_detail_pane(cx)),
+            )
+    }
+
+    fn render_team_detail_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let container = div()
+            .id("team-detail")
+            .flex()
+            .flex_col()
+            .flex_grow()
+            .h_full()
+            .overflow_y_scroll()
+            .p(px(24.0))
+            .gap(px(16.0));
+
+        let Some(detail) = self.selected_team_detail.as_ref() else {
+            return container.child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(theme::fg_dim())
+                    .child(if self.selected_team_id.is_some() {
+                        "Loading team…"
+                    } else {
+                        "Select a team to view its members."
+                    }),
+            );
+        };
+
+        let invite_role = self.team_invite_role.clone();
+
+        container
+            // Team header
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .child(
+                        div()
+                            .text_size(px(18.0))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme::fg())
+                            .child(detail.team.name.clone()),
+                    )
+                    .when(detail.team.description.is_some(), |el| {
+                        el.child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(theme::fg_dim())
+                                .child(detail.team.description.clone().unwrap_or_default()),
+                        )
+                    }),
+            )
+            // Members section header + invite toggle
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme::cyan())
+                            .child(format!("Members ({})", detail.members.len())),
+                    )
+                    .child(div().flex_grow())
+                    .child(
+                        div()
+                            .id("team-invite-toggle")
+                            .px(px(10.0))
+                            .py(px(4.0))
+                            .rounded(px(4.0))
+                            .bg(theme::bg_active())
+                            .text_size(px(11.0))
+                            .text_color(theme::cyan())
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::bg_hover()))
+                            .on_click(cx.listener(|this, _, _w, cx| {
+                                this.team_invite_showing = !this.team_invite_showing;
+                                this.team_action_error = None;
+                                cx.notify();
+                            }))
+                            .child(if self.team_invite_showing {
+                                "Cancel"
+                            } else {
+                                "+ Invite"
+                            }),
+                    ),
+            )
+            // Invite row
+            .when(self.team_invite_showing, |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(div().flex_grow().child(self.team_invite_input.clone()))
+                        // Role cycle chip
+                        .child(
+                            div()
+                                .id("team-invite-role")
+                                .px(px(10.0))
+                                .py(px(6.0))
+                                .rounded(px(4.0))
+                                .bg(theme::bg_active())
+                                .text_size(px(11.0))
+                                .text_color(theme::gold())
+                                .cursor_pointer()
+                                .hover(|s| s.bg(theme::bg_hover()))
+                                .on_click(cx.listener(|this, _, _w, cx| {
+                                    this.team_invite_role = match this.team_invite_role.as_str() {
+                                        "viewer" => "member",
+                                        "member" => "admin",
+                                        "admin" => "owner",
+                                        _ => "viewer",
+                                    }
+                                    .into();
+                                    cx.notify();
+                                }))
+                                .child(invite_role),
+                        )
+                        .child(
+                            div()
+                                .id("team-invite-send")
+                                .px(px(12.0))
+                                .py(px(6.0))
+                                .rounded(px(4.0))
+                                .bg(theme::blue())
+                                .text_size(px(11.0))
+                                .text_color(rgb(theme::BG))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .cursor_pointer()
+                                .hover(|s| s.opacity(0.85))
+                                .on_click(cx.listener(|this, _, _w, cx| {
+                                    this.invite_team_member_from_input(cx);
+                                }))
+                                .child(if self.team_invite_loading {
+                                    "Sending…"
+                                } else {
+                                    "Send"
+                                }),
+                        ),
+                )
+            })
+            // Error line
+            .when(self.team_action_error.is_some(), |el| {
+                el.child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(theme::red())
+                        .child(self.team_action_error.clone().unwrap_or_default()),
+                )
+            })
+            // Member rows
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .children(detail.members.iter().map(|m| {
+                        let mid = m.member_id.clone();
+                        let is_owner_role = m.role == "owner";
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .px(px(12.0))
+                            .py(px(8.0))
+                            .rounded(px(6.0))
+                            .bg(theme::bg_elevated())
+                            .child(
+                                div()
+                                    .text_size(px(13.0))
+                                    .child(if m.member_type == "agent" {
+                                        "🤖"
+                                    } else {
+                                        "🧑"
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .flex_grow()
+                                    .text_size(px(12.0))
+                                    .text_color(theme::fg())
+                                    .child(m.member_id.clone()),
+                            )
+                            // Role chip
+                            .child(
+                                div()
+                                    .px(px(8.0))
+                                    .py(px(2.0))
+                                    .rounded(px(4.0))
+                                    .bg(theme::bg_active())
+                                    .text_size(px(10.0))
+                                    .text_color(theme::gold())
+                                    .child(m.role.clone()),
+                            )
+                            // Remove (✕) — not shown for owners
+                            .when(!is_owner_role, |el| {
+                                el.child(
+                                    div()
+                                        .id(SharedString::from(format!("rm-{}", mid)))
+                                        .px(px(6.0))
+                                        .py(px(2.0))
+                                        .rounded(px(4.0))
+                                        .text_size(px(12.0))
+                                        .text_color(theme::fg_dim())
+                                        .cursor_pointer()
+                                        .hover(|s| {
+                                            s.bg(theme::bg_hover()).text_color(theme::red())
+                                        })
+                                        .on_click(cx.listener({
+                                            let mid = mid.clone();
+                                            move |this, _, _w, cx| {
+                                                this.remove_team_member(mid.clone(), cx);
+                                            }
+                                        }))
+                                        .child("✕"),
+                                )
+                            })
+                    })),
+            )
+    }
+
+    fn render_team_create_modal(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::rgba(0x0A0E1499))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(16.0))
+                    .w(px(420.0))
+                    .p(px(24.0))
+                    .rounded(px(12.0))
+                    .bg(rgb(theme::BG_ELEVATED))
+                    .border_1()
+                    .border_color(rgb(theme::BLUE))
+                    .child(
+                        div()
+                            .text_size(px(16.0))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme::fg())
+                            .child("Create Team"),
+                    )
+                    .child(self.team_create_name_input.clone())
+                    .child(self.team_create_slug_input.clone())
+                    .when(self.team_create_error.is_some(), |el| {
+                        el.child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(theme::red())
+                                .child(self.team_create_error.clone().unwrap_or_default()),
+                        )
+                    })
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(8.0))
+                            .justify_end()
+                            .child(
+                                div()
+                                    .id("team-create-cancel")
+                                    .px(px(14.0))
+                                    .py(px(7.0))
+                                    .rounded(px(6.0))
+                                    .text_size(px(12.0))
+                                    .text_color(theme::fg_dim())
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme::bg_hover()))
+                                    .on_click(cx.listener(|this, _, _w, cx| {
+                                        this.team_create_showing = false;
+                                        this.team_create_error = None;
+                                        cx.notify();
+                                    }))
+                                    .child("Cancel"),
+                            )
+                            .child(
+                                div()
+                                    .id("team-create-submit")
+                                    .px(px(16.0))
+                                    .py(px(7.0))
+                                    .rounded(px(6.0))
+                                    .bg(theme::blue())
+                                    .text_size(px(12.0))
+                                    .text_color(rgb(theme::BG))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.85))
+                                    .on_click(cx.listener(|this, _, _w, cx| {
+                                        this.create_team_from_input(cx);
+                                    }))
+                                    .child(if self.team_create_loading {
+                                        "Creating…"
+                                    } else {
+                                        "Create"
+                                    }),
+                            ),
+                    ),
+            )
+    }
+
+    // ── Inbox sheet (Spec 24 §3.5.5) ───────────────────────────────────
+
+    fn render_inbox_sheet(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::rgba(0x0A0E1499))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(14.0))
+                    .w(px(520.0))
+                    .max_h(px(560.0))
+                    .p(px(24.0))
+                    .rounded(px(12.0))
+                    .bg(rgb(theme::BG_ELEVATED))
+                    .border_1()
+                    .border_color(rgb(theme::CYAN))
+                    // Header
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(
+                                div()
+                                    .text_size(px(16.0))
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(theme::fg())
+                                    .child("📥 Inbox"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(theme::fg_dim())
+                                    .child(format!("{} pending", self.inbox_invites.len())),
+                            )
+                            .child(div().flex_grow())
+                            .child(
+                                div()
+                                    .id("inbox-close")
+                                    .px(px(8.0))
+                                    .py(px(4.0))
+                                    .rounded(px(4.0))
+                                    .text_size(px(12.0))
+                                    .text_color(theme::fg_dim())
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme::bg_hover()))
+                                    .on_click(cx.listener(|this, _, _w, cx| {
+                                        this.inbox_sheet_showing = false;
+                                        cx.notify();
+                                    }))
+                                    .child("✕ Close"),
+                            ),
+                    )
+                    .when(self.inbox_invites.is_empty() && !self.inbox_loading, |el| {
+                        el.child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(theme::fg_dim())
+                                .child("No pending invites."),
+                        )
+                    })
+                    // Invite rows
+                    .child(
+                        div()
+                            .id("inbox-list")
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.0))
+                            .overflow_y_scroll()
+                            .children(self.inbox_invites.iter().map(|inv| {
+                                let iid = inv.id.clone();
+                                let in_flight = self.inbox_action_in_flight.contains(&inv.id);
+                                let (icon, kind) = match inv.target_type.as_str() {
+                                    "team" => ("👥", "team"),
+                                    "portfolio" => ("◈", "portfolio"),
+                                    _ => ("◎", "forecast"),
+                                };
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(6.0))
+                                    .p(px(12.0))
+                                    .rounded(px(8.0))
+                                    .bg(rgb(theme::BG))
+                                    .border_1()
+                                    .border_color(theme::fg_faint())
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(8.0))
+                                            .child(div().text_size(px(14.0)).child(icon))
+                                            .child(
+                                                div()
+                                                    .flex_grow()
+                                                    .text_size(px(12.0))
+                                                    .text_color(theme::fg())
+                                                    .child(format!(
+                                                        "{} · {} access",
+                                                        kind, inv.permission
+                                                    )),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(10.0))
+                                                    .text_color(theme::fg_faint())
+                                                    .child(format!("from {}", inv.inviter_id)),
+                                            ),
+                                    )
+                                    .when(inv.message.is_some(), |el| {
+                                        el.child(
+                                            div()
+                                                .text_size(px(11.0))
+                                                .text_color(theme::fg_dim())
+                                                .child(inv.message.clone().unwrap_or_default()),
+                                        )
+                                    })
+                                    // Action buttons
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .gap(px(8.0))
+                                            .justify_end()
+                                            .child(
+                                                div()
+                                                    .id(SharedString::from(format!(
+                                                        "inv-decline-{}",
+                                                        iid
+                                                    )))
+                                                    .px(px(12.0))
+                                                    .py(px(5.0))
+                                                    .rounded(px(4.0))
+                                                    .text_size(px(11.0))
+                                                    .text_color(theme::fg_dim())
+                                                    .cursor_pointer()
+                                                    .hover(|s| {
+                                                        s.bg(theme::bg_hover())
+                                                            .text_color(theme::red())
+                                                    })
+                                                    .on_click(cx.listener({
+                                                        let iid = iid.clone();
+                                                        move |this, _, _w, cx| {
+                                                            this.decline_invite(iid.clone(), cx);
+                                                        }
+                                                    }))
+                                                    .child(if in_flight {
+                                                        "…"
+                                                    } else {
+                                                        "Decline"
+                                                    }),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id(SharedString::from(format!(
+                                                        "inv-accept-{}",
+                                                        iid
+                                                    )))
+                                                    .px(px(14.0))
+                                                    .py(px(5.0))
+                                                    .rounded(px(4.0))
+                                                    .bg(theme::green())
+                                                    .text_size(px(11.0))
+                                                    .text_color(rgb(theme::BG))
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .cursor_pointer()
+                                                    .hover(|s| s.opacity(0.85))
+                                                    .on_click(cx.listener({
+                                                        let iid = iid.clone();
+                                                        move |this, _, _w, cx| {
+                                                            this.accept_invite(iid.clone(), cx);
+                                                        }
+                                                    }))
+                                                    .child(if in_flight {
+                                                        "…"
+                                                    } else {
+                                                        "Accept"
+                                                    }),
+                                            ),
+                                    )
+                            })),
+                    ),
+            )
+    }
 
     fn render_leaderboard_panel(&self) -> impl IntoElement {
         div()
@@ -5894,55 +7346,7 @@ impl FermiConsole {
                                                 div()
                                                     .text_size(px(9.0))
                                                     .text_color(theme::fg_faint())
-                                                    .child("only you"),
-                                            )
-                                    })
-                                    // Team option
-                                    .child({
-                                        let is_sel = selected_vis == "team";
-                                        div()
-                                            .id("vis-team")
-                                            .flex()
-                                            .flex_col()
-                                            .items_center()
-                                            .gap(px(4.0))
-                                            .flex_1()
-                                            .p(px(12.0))
-                                            .rounded(px(8.0))
-                                            .border_1()
-                                            .border_color(if is_sel {
-                                                rgb(theme::BLUE)
-                                            } else {
-                                                rgb(theme::FG_FAINT)
-                                            })
-                                            .bg(if is_sel {
-                                                rgb(theme::BG_ACTIVE)
-                                            } else {
-                                                rgb(theme::BG)
-                                            })
-                                            .cursor_pointer()
-                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
-                                            .on_click(cx.listener(|this, _, _window, cx| {
-                                                this.commit_sheet_visibility = "team".into();
-                                                cx.notify();
-                                            }))
-                                            .child(
-                                                div()
-                                                    .text_size(px(18.0))
-                                                    .child("👥"),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(px(11.0))
-                                                    .font_weight(FontWeight::SEMIBOLD)
-                                                    .text_color(rgb(theme::FG))
-                                                    .child("Team"),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(px(9.0))
-                                                    .text_color(theme::fg_faint())
-                                                    .child("team Brier"),
+                                                    .child("only you + invited"),
                                             )
                                     })
                                     // Public option
@@ -5994,6 +7398,125 @@ impl FermiConsole {
                                             )
                                     }),
                             ),
+                    )
+                    // Share-with list (Spec 24 §3.5.1) — people/emails to grant
+                    // access to after the forecast is written. `shared` is
+                    // implicit: private + a non-empty list.
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.0))
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(theme::fg_faint())
+                                    .child("SHARE WITH (optional)"),
+                            )
+                            // Add row: input + permission cycle + Add
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.0))
+                                    .child(
+                                        div().flex_grow().child(self.commit_share_input.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("commit-share-perm")
+                                            .px(px(10.0))
+                                            .py(px(6.0))
+                                            .rounded(px(4.0))
+                                            .bg(rgb(theme::BG_ACTIVE))
+                                            .text_size(px(11.0))
+                                            .text_color(theme::gold())
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                            .on_click(cx.listener(|this, _, _w, cx| {
+                                                this.commit_share_permission =
+                                                    match this.commit_share_permission.as_str() {
+                                                        "view" => "edit",
+                                                        "edit" => "admin",
+                                                        _ => "view",
+                                                    }
+                                                    .into();
+                                                cx.notify();
+                                            }))
+                                            .child(self.commit_share_permission.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("commit-share-add")
+                                            .px(px(12.0))
+                                            .py(px(6.0))
+                                            .rounded(px(4.0))
+                                            .bg(rgb(theme::BLUE))
+                                            .text_size(px(11.0))
+                                            .text_color(rgb(theme::BG))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .cursor_pointer()
+                                            .hover(|s| s.opacity(0.85))
+                                            .on_click(cx.listener(|this, _, _w, cx| {
+                                                this.add_commit_share_target(cx);
+                                            }))
+                                            .child("Add"),
+                                    ),
+                            )
+                            // Pending share chips
+                            .children(self.commit_share_targets.iter().enumerate().map(
+                                |(i, (target, perm))| {
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(8.0))
+                                        .px(px(10.0))
+                                        .py(px(6.0))
+                                        .rounded(px(6.0))
+                                        .bg(rgb(theme::BG))
+                                        .child(div().text_size(px(12.0)).child(
+                                            if target.contains('@') { "✉" } else { "🧑" },
+                                        ))
+                                        .child(
+                                            div()
+                                                .flex_grow()
+                                                .overflow_hidden()
+                                                .text_size(px(11.0))
+                                                .text_color(rgb(theme::FG))
+                                                .child(target.clone()),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(10.0))
+                                                .text_color(theme::gold())
+                                                .child(perm.clone()),
+                                        )
+                                        .child(
+                                            div()
+                                                .id(SharedString::from(format!(
+                                                    "commit-share-rm-{}",
+                                                    i
+                                                )))
+                                                .px(px(6.0))
+                                                .py(px(2.0))
+                                                .rounded(px(4.0))
+                                                .text_size(px(12.0))
+                                                .text_color(theme::fg_dim())
+                                                .cursor_pointer()
+                                                .hover(|s| {
+                                                    s.bg(theme::bg_hover())
+                                                        .text_color(theme::red())
+                                                })
+                                                .on_click(cx.listener(move |this, _, _w, cx| {
+                                                    if i < this.commit_share_targets.len() {
+                                                        this.commit_share_targets.remove(i);
+                                                        cx.notify();
+                                                    }
+                                                }))
+                                                .child("✕"),
+                                        )
+                                },
+                            )),
                     )
                     // Action buttons
                     .child(
@@ -6876,6 +8399,12 @@ impl Render for FermiConsole {
         let pending_cascades_overlay = self
             .pending_cascades_sheet_showing
             .then(|| self.render_pending_cascades_sheet(cx).into_any_element());
+        let team_create_overlay = self
+            .team_create_showing
+            .then(|| self.render_team_create_modal(cx).into_any_element());
+        let inbox_overlay = self
+            .inbox_sheet_showing
+            .then(|| self.render_inbox_sheet(cx).into_any_element());
 
         div()
             .key_context("FermiConsole")
@@ -6885,6 +8414,7 @@ impl Render for FermiConsole {
             .on_action(cx.listener(Self::on_show_agent_fleet))
             .on_action(cx.listener(Self::on_show_composer))
             .on_action(cx.listener(Self::on_show_leaderboard))
+            .on_action(cx.listener(Self::on_show_teams))
             .on_action(cx.listener(Self::on_trigger_question_orchestration))
             .on_action(cx.listener(Self::on_run_simulation))
             .on_action(cx.listener(Self::on_publish_forecast))
@@ -6922,9 +8452,14 @@ impl Render for FermiConsole {
                             }
                         }
                         Panel::Leaderboard => self.render_leaderboard_panel().into_any_element(),
+                        Panel::Teams => self.render_teams_panel(cx).into_any_element(),
                     },
                 ),
             )
+            // Create-team modal overlay
+            .children(team_create_overlay)
+            // Inbox sheet overlay (pending invites)
+            .children(inbox_overlay)
             // Commit sheet overlay (⌘P)
             .children(commit_overlay)
             // Resolve sheet overlay
@@ -7889,6 +9424,7 @@ fn main() {
             KeyBinding::new("secondary-3", ShowAgentFleet, Some("FermiConsole")),
             KeyBinding::new("secondary-4", ShowComposer, Some("FermiConsole")),
             KeyBinding::new("secondary-5", ShowLeaderboard, Some("FermiConsole")),
+            KeyBinding::new("secondary-6", ShowTeams, Some("FermiConsole")),
             KeyBinding::new("secondary-n", NewForecast, Some("FermiConsole")),
             KeyBinding::new("secondary-q", Quit, None),
         ]);
