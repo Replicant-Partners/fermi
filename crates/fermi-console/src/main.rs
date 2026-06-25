@@ -972,7 +972,10 @@ impl FermiConsole {
         cx.spawn(async move |this, cx| match api.list_my_teams().await {
             Ok(resp) => {
                 this.update(cx, |this, cx| {
-                    this.teams = resp.teams;
+                    // ABW is shared substrate: /api/teams returns every
+                    // vertical's teams (rabble swarms, kask workspaces, …).
+                    // The Fermi console only manages fermi_forecast teams.
+                    this.teams = resp.teams.into_iter().filter(is_fermi_team).collect();
                     this.teams_loading = false;
                     // Keep the current selection if it's still present,
                     // otherwise default to the first team.
@@ -1067,6 +1070,9 @@ impl FermiConsole {
                 name,
                 slug,
                 description: None,
+                // Tag as a fermi team so it shows in the (origin-scoped)
+                // Teams panel and not in other verticals' lists.
+                origin: Some("fermi_forecast".into()),
             };
             match api.create_team(&req).await {
                 Ok(team_json) => {
@@ -8521,6 +8527,28 @@ fn truncate(s: &str, max_chars: usize) -> String {
         "…".to_string()
     } else {
         format!("{}…", s.chars().take(max_chars - 1).collect::<String>())
+    }
+}
+
+/// True if a team belongs to the fermi_forecast vertical and should appear
+/// in the console's Teams panel. ABW is shared substrate; `/api/teams`
+/// returns rabble swarms, kask workspaces, etc. too.
+///
+/// When the API returns `origin` (after the fermi-auth change ships) this is
+/// strict: `origin == "fermi_forecast"`. Against API builds that don't yet
+/// return `origin`, fall back to hiding the obvious other-vertical
+/// auto-created workspaces by slug/description so the list is usable now.
+fn is_fermi_team(t: &Team) -> bool {
+    match t.origin.as_deref() {
+        Some(o) => o == "fermi_forecast",
+        None => {
+            let slug = t.slug.to_ascii_lowercase();
+            let desc = t.description.as_deref().unwrap_or("").to_ascii_lowercase();
+            const VERTICAL_PREFIXES: &[&str] =
+                &["rabble", "kask", "efrain", "smoketest", "silat", "swarm"];
+            let is_vertical = VERTICAL_PREFIXES.iter().any(|p| slug.starts_with(p));
+            !(is_vertical || desc.contains("auto-created workspace"))
+        }
     }
 }
 
