@@ -704,6 +704,25 @@ async fn run_migrations(db: &PgPool) {
         // 2026-06-23 to give a clean monotonic ordering. Also landed
         // via ensure_critical_schema; double-execution is safe.
         "migrations/153_pending_cascades.sql",
+        // ── Spec 25: Forecast Relationship Groups ─────────────────────
+        //
+        // 155: forecast_relationship_groups table + relationship_groups
+        // column on fermi_forecasts. Group-tag model replaces the
+        // per-relationship ID-list model from mig 150.
+        "migrations/155_forecast_relationship_groups.sql",
+        // 156: pending_cascades extensions — applied_deltas (for undo),
+        // superseded_by (for requeue), group_id, 'undone' status,
+        // 'cascade_undo' revision_trigger.
+        "migrations/156_pending_cascades_extensions.sql",
+        // 157: restore the COMPLETE object_shares.object_type set. MUST stay
+        // LAST among constraint-touching migrations — the runner executes
+        // files in list order every startup, so the last drop/recreate
+        // wins. 152 dropped 'workspace' (its author left "that bug for
+        // whoever needs it"), which 500'd kask.bio workspace sharing
+        // (POST /api/shares object_type='workspace'). 157 recreates the
+        // CHECK with the full union and is the single source of truth for
+        // this constraint going forward — add new object types HERE.
+        "migrations/157_object_shares_complete_object_type.sql",
     ];
 
     for file in &migration_files {
@@ -820,7 +839,7 @@ async fn ensure_critical_schema(db: &PgPool) {
           CHECK ( \
               revision_trigger IS NULL OR revision_trigger IN ( \
                   'initial', 'evidence_update', 'agent_correction', \
-                  'schedule_rerun', 'manual', 'bayesops_refit', 'cascade' \
+                   'schedule_rerun', 'manual', 'bayesops_refit', 'cascade', 'cascade_undo' \
               ) \
           )"),
         ("fermi_forecast_updates.idx_forecast",
@@ -2431,42 +2450,71 @@ async fn main() {
              "/api/forecasts/:forecast_id/invites",
              post(handlers::invites::invite_to_forecast_handler),
          )
-         // ── Forecast relationships ─────────────────────────────────────
-         //
-         // Generalizes "when forecast A changes, forecast B should follow"
-         // beyond any single domain. Migration 150 + handlers/relationships.rs.
-         // First implementation: 'mutually_exclusive' (the WC sims case).
-         .route(
-             "/api/forecast-relationships",
-             post(handlers::relationships::create_relationship_handler)
-                 .get(handlers::relationships::list_relationships_handler),
-         )
-         .route(
-             "/api/forecast-relationships/:rel_id",
-             delete(handlers::relationships::delete_relationship_handler),
-         )
-         .route(
-             "/api/forecast-relationships/:rel_id/propagate",
-             post(handlers::relationships::propagate_relationship_handler),
-         )
-         // ── Pending cascades — operator-gated cascade queue ──────────
-         //
-         // When a forecast resolves, the server queues a pending_cascade
-         // row per non-archived relationship the forecast belongs to.
-         // Operator reviews the queue and Apply / Dismiss each entry.
-         // Operator-gate: no parameter mutation fires without a click.
-         .route(
-             "/api/pending-cascades",
-             get(handlers::pending_cascades::list_pending_cascades_handler),
-         )
-         .route(
-             "/api/pending-cascades/:cascade_id/apply",
-             post(handlers::pending_cascades::apply_pending_cascade_handler),
-         )
-         .route(
-             "/api/pending-cascades/:cascade_id/dismiss",
-             post(handlers::pending_cascades::dismiss_pending_cascade_handler),
-         )
+          // ── Forecast relationships (legacy — mig 150) ────────────────
+          .route(
+              "/api/forecast-relationships",
+              post(handlers::relationships::legacy::create_relationship_handler)
+                  .get(handlers::relationships::legacy::list_relationships_handler),
+          )
+          .route(
+              "/api/forecast-relationships/:rel_id",
+              delete(handlers::relationships::legacy::delete_relationship_handler),
+          )
+          .route(
+              "/api/forecast-relationships/:rel_id/propagate",
+              post(handlers::relationships::legacy::propagate_relationship_handler),
+          )
+          // ── Relationship groups (Spec 25 §6.1) ────────────────────────
+          .route(
+              "/api/relationship-groups",
+              post(handlers::relationships::groups::create_group_handler)
+                  .get(handlers::relationships::groups::list_groups_handler),
+          )
+          .route(
+              "/api/relationship-groups/:group_id",
+              get(handlers::relationships::groups::get_group_handler)
+                  .patch(handlers::relationships::groups::patch_group_handler)
+                  .delete(handlers::relationships::groups::delete_group_handler),
+          )
+          .route(
+              "/api/relationship-groups/:group_id/members",
+              get(handlers::relationships::groups::get_group_members_handler),
+          )
+          // ── Forecast group membership (Spec 25 §6.2) ────────────────
+          .route(
+              "/api/forecasts/:forecast_id/groups",
+              put(handlers::relationships::membership::set_forecast_groups_handler),
+          )
+          .route(
+              "/api/forecasts/:forecast_id/groups/:group_id",
+              post(handlers::relationships::membership::add_forecast_to_group_handler)
+                  .delete(handlers::relationships::membership::remove_forecast_from_group_handler),
+          )
+          // ── Pending cascades — operator-gated cascade queue ──────────
+          .route(
+              "/api/pending-cascades",
+              get(handlers::pending_cascades::list_pending_cascades_handler),
+          )
+          .route(
+              "/api/pending-cascades/:cascade_id/apply",
+              post(handlers::relationships::apply::apply_pending_cascade_handler),
+          )
+          .route(
+              "/api/pending-cascades/:cascade_id/dismiss",
+              post(handlers::pending_cascades::dismiss_pending_cascade_handler),
+          )
+          .route(
+              "/api/pending-cascades/:cascade_id/undo",
+              post(handlers::relationships::undo::undo_pending_cascade_handler),
+          )
+          .route(
+              "/api/pending-cascades/requeue",
+              post(handlers::relationships::requeue::requeue_cascade_handler),
+          )
+          .route(
+              "/api/forecasts/:forecast_id/cascade-history",
+              get(handlers::pending_cascades::cascade_history_handler),
+          )
          // ── Portfolio routes ───────────────────────────────────────────
         .route(
             "/api/portfolios",

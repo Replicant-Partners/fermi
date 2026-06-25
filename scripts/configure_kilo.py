@@ -10,7 +10,7 @@ import os
 import re
 
 KILO_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbnYiOiJwcm9kdWN0aW9uIiwia2lsb1VzZXJJZCI6ImUzNTIwZjk5LTU3YWUtNGQwNi04NjIwLWEzYWZkMDExZThkNSIsImFwaVRva2VuUGVwcGVyIjpudWxsLCJ2ZXJzaW9uIjozLCJpYXQiOjE3NzgwMjAxNTAsImV4cCI6MTkzNTcwMDE1MH0.ZnFLCvxzJBgj6ePELAoZnlGHOtnJagW0qE9yytThLD8"
-ANT_KEY = "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"
+ANT_KEY = "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"
 
 HOME = os.path.expanduser("~")
 KILO_DIR = os.path.join(HOME, ".kilocode", "cli", "global")
@@ -102,7 +102,7 @@ with open(CLI_CFG, "w") as f:
 print(f"  [OK] {CLI_CFG}")
 
 # ── 4. settings.json (Zed) — swap the old Anthropic key ──────────────────────
-OLD_ANT = "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"
+OLD_ANT = "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"
 
 with open(ZED_CFG) as f:
     zed_raw = f.read()
