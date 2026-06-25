@@ -723,6 +723,7 @@ async fn run_migrations(db: &PgPool) {
         // CHECK with the full union and is the single source of truth for
         // this constraint going forward — add new object types HERE.
         "migrations/157_object_shares_complete_object_type.sql",
+        "migrations/158_forecast_sim_probability.sql",
     ];
 
     for file in &migration_files {

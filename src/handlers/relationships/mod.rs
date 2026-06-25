@@ -11,6 +11,7 @@ pub mod apply;
 pub mod undo;
 pub mod requeue;
 pub mod legacy;
+pub mod recompose;
 
 pub use propagation::{dispatch_propagation, dispatch_propagation_group, PropagateRequest, PropagateResult, DeltaEntry};
 pub use apply::ApplyDismissRequest;

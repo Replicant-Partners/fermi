@@ -5588,7 +5588,7 @@ impl CockpitState {
                         "Local Monte Carlo simulation: mean={:.4}, p5={:.4}, p95={:.4} ({} iterations)",
                         results.mean, results.p5, results.p95, results.iterations
                     );
-                    tokio::spawn(async move {
+                    cx.spawn(async move |this, cx| {
                         let req = crate::api::client::UpdateProbabilityRequest {
                             new_probability: new_prob,
                             reason: Some(reason),
@@ -5596,17 +5596,42 @@ impl CockpitState {
                             evidence_added: None,
                         };
                         match api.update_probability(&fid, &req).await {
-                            Ok(_) => log::info!(
-                                "[sim-persist] forecast {} probability persisted to {:.4}",
-                                fid, new_prob
-                            ),
+                            Ok(resp) => {
+                                // The server recomposes mutex-group
+                                // eliminations into the displayed value.
+                                // Adopt it so re-running the sim keeps the
+                                // eliminations priced in instead of
+                                // visually dropping back to the standalone
+                                // Monte-Carlo mean.
+                                let recomposed = resp
+                                    .get("recomposed_probability")
+                                    .and_then(|v| v.as_f64());
+                                match recomposed {
+                                    Some(p) if (p - new_prob).abs() > 1e-6 => {
+                                        log::info!(
+                                            "[sim-persist] {} standalone {:.4} → recomposed {:.4} (eliminations priced in)",
+                                            fid, new_prob, p
+                                        );
+                                        this.update(cx, |state, cx| {
+                                            state.predicted_probability = p;
+                                            cx.notify();
+                                        })
+                                        .ok();
+                                    }
+                                    _ => log::info!(
+                                        "[sim-persist] forecast {} probability persisted to {:.4}",
+                                        fid, new_prob
+                                    ),
+                                }
+                            }
                             Err(e) => log::warn!(
                                 "[sim-persist] update_probability failed for {}: {} — \
                                  dashboard + trajectory will show stale value until next sim",
                                 fid, e
                             ),
                         }
-                    });
+                    })
+                    .detach();
                 }
             }
             Err(e) => {

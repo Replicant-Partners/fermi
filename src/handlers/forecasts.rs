@@ -1089,6 +1089,41 @@ pub async fn update_probability_handler(
     // makes the contract unambiguous.
     let update_id = Uuid::new_v4().to_string();
     let new_prob_f32 = req.new_probability as f32;
+
+    // The incoming value is this forecast's STANDALONE Monte-Carlo mean.
+    // Persist it as the raw sim_probability — the recompose below derives
+    // the displayed predicted_probability from it (and from siblings'),
+    // so re-running a sim never resets a cascade-adjusted value back to
+    // the standalone. See migration 158 + relationships::recompose.
+    sqlx::query("UPDATE fermi_forecasts SET sim_probability = $1 WHERE id = $2")
+        .bind(new_prob_f32)
+        .bind(&forecast_id)
+        .execute(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Recompose any mutex group this forecast belongs to. This writes the
+    // derived predicted_probability for ALL group members and returns this
+    // forecast's displayed value. Forecasts in no mutex group fall back to
+    // the raw standalone. Best-effort: a recompose failure must not block
+    // the core probability update.
+    let displayed = match crate::handlers::relationships::recompose::recompose_forecast_groups(
+        &forecast_id,
+        pool,
+    )
+    .await
+    {
+        Ok(Some(v)) => v,
+        Ok(None) => req.new_probability,
+        Err((_, e)) => {
+            tracing::warn!(forecast = %forecast_id, error = %e, "[recompose] failed; using raw standalone");
+            req.new_probability
+        }
+    };
+    let displayed_f32 = displayed as f32;
+
+    // Trajectory row reflects the DISPLAYED (recomposed) value so the
+    // trajectory tab shows the smart number, not the bare standalone.
     sqlx::query(
         "INSERT INTO fermi_forecast_updates
          (id, forecast_id, previous_probability, new_probability, reason, agent_id, evidence_added, created_at)
@@ -1097,7 +1132,7 @@ pub async fn update_probability_handler(
     .bind(&update_id)
     .bind(&forecast_id)
     .bind(previous_probability)
-    .bind(new_prob_f32)
+    .bind(displayed_f32)
     .bind(&req.reason)
     .bind(&req.agent_id)
     .bind(&req.evidence_added)
@@ -1105,11 +1140,13 @@ pub async fn update_probability_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Update the forecast's current probability.
+    // recompose already wrote predicted_probability for members it
+    // changed; ensure this forecast lands on the displayed value even when
+    // it is in no group (recompose was a no-op) or was unchanged there.
     sqlx::query(
         "UPDATE fermi_forecasts SET predicted_probability = $1, updated_at = NOW() WHERE id = $2",
     )
-    .bind(new_prob_f32)
+    .bind(displayed_f32)
     .bind(&forecast_id)
     .execute(pool)
     .await
@@ -1118,19 +1155,11 @@ pub async fn update_probability_handler(
     // Anchor the new probability immediately — each revision gets its own
     // tamper-evident commitment so the rate-of-change is fully provable.
     let commitment_hash = {
-        let _ = crate::handlers::forecast_benchmark::anchor_forecast(
-            pool,
-            &forecast_id,
-            Some(&update_id),
-            req.new_probability as f64,
-            None, // fpl_source not available here without a re-fetch
-            chrono::Utc::now(),
-            Some("auto-anchor on probability update"),
-        ).await;
-        // Return the hash for the response (best-effort)
+        // Anchor the DISPLAYED probability — the recomposed value is what
+        // the forecast actually asserts.
         crate::handlers::forecast_benchmark::anchor_forecast(
             pool, &forecast_id, Some(&update_id),
-            req.new_probability as f64, None,
+            displayed, None,
             chrono::Utc::now(), Some("auto-anchor on probability update"),
         ).await.ok()
     };
@@ -1139,7 +1168,12 @@ pub async fn update_probability_handler(
         "forecast_id": forecast_id,
         "update_id": update_id,
         "previous_probability": previous_probability,
+        // The standalone value the client sent, for reference.
         "new_probability": req.new_probability,
+        // The displayed value after mutex-group recomposition. Equal to
+        // new_probability when the forecast is in no mutex group. The
+        // console adopts this so a re-sim keeps eliminations priced in.
+        "recomposed_probability": displayed,
         "reason": req.reason,
         "agent_id": req.agent_id,
         "commitment_hash": commitment_hash,
