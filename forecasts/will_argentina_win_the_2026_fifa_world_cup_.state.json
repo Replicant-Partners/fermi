@@ -1,53 +1,23 @@
 {
   "forecast_id": "9f1adf4c-ad59-4c6a-bb80-06d78c430eae",
-  "current_version": 6,
-  "predicted_probability": 0.08434958280321023,
+  "current_version": 1,
+  "predicted_probability": 0.10303201864065864,
   "inside_view_explanation": "Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.2%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-06-25 17:52",
-      "probability": 0.09383352845907213,
-      "change_summary": "Initial: 9.4% base=2%, 6 drivers, 6 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-06-25 17:52",
-      "probability": 0.09383352845907213,
-      "change_summary": "9.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-06-25 17:52",
-      "probability": 0.09383352845907213,
-      "change_summary": "9.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-06-25 17:52",
-      "probability": 0.09383352845907213,
-      "change_summary": "9.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 5,
-      "timestamp": "2026-06-25 17:52",
-      "probability": 0.09411306231723957,
-      "change_summary": "9.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 6,
-      "timestamp": "2026-06-25 17:52",
-      "probability": 0.08434958280321023,
-      "change_summary": "8.4% (-1pp), 6 drivers, 6 evidence"
+      "timestamp": "2026-06-29 13:59",
+      "probability": 0.10303201864065864,
+      "change_summary": "Initial: 10.3% base=2%, 6 drivers, 6 evidence"
     }
   ],
   "sim_results": {
-    "mean": 0.08434958280321023,
-    "median": 0.08314954035899355,
-    "p5": 0.06113459397704567,
-    "p95": 0.11179974053682866,
-    "std_dev": 0.015438097188398035,
+    "mean": 0.08436355819240586,
+    "median": 0.08324120039479921,
+    "p5": 0.061128324424210276,
+    "p95": 0.11174336671150926,
+    "std_dev": 0.01544089642980448,
     "iterations": 10000
   },
   "base_rate": {
