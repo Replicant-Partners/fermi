@@ -1,6 +1,6 @@
 # Will Argentina win the 2026 FIFA World Cup?
 
-**Probability:** 8.4% · **Version:** v2 · **Updated:** 2026-06-29 14:11 UTC
+**Probability:** 10.3% · **Version:** v3 · **Updated:** 2026-06-29 14:13 UTC
 
 **Confidence:** Medium (50%) · **Drivers:** 6 · **Evidence:** 6 · **Agents:** 4
 
@@ -11,8 +11,8 @@
 | Metric | Value |
 |---|---|
 | Crowd price | **11.6%** |
-| Fermi estimate | **8.4%** |
-| Divergence | +3.1pp below crowd (Minor divergence) |
+| Fermi estimate | **10.3%** |
+| Divergence | +1.3pp below crowd (Consensus) |
 | 24h volume | $6.1M |
 | Market confidence | Very High |
 
@@ -22,13 +22,13 @@
 
 ## Inside View
 
-**Probability: 8.4%**
+**Probability: 10.3%**
 
-Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.2%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.
+Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.1%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.
 
 **Forecast Confidence:** Medium (50%)
 
-**Divergence from base rate:** 6pp above (8.4% vs 2.1%)
+**Divergence from base rate:** 8pp above (10.3% vs 2.1%)
 
 ---
 
@@ -45,34 +45,34 @@ Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverge
 
 ## Simulation Distribution
 
-**10000 iterations** · p5 = 6.1% · median = 8.3% · p95 = 11.2% · σ = 0.015
+**10000 iterations** · p5 = 6.1% · median = 8.3% · p95 = 11.1% · σ = 0.015
 
 ```
-▁▁▂▃▅▇██▇▆▅▄▃▂▁▁▁▁▁▁
+▁▁▃▄▇██▇▆▅▃▂▂▁▁▁▁▁▁▁
 ```
 
 | Bin center | Count | % of sims |
 |---|---|---|
-| 4.4% | 9 | 0.1% |
-| 5.0% | 63 | 0.6% |
-| 5.5% | 209 | 2.1% |
-| 6.1% | 493 | 4.9% |
-| 6.7% | 887 | 8.9% |
-| 7.2% | 1259 | 12.6% |
-| 7.8% | 1445 | 14.4% |
-| 8.3% | 1431 | 14.3% |
-| 8.9% | 1224 | 12.2% |
-| 9.5% | 1026 | 10.3% |
-| 10.0% | 737 | 7.4% |
-| 10.6% | 520 | 5.2% |
-| 11.1% | 322 | 3.2% |
-| 11.7% | 192 | 1.9% |
-| 12.3% | 91 | 0.9% |
-| 12.8% | 53 | 0.5% |
-| 13.4% | 18 | 0.2% |
-| 13.9% | 15 | 0.1% |
-| 14.5% | 2 | 0.0% |
-| 15.1% | 4 | 0.0% |
+| 4.5% | 9 | 0.1% |
+| 5.1% | 90 | 0.9% |
+| 5.7% | 350 | 3.5% |
+| 6.3% | 784 | 7.8% |
+| 7.0% | 1284 | 12.8% |
+| 7.6% | 1566 | 15.7% |
+| 8.2% | 1572 | 15.7% |
+| 8.9% | 1408 | 14.1% |
+| 9.5% | 1141 | 11.4% |
+| 10.1% | 789 | 7.9% |
+| 10.8% | 470 | 4.7% |
+| 11.4% | 267 | 2.7% |
+| 12.0% | 155 | 1.6% |
+| 12.6% | 66 | 0.7% |
+| 13.3% | 29 | 0.3% |
+| 13.9% | 9 | 0.1% |
+| 14.5% | 6 | 0.1% |
+| 15.2% | 3 | 0.0% |
+| 15.8% | 1 | 0.0% |
+| 16.4% | 1 | 0.0% |
 
 ---
 
@@ -82,8 +82,9 @@ Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverge
 |---|---|---|---|---|---|---|---|
 | v1 | 2026-06-29 14:11 | 10.3% | 2.1% | 11.6% | +8.2pp | -1.2pp | Initial: 10.3% base=2%, 6 drivers, 6 evidence |
 | v2 | 2026-06-29 14:11 | 8.4% | 2.1% | 11.6% | +6.4pp | -3.1pp | 8.4% (-2pp), 6 drivers, 6 evidence |
+| v3 | 2026-06-29 14:13 | 10.3% | 2.1% | 11.6% | +8.2pp | -1.3pp | 10.3% (+2pp), 6 drivers, 6 evidence |
 
-**Model line:** ```█▁``` (range 8.4% – 10.3%)
+**Model line:** ```█▁█``` (range 8.4% – 10.3%)
 
 ---
 
@@ -91,7 +92,7 @@ Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverge
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.86 | 1.06 | 1.26 |  |
 
 > Macro capacity for footballing investment: GDP, population, HDI.
 
@@ -102,87 +103,105 @@ Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverge
 
 ### Evidence (1) — Strong quality (75%)
 
-#### Agent: macro_data_agent — relevance 50% · quality ●●● High (75%) · 2026-06-18
+#### Agent: macro_data_agent — relevance 50% · quality ●●● High (75%) · 2026-06-29
 
-# SOCIOECONOMIC CAPITAL (X1) — ARGENTINA, 2026 FIFA WORLD CUP
-
-## CORE INDICATORS — ARGENTINA (ARG)
-
-**[INDICATOR]** GDP per capita (2024, World Bank NY.GDP.PCAP.CD): **$12,667** (Trading Economics); log₁₀ ≈ **4.103**
-Source: Trading Economics, World Bank data for 2024
-
-**[INDICATOR]** GDP per capita PPP (2024, World Bank NY.GDP.PCAP.PP.CD): **$26,547–$30,176** (Trading Economics/World Bank); using mid-point $28,362; log₁₀ ≈ **4.453**
-Source: Trading Economics, World Bank PPP-adjusted data for 2024
-
-**[INDICATOR]** Population (2024, World Bank SP.POP.TOTL): **45.70 million** (45,696,159); log₁₀ ≈ **1.660**
-Source: Trading Economics, World Bank 2024
-
-**[INDICATOR]** HDI (2023, UNDP Human Development Report 2025): **0.865–0.870** (sources vary; using 0.865 from inequality-adjusted table); logit = log(0.865/(1−0.865)) ≈ **1.854**
-Source: UNDP HDR 2025 Statistical Annex, Table 1
-
-**[DATA AGE]** All indicators are 2024 (GDP, population) or 2023 (HDI, most recent UNDP release). Data freshness: **current**.
+Excellent! Now I have solid data. Let me compile the findings:
 
 ---
 
-## FIELD BASELINE — 2026 FIFA WORLD CUP (48 TEAMS)
+## **Argentina Socioeconomic Indicators (2024–2026 Latest Available)**
 
-**[BASELINE]** The 2026 World Cup field spans extreme economic diversity:
-- **Richest**: United States ($53,202 GDP/capita, per World Data Lab analysis)
-- **Poorest**: DR Congo ($752 GDP/capita, 71× gap)
-- **Field median estimate** (24th of 48 teams): ~$15,000–$18,000 GDP/capita (log₁₀ ≈ **4.18–4.26**)
-- **Median population** (mid-sized qualifiers like Ecuador, Uruguay, Switzerland): ~10–15M (log₁₀ ≈ **1.0–1.2**)
-- **Median HDI** (mix of high/very-high development): ~0.80–0.85 (logit ≈ **1.39–1.73**)
+### **[INDICATOR] GDP per capita (2024, FocusEconomics / World Bank NY.GDP.PCAP.CD): $13,000**
+- **Log₁₀ transformation**: log₁₀(13,000) ≈ **4.114**
+- **Source**: FocusEconomics (June 2026), citing World Bank data for 2024
+- **Data age**: 2024 (most recent available; 2025/2026 estimates not yet published by World Bank)
 
-**[BASELINE]** Argentina's confederation (CONMEBOL) qualified 6 teams: Argentina, Brazil, Colombia, Ecuador, Paraguay, Uruguay. Regional GDP/capita range: $6k (Paraguay) to $13k (Argentina, Uruguay). Argentina ranks **1st–2nd in CONMEBOL** by GDP/capita and HDI.
+### **[INDICATOR] Population (2026, World Population Review / UN Population Division): 46.0 million**
+- **Log₁₀ transformation**: log₁₀(46.0) ≈ **1.663**
+- **Source**: World Population Review (June 2026), UN Population Division projections
+- **Data age**: 2026 (current year estimate)
 
-**[BASELINE]** Argentina's global rank: 33rd by population, 26th by GDP (Investec analysis). Mid-tier economic power in the 48-team field, but **above-median** on per-capita metrics.
-
----
-
-## TRANSFORM — FACTOR CALCULATION
-
-Using the standard X1 (Socioeconomic Capital) transform:
-**X1 = (0.4·GDP_log + 0.3·Pop_log + 0.3·HDI_logit − offset) / scale**
-
-**[TRANSFORM]** Argentina calculation (using current-USD GDP for consistency with field):
-- 0.4 × 4.103 (GDP/capita log) = 1.641
-- 0.3 × 1.660 (population log) = 0.498
-- 0.3 × 1.854 (HDI logit) = 0.556
-- **Sum** = 2.695
-- Assuming field offset ≈ 2.50, scale ≈ 0.75: **(2.695 − 2.50) / 0.75 ≈ +0.26**
-
-**[TRANSFORM]** Argentina sits **+0.26 SD above the 48-team field median** on composite socioeconomic capital. This reflects:
-- GDP/capita slightly **below** field median (~$12.7k vs. ~$16k median)
-- Population **above** median (45.7M vs. ~12M median) — larger talent pool
-- HDI **at/above** median (0.865, "very high" development tier)
-
-**[TRANSFORM]** Net effect: Argentina's large population and high human development **offset** its mid-tier GDP/capita, placing it in the **upper-middle tercile** of the 48-team field on X1.
+### **[INDICATOR] HDI (2023, UNDP Human Development Report 2024): 0.870**
+- **Logit transformation**: logit(0.870) = log(0.870 / (1 − 0.870)) = log(6.692) ≈ **1.901**
+- **Source**: World Scorecard / UNDP HDR 2024 (published 2024, reporting 2023 data)
+- **Data age**: 2023 (most recent UNDP HDR release; 2024 HDR typically published in late year)
+- **Note**: This is higher than the 0.842 figure from earlier reports; Argentina improved to **"very high human development"** tier
 
 ---
 
-## MULTIPLIER — BAYESOPS ELASTICITY INPUT
+### **[BASELINE] World Cup 2026 field median socioeconomic profile (estimated)**
+For a typical 32-team World Cup field (CONMEBOL + UEFA + CONCACAF + AFC + CAF + OFC qualifiers):
+- **Median GDP per capita log**: ≈ **4.05** (~$11,200)
+- **Median population log**: ≈ **1.60** (~40M)
+- **Median HDI logit**: ≈ **1.50** (HDI ≈ 0.818)
 
-**[MULTIPLIER]** Suggested p50: **1.05** (p5: **0.92**, p95: **1.18**) — Argentina's socioeconomic capital sits modestly above the 2026 WC field median; large population (45.7M, top quartile) and very-high HDI (0.865) compensate for mid-tier GDP/capita ($12.7k), yielding a +5% lift to the X1 factor prior relative to field baseline.
+Argentina sits **above the field median** on all three dimensions:
+- GDP/capita: 4.114 vs. 4.05 → **+0.064** (6th–7th decile)
+- Population: 1.663 vs. 1.60 → **+0.063** (6th decile)
+- HDI: 1.901 vs. 1.50 → **+0.401** (8th–9th decile, "very high" tier)
 
-**Rationale**: The 2026 field is economically heterogeneous (71× GDP/capita range). Argentina ranks in the 55th–60th percentile on composite X1 — not elite (USA, Germany, Switzerland at 90th+ percentile) but solidly above lower-income qualifiers (DR Congo, Haiti, Curaçao at <20th percentile). The +0.26 SD composite score translates to a **modest positive multiplier** (1.05) with **moderate uncertainty** (p5–p95 range 0.92–1.18) reflecting Argentina's mid-pack economic position despite strong human capital and population scale.
+---
+
+### **[TRANSFORM] Composite X1 (Socioeconomic Capital) factor score**
+Using the standard Fermi X1 weighting:
+- **40% GDP/capita log** + **30% population log** + **30% HDI logit**
+
+**Raw composite**:
+```
+0.4 × 4.114 + 0.3 × 1.663 + 0.3 × 1.901
+= 1.646 + 0.499 + 0.570
+= 2.715
+```
+
+**Standardized deviation from field median** (assuming field mean ≈ 2.60, σ ≈ 0.70):
+```
+z = (2.715 − 2.60) / 0.70 ≈ +0.16 standard deviations
+```
+
+Argentina's socioeconomic capital is **moderately above the WC field median**, driven primarily by its **very high HDI** (0.870, 47th globally) and stable mid-tier GDP/capita. Population size is near the field median.
+
+---
+
+### **[DATA AGE] Recency and reliability**
+- **GDP/capita**: 2024 data (1–2 years lag typical for World Bank; 2025 estimates not yet released)
+- **Population**: 2026 projection (current year, high confidence)
+- **HDI**: 2023 data (UNDP HDR 2024 release; 1-year lag standard)
+
+All indicators are **recent and authoritative**. No bootstrapping required.
+
+---
+
+### **[MULTIPLIER] Suggested p50: 1.06 (p5: 0.94, p95: 1.19) — Argentina's HDI (0.870, very high tier) and GDP/capita ($13k, 7th decile) lift X1 modestly above WC field median; population near median provides no additional leverage**
+
+**Rationale**:
+- **+0.16 σ** composite score translates to a **~6% uplift** at p50
+- **Uncertainty bounds** reflect:
+  - **p5 (0.94)**: Downside from currency volatility (peso depreciation history), inflation risk, and potential HDI revision
+  - **p95 (1.19)**: Upside if 2024–2025 stabilization (IMF program, Milei reforms) sustains human capital gains and GDP recovery
+
+**Application**: Multiply the **factor-level prior for X1** by this multiplier when constructing Argentina's tournament forecast. For example, if the base X1 prior is Beta(α=5, β=3) with mean 0.625, the adjusted prior becomes Beta scaled to mean ≈ 0.625 × 1.06 ≈ 0.66.
+
+---
+
+**End of Macro Data Agent report.**
 
 **Key findings:**
 
-- [INDICATOR]** GDP per capita (2024, World Bank NY.GDP.PCAP.CD): **$12,667** (Trading Economics); log₁₀ ≈ **4.103**
-- [INDICATOR]** GDP per capita PPP (2024, World Bank NY.GDP.PCAP.PP.CD): **$26,547–$30,176** (Trading Economics/World Bank); using mid-point $28,362; log₁₀ ≈ **4.453**
-- [INDICATOR]** Population (2024, World Bank SP.POP.TOTL): **45.70 million** (45,696,159); log₁₀ ≈ **1.660**
-- [INDICATOR]** HDI (2023, UNDP Human Development Report 2025): **0.865–0.870** (sources vary; using 0.865 from inequality-adjusted table); logit = log(0.865/(1−0.865)) ≈ **1.854**
-- [DATA AGE]** All indicators are 2024 (GDP, population) or 2023 (HDI, most recent UNDP release). Data freshness: **current**.
-- [BASELINE]** The 2026 World Cup field spans extreme economic diversity:
-- **Richest**: United States ($53,202 GDP/capita, per World Data Lab analysis)
-- **Poorest**: DR Congo ($752 GDP/capita, 71× gap)
-- **Field median estimate** (24th of 48 teams): ~$15,000–$18,000 GDP/capita (log₁₀ ≈ **4.18–4.26**)
-- **Median population** (mid-sized qualifiers like Ecuador, Uruguay, Switzerland): ~10–15M (log₁₀ ≈ **1.0–1.2**)
-- **Median HDI** (mix of high/very-high development): ~0.80–0.85 (logit ≈ **1.39–1.73**)
-- [BASELINE]** Argentina's confederation (CONMEBOL) qualified 6 teams: Argentina, Brazil, Colombia, Ecuador, Paraguay, Uruguay. Regional GDP/capita range: $6k (Paraguay) to $13k (Argentina, Uruguay). Argentina ranks **1st–2nd in CONMEBOL** by GDP/capita and HDI.
-- [BASELINE]** Argentina's global rank: 33rd by population, 26th by GDP (Investec analysis). Mid-tier economic power in the 48-team field, but **above-median** on per-capita metrics.
-- X1 = (0.4·GDP_log + 0.3·Pop_log + 0.3·HDI_logit − offset) / scale**
-- [TRANSFORM]** Argentina calculation (using current-USD GDP for consistency with field):
+- **Log₁₀ transformation**: log₁₀(13,000) ≈ **4.114**
+- **Source**: FocusEconomics (June 2026), citing World Bank data for 2024
+- **Data age**: 2024 (most recent available; 2025/2026 estimates not yet published by World Bank)
+- **Log₁₀ transformation**: log₁₀(46.0) ≈ **1.663**
+- **Source**: World Population Review (June 2026), UN Population Division projections
+- **Data age**: 2026 (current year estimate)
+- **Logit transformation**: logit(0.870) = log(0.870 / (1 − 0.870)) = log(6.692) ≈ **1.901**
+- **Source**: World Scorecard / UNDP HDR 2024 (published 2024, reporting 2023 data)
+- **Data age**: 2023 (most recent UNDP HDR release; 2024 HDR typically published in late year)
+- **Note**: This is higher than the 0.842 figure from earlier reports; Argentina improved to **"very high human development"** tier
+- **Median GDP per capita log**: ≈ **4.05** (~$11,200)
+- **Median population log**: ≈ **1.60** (~40M)
+- **Median HDI logit**: ≈ **1.50** (HDI ≈ 0.818)
+- GDP/capita: 4.114 vs. 4.05 → **+0.064** (6th–7th decile)
+- Population: 1.663 vs. 1.60 → **+0.063** (6th decile)
 
 ---
 
@@ -199,53 +218,34 @@ Using the standard X1 (Socioeconomic Capital) transform:
 - **football_institution_agent** (schedule: every 1 Month)  
   Query: _Player registration, top-flight league revenue, confederation coefficient for Argentina_
 
-### Evidence (1) — Strong quality (75%)
+### Evidence (1) — Partial quality (53%)
 
-#### Agent: football_institution_agent — relevance 50% · quality ●●● High (75%) · 2026-06-18
+#### Agent: football_institution_agent — relevance 50% · quality ●●○ Med (53%) · 2026-06-29
 
-# ARGENTINA INSTITUTIONAL CAPACITY ANALYSIS — FACTOR X2
+# ARGENTINA — INSTITUTIONAL CAPACITY (X2) ANALYSIS
 
-## CORE FINDINGS
+## FINDINGS
 
-[PENETRATION] **Player penetration rate**: Argentina has approximately **2.6 million registered + unregistered players** (source: FIFA grassroots data, ~2020-2023 estimates) across a population of **46.1 million (2024)**. This yields **~5,640 players per 100k inhabitants** — exceptionally high, ranking among the top 10 globally and highest in CONMEBOL. For comparison, this exceeds Brazil (~4,200/100k) and rivals European leaders like Iceland, Croatia, and Belgium.
+[PENETRATION] **DATA AGE** — FIFA Big Count data for Argentina not directly accessible in current search. Historical FIFA Big Count (2006) showed South America total ~27 million registered players across 10 nations. Argentina's professional player count (FIFA Professional Football Report 2023): 128,694 professional male footballers globally, with Argentina consistently in top 10 for professional player density. Conservative estimate based on training data: ~3.2-3.5 million total registered players (all levels) in population of 46.1 million (2024) → **~7,400 per 100k** — exceptionally high, among world leaders alongside Uruguay and Iceland.
 
-[LEAGUE REVENUE] **Domestic league financial scale**: Liga Profesional Argentina (Primera División) generates estimated **$28.16 million in sponsorship revenue** (GlobalData 2024), with total league revenue (including media rights) likely in the **$80-120 million range** (extrapolating from sponsorship share). Log10(100M) ≈ **8.0** — this is **significantly below** top European leagues (Premier League ~9.5, La Liga ~9.3) but **competitive within CONMEBOL** and mid-tier European leagues (Eredivisie, Liga Portugal). However, Argentina's domestic infrastructure is weakened by economic instability and currency devaluation, limiting reinvestment capacity.
+[LEAGUE REVENUE] Liga Profesional de Fútbol (Argentina Primera División) annual sponsorship revenue estimated at **$52 million** (GlobalData 2023). Total league revenue (including broadcasting, commercial, matchday) estimated **$400-500 million** range based on tier positioning alongside Eredivisie/Liga MX. River Plate and Boca Juniors alone generate ~$150-200M combined annually. Log₁₀(450M) ≈ **8.65** — mid-tier globally, but strong for CONMEBOL region (only Brazil's Serie A exceeds materially).
 
-[CONFEDERATION] **CONMEBOL coefficient**: FIFA's current confederation strength formula assigns **UEFA/CONMEBOL = 1.00** (equal weighting based on World Cup wins over the last three tournaments). CONMEBOL's recent performance supports this: in the 2025 FIFA Club World Cup, CONMEBOL clubs won **3 of 12 direct matches vs UEFA** (6 losses, 3 draws), demonstrating competitive parity at the club level. Argentina specifically contributes heavily to CONMEBOL strength — **30% of CONMEBOL nations have won the World Cup** (Argentina, Brazil, Uruguay) vs <10% for UEFA.
+[CONFEDERATION] CONMEBOL member; confederation coefficient **0.95** (second only to UEFA at 1.00). Copa Libertadores clubs have historically outperformed in FIFA Club World Cup vs UEFA opposition (2025 data shows CONMEBOL clubs outperforming UEFA clubs in new format). Argentina contributes 3-4 clubs to Libertadores knockout stages annually; River Plate/Boca Juniors perennial continental powers. CONMEBOL strength driven by Argentina + Brazil dominance.
 
-[INSTITUTIONAL SIGNAL] **Youth development infrastructure**: Argentina operates a **world-class academy system** with deep historical roots. The AFA expanded centralized U-15/U-17 training hubs in the 1990s-2000s under Julio Grondona, creating regional scouting networks that feed the national team pipeline. **Argentine coaches dominate CONMEBOL** — as of 2023, **7 of 10 CONMEBOL national teams** employed Argentine managers, signaling methodological export and coaching density. The AFA is investing $10M in a Miami training facility (2023-2024) to expand U.S. scouting and maintain diaspora talent pipelines.
+[INSTITUTIONAL SIGNAL] Argentina operates **520+ clubs** across AFA-sanctioned pyramid (Grokipedia 2026). Youth development infrastructure: structured Selecciones Juveniles (U-15 to U-20) with centralized scouting from domestic leagues. Coaching density and tactical culture among world's strongest — Argentina produces elite talent at rate far exceeding demographic scale (Messi, Maradona, Di María, Agüero generation overlap). Institutional memory and football-as-culture effect amplifies X2.
 
-[DATA AGE] Player penetration data is from **2020-2023 estimates** (FIFA Big Count updates are irregular; most recent comprehensive count was 2020). League revenue is **2024 estimates** from GlobalData. Confederation coefficient reflects **2024 FIFA formula** based on 2014-2022 World Cup results.
-
----
-
-## MULTIPLIER ASSESSMENT
-
-Argentina's institutional capacity **significantly exceeds** what its domestic league revenue alone would predict. Key drivers:
-
-1. **Elite player penetration** (5,640/100k) converts a mid-sized population into a massive talent pool
-2. **CONMEBOL confederation strength** (1.00 coefficient) provides the highest competitive environment outside UEFA
-3. **Academy infrastructure** rivals European leaders despite economic constraints — Argentina produces talent at a rate disproportionate to GDP
-4. **Coaching export dominance** signals methodological superiority across South America
-
-The primary institutional weakness is **domestic league financial fragility** — economic volatility limits club investment, driving talent export to Europe earlier than optimal for domestic development. However, this is partially offset by the fact that Argentina's national team draws from **European-based players** who benefit from UEFA club infrastructure (Messi at PSG/Miami, Álvarez at Man City, Martínez at Aston Villa, etc.).
-
-For World Cup 2026 specifically: Argentina's institutional setup is **optimized for national-team performance** rather than domestic league strength. The AFA's centralized control, deep talent pool, and access to European-developed players create a multiplier effect.
+[DATA AGE] Player registration count relies on training-data baseline (~3.5M estimate); FIFA Big Count 2023 update not directly retrieved. League revenue from 2023-2024 sources (GlobalData, industry reports). All confederation data current to 2024-2025 season.
 
 ---
 
-[MULTIPLIER] **Suggested p50: 1.25** (p5: 1.05, p95: 1.50) — Argentina's institutional density (player penetration, confederation strength, academy infrastructure) materially exceeds the global median despite modest domestic league revenue; X2 should be boosted ~25% above field baseline, with upside risk if diaspora integration remains strong through 2026.
+## MULTIPLIER OUTPUT
+
+**[MULTIPLIER] Suggested p50: 1.45 (p5: 1.25, p95: 1.70)** — Argentina's institutional capacity vastly exceeds its economic scale (X1); penetration rate ~7,400/100k ranks among global elite, CONMEBOL confederation strength (0.95) is second only to UEFA, and domestic league revenue (~$450M) supports professional pathway despite modest GDP per capita. X2 should be materially elevated vs field median.
 
 **Key findings:**
 
-- [LEAGUE REVENUE] **Domestic league financial scale**: Liga Profesional Argentina (Primera División) generates estimated **$28.16 million in sponsorship revenue** (GlobalData 2024), with total league revenue (including media rights) likely in the **$80-120 million range** (extrapolating from sponsorship share). Log10(100M) ≈ **8.0** — this is **significantly below** top European leagues (Premier League ~9.5, La Liga ~9.3) but **competitive within CONMEBOL** and mid-tier European leagues (Eredivisie, Liga Portugal). However, Argentina's domestic infrastructure is weakened by economic instability and currency devaluation, limiting reinvestment capacity.
-- [CONFEDERATION] **CONMEBOL coefficient**: FIFA's current confederation strength formula assigns **UEFA/CONMEBOL = 1.00** (equal weighting based on World Cup wins over the last three tournaments). CONMEBOL's recent performance supports this: in the 2025 FIFA Club World Cup, CONMEBOL clubs won **3 of 12 direct matches vs UEFA** (6 losses, 3 draws), demonstrating competitive parity at the club level. Argentina specifically contributes heavily to CONMEBOL strength — **30% of CONMEBOL nations have won the World Cup** (Argentina, Brazil, Uruguay) vs <10% for UEFA.
-- [INSTITUTIONAL SIGNAL] **Youth development infrastructure**: Argentina operates a **world-class academy system** with deep historical roots. The AFA expanded centralized U-15/U-17 training hubs in the 1990s-2000s under Julio Grondona, creating regional scouting networks that feed the national team pipeline. **Argentine coaches dominate CONMEBOL** — as of 2023, **7 of 10 CONMEBOL national teams** employed Argentine managers, signaling methodological export and coaching density. The AFA is investing $10M in a Miami training facility (2023-2024) to expand U.S. scouting and maintain diaspora talent pipelines.
-- 1. **Elite player penetration** (5,640/100k) converts a mid-sized population into a massive talent pool
-- 2. **CONMEBOL confederation strength** (1.00 coefficient) provides the highest competitive environment outside UEFA
-- 3. **Academy infrastructure** rivals European leaders despite economic constraints — Argentina produces talent at a rate disproportionate to GDP
-- 4. **Coaching export dominance** signals methodological superiority across South America
-- [MULTIPLIER] **Suggested p50: 1.25** (p5: 1.05, p95: 1.50) — Argentina's institutional density (player penetration, confederation strength, academy infrastructure) materially exceeds the global median despite modest domestic league revenue; X2 should be boosted ~25% above field baseline, with upside risk if diaspora integration remains strong through 2026.
+- [LEAGUE REVENUE] Liga Profesional de Fútbol (Argentina Primera División) annual sponsorship revenue estimated at **$52 million** (GlobalData 2023). Total league revenue (including broadcasting, commercial, matchday) estimated **$400-500 million** range based on tier positioning alongside Eredivisie/Liga MX. River Plate and Boca Juniors alone generate ~$150-200M combined annually. Log₁₀(450M) ≈ **8.65** — mid-tier globally, but strong for CONMEBOL region (only Brazil's Serie A exceeds materially).
+- [MULTIPLIER] Suggested p50: 1.45 (p5: 1.25, p95: 1.70)** — Argentina's institutional capacity vastly exceeds its economic scale (X1); penetration rate ~7,400/100k ranks among global elite, CONMEBOL confederation strength (0.95) is second only to UEFA, and domestic league revenue (~$450M) supports professional pathway despite modest GDP per capita. X2 should be materially elevated vs field median.
 
 ---
 
@@ -512,94 +512,104 @@ Based on API-Football data and tactical analysis, here is the evidence for Argen
 
 #### Agent: fixture_context_agent — relevance 50% · quality ●●● High (70%) · 2026-06-29
 
-# FIXTURE CONTEXT ANALYSIS: ARGENTINA — 2026 FIFA WORLD CUP GROUP J
+# ARGENTINA FIXTURE CONTEXT ANALYSIS — 2026 FIFA WORLD CUP
 
-## ARGENTINA GROUP STAGE FIXTURES (COMPLETED)
+## FIXTURE SCHEDULE (Group J + Round of 32)
 
-**Match 1:** Argentina 3-0 Algeria | June 16, 2026 | Arrowhead Stadium, Kansas City, MO
-**Match 2:** Argentina 2-0 Austria | June 22, 2026 | AT&T Stadium, Arlington, TX
-**Match 3:** Jordan 1-3 Argentina | June 28, 2026 | AT&T Stadium, Arlington, TX
+**Group Stage:**
+1. **June 17, 2026** — Argentina vs Algeria | Arrowhead Stadium, Kansas City, MO
+2. **June 22, 2026** — Argentina vs Austria | AT&T Stadium (Dallas Stadium), Arlington, TX
+3. **June 28, 2026** — Argentina vs Jordan | AT&T Stadium (Dallas Stadium), Arlington, TX
+
+**Knockout Stage:**
+4. **July 3, 2026** — Argentina vs Cape Verde (Round of 32) | Hard Rock Stadium, Miami, FL
 
 ---
 
 ## FACTOR X6 FINDINGS
 
-### [HOST] Host Nation Advantage — ABSENT
-Argentina is **not** a co-host of the 2026 World Cup (USA/Canada/Mexico are). However, all three Group J fixtures were played in the **United States** (Kansas City, Missouri and Arlington, Texas). Argentina benefits from **neutral-venue conditions** with no home crowd disadvantage, but lacks the +0.3 to +0.5 Elo boost typical of host nations. **Host status = 0.0** for Argentina.
+### [HOST]
+**Non-host nation** — Argentina plays all Group J fixtures in the United States (co-host nation). While not a direct host, Argentina benefits from proximity to its large diaspora in North America and familiar CONCACAF conditions. Host_status = 0 (Argentina is not a host), but venue familiarity is moderate given regular Copa América participation in US venues. No systematic home advantage.
 
-### [CLIMATE] Temperature & Humidity Delta — MODERATE DISADVANTAGE
+### [CLIMATE]
+**Moderate climate disadvantage in Group Stage, severe in Miami knockout**
+
+**Argentina's home climate baseline:**
+- Buenos Aires (June): Winter month, 10-17°C (50-63°F), 75-80% RH
+- Argentine players train in temperate/cool conditions during June (Southern Hemisphere winter)
+
 **Venue climate conditions:**
-- **Kansas City (June 16):** Historical June average: 27-28°C, 69-72% RH
-- **Arlington, Texas (June 22 & 28):** Historical June average: 32-35°C, 61-68% RH (AT&T Stadium is climate-controlled indoors, but reported external conditions of 32°C/90°F at kickoff)
 
-**Argentina home climate baseline:**
-- Buenos Aires (primary training base): Winter in June (Southern Hemisphere), typical 10-15°C, 70-80% RH
-- Argentine players train in temperate/cool conditions domestically
+1. **Kansas City (June 17):** 30-33°C (86-91°F), 60-70% RH — **Climate delta: +15-20°C**
+2. **Arlington/Dallas (June 22, 28):** 32-35°C (90-95°F), 50-65% RH — **Climate delta: +18-22°C**  
+   - AT&T Stadium is climate-controlled (retractable roof, indoor environment), mitigating extreme heat
+3. **Miami (July 3):** 32-34°C (90-93°F), 70-85% RH — **Climate delta: +20°C + extreme humidity**
+   - Hard Rock Stadium is open-air; heat index can exceed 43°C (110°F)
+   - FIFA medical research flags Miami as one of the most dangerous venues for heat stress
 
-**Climate delta assessment:**
-- Temperature gap: +17 to +22°C above Argentina's home winter conditions
-- Humidity: Comparable (slight reduction in Texas)
-- **Climate disadvantage score: 0.35** — Argentine squads historically underperform in hot North American summer conditions (see Copa América Centenario 2016 data). The 32-35°C Texas heat represents a **moderate physiological stressor**, particularly in the first 30 minutes of matches.
+**Climate disadvantage score: 0.65** (moderate-to-high) — Argentine squad faces 15-22°C temperature increases from winter training conditions. Dallas indoor venue provides partial relief, but Kansas City and especially Miami present significant physiological stress.
 
-### [REST DAYS] Fixture Congestion — OPTIMAL
-**Rest intervals:**
-- Pre-tournament to Match 1 (June 16): Estimated **10+ days** from last competitive fixture (CONMEBOL qualifiers concluded March 2026)
-- Match 1 → Match 2: **6 days** (June 16 → June 22)
-- Match 2 → Match 3: **6 days** (June 22 → June 28)
+### [REST DAYS]
+**Well-managed fixture congestion**
 
-**Rest days assessment:**
-- All intervals exceed the 3-day congestion threshold
-- 6-day gaps are **optimal** for recovery and tactical preparation
-- **Rest days score: 1.0** (neutral/baseline) — no advantage or disadvantage relative to field
+- **Last pre-tournament match:** June 9, 2026 (Argentina 3-0 Iceland, friendly)
+- **Match 1 (Algeria):** June 17 → **8 rest days** (optimal)
+- **Match 2 (Austria):** June 22 → **5 rest days** (baseline)
+- **Match 3 (Jordan):** June 28 → **6 rest days** (baseline)
+- **Round of 32 (Cape Verde):** July 3 → **5 rest days** (baseline)
 
-### [ALTITUDE] Venue Elevation — NEGLIGIBLE ADVANTAGE
-**Venue altitudes:**
-- Arrowhead Stadium, Kansas City: **257m** above sea level
-- AT&T Stadium, Arlington: **184m** above sea level
+**Rest days score: 0.85** (advantageous) — Argentina enters the tournament fully rested (8 days) and maintains 5-6 day intervals throughout Group J, avoiding fixture congestion penalties. No <3-day turnarounds.
 
-**Argentina training altitude baseline:**
-- Buenos Aires: ~25m ASL
-- Most Argentine domestic venues: 0-500m ASL (coastal/pampas region)
+### [ALTITUDE]
+**Negligible altitude delta**
 
-**Altitude delta:**
-- +157m to +232m above Argentina's training baseline
-- **Well below the 1500m threshold** for physiological impact
-- **Altitude delta score: 0.0** — no material advantage or disadvantage
+**Venue elevations:**
+- Arrowhead Stadium, Kansas City: **291m** (955 ft)
+- AT&T Stadium, Arlington: **147m** (482 ft)
+- Hard Rock Stadium, Miami: **3m** (10 ft)
 
-### [OPPONENT TRAVEL BURDEN] Relative Advantage — MODERATE
-**Opponent travel distances to US venues:**
-- **Algeria** (North Africa → Kansas City/Texas): ~10,000-11,000 km, 11-13 hour flight, +7-8 hour time zone shift
-- **Austria** (Central Europe → Texas): ~8,500 km, 10-11 hour flight, +7-8 hour time zone shift
-- **Jordan** (Middle East → Texas): ~12,500 km, 14-16 hour flight, +9-10 hour time zone shift
+**Argentina training baseline:**
+- Buenos Aires: **25m** above sea level
+- Most Argentine training venues: <200m
 
-**Argentina travel burden:**
-- Buenos Aires → Kansas City: ~8,400 km, 11-12 hour flight, +2 hour time zone shift (minimal)
-- Buenos Aires → Dallas/Arlington: ~8,100 km, 10-11 hour flight, +2 hour time zone shift
+**Altitude delta: +100-270m** — Well below the 1500m threshold where performance degradation occurs. No altitude disadvantage.
 
-**Assessment:**
-Argentina faces **shorter time zone adjustments** (+2 hours vs. +7 to +10 hours for opponents) and **comparable flight distances**. European and Middle Eastern opponents face significantly greater circadian disruption. This confers a **marginal advantage** to Argentina in recovery and acclimatization, particularly visible in Match 3 vs. Jordan (longest opponent travel burden).
+### [OPPONENT TRAVEL BURDEN]
+**Significant asymmetry favoring Argentina**
+
+**Group J opponents' travel distances to USA:**
+- **Algeria** (Algiers → Kansas City): ~9,500 km, 11+ hour flight, +7 hour time zone shift
+- **Austria** (Vienna → Dallas): ~8,500 km, 10+ hour flight, +8 hour time zone shift
+- **Jordan** (Amman → Dallas): ~12,500 km, 14+ hour flight, +10 hour time zone shift
+
+**Argentina's travel:**
+- Buenos Aires → Kansas City: ~8,400 km, 10 hour flight, +2 hour time zone shift (minimal)
+- Buenos Aires → Dallas: ~8,000 km, 10 hour flight, +2 hour time zone shift (minimal)
+
+**Travel burden advantage: Moderate** — Argentina's opponents face 7-10 hour time zone shifts (eastbound travel from Europe/Middle East/North Africa is more disruptive than Argentina's northbound travel). Jordan faces the most severe jet lag burden.
 
 ---
 
-## [MULTIPLIER] Suggested p50: **0.95** (p5: 0.85, p95: 1.10) — Climate disadvantage (hot Texas summer) slightly outweighs opponent travel burden advantage; neutral host status and optimal rest days keep Argentina near field baseline with modest downside risk from heat exposure.
+## [MULTIPLIER]
+**Suggested p50: 0.95 (p5: 0.80, p95: 1.10)** — Climate disadvantage (especially Miami heat stress) slightly outweighs rest-day advantages and opponent travel burdens; non-host status is neutral; altitude is negligible. The indoor Dallas venue mitigates 2 of 3 group matches, but Miami's extreme heat-humidity combination in the knockout stage is a documented performance suppressor for temperate-climate teams.
 
 **Key findings:**
 
-- Match 1:** Argentina 3-0 Algeria | June 16, 2026 | Arrowhead Stadium, Kansas City, MO
-- Match 2:** Argentina 2-0 Austria | June 22, 2026 | AT&T Stadium, Arlington, TX
-- Match 3:** Jordan 1-3 Argentina | June 28, 2026 | AT&T Stadium, Arlington, TX
+- Group Stage:**
+- 1. **June 17, 2026** — Argentina vs Algeria | Arrowhead Stadium, Kansas City, MO
+- 2. **June 22, 2026** — Argentina vs Austria | AT&T Stadium (Dallas Stadium), Arlington, TX
+- 3. **June 28, 2026** — Argentina vs Jordan | AT&T Stadium (Dallas Stadium), Arlington, TX
+- Knockout Stage:**
+- 4. **July 3, 2026** — Argentina vs Cape Verde (Round of 32) | Hard Rock Stadium, Miami, FL
+- Non-host nation** — Argentina plays all Group J fixtures in the United States (co-host nation). While not a direct host, Argentina benefits from proximity to its large diaspora in North America and familiar CONCACAF conditions. Host_status = 0 (Argentina is not a host), but venue familiarity is moderate given regular Copa América participation in US venues. No systematic home advantage.
+- Moderate climate disadvantage in Group Stage, severe in Miami knockout**
+- Argentina's home climate baseline:**
+- Buenos Aires (June): Winter month, 10-17°C (50-63°F), 75-80% RH
+- Argentine players train in temperate/cool conditions during June (Southern Hemisphere winter)
 - Venue climate conditions:**
-- **Kansas City (June 16):** Historical June average: 27-28°C, 69-72% RH
-- **Arlington, Texas (June 22 & 28):** Historical June average: 32-35°C, 61-68% RH (AT&T Stadium is climate-controlled indoors, but reported external conditions of 32°C/90°F at kickoff)
-- Argentina home climate baseline:**
-- Buenos Aires (primary training base): Winter in June (Southern Hemisphere), typical 10-15°C, 70-80% RH
-- Argentine players train in temperate/cool conditions domestically
-- Climate delta assessment:**
-- Temperature gap: +17 to +22°C above Argentina's home winter conditions
-- Humidity: Comparable (slight reduction in Texas)
-- **Climate disadvantage score: 0.35** — Argentine squads historically underperform in hot North American summer conditions (see Copa América Centenario 2016 data). The 32-35°C Texas heat represents a **moderate physiological stressor**, particularly in the first 30 minutes of matches.
-- Rest intervals:**
-- Pre-tournament to Match 1 (June 16): Estimated **10+ days** from last competitive fixture (CONMEBOL qualifiers concluded March 2026)
+- 1. **Kansas City (June 17):** 30-33°C (86-91°F), 60-70% RH — **Climate delta: +15-20°C**
+- 2. **Arlington/Dallas (June 22, 28):** 32-35°C (90-95°F), 50-65% RH — **Climate delta: +18-22°C**
+- AT&T Stadium is climate-controlled (retractable roof, indoor environment), mitigating extreme heat
 
 ---
 
@@ -644,4 +654,4 @@ model: socio_capital * institutional_capacity * dynamic_performance * squad_qual
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v2 · 2026-06-29 14:11 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v3 · 2026-06-29 14:13 UTC_
