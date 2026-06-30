@@ -1,0 +1,85 @@
+{
+  "forecast_id": "86a9a26d-764c-4764-a4e5-b4e3297e1e2a",
+  "current_version": 1,
+  "predicted_probability": 0.055658067832359395,
+  "inside_view_explanation": "Inside view: model evaluates to 3.9% (p5=2.7%, p95=5.4%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "forecast_confidence": 0.5,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-06-30 13:08",
+      "probability": 0.055658067832359395,
+      "change_summary": "Initial: 5.6% base=2%, 6 drivers, 0 evidence"
+    }
+  ],
+  "sim_results": {
+    "mean": 0.03902964943291206,
+    "median": 0.03831287498123759,
+    "p5": 0.026823474684642006,
+    "p95": 0.053874529536463225,
+    "std_dev": 0.008315594206089672,
+    "iterations": 10000
+  },
+  "base_rate": {
+    "reference_class": "FIFA World Cup winners 1930–2022",
+    "historical_frequency": 0.0208,
+    "sample_size": 22,
+    "source": "FIFA tournament archive — 22 prior World Cups",
+    "reasoning": "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via the six factor-derived drivers."
+  },
+  "evidence": [],
+  "agents": [
+    {
+      "name": "macro_data_agent",
+      "agent_type": "research",
+      "query": "GDP per capita, population, HDI for Switzerland (2024–2026 latest available)",
+      "schedule": "Some(Every { interval: 1, unit: Month })",
+      "driver_refs": [
+        "socio_capital"
+      ]
+    },
+    {
+      "name": "football_institution_agent",
+      "agent_type": "research",
+      "query": "Player registration, top-flight league revenue, confederation coefficient for Switzerland",
+      "schedule": "Some(Every { interval: 1, unit: Month })",
+      "driver_refs": [
+        "institutional_capacity"
+      ]
+    },
+    {
+      "name": "football_analyst",
+      "agent_type": "research",
+      "query": "Latest Elo rating, last 5 matches form, key player availability, market value distribution for Switzerland",
+      "schedule": "Some(Every { interval: 1, unit: Week })",
+      "driver_refs": [
+        "dynamic_performance",
+        "squad_quality",
+        "tactical_efficiency"
+      ]
+    },
+    {
+      "name": "fixture_context_agent",
+      "agent_type": "research",
+      "query": "Upcoming fixtures for Switzerland: venue, climate, rest days, altitude, opponent travel burden",
+      "schedule": "Some(Every { interval: 3, unit: Day })",
+      "driver_refs": [
+        "fixture_context"
+      ]
+    }
+  ],
+  "driver_confidence": {},
+  "polymarket": {
+    "event_id": "30615",
+    "market_id": "558974",
+    "question": "Will Switzerland win the 2026 FIFA World Cup?",
+    "market_price": 0.0085,
+    "volume_24h": 1265245.1752189996,
+    "liquidity": null,
+    "confidence": "Very High",
+    "price_change_1w": null,
+    "url": "https://polymarket.com/event/world-cup-winner",
+    "price_history": []
+  },
+  "workspace_id": "77e69910-1108-4357-9ce6-e690ce8cdfd7"
+}
