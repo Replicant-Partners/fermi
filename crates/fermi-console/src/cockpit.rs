@@ -251,6 +251,28 @@ pub struct CockpitState {
     pub publish_status: Option<String>,
     pub api: Arc<ApiClient>,
 
+    // ── Server lifecycle reconciliation ───────────────────────────
+    // The authoritative status of this forecast, pulled from the server
+    // (not inferred by the user). When it's `resolved`/`void` the cockpit
+    // locks: no re-sims, no new snapshots. This is the source of truth that
+    // frees the operator from having to remember "this team is eliminated".
+    pub forecast_status: Option<String>,
+    pub forecast_outcome: Option<bool>,
+    pub resolution_note: Option<String>,
+    pub reconciling: bool,
+
+    /// Per-driver Sobol total-order index (0..1) from the last simulation's
+    /// `full_sensitivity_analysis`. The sensitivity bars render from THIS
+    /// (true variance-based influence) when present, instead of the driver's
+    /// raw p95−p5 spread (which is ~uniform for a factor model).
+    pub driver_sensitivity: std::collections::HashMap<String, f64>,
+
+    /// True while a just-run sim's raw mean is being recomposed server-side
+    /// (mutex-group eliminations priced back in). The displayed value is
+    /// provisional until this clears; saving is blocked so a save can never
+    /// disagree with the value the sim settles on.
+    pub recomposing: bool,
+
     // ── Access / sharing (Spec 24 §3.5.2) ─────────────────────────
     /// Current object_shares rows for this forecast (Access tab).
     pub shares: Vec<ShareEntry>,
@@ -570,6 +592,12 @@ impl CockpitState {
             forecast_id: None,
             publish_status: None,
             api,
+            forecast_status: None,
+            forecast_outcome: None,
+            resolution_note: None,
+            reconciling: false,
+            driver_sensitivity: std::collections::HashMap::new(),
+            recomposing: false,
             shares: Vec::new(),
             shares_loading: false,
             share_input,
@@ -4949,6 +4977,25 @@ impl CockpitState {
     // ═══════════════════════════════════════════════════════════════
 
     pub fn run_simulation(&mut self, cx: &mut Context<Self>) {
+        // Reconcile-derived lock: a resolved/voided forecast is settled —
+        // re-running a simulation against it is meaningless and its result
+        // can't be saved anyway. Refuse with the authoritative reason.
+        if self.is_locked() {
+            self.sim_error = Some(format!(
+                "Locked: {}. Re-running a simulation is disabled.",
+                self.lock_reason().unwrap_or_else(|| "forecast is resolved".into())
+            ));
+            self.messages.push(AssistantMessage {
+                node: "simulation".into(),
+                kind: MessageKind::Warning,
+                text: format!(
+                    "This forecast is settled ({}). Re-sims are disabled — use ↻ Reconcile if you think this is stale.",
+                    self.lock_reason().unwrap_or_else(|| "resolved".into())
+                ),
+            });
+            cx.notify();
+            return;
+        }
         self.save_focused_driver(cx);
         self.sim_running = true;
         self.sim_error = None;
@@ -5369,6 +5416,18 @@ impl CockpitState {
                     "Sensitivity analysis unavailable.".to_string()
                 };
 
+                // Store per-driver Sobol total-order indices so the
+                // sensitivity bars render true influence, not raw spread.
+                if let Ok(ref sa) = sensitivity {
+                    self.driver_sensitivity.clear();
+                    for d in parsed.drivers() {
+                        if let Some(ds) = sa.get_driver_sensitivity(&d.name) {
+                            self.driver_sensitivity
+                                .insert(d.name.clone(), ds.total_order_index);
+                        }
+                    }
+                }
+
                 // Enrich the narrative explanation with sensitivity data
                 if let Ok(ref sa) = sensitivity {
                     let top = sa.top_drivers(3);
@@ -5584,6 +5643,11 @@ impl CockpitState {
                     let api = self.api.clone();
                     let fid = fid.clone();
                     let new_prob = self.predicted_probability;
+                    // The displayed value is provisional until the server
+                    // recomposes mutex-group eliminations back in. Mark it so
+                    // the headline reads "recomposing…" and saving is blocked
+                    // — a save can then never disagree with the settled sim.
+                    self.recomposing = true;
                     let reason = format!(
                         "Local Monte Carlo simulation: mean={:.4}, p5={:.4}, p95={:.4} ({} iterations)",
                         results.mean, results.p5, results.p95, results.iterations
@@ -5615,30 +5679,49 @@ impl CockpitState {
                                 let recomposed = resp
                                     .get("recomposed_probability")
                                     .and_then(|v| v.as_f64());
-                                match recomposed {
-                                    Some(p) if (p - new_prob).abs() > 1e-6 => {
-                                        log::info!(
-                                            "[sim-persist] standalone {:.4} → recomposed {:.4} (eliminations priced in)",
-                                            new_prob, p
-                                        );
-                                        this.update(cx, |state, cx| {
+                                this.update(cx, |state, cx| {
+                                    state.recomposing = false;
+                                    match recomposed {
+                                        Some(p) if (p - new_prob).abs() > 1e-6 => {
+                                            log::info!(
+                                                "[sim-persist] standalone {:.4} → recomposed {:.4} (eliminations priced in)",
+                                                new_prob, p
+                                            );
                                             state.predicted_probability = p;
-                                            cx.notify();
-                                        })
-                                        .ok();
+                                            // Explain the change so the jump from
+                                            // the raw sim mean isn't a surprise.
+                                            state.messages.push(AssistantMessage {
+                                                node: "simulation".into(),
+                                                kind: MessageKind::Info,
+                                                text: format!(
+                                                    "Recomposed: standalone {:.1}% → {:.1}% (mutex-group eliminations priced in)",
+                                                    new_prob * 100.0,
+                                                    p * 100.0
+                                                ),
+                                            });
+                                        }
+                                        _ => {}
                                     }
-                                    _ => log::info!(
-                                        "[sim-persist] probability persisted to {:.4}",
-                                        new_prob
-                                    ),
-                                }
+                                    cx.notify();
+                                })
+                                .ok();
                             }
-                            Ok(Err(e)) => log::warn!(
-                                "[sim-persist] update_probability failed: {} — \
-                                 display shows stale value until next sim",
-                                e
-                            ),
-                            Err(e) => log::warn!("[sim-persist] tokio join error: {}", e),
+                            Ok(Err(e)) => {
+                                log::warn!("[sim-persist] update_probability failed: {}", e);
+                                this.update(cx, |state, cx| {
+                                    state.recomposing = false;
+                                    cx.notify();
+                                })
+                                .ok();
+                            }
+                            Err(e) => {
+                                log::warn!("[sim-persist] tokio join error: {}", e);
+                                this.update(cx, |state, cx| {
+                                    state.recomposing = false;
+                                    cx.notify();
+                                })
+                                .ok();
+                            }
                         }
                     })
                     .detach();
@@ -6347,6 +6430,80 @@ impl CockpitState {
         cx.notify();
     }
 
+    // ── Server lifecycle reconciliation ────────────────────────────────
+
+    /// True when the server has resolved/voided this forecast — the cockpit
+    /// must then block re-sims and new snapshots. Driven by the authoritative
+    /// `forecast_status`, not by anything the user has to remember.
+    pub fn is_locked(&self) -> bool {
+        matches!(
+            self.forecast_status.as_deref(),
+            Some("resolved") | Some("void")
+        )
+    }
+
+    /// A human-readable reason for the lock, e.g.
+    /// "Resolved → No · Auto-resolved via Polymarket …".
+    pub fn lock_reason(&self) -> Option<String> {
+        if !self.is_locked() {
+            return None;
+        }
+        let verb = match self.forecast_status.as_deref() {
+            Some("void") => "Voided".to_string(),
+            _ => {
+                let outcome = match self.forecast_outcome {
+                    Some(true) => " → Yes",
+                    Some(false) => " → No",
+                    None => "",
+                };
+                format!("Resolved{}", outcome)
+            }
+        };
+        match &self.resolution_note {
+            Some(note) if !note.is_empty() => Some(format!("{} · {}", verb, note)),
+            _ => Some(verb),
+        }
+    }
+
+    /// Re-pull the authoritative lifecycle state from the server and adopt
+    /// it. This is the "reconcile server context" action: a stale cockpit
+    /// (opened while active, resolved server-side since) snaps to the real
+    /// state — status, outcome, the resolved probability — and locks itself.
+    pub fn reconcile_forecast(&mut self, cx: &mut Context<Self>) {
+        let Some(fid) = self.forecast_id.clone() else {
+            return;
+        };
+        self.reconciling = true;
+        cx.notify();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = tokio::spawn(async move { api.get_forecast(&fid).await }).await;
+            this.update(cx, |state, cx| {
+                state.reconciling = false;
+                if let Ok(Ok(f)) = result {
+                    let was_locked = state.is_locked();
+                    state.forecast_status = Some(f.status.clone());
+                    state.forecast_outcome = f.actual_outcome;
+                    state.resolution_note = f.resolution_notes.clone();
+                    // When locked, show the authoritative resolved value
+                    // rather than a stale local sim mean.
+                    if state.is_locked() {
+                        state.predicted_probability = f.predicted_probability;
+                        if !was_locked {
+                            state.pending_toasts.push(
+                                "This forecast was resolved on the server — locked for editing"
+                                    .to_string(),
+                            );
+                        }
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     // ── Access / sharing (Spec 24 §3.5.2) ──────────────────────────────
 
     /// Fetch the current shares for this forecast into the Access tab.
@@ -6549,6 +6706,26 @@ impl CockpitState {
     }
 
     pub fn publish_forecast(&mut self, visibility: String, cx: &mut Context<Self>) {
+        // Reconcile-derived lock: the server has settled this forecast, so a
+        // new snapshot would be rejected (409) anyway. Block locally with the
+        // authoritative reason instead of letting the save silently fail.
+        if self.is_locked() {
+            self.publish_status = Some(format!(
+                "Locked: {}. Saving new snapshots is disabled.",
+                self.lock_reason().unwrap_or_else(|| "forecast is resolved".into())
+            ));
+            cx.notify();
+            return;
+        }
+        // Don't save mid-recompose: the displayed value is still the raw sim
+        // mean and would disagree with the value the sim settles on a moment
+        // later. Wait for the recomposed value, then save.
+        if self.recomposing {
+            self.publish_status =
+                Some("Recomposing eliminations — try save again in a moment.".into());
+            cx.notify();
+            return;
+        }
         self.save_focused_driver(cx);
         // Same guard as run_simulation — never regenerate cached_fpl from
         // the AST if the loaded FPL is richer (factor blocks, agents,
@@ -6713,6 +6890,13 @@ impl CockpitState {
                 Err(e) => {
                     this.update(cx, |state, cx| {
                         state.publish_status = Some(format!("Failed: {}", e));
+                        // If the server rejected the write because the
+                        // forecast is already resolved, our local view was
+                        // stale — reconcile so the cockpit locks and shows
+                        // the real settled state instead of a dead error.
+                        if e.to_lowercase().contains("resolved") {
+                            state.reconcile_forecast(cx);
+                        }
                         cx.notify();
                     })
                     .ok();
@@ -6768,6 +6952,8 @@ impl Render for CockpitState {
             }))
             // ── Fermi Banner (top, always visible) ────────────────
             .child(render_fermi_banner(&self.messages, &self.agent_runs))
+            // ── Locked banner: server resolved/voided this forecast ──
+            .when(self.is_locked(), |el| el.child(render_locked_banner(self, cx)))
             // ── Main content (left + right panels) ────────────────
             .child(
                 div()
@@ -11059,6 +11245,61 @@ fn render_assistant_panel(messages: &[AssistantMessage]) -> impl IntoElement {
 /// Fermi Banner — persistent top strip showing live agent activity.
 /// Always visible, shows the most recent messages + latest finding.
 /// Replaces the buried "FPL Assistant" panel.
+/// Banner shown when the server has resolved/voided this forecast. Makes the
+/// settled state — and the fact that re-sims / new snapshots are disabled —
+/// explicit, so the operator doesn't have to carry that context. Includes a
+/// ↻ Reconcile button to re-pull server state on demand.
+fn render_locked_banner(
+    state: &CockpitState,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let reason = state.lock_reason().unwrap_or_else(|| "Resolved".to_string());
+    let outcome_color = match state.forecast_outcome {
+        Some(true) => theme::GREEN,
+        Some(false) => theme::RED,
+        None => theme::GOLD,
+    };
+    let pct = format!("{:.1}%", state.predicted_probability * 100.0);
+    div()
+        .flex()
+        .items_center()
+        .gap(px(12.0))
+        .px(px(16.0))
+        .py(px(8.0))
+        .bg(rgb(theme::BG_ELEVATED))
+        .border_b_1()
+        .border_color(rgb(outcome_color))
+        .child(div().text_size(px(14.0)).text_color(rgb(outcome_color)).child("🔒"))
+        .child(
+            div()
+                .text_size(px(12.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(outcome_color))
+                .child(reason),
+        )
+        .child(
+            div()
+                .text_size(px(11.0))
+                .text_color(rgb(theme::FG_DIM))
+                .child(format!("settled at {} · re-sims & new snapshots disabled", pct)),
+        )
+        .child(div().flex_grow())
+        .child(
+            div()
+                .id("cockpit-reconcile")
+                .px(px(10.0))
+                .py(px(4.0))
+                .rounded(px(4.0))
+                .bg(rgb(theme::BG_ACTIVE))
+                .text_size(px(11.0))
+                .text_color(rgb(theme::CYAN))
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                .on_click(cx.listener(|this, _, _w, cx| this.reconcile_forecast(cx)))
+                .child(if state.reconciling { "↻ Reconciling…" } else { "↻ Reconcile" }),
+        )
+}
+
 fn render_fermi_banner(
     messages: &[AssistantMessage],
     agent_runs: &[AgentExecution],
@@ -11466,22 +11707,30 @@ fn render_forecast_index(
                 .map(|d| {
                     let display = d.display_name.as_deref().unwrap_or(&d.name).to_string();
                     let name = d.name.clone();
-                    let impact = match d.driver_type {
-                        DriverType::Continuous => {
-                            if let Some(Distribution::Triangular {
-                                ref p5, ref p95, ..
-                            }) = d.distribution
-                            {
-                                (expr_to_f64(p95) - expr_to_f64(p5)).abs().max(0.01)
-                            } else {
-                                0.5
+                    // Prefer the Sobol total-order index (true variance-based
+                    // influence) from the last sim; fall back to p95−p5 spread
+                    // when no sensitivity has been computed yet.
+                    let impact = state
+                        .driver_sensitivity
+                        .get(&d.name)
+                        .copied()
+                        .map(|s| s.max(0.001))
+                        .unwrap_or_else(|| match d.driver_type {
+                            DriverType::Continuous => {
+                                if let Some(Distribution::Triangular {
+                                    ref p5, ref p95, ..
+                                }) = d.distribution
+                                {
+                                    (expr_to_f64(p95) - expr_to_f64(p5)).abs().max(0.01)
+                                } else {
+                                    0.5
+                                }
                             }
-                        }
-                        DriverType::Binary => {
-                            d.probability.unwrap_or(0.5) * d.impact_multiplier.unwrap_or(1.0)
-                        }
-                        _ => 0.5,
-                    };
+                            DriverType::Binary => {
+                                d.probability.unwrap_or(0.5) * d.impact_multiplier.unwrap_or(1.0)
+                            }
+                            _ => 0.5,
+                        });
                     let ev_count = state
                         .program
                         .evidence_items()
@@ -11510,7 +11759,11 @@ fn render_forecast_index(
                             div()
                                 .text_size(px(8.0))
                                 .text_color(rgb(theme::FG_FAINT))
-                                .child("Driver sensitivity (spread)  ·  evidence"),
+                                .child(if state.driver_sensitivity.is_empty() {
+                                    "Driver sensitivity (spread)  ·  evidence — run a sim for Sobol influence"
+                                } else {
+                                    "Driver influence (Sobol total-order)  ·  evidence"
+                                }),
                         )
                         .children(drivers_data.iter().map(|(name, display, impact, ev_count)| {
                             let bar_frac = (impact / max_impact).clamp(0.05, 1.0);
@@ -13110,7 +13363,20 @@ fn render_trajectory_event(ev: &JsonValue) -> AnyElement {
                 "hard_blocked" => (theme::RED, "⚠"),
                 _ => (theme::FG_DIM, "?"),
             };
-            (color, glyph, headline, String::new())
+            // Surface the statistical strength of the fit — n_eff and the
+            // CI width are carried in the event but were never shown, so a
+            // "staged" vs "auto_accepted" decision had no visible rationale.
+            let n_eff = ev.get("n_eff").and_then(|v| v.as_f64());
+            let ci_width = ev.get("ci_width").and_then(|v| v.as_f64());
+            let detail = match (n_eff, ci_width) {
+                (Some(ne), Some(cw)) => {
+                    format!("effective n={:.1} · 90% CI ±{:.3}", ne, cw / 2.0)
+                }
+                (Some(ne), None) => format!("effective n={:.1}", ne),
+                (None, Some(cw)) => format!("90% CI ±{:.3}", cw / 2.0),
+                _ => String::new(),
+            };
+            (color, glyph, headline, detail)
         }
         "agent_run" => {
             let sender = ev
@@ -13677,23 +13943,29 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                         .iter()
                         .map(|d| {
                             let display = d.display_name.as_deref().unwrap_or(&d.name).to_string();
-                            let impact = match d.driver_type {
-                                DriverType::Continuous => {
-                                    if let Some(Distribution::Triangular {
-                                        ref p5, ref p95, ..
-                                    }) = d.distribution
-                                    {
-                                        (expr_to_f64(p95) - expr_to_f64(p5)).abs().max(0.01)
-                                    } else {
-                                        0.5
+                            // Sobol total-order index when available, else spread.
+                            let impact = state
+                                .driver_sensitivity
+                                .get(&d.name)
+                                .copied()
+                                .map(|s| s.max(0.001))
+                                .unwrap_or_else(|| match d.driver_type {
+                                    DriverType::Continuous => {
+                                        if let Some(Distribution::Triangular {
+                                            ref p5, ref p95, ..
+                                        }) = d.distribution
+                                        {
+                                            (expr_to_f64(p95) - expr_to_f64(p5)).abs().max(0.01)
+                                        } else {
+                                            0.5
+                                        }
                                     }
-                                }
-                                DriverType::Binary => {
-                                    d.probability.unwrap_or(0.5)
-                                        * d.impact_multiplier.unwrap_or(1.0)
-                                }
-                                _ => 0.5,
-                            };
+                                    DriverType::Binary => {
+                                        d.probability.unwrap_or(0.5)
+                                            * d.impact_multiplier.unwrap_or(1.0)
+                                    }
+                                    _ => 0.5,
+                                });
                             let ev_count = evidence
                                 .iter()
                                 .filter(|e| {
@@ -13720,7 +13992,11 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                     div()
                                         .text_size(px(9.0))
                                         .text_color(rgb(theme::FG_FAINT))
-                                        .child("Driver sensitivity (spread) · evidence"),
+                                        .child(if state.driver_sensitivity.is_empty() {
+                                            "Driver sensitivity (spread) · evidence"
+                                        } else {
+                                            "Driver influence (Sobol total-order) · evidence"
+                                        }),
                                 )
                                 .children(drivers_data.iter().map(|(display, impact, ev_count)| {
                                     let bar_frac = (impact / max_impact).clamp(0.05, 1.0);
