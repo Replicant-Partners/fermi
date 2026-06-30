@@ -1,6 +1,6 @@
 # Will Argentina win the 2026 FIFA World Cup?
 
-**Probability:** 8.4% · **Version:** v8 · **Updated:** 2026-06-30 11:10 UTC
+**Probability:** 12.0% · **Version:** v1 · **Updated:** 2026-06-30 12:33 UTC
 
 **Confidence:** Medium (50%) · **Drivers:** 6 · **Evidence:** 6 · **Agents:** 4
 
@@ -11,8 +11,8 @@
 | Metric | Value |
 |---|---|
 | Crowd price | **11.6%** |
-| Fermi estimate | **8.4%** |
-| Divergence | +3.1pp below crowd (Minor divergence) |
+| Fermi estimate | **12.0%** |
+| Divergence | +0.5pp above crowd (Consensus) |
 | 24h volume | $6.1M |
 | Market confidence | Very High |
 
@@ -22,74 +22,56 @@
 
 ## Inside View
 
-**Probability: 8.4%**
+**Probability: 12.0%**
 
-Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.1%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.
+Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.2%). Outside view (base rate): 11.6%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.
 
 **Forecast Confidence:** Medium (50%)
 
-**Divergence from base rate:** 6pp above (8.4% vs 2.1%)
+**Divergence from base rate:** 0pp above (12.0% vs 11.6%)
 
 ---
 
 ## Outside View (Base Rate)
 
-**2.1%** — FIFA World Cup winners 1930–2022
+**11.6%** — Polymarket crowd-implied probability (Will Argentina win the 2026 FIFA World Cup?)
 
-- **Sample size:** n=22
-- **Source:** FIFA tournament archive — 22 prior World Cups
+- **Source:** Polymarket
 
-Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via the six factor-derived drivers.
+Crowd price backed by $6.1M volume,  liquidity. Very High confidence.
 
 ---
 
 ## Simulation Distribution
 
-**10000 iterations** · p5 = 6.1% · median = 8.3% · p95 = 11.1% · σ = 0.015
+**10000 iterations** · p5 = 6.1% · median = 8.3% · p95 = 11.2% · σ = 0.016
 
 ```
-▁▂▃▄▆██▇▆▅▃▂▂▁▁▁▁▁▁▁
+▁▂▃▄▆▇██▇▅▄▃▂▂▁▁▁▁▁▁
 ```
 
 | Bin center | Count | % of sims |
 |---|---|---|
-| 4.7% | 27 | 0.3% |
-| 5.3% | 115 | 1.1% |
-| 5.8% | 374 | 3.7% |
-| 6.4% | 764 | 7.6% |
-| 7.0% | 1204 | 12.0% |
-| 7.6% | 1487 | 14.9% |
-| 8.2% | 1589 | 15.9% |
-| 8.8% | 1356 | 13.6% |
-| 9.4% | 1040 | 10.4% |
-| 10.0% | 830 | 8.3% |
-| 10.6% | 542 | 5.4% |
-| 11.2% | 339 | 3.4% |
-| 11.8% | 176 | 1.8% |
-| 12.4% | 82 | 0.8% |
-| 13.0% | 43 | 0.4% |
-| 13.6% | 22 | 0.2% |
-| 14.2% | 5 | 0.1% |
-| 14.7% | 3 | 0.0% |
-| 15.3% | 1 | 0.0% |
-| 15.9% | 1 | 0.0% |
-
----
-
-## Forecast Index (version history)
-
-| v | timestamp | model | base | crowd | Δ(model−base) | Δ(model−crowd) | note |
-|---|---|---|---|---|---|---|---|
-| v1 | 2026-06-30 11:08 | 8.4% | 2.1% | 11.6% | +6.4pp | -3.1pp | Initial: 8.4% base=2%, 6 drivers, 6 evidence |
-| v2 | 2026-06-30 11:08 | 8.4% | 2.1% | 11.6% | +6.4pp | -3.1pp | 8.4% (→), 6 drivers, 6 evidence |
-| v3 | 2026-06-30 11:10 | 8.4% | 2.1% | 11.6% | +6.4pp | -3.1pp | 8.4% (→), 6 drivers, 6 evidence |
-| v4 | 2026-06-30 11:10 | 12.0% | 2.1% | 11.6% | +10.0pp | +0.5pp | 12.0% (+4pp), 6 drivers, 6 evidence |
-| v5 | 2026-06-30 11:10 | 12.0% | 2.1% | 11.6% | +9.9pp | +0.5pp | 12.0% (→), 6 drivers, 6 evidence |
-| v6 | 2026-06-30 11:10 | 12.0% | 2.1% | 11.6% | +9.9pp | +0.5pp | 12.0% (→), 6 drivers, 6 evidence |
-| v7 | 2026-06-30 11:10 | 8.4% | 2.1% | 11.6% | +6.4pp | -3.1pp | 8.4% (-4pp), 6 drivers, 6 evidence |
-| v8 | 2026-06-30 11:10 | 8.4% | 2.1% | 11.6% | +6.4pp | -3.1pp | 8.4% (→), 6 drivers, 6 evidence |
-
-**Model line:** ```▁▁▁███▁▁``` (range 8.4% – 12.0%)
+| 4.7% | 30 | 0.3% |
+| 5.2% | 127 | 1.3% |
+| 5.8% | 309 | 3.1% |
+| 6.3% | 679 | 6.8% |
+| 6.9% | 1024 | 10.2% |
+| 7.4% | 1303 | 13.0% |
+| 8.0% | 1407 | 14.1% |
+| 8.5% | 1370 | 13.7% |
+| 9.1% | 1179 | 11.8% |
+| 9.6% | 875 | 8.8% |
+| 10.2% | 661 | 6.6% |
+| 10.7% | 448 | 4.5% |
+| 11.3% | 284 | 2.8% |
+| 11.8% | 139 | 1.4% |
+| 12.4% | 86 | 0.9% |
+| 12.9% | 49 | 0.5% |
+| 13.5% | 21 | 0.2% |
+| 14.1% | 5 | 0.1% |
+| 14.6% | 2 | 0.0% |
+| 15.2% | 2 | 0.0% |
 
 ---
 
@@ -97,7 +79,7 @@ Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverge
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.88 | 1.08 | 1.28 |  |
+| 0.80 | 1.00 | 1.20 |  |
 
 > Macro capacity for footballing investment: GDP, population, HDI.
 
@@ -234,7 +216,7 @@ For a **+0.39 SD composite**, I map to a **p50 multiplier of 1.08**:
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 1.05 | 1.25 | 1.45 |  |
+| 0.80 | 1.00 | 1.20 |  |
 
 > Federation strength, league development, player pipeline depth.
 
@@ -286,7 +268,7 @@ Excellent! Now I have key data points. Let me compile the institutional capacity
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 1.45 | 1.65 | 1.85 |  |
+| 0.80 | 1.00 | 1.20 |  |
 
 > Recent form and Elo trajectory — refits as match outcomes accumulate.
 
@@ -970,7 +952,7 @@ Argentina's factor profile across X3 (Dynamic Performance), X4 (Squad Quality), 
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.60 | 0.80 | 1.00 |  |
+| 0.80 | 1.00 | 1.20 |  |
 
 > Per-fixture context: venue, climate, rest, altitude.
 
@@ -1158,4 +1140,4 @@ model: socio_capital * institutional_capacity * dynamic_performance * squad_qual
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v8 · 2026-06-30 11:10 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v1 · 2026-06-30 12:33 UTC_

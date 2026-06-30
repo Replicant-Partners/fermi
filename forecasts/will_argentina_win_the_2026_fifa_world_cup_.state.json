@@ -1,73 +1,31 @@
 {
   "forecast_id": "9f1adf4c-ad59-4c6a-bb80-06d78c430eae",
-  "current_version": 8,
-  "predicted_probability": 0.08434953321067222,
-  "inside_view_explanation": "Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.1%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "current_version": 1,
+  "predicted_probability": 0.12021331792580896,
+  "inside_view_explanation": "Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.2%). Outside view (base rate): 11.6%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-06-30 11:08",
-      "probability": 0.08433171344095405,
-      "change_summary": "Initial: 8.4% base=2%, 6 drivers, 6 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-06-30 11:08",
-      "probability": 0.08433171344095405,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-06-30 11:10",
-      "probability": 0.08448523363874803,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-06-30 11:10",
-      "probability": 0.12047438112425496,
-      "change_summary": "12.0% (+4pp), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 5,
-      "timestamp": "2026-06-30 11:10",
-      "probability": 0.12001661895779162,
-      "change_summary": "12.0% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 6,
-      "timestamp": "2026-06-30 11:10",
-      "probability": 0.12001661895779162,
-      "change_summary": "12.0% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 7,
-      "timestamp": "2026-06-30 11:10",
-      "probability": 0.08434953321067222,
-      "change_summary": "8.4% (-4pp), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 8,
-      "timestamp": "2026-06-30 11:10",
-      "probability": 0.08434953321067222,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
+      "timestamp": "2026-06-30 12:33",
+      "probability": 0.12021331792580896,
+      "change_summary": "Initial: 12.0% base=12%, 6 drivers, 6 evidence"
     }
   ],
   "sim_results": {
-    "mean": 0.08434953321067222,
-    "median": 0.08316272215506028,
-    "p5": 0.061151071992467415,
-    "p95": 0.11141223024695489,
-    "std_dev": 0.015349797215709008,
+    "mean": 0.08429785748025638,
+    "median": 0.08313116264432402,
+    "p5": 0.06101353605078309,
+    "p95": 0.11160669047187985,
+    "std_dev": 0.01550263036996684,
     "iterations": 10000
   },
   "base_rate": {
-    "reference_class": "FIFA World Cup winners 1930–2022",
-    "historical_frequency": 0.0208,
-    "sample_size": 22,
-    "source": "FIFA tournament archive — 22 prior World Cups",
-    "reasoning": "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via the six factor-derived drivers."
+    "reference_class": "Polymarket crowd-implied probability (Will Argentina win the 2026 FIFA World Cup?)",
+    "historical_frequency": 0.1155,
+    "sample_size": null,
+    "source": "Polymarket",
+    "reasoning": "Crowd price backed by $6.1M volume,  liquidity. Very High confidence."
   },
   "evidence": [
     {
