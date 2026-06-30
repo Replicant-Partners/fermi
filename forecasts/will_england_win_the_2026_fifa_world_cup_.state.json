@@ -1,6 +1,6 @@
 {
   "forecast_id": "2b60260e-bff4-48b8-85e5-093b2eb679f3",
-  "current_version": 7,
+  "current_version": 8,
   "predicted_probability": 0.15054520964622498,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
@@ -43,6 +43,12 @@
     },
     {
       "version": 7,
+      "timestamp": "2026-06-30 13:10",
+      "probability": 0.15054520964622498,
+      "change_summary": "15.1% (→), 6 drivers, 4 evidence"
+    },
+    {
+      "version": 8,
       "timestamp": "2026-06-30 13:10",
       "probability": 0.15054520964622498,
       "change_summary": "15.1% (→), 6 drivers, 4 evidence"
