@@ -1,8 +1,8 @@
 {
   "forecast_id": "9f1adf4c-ad59-4c6a-bb80-06d78c430eae",
-  "current_version": 12,
-  "predicted_probability": 0.0844388338097393,
-  "inside_view_explanation": "Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.2%). Outside view (base rate): 45.0%. Key drivers: the_2026_tournament_has_48_teams_vs_historical_32.",
+  "current_version": 13,
+  "predicted_probability": 0.08423808893670967,
+  "inside_view_explanation": "Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.1%). Outside view (base rate): 16.7%. Key drivers: factor_1, factor_2, factor_3.",
   "forecast_confidence": 0.5,
   "versions": [
     {
@@ -76,22 +76,28 @@
       "timestamp": "2026-06-30 11:07",
       "probability": 0.0844388338097393,
       "change_summary": "8.4% (-4pp), 1 drivers, 9 evidence"
+    },
+    {
+      "version": 13,
+      "timestamp": "2026-06-30 11:07",
+      "probability": 0.08423808893670967,
+      "change_summary": "8.4% (→), 3 drivers, 11 evidence"
     }
   ],
   "sim_results": {
-    "mean": 0.0844388338097393,
-    "median": 0.08318019630439791,
-    "p5": 0.0609845794299848,
-    "p95": 0.1120300477615001,
-    "std_dev": 0.015426961725324337,
+    "mean": 0.08423808893670967,
+    "median": 0.08318849552900251,
+    "p5": 0.06110252165908235,
+    "p95": 0.11111627777176254,
+    "std_dev": 0.015161108809364278,
     "iterations": 10000
   },
   "base_rate": {
-    "reference_class": "e, but expanded format also adds more knockout variance. Starting with CONMEBOL base rate of 0.45 as anchor, then",
-    "historical_frequency": 0.45,
+    "reference_class": "a's specific strength and current form will be handled by drivers. Conservative base rate: 0.167 (Argentina-spe",
+    "historical_frequency": 0.167,
     "sample_size": null,
     "source": "macro_forecaster",
-    "reasoning": "```json\n{\n  \"reference_class\": \"Historical FIFA World Cup wins by CONMEBOL teams (1930-2022)\",\n  \"historical_frequency\": 0.45,\n  \"sample_size\": 22,\n  \"reasoning\": \"22 World Cups held 1930-2022. CONMEBOL teams (South American) won 10 times (Uruguay 2, Brazil 5, Argentina 3). Frequency = 10/22 = 0.45. This is the most specific applicable reference class. Argentina specifically: 3 wins in 22 tournaments = 0.136 base rate. However, using the broader CONMEBOL class (0.45) is more robust given small s"
+    "reasoning": "```json\n{\n  \"reference_class\": \"FIFA World Cup wins by CONMEBOL teams (1930-2022)\",\n  \"historical_frequency\": 0.458,\n  \"sample_size\": 24,\n  \"reasoning\": \"22 World Cups held (excluding 1942/1946). CONMEBOL teams won 11 times (Uruguay 2, Brazil 5, Argentina 3). 11/24 = 0.458. Argentina-specific: 3 wins in 18 tournaments entered = 0.167. However, Argentina is currently ranked #1 FIFA, reigning champion, has Messi successor pipeline, and strong youth development. Using broader CONMEBOL rate (0.458) "
   },
   "evidence": [
     {
@@ -216,6 +222,32 @@
       "relevance": 0.5,
       "date": "2026-06-30",
       "key_findings": []
+    },
+    {
+      "id": "fermi_evidence_1782817639",
+      "source": "Agent: fermi (Claude API)",
+      "summary": "",
+      "relevance": 0.5,
+      "date": "2026-06-30",
+      "key_findings": []
+    },
+    {
+      "id": "fermi_evidence_1782817646",
+      "source": "Agent: fermi (Claude API)",
+      "summary": "```json\n{\n  \"reference_class\": \"FIFA World Cup wins by CONMEBOL teams (1930-2022)\",\n  \"historical_frequency\": 0.458,\n  \"sample_size\": 24,\n  \"reasoning\": \"22 World Cups held (excluding 1942/1946). CONMEBOL teams won 11 times (Uruguay 2, Brazil 5, Argentina 3). 11/24 = 0.458. Argentina-specific: 3 wins in 18 tournaments entered = 0.167. However, Argentina is currently ranked #1 FIFA, reigning champion, has Messi successor pipeline, and strong youth development. Using broader CONMEBOL rate (0.458) as base rate is appropriate because Argentina is consistently a top-2 CONMEBOL team and the question asks about a specific strong CONMEBOL nation, not a random one. Adjusting from 0.458 for Argentina's specific strength and current form will be handled by drivers. Conservative base rate: 0.167 (Argentina-specific historical rate) is more defensible than 0.458, but 0.458/5 CONMEBOL contenders ≈ 0.09 per strong team. Settling on Argentina's empirical rate: 0.167.\"\n}\n```\n\nWait, let me recalculate with proper reference class selection:\n\n```json\n{\n  \"reference_class\": \"Argentina's FIFA World Cup wins (1930-2022)\",\n  \"historical_frequency\": 0.167,\n  \"sample_size\": 18,\n  \"reasoning\": \"Argentina has participated in 18 World Cups (all except 1938, 1950, 1954, 1970). Won 3 times (1978, 1986, 2022). 3/18 = 0.167. This is the most specific applicable reference class. Alternative consideration: reigning champions defending title have won 2/21 times (Italy 1938, Brazil 1962) = 0.095. But Argentina-specific historical rate (0.167) is more robust with larger sample size and accounts for Argentina's consistent elite status rather than the 'defending champion curse' which may be spurious.\"\n}\n```",
+      "relevance": 0.5,
+      "date": "2026-06-30",
+      "key_findings": [
+        "\"reference_class\": \"FIFA World Cup wins by CONMEBOL teams (1930-2022)\",",
+        "\"historical_frequency\": 0.458,",
+        "\"sample_size\": 24,",
+        "\"reasoning\": \"22 World Cups held (excluding 1942/1946). CONMEBOL teams won 11 times (Uruguay 2, Brazil 5, Argentina 3). 11/24 = 0.458. Argentina-specific: 3 wins in 18 tournaments entered = 0.167. However, Argentina is currently ranked #1 FIFA, reigning champion, has Messi successor pipeline, and strong youth development. Using broader CONMEBOL rate (0.458) as base rate is appropriate because Argentina is consistently a top-2 CONMEBOL team and the question asks about a specific strong CONMEBOL nation, not a random one. Adjusting from 0.458 for Argentina's specific strength and current form will be handled by drivers. Conservative base rate: 0.167 (Argentina-specific historical rate) is more defensible than 0.458, but 0.458/5 CONMEBOL contenders ≈ 0.09 per strong team. Settling on Argentina's empirical rate: 0.167.\"",
+        "Wait, let me recalculate with proper reference class selection:",
+        "\"reference_class\": \"Argentina's FIFA World Cup wins (1930-2022)\",",
+        "\"historical_frequency\": 0.167,",
+        "\"sample_size\": 18,",
+        "\"reasoning\": \"Argentina has participated in 18 World Cups (all except 1938, 1950, 1954, 1970). Won 3 times (1978, 1986, 2022). 3/18 = 0.167. This is the most specific applicable reference class. Alternative consideration: reigning champions defending title have won 2/21 times (Italy 1938, Brazil 1962) = 0.095. But Argentina-specific historical rate (0.167) is more robust with larger sample size and accounts for Argentina's consistent elite status rather than the 'defending champion curse' which may be spurious.\""
+      ]
     }
   ],
   "agents": [
