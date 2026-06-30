@@ -1,8 +1,8 @@
 {
   "forecast_id": "9f1adf4c-ad59-4c6a-bb80-06d78c430eae",
-  "current_version": 8,
-  "predicted_probability": 0.08442814650196778,
-  "inside_view_explanation": "Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.2%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "current_version": 9,
+  "predicted_probability": 0.08443774151023255,
+  "inside_view_explanation": "Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.1%). Outside view (base rate): 45.0%. Key drivers: 16_7_however.",
   "forecast_confidence": 0.5,
   "versions": [
     {
@@ -52,22 +52,28 @@
       "timestamp": "2026-06-30 11:05",
       "probability": 0.08442814650196778,
       "change_summary": "8.4% (→), 6 drivers, 6 evidence"
+    },
+    {
+      "version": 9,
+      "timestamp": "2026-06-30 11:06",
+      "probability": 0.08443774151023255,
+      "change_summary": "8.4% (→), 1 drivers, 7 evidence"
     }
   ],
   "sim_results": {
-    "mean": 0.08442814650196778,
-    "median": 0.08308635566401032,
-    "p5": 0.06094007339336842,
-    "p95": 0.1118565262360135,
-    "std_dev": 0.015524222717562557,
+    "mean": 0.08443774151023255,
+    "median": 0.08349111706353378,
+    "p5": 0.06141274302260313,
+    "p95": 0.11148898730593389,
+    "std_dev": 0.015220353966256784,
     "iterations": 10000
   },
   "base_rate": {
-    "reference_class": "FIFA World Cup winners 1930–2022",
-    "historical_frequency": 0.0208,
-    "sample_size": 22,
-    "source": "FIFA tournament archive — 22 prior World Cups",
-    "reasoning": "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via the six factor-derived drivers."
+    "reference_class": "2022 WC, 2024 Copa América) suggests sustained excellence rather than a peak. Base rate of 0.45 for region, adj",
+    "historical_frequency": 0.45,
+    "sample_size": null,
+    "source": "macro_forecaster",
+    "reasoning": "```json\n{\n  \"reference_class\": \"South American teams winning FIFA World Cup (1930-2022)\",\n  \"historical_frequency\": 0.45,\n  \"sample_size\": 22,\n  \"reasoning\": \"Of 22 World Cups held, South American teams (Brazil 5x, Argentina 3x, Uruguay 2x) won 10 times = 45.5%. Argentina specifically: 3 wins in 18 participations (1978, 1986, 2022) = 16.7%. However, using the broader CONMEBOL reference class is more robust given small sample size for individual teams. Argentina as reigning champion and top-ranke"
   },
   "evidence": [
     {
@@ -167,6 +173,14 @@
       "summary": "",
       "relevance": 0.5,
       "date": "2026-06-25",
+      "key_findings": []
+    },
+    {
+      "id": "fermi_evidence_1782817548",
+      "source": "Agent: fermi (Claude API)",
+      "summary": "",
+      "relevance": 0.5,
+      "date": "2026-06-30",
       "key_findings": []
     }
   ],
