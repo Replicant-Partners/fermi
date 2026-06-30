@@ -1,145 +1,31 @@
 {
   "forecast_id": "9f1adf4c-ad59-4c6a-bb80-06d78c430eae",
-  "current_version": 20,
-  "predicted_probability": 0.12025433357595282,
-  "inside_view_explanation": "Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.2%). Outside view (base rate): 16.7%. Key drivers: factor_1, factor_2, factor_3.",
+  "current_version": 1,
+  "predicted_probability": 0.08433171344095405,
+  "inside_view_explanation": "Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.2%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-06-30 11:05",
-      "probability": 0.08443110853109603,
+      "timestamp": "2026-06-30 11:08",
+      "probability": 0.08433171344095405,
       "change_summary": "Initial: 8.4% base=2%, 6 drivers, 6 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-06-30 11:05",
-      "probability": 0.08443110853109603,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-06-30 11:05",
-      "probability": 0.08443110853109603,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-06-30 11:05",
-      "probability": 0.08443110853109603,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 5,
-      "timestamp": "2026-06-30 11:05",
-      "probability": 0.08443110853109603,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 6,
-      "timestamp": "2026-06-30 11:05",
-      "probability": 0.08443110853109603,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 7,
-      "timestamp": "2026-06-30 11:05",
-      "probability": 0.08442814650196778,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 8,
-      "timestamp": "2026-06-30 11:05",
-      "probability": 0.08442814650196778,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 9,
-      "timestamp": "2026-06-30 11:06",
-      "probability": 0.08443774151023255,
-      "change_summary": "8.4% (→), 1 drivers, 7 evidence"
-    },
-    {
-      "version": 10,
-      "timestamp": "2026-06-30 11:06",
-      "probability": 0.08443774151023255,
-      "change_summary": "8.4% (→), 1 drivers, 7 evidence"
-    },
-    {
-      "version": 11,
-      "timestamp": "2026-06-30 11:06",
-      "probability": 0.1204082171821424,
-      "change_summary": "12.0% (+4pp), 1 drivers, 7 evidence"
-    },
-    {
-      "version": 12,
-      "timestamp": "2026-06-30 11:07",
-      "probability": 0.0844388338097393,
-      "change_summary": "8.4% (-4pp), 1 drivers, 9 evidence"
-    },
-    {
-      "version": 13,
-      "timestamp": "2026-06-30 11:07",
-      "probability": 0.08423808893670967,
-      "change_summary": "8.4% (→), 3 drivers, 11 evidence"
-    },
-    {
-      "version": 14,
-      "timestamp": "2026-06-30 11:07",
-      "probability": 0.12013003898529476,
-      "change_summary": "12.0% (+4pp), 3 drivers, 11 evidence"
-    },
-    {
-      "version": 15,
-      "timestamp": "2026-06-30 11:07",
-      "probability": 0.12013003898529476,
-      "change_summary": "12.0% (→), 3 drivers, 11 evidence"
-    },
-    {
-      "version": 16,
-      "timestamp": "2026-06-30 11:07",
-      "probability": 0.12013003898529476,
-      "change_summary": "12.0% (→), 3 drivers, 11 evidence"
-    },
-    {
-      "version": 17,
-      "timestamp": "2026-06-30 11:07",
-      "probability": 0.12013003898529476,
-      "change_summary": "12.0% (→), 3 drivers, 11 evidence"
-    },
-    {
-      "version": 18,
-      "timestamp": "2026-06-30 11:07",
-      "probability": 0.0843272926488793,
-      "change_summary": "8.4% (-4pp), 3 drivers, 11 evidence"
-    },
-    {
-      "version": 19,
-      "timestamp": "2026-06-30 11:07",
-      "probability": 0.0843272926488793,
-      "change_summary": "8.4% (→), 3 drivers, 11 evidence"
-    },
-    {
-      "version": 20,
-      "timestamp": "2026-06-30 11:07",
-      "probability": 0.12025433357595282,
-      "change_summary": "12.0% (+4pp), 3 drivers, 11 evidence"
     }
   ],
   "sim_results": {
-    "mean": 0.0843272926488793,
-    "median": 0.08341411212749997,
-    "p5": 0.060932842910811094,
-    "p95": 0.11160613168606343,
-    "std_dev": 0.015417509691444828,
+    "mean": 0.08433171344095405,
+    "median": 0.08307091926620683,
+    "p5": 0.061251743567785774,
+    "p95": 0.11151262877212188,
+    "std_dev": 0.015416586722632925,
     "iterations": 10000
   },
   "base_rate": {
-    "reference_class": "a's specific strength and current form will be handled by drivers. Conservative base rate: 0.167 (Argentina-spe",
-    "historical_frequency": 0.167,
-    "sample_size": null,
-    "source": "macro_forecaster",
-    "reasoning": "```json\n{\n  \"reference_class\": \"FIFA World Cup wins by CONMEBOL teams (1930-2022)\",\n  \"historical_frequency\": 0.458,\n  \"sample_size\": 24,\n  \"reasoning\": \"22 World Cups held (excluding 1942/1946). CONMEBOL teams won 11 times (Uruguay 2, Brazil 5, Argentina 3). 11/24 = 0.458. Argentina-specific: 3 wins in 18 tournaments entered = 0.167. However, Argentina is currently ranked #1 FIFA, reigning champion, has Messi successor pipeline, and strong youth development. Using broader CONMEBOL rate (0.458) "
+    "reference_class": "FIFA World Cup winners 1930–2022",
+    "historical_frequency": 0.0208,
+    "sample_size": 22,
+    "source": "FIFA tournament archive — 22 prior World Cups",
+    "reasoning": "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via the six factor-derived drivers."
   },
   "evidence": [
     {
@@ -240,56 +126,6 @@
       "relevance": 0.5,
       "date": "2026-06-25",
       "key_findings": []
-    },
-    {
-      "id": "fermi_evidence_1782817548",
-      "source": "Agent: fermi (Claude API)",
-      "summary": "",
-      "relevance": 0.5,
-      "date": "2026-06-30",
-      "key_findings": []
-    },
-    {
-      "id": "fermi_evidence_1782817627",
-      "source": "Agent: fermi (Claude API)",
-      "summary": "",
-      "relevance": 0.5,
-      "date": "2026-06-30",
-      "key_findings": []
-    },
-    {
-      "id": "fermi_evidence_1782817633",
-      "source": "Agent: fermi (Claude API)",
-      "summary": "",
-      "relevance": 0.5,
-      "date": "2026-06-30",
-      "key_findings": []
-    },
-    {
-      "id": "fermi_evidence_1782817639",
-      "source": "Agent: fermi (Claude API)",
-      "summary": "",
-      "relevance": 0.5,
-      "date": "2026-06-30",
-      "key_findings": []
-    },
-    {
-      "id": "fermi_evidence_1782817646",
-      "source": "Agent: fermi (Claude API)",
-      "summary": "```json\n{\n  \"reference_class\": \"FIFA World Cup wins by CONMEBOL teams (1930-2022)\",\n  \"historical_frequency\": 0.458,\n  \"sample_size\": 24,\n  \"reasoning\": \"22 World Cups held (excluding 1942/1946). CONMEBOL teams won 11 times (Uruguay 2, Brazil 5, Argentina 3). 11/24 = 0.458. Argentina-specific: 3 wins in 18 tournaments entered = 0.167. However, Argentina is currently ranked #1 FIFA, reigning champion, has Messi successor pipeline, and strong youth development. Using broader CONMEBOL rate (0.458) as base rate is appropriate because Argentina is consistently a top-2 CONMEBOL team and the question asks about a specific strong CONMEBOL nation, not a random one. Adjusting from 0.458 for Argentina's specific strength and current form will be handled by drivers. Conservative base rate: 0.167 (Argentina-specific historical rate) is more defensible than 0.458, but 0.458/5 CONMEBOL contenders ≈ 0.09 per strong team. Settling on Argentina's empirical rate: 0.167.\"\n}\n```\n\nWait, let me recalculate with proper reference class selection:\n\n```json\n{\n  \"reference_class\": \"Argentina's FIFA World Cup wins (1930-2022)\",\n  \"historical_frequency\": 0.167,\n  \"sample_size\": 18,\n  \"reasoning\": \"Argentina has participated in 18 World Cups (all except 1938, 1950, 1954, 1970). Won 3 times (1978, 1986, 2022). 3/18 = 0.167. This is the most specific applicable reference class. Alternative consideration: reigning champions defending title have won 2/21 times (Italy 1938, Brazil 1962) = 0.095. But Argentina-specific historical rate (0.167) is more robust with larger sample size and accounts for Argentina's consistent elite status rather than the 'defending champion curse' which may be spurious.\"\n}\n```",
-      "relevance": 0.5,
-      "date": "2026-06-30",
-      "key_findings": [
-        "\"reference_class\": \"FIFA World Cup wins by CONMEBOL teams (1930-2022)\",",
-        "\"historical_frequency\": 0.458,",
-        "\"sample_size\": 24,",
-        "\"reasoning\": \"22 World Cups held (excluding 1942/1946). CONMEBOL teams won 11 times (Uruguay 2, Brazil 5, Argentina 3). 11/24 = 0.458. Argentina-specific: 3 wins in 18 tournaments entered = 0.167. However, Argentina is currently ranked #1 FIFA, reigning champion, has Messi successor pipeline, and strong youth development. Using broader CONMEBOL rate (0.458) as base rate is appropriate because Argentina is consistently a top-2 CONMEBOL team and the question asks about a specific strong CONMEBOL nation, not a random one. Adjusting from 0.458 for Argentina's specific strength and current form will be handled by drivers. Conservative base rate: 0.167 (Argentina-specific historical rate) is more defensible than 0.458, but 0.458/5 CONMEBOL contenders ≈ 0.09 per strong team. Settling on Argentina's empirical rate: 0.167.\"",
-        "Wait, let me recalculate with proper reference class selection:",
-        "\"reference_class\": \"Argentina's FIFA World Cup wins (1930-2022)\",",
-        "\"historical_frequency\": 0.167,",
-        "\"sample_size\": 18,",
-        "\"reasoning\": \"Argentina has participated in 18 World Cups (all except 1938, 1950, 1954, 1970). Won 3 times (1978, 1986, 2022). 3/18 = 0.167. This is the most specific applicable reference class. Alternative consideration: reigning champions defending title have won 2/21 times (Italy 1938, Brazil 1962) = 0.095. But Argentina-specific historical rate (0.167) is more robust with larger sample size and accounts for Argentina's consistent elite status rather than the 'defending champion curse' which may be spurious.\""
-      ]
     }
   ],
   "agents": [
