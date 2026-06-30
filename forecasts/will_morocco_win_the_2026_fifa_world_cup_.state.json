@@ -1,0 +1,85 @@
+{
+  "forecast_id": "5f89f88d-769a-4a4d-9796-3b6497dbcb65",
+  "current_version": 1,
+  "predicted_probability": 0.015970774998466986,
+  "inside_view_explanation": "Inside view: model evaluates to 1.6% (p5=1.0%, p95=2.3%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "forecast_confidence": 0.5,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-06-30 10:37",
+      "probability": 0.015970774998466986,
+      "change_summary": "Initial: 1.6% base=2%, 6 drivers, 0 evidence"
+    }
+  ],
+  "sim_results": {
+    "mean": 0.015970774998466986,
+    "median": 0.015583884660079981,
+    "p5": 0.010075081175975225,
+    "p95": 0.02333758402742794,
+    "std_dev": 0.0040627122131273495,
+    "iterations": 10000
+  },
+  "base_rate": {
+    "reference_class": "FIFA World Cup winners 1930–2022",
+    "historical_frequency": 0.0208,
+    "sample_size": 22,
+    "source": "FIFA tournament archive — 22 prior World Cups",
+    "reasoning": "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via the six factor-derived drivers."
+  },
+  "evidence": [],
+  "agents": [
+    {
+      "name": "macro_data_agent",
+      "agent_type": "research",
+      "query": "GDP per capita, population, HDI for Morocco (2024–2026 latest available)",
+      "schedule": "Some(Every { interval: 1, unit: Month })",
+      "driver_refs": [
+        "socio_capital"
+      ]
+    },
+    {
+      "name": "football_institution_agent",
+      "agent_type": "research",
+      "query": "Player registration, top-flight league revenue, confederation coefficient for Morocco",
+      "schedule": "Some(Every { interval: 1, unit: Month })",
+      "driver_refs": [
+        "institutional_capacity"
+      ]
+    },
+    {
+      "name": "football_analyst",
+      "agent_type": "research",
+      "query": "Latest Elo rating, last 5 matches form, key player availability, market value distribution for Morocco",
+      "schedule": "Some(Every { interval: 1, unit: Week })",
+      "driver_refs": [
+        "dynamic_performance",
+        "squad_quality",
+        "tactical_efficiency"
+      ]
+    },
+    {
+      "name": "fixture_context_agent",
+      "agent_type": "research",
+      "query": "Upcoming fixtures for Morocco: venue, climate, rest days, altitude, opponent travel burden",
+      "schedule": "Some(Every { interval: 3, unit: Day })",
+      "driver_refs": [
+        "fixture_context"
+      ]
+    }
+  ],
+  "driver_confidence": {},
+  "polymarket": {
+    "event_id": "30615",
+    "market_id": "558963",
+    "question": "Will Morocco win the 2026 FIFA World Cup?",
+    "market_price": 0.0235,
+    "volume_24h": 2334835.300428999,
+    "liquidity": null,
+    "confidence": "Very High",
+    "price_change_1w": null,
+    "url": "https://polymarket.com/event/world-cup-winner",
+    "price_history": []
+  },
+  "workspace_id": "dd11b646-c6d6-41a9-80b5-c470f4b47b14"
+}
