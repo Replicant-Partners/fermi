@@ -1,79 +1,24 @@
 {
   "forecast_id": "5765e18d-50af-4087-ae52-1d8810d8578b",
-  "current_version": 9,
-  "predicted_probability": 0.07909318471074303,
-  "inside_view_explanation": "Inside view: model evaluates to 7.9% (p5=5.7%, p95=10.5%). Outside view (base rate): 17.4%. Key drivers: however.",
+  "current_version": 1,
+  "predicted_probability": 0.0010000000474974513,
+  "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-06-30 10:28",
+      "timestamp": "2026-06-30 10:29",
       "probability": 0.0010000000474974513,
       "change_summary": "Initial: 0.1% base=2%, 6 drivers, 4 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-06-30 10:28",
-      "probability": 0.07941735032227926,
-      "change_summary": "7.9% (+8pp), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-06-30 10:28",
-      "probability": 0.07941735032227926,
-      "change_summary": "7.9% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-06-30 10:29",
-      "probability": 0.174,
-      "change_summary": "17.4% (+9pp), 1 drivers, 5 evidence"
-    },
-    {
-      "version": 5,
-      "timestamp": "2026-06-30 10:29",
-      "probability": 0.07965534929053275,
-      "change_summary": "8.0% (-9pp), 1 drivers, 5 evidence"
-    },
-    {
-      "version": 6,
-      "timestamp": "2026-06-30 10:29",
-      "probability": 0.07965534929053275,
-      "change_summary": "8.0% (→), 1 drivers, 5 evidence"
-    },
-    {
-      "version": 7,
-      "timestamp": "2026-06-30 10:29",
-      "probability": 0.07965534929053275,
-      "change_summary": "8.0% (→), 1 drivers, 5 evidence"
-    },
-    {
-      "version": 8,
-      "timestamp": "2026-06-30 10:29",
-      "probability": 0.07965534929053275,
-      "change_summary": "8.0% (→), 1 drivers, 5 evidence"
-    },
-    {
-      "version": 9,
-      "timestamp": "2026-06-30 10:29",
-      "probability": 0.07909318471074303,
-      "change_summary": "7.9% (→), 1 drivers, 5 evidence"
     }
   ],
-  "sim_results": {
-    "mean": 0.07909318471074303,
-    "median": 0.0778571464513535,
-    "p5": 0.05654075361708905,
-    "p95": 0.1053161938731798,
-    "std_dev": 0.014936577141758578,
-    "iterations": 10000
-  },
+  "sim_results": null,
   "base_rate": {
-    "reference_class": "tournament. germany's historical 17.4% rate is significantly above",
-    "historical_frequency": 0.174,
-    "sample_size": null,
-    "source": "macro_forecaster",
-    "reasoning": "```json\n{\n  \"reference_class\": \"European teams winning FIFA World Cup (1930-2022)\",\n  \"historical_frequency\": 0.52,\n  \"sample_size\": 23,\n  \"reasoning\": \"Of 23 completed World Cups (excluding 1942/1946), European teams won 12 times (Italy 4, Germany 4, Spain 1, France 2, England 1). Germany specifically has won 4 of 23 tournaments (17.4% base rate for Germany alone). However, the relevant reference class is 'strong European football nations' rather than 'all teams', since Germany consistently qua"
+    "reference_class": "FIFA World Cup winners 1930–2022",
+    "historical_frequency": 0.0208,
+    "sample_size": 22,
+    "source": "FIFA tournament archive — 22 prior World Cups",
+    "reasoning": "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via the six factor-derived drivers."
   },
   "evidence": [
     {
@@ -171,14 +116,6 @@
         "Joshua Kimmich (Bayern Munich, captain): **€50-60 million**",
         "Kai Havertz (Arsenal): **€70-80 million** — primary striker in Nagelsmann's 4-2-3-1"
       ]
-    },
-    {
-      "id": "fermi_evidence_1782815316",
-      "source": "Agent: fermi (Claude API)",
-      "summary": "",
-      "relevance": 0.5,
-      "date": "2026-06-30",
-      "key_findings": []
     }
   ],
   "agents": [
