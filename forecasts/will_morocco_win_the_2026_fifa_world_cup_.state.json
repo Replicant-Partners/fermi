@@ -1,67 +1,18 @@
 {
   "forecast_id": "5f89f88d-769a-4a4d-9796-3b6497dbcb65",
-  "current_version": 8,
-  "predicted_probability": 0.01589143499672019,
-  "inside_view_explanation": "Inside view: model evaluates to 1.6% (p5=1.0%, p95=2.3%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "current_version": 1,
+  "predicted_probability": 0.02266124077141285,
+  "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-06-30 10:37",
-      "probability": 0.015970774998466986,
-      "change_summary": "Initial: 1.6% base=2%, 6 drivers, 0 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-06-30 10:37",
-      "probability": 0.015970774998466986,
-      "change_summary": "1.6% (→), 6 drivers"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-06-30 10:37",
-      "probability": 0.015970774998466986,
-      "change_summary": "1.6% (→), 6 drivers"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-06-30 10:37",
-      "probability": 0.015970774998466986,
-      "change_summary": "1.6% (→), 6 drivers"
-    },
-    {
-      "version": 5,
-      "timestamp": "2026-06-30 10:37",
-      "probability": 0.015970774998466986,
-      "change_summary": "1.6% (→), 6 drivers"
-    },
-    {
-      "version": 6,
-      "timestamp": "2026-06-30 10:37",
-      "probability": 0.015970774998466986,
-      "change_summary": "1.6% (→), 6 drivers"
-    },
-    {
-      "version": 7,
-      "timestamp": "2026-06-30 10:38",
-      "probability": 0.015970774998466986,
-      "change_summary": "1.6% (→), 6 drivers"
-    },
-    {
-      "version": 8,
-      "timestamp": "2026-06-30 10:40",
-      "probability": 0.01589143499672019,
-      "change_summary": "1.6% (→), 6 drivers, 4 evidence"
+      "timestamp": "2026-06-30 13:12",
+      "probability": 0.02266124077141285,
+      "change_summary": "Initial: 2.3% base=2%, 6 drivers, 4 evidence"
     }
   ],
-  "sim_results": {
-    "mean": 0.01589143499672019,
-    "median": 0.015495924360511858,
-    "p5": 0.010082872258165409,
-    "p95": 0.023092226559304735,
-    "std_dev": 0.003978856583055525,
-    "iterations": 10000
-  },
+  "sim_results": null,
   "base_rate": {
     "reference_class": "FIFA World Cup winners 1930–2022",
     "historical_frequency": 0.0208,
