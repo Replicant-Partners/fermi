@@ -251,6 +251,16 @@ pub struct CockpitState {
     pub publish_status: Option<String>,
     pub api: Arc<ApiClient>,
 
+    // ── Server lifecycle reconciliation ───────────────────────────
+    // The authoritative status of this forecast, pulled from the server
+    // (not inferred by the user). When it's `resolved`/`void` the cockpit
+    // locks: no re-sims, no new snapshots. This is the source of truth that
+    // frees the operator from having to remember "this team is eliminated".
+    pub forecast_status: Option<String>,
+    pub forecast_outcome: Option<bool>,
+    pub resolution_note: Option<String>,
+    pub reconciling: bool,
+
     // ── Access / sharing (Spec 24 §3.5.2) ─────────────────────────
     /// Current object_shares rows for this forecast (Access tab).
     pub shares: Vec<ShareEntry>,
@@ -570,6 +580,10 @@ impl CockpitState {
             forecast_id: None,
             publish_status: None,
             api,
+            forecast_status: None,
+            forecast_outcome: None,
+            resolution_note: None,
+            reconciling: false,
             shares: Vec::new(),
             shares_loading: false,
             share_input,
@@ -4949,6 +4963,25 @@ impl CockpitState {
     // ═══════════════════════════════════════════════════════════════
 
     pub fn run_simulation(&mut self, cx: &mut Context<Self>) {
+        // Reconcile-derived lock: a resolved/voided forecast is settled —
+        // re-running a simulation against it is meaningless and its result
+        // can't be saved anyway. Refuse with the authoritative reason.
+        if self.is_locked() {
+            self.sim_error = Some(format!(
+                "Locked: {}. Re-running a simulation is disabled.",
+                self.lock_reason().unwrap_or_else(|| "forecast is resolved".into())
+            ));
+            self.messages.push(AssistantMessage {
+                node: "simulation".into(),
+                kind: MessageKind::Warning,
+                text: format!(
+                    "This forecast is settled ({}). Re-sims are disabled — use ↻ Reconcile if you think this is stale.",
+                    self.lock_reason().unwrap_or_else(|| "resolved".into())
+                ),
+            });
+            cx.notify();
+            return;
+        }
         self.save_focused_driver(cx);
         self.sim_running = true;
         self.sim_error = None;
@@ -6312,6 +6345,80 @@ impl CockpitState {
         cx.notify();
     }
 
+    // ── Server lifecycle reconciliation ────────────────────────────────
+
+    /// True when the server has resolved/voided this forecast — the cockpit
+    /// must then block re-sims and new snapshots. Driven by the authoritative
+    /// `forecast_status`, not by anything the user has to remember.
+    pub fn is_locked(&self) -> bool {
+        matches!(
+            self.forecast_status.as_deref(),
+            Some("resolved") | Some("void")
+        )
+    }
+
+    /// A human-readable reason for the lock, e.g.
+    /// "Resolved → No · Auto-resolved via Polymarket …".
+    pub fn lock_reason(&self) -> Option<String> {
+        if !self.is_locked() {
+            return None;
+        }
+        let verb = match self.forecast_status.as_deref() {
+            Some("void") => "Voided".to_string(),
+            _ => {
+                let outcome = match self.forecast_outcome {
+                    Some(true) => " → Yes",
+                    Some(false) => " → No",
+                    None => "",
+                };
+                format!("Resolved{}", outcome)
+            }
+        };
+        match &self.resolution_note {
+            Some(note) if !note.is_empty() => Some(format!("{} · {}", verb, note)),
+            _ => Some(verb),
+        }
+    }
+
+    /// Re-pull the authoritative lifecycle state from the server and adopt
+    /// it. This is the "reconcile server context" action: a stale cockpit
+    /// (opened while active, resolved server-side since) snaps to the real
+    /// state — status, outcome, the resolved probability — and locks itself.
+    pub fn reconcile_forecast(&mut self, cx: &mut Context<Self>) {
+        let Some(fid) = self.forecast_id.clone() else {
+            return;
+        };
+        self.reconciling = true;
+        cx.notify();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = tokio::spawn(async move { api.get_forecast(&fid).await }).await;
+            this.update(cx, |state, cx| {
+                state.reconciling = false;
+                if let Ok(Ok(f)) = result {
+                    let was_locked = state.is_locked();
+                    state.forecast_status = Some(f.status.clone());
+                    state.forecast_outcome = f.actual_outcome;
+                    state.resolution_note = f.resolution_notes.clone();
+                    // When locked, show the authoritative resolved value
+                    // rather than a stale local sim mean.
+                    if state.is_locked() {
+                        state.predicted_probability = f.predicted_probability;
+                        if !was_locked {
+                            state.pending_toasts.push(
+                                "This forecast was resolved on the server — locked for editing"
+                                    .to_string(),
+                            );
+                        }
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     // ── Access / sharing (Spec 24 §3.5.2) ──────────────────────────────
 
     /// Fetch the current shares for this forecast into the Access tab.
@@ -6514,6 +6621,17 @@ impl CockpitState {
     }
 
     pub fn publish_forecast(&mut self, visibility: String, cx: &mut Context<Self>) {
+        // Reconcile-derived lock: the server has settled this forecast, so a
+        // new snapshot would be rejected (409) anyway. Block locally with the
+        // authoritative reason instead of letting the save silently fail.
+        if self.is_locked() {
+            self.publish_status = Some(format!(
+                "Locked: {}. Saving new snapshots is disabled.",
+                self.lock_reason().unwrap_or_else(|| "forecast is resolved".into())
+            ));
+            cx.notify();
+            return;
+        }
         self.save_focused_driver(cx);
         // Same guard as run_simulation — never regenerate cached_fpl from
         // the AST if the loaded FPL is richer (factor blocks, agents,
@@ -6678,6 +6796,13 @@ impl CockpitState {
                 Err(e) => {
                     this.update(cx, |state, cx| {
                         state.publish_status = Some(format!("Failed: {}", e));
+                        // If the server rejected the write because the
+                        // forecast is already resolved, our local view was
+                        // stale — reconcile so the cockpit locks and shows
+                        // the real settled state instead of a dead error.
+                        if e.to_lowercase().contains("resolved") {
+                            state.reconcile_forecast(cx);
+                        }
                         cx.notify();
                     })
                     .ok();
@@ -6733,6 +6858,8 @@ impl Render for CockpitState {
             }))
             // ── Fermi Banner (top, always visible) ────────────────
             .child(render_fermi_banner(&self.messages, &self.agent_runs))
+            // ── Locked banner: server resolved/voided this forecast ──
+            .when(self.is_locked(), |el| el.child(render_locked_banner(self, cx)))
             // ── Main content (left + right panels) ────────────────
             .child(
                 div()
@@ -11024,6 +11151,61 @@ fn render_assistant_panel(messages: &[AssistantMessage]) -> impl IntoElement {
 /// Fermi Banner — persistent top strip showing live agent activity.
 /// Always visible, shows the most recent messages + latest finding.
 /// Replaces the buried "FPL Assistant" panel.
+/// Banner shown when the server has resolved/voided this forecast. Makes the
+/// settled state — and the fact that re-sims / new snapshots are disabled —
+/// explicit, so the operator doesn't have to carry that context. Includes a
+/// ↻ Reconcile button to re-pull server state on demand.
+fn render_locked_banner(
+    state: &CockpitState,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let reason = state.lock_reason().unwrap_or_else(|| "Resolved".to_string());
+    let outcome_color = match state.forecast_outcome {
+        Some(true) => theme::GREEN,
+        Some(false) => theme::RED,
+        None => theme::GOLD,
+    };
+    let pct = format!("{:.1}%", state.predicted_probability * 100.0);
+    div()
+        .flex()
+        .items_center()
+        .gap(px(12.0))
+        .px(px(16.0))
+        .py(px(8.0))
+        .bg(rgb(theme::BG_ELEVATED))
+        .border_b_1()
+        .border_color(rgb(outcome_color))
+        .child(div().text_size(px(14.0)).text_color(rgb(outcome_color)).child("🔒"))
+        .child(
+            div()
+                .text_size(px(12.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(outcome_color))
+                .child(reason),
+        )
+        .child(
+            div()
+                .text_size(px(11.0))
+                .text_color(rgb(theme::FG_DIM))
+                .child(format!("settled at {} · re-sims & new snapshots disabled", pct)),
+        )
+        .child(div().flex_grow())
+        .child(
+            div()
+                .id("cockpit-reconcile")
+                .px(px(10.0))
+                .py(px(4.0))
+                .rounded(px(4.0))
+                .bg(rgb(theme::BG_ACTIVE))
+                .text_size(px(11.0))
+                .text_color(rgb(theme::CYAN))
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                .on_click(cx.listener(|this, _, _w, cx| this.reconcile_forecast(cx)))
+                .child(if state.reconciling { "↻ Reconciling…" } else { "↻ Reconcile" }),
+        )
+}
+
 fn render_fermi_banner(
     messages: &[AssistantMessage],
     agent_runs: &[AgentExecution],

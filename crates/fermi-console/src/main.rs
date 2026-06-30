@@ -2099,6 +2099,19 @@ impl FermiConsole {
                 _ => {}
             }
         }
+        // Re-entering the cockpit: reconcile the open forecast against the
+        // server so a session that went stale (resolved/eliminated while
+        // open) snaps to the settled state and locks itself.
+        if changed && self.connected && panel == Panel::Composer {
+            if let Some(ref cockpit) = self.cockpit {
+                let cockpit = cockpit.clone();
+                cockpit.update(cx, |cockpit, cx| {
+                    if cockpit.forecast_id.is_some() {
+                        cockpit.reconcile_forecast(cx);
+                    }
+                });
+            }
+        }
         cx.notify();
     }
 
@@ -3803,6 +3816,13 @@ impl FermiConsole {
                     });
                     let q_text = forecast.question_text.clone();
                     let prob = forecast.predicted_probability;
+                    // Authoritative lifecycle state — drives the cockpit lock
+                    // so an eliminated/resolved forecast can't be re-simmed or
+                    // re-saved (Spec: reconcile server context, don't make the
+                    // user carry it).
+                    let f_status = forecast.status.clone();
+                    let f_outcome = forecast.actual_outcome;
+                    let f_resolution_note = forecast.resolution_notes.clone();
                     // Workspace link, when present, lets the cockpit fire
                     // workspace-scoped endpoints (BayesOps state, refit,
                     // workspace outputs). Without this, the Trajectory tab
@@ -3824,6 +3844,9 @@ impl FermiConsole {
                             input.set_text(&q_text, cx);
                         });
                         cockpit.predicted_probability = prob;
+                        cockpit.forecast_status = Some(f_status);
+                        cockpit.forecast_outcome = f_outcome;
+                        cockpit.resolution_note = f_resolution_note;
                         cockpit.workspace_id = ws_id;
                         // If we have a workspace, fetch its params output
                         // so the next Ctrl+R can bind per-team scalars
