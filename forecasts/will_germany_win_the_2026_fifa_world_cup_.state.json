@@ -1,6 +1,6 @@
 {
   "forecast_id": "5765e18d-50af-4087-ae52-1d8810d8578b",
-  "current_version": 5,
+  "current_version": 6,
   "predicted_probability": 0.07965534929053275,
   "inside_view_explanation": "Inside view: model evaluates to 8.0% (p5=5.7%, p95=10.6%). Outside view (base rate): 17.4%. Key drivers: however.",
   "forecast_confidence": 0.5,
@@ -34,6 +34,12 @@
       "timestamp": "2026-06-30 10:29",
       "probability": 0.07965534929053275,
       "change_summary": "8.0% (-9pp), 1 drivers, 5 evidence"
+    },
+    {
+      "version": 6,
+      "timestamp": "2026-06-30 10:29",
+      "probability": 0.07965534929053275,
+      "change_summary": "8.0% (→), 1 drivers, 5 evidence"
     }
   ],
   "sim_results": {
