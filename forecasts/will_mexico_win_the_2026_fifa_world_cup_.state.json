@@ -1,7 +1,7 @@
 {
   "forecast_id": "863c1d58-c435-430c-b0fa-eb158adbafb7",
-  "current_version": 3,
-  "predicted_probability": 0.04397215002212735,
+  "current_version": 4,
+  "predicted_probability": 0.04382081623129828,
   "inside_view_explanation": "Inside view: model evaluates to 3.1% (p5=2.1%, p95=4.3%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
   "forecast_confidence": 0.5,
   "versions": [
@@ -22,14 +22,20 @@
       "timestamp": "2026-06-30 10:51",
       "probability": 0.04397215002212735,
       "change_summary": "4.4% (+1pp), 6 drivers, 4 evidence"
+    },
+    {
+      "version": 4,
+      "timestamp": "2026-06-30 10:51",
+      "probability": 0.04382081623129828,
+      "change_summary": "4.4% (→), 6 drivers, 4 evidence"
     }
   ],
   "sim_results": {
-    "mean": 0.03083839553221124,
-    "median": 0.030331381953599603,
-    "p5": 0.020538200450625835,
-    "p95": 0.043353999699965284,
-    "std_dev": 0.006962648060562054,
+    "mean": 0.030731368058343582,
+    "median": 0.030024555197728123,
+    "p5": 0.02052225808130989,
+    "p95": 0.04341412444708357,
+    "std_dev": 0.006980302009036173,
     "iterations": 10000
   },
   "base_rate": {
