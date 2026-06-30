@@ -1,0 +1,85 @@
+{
+  "forecast_id": "c83d7372-a23a-4be3-8cc1-9764c3928660",
+  "current_version": 1,
+  "predicted_probability": 0.014266595006988665,
+  "inside_view_explanation": "Inside view: model evaluates to 1.0% (p5=0.5%, p95=1.2%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "forecast_confidence": 0.5,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-06-30 10:37",
+      "probability": 0.014266595006988665,
+      "change_summary": "Initial: 1.4% base=2%, 6 drivers, 0 evidence"
+    }
+  ],
+  "sim_results": {
+    "mean": 0.007742177121405759,
+    "median": 0.0074862165650985725,
+    "p5": 0.004568783151134399,
+    "p95": 0.011832493161630514,
+    "std_dev": 0.002236331856468469,
+    "iterations": 10000
+  },
+  "base_rate": {
+    "reference_class": "FIFA World Cup winners 1930–2022",
+    "historical_frequency": 0.0208,
+    "sample_size": 22,
+    "source": "FIFA tournament archive — 22 prior World Cups",
+    "reasoning": "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via the six factor-derived drivers."
+  },
+  "evidence": [],
+  "agents": [
+    {
+      "name": "macro_data_agent",
+      "agent_type": "research",
+      "query": "GDP per capita, population, HDI for Bosnia & Herzegovina (2024–2026 latest available)",
+      "schedule": "Some(Every { interval: 1, unit: Month })",
+      "driver_refs": [
+        "socio_capital"
+      ]
+    },
+    {
+      "name": "football_institution_agent",
+      "agent_type": "research",
+      "query": "Player registration, top-flight league revenue, confederation coefficient for Bosnia & Herzegovina",
+      "schedule": "Some(Every { interval: 1, unit: Month })",
+      "driver_refs": [
+        "institutional_capacity"
+      ]
+    },
+    {
+      "name": "football_analyst",
+      "agent_type": "research",
+      "query": "Latest Elo rating, last 5 matches form, key player availability, market value distribution for Bosnia & Herzegovina",
+      "schedule": "Some(Every { interval: 1, unit: Week })",
+      "driver_refs": [
+        "dynamic_performance",
+        "squad_quality",
+        "tactical_efficiency"
+      ]
+    },
+    {
+      "name": "fixture_context_agent",
+      "agent_type": "research",
+      "query": "Upcoming fixtures for Bosnia & Herzegovina: venue, climate, rest days, altitude, opponent travel burden",
+      "schedule": "Some(Every { interval: 3, unit: Day })",
+      "driver_refs": [
+        "fixture_context"
+      ]
+    }
+  ],
+  "driver_confidence": {},
+  "polymarket": {
+    "event_id": "30615",
+    "market_id": "558983",
+    "question": "Will Bosnia-Herzegovina win the 2026 FIFA World Cup?",
+    "market_price": 0.0015,
+    "volume_24h": 1817154.652,
+    "liquidity": null,
+    "confidence": "Very High",
+    "price_change_1w": null,
+    "url": "https://polymarket.com/event/world-cup-winner",
+    "price_history": []
+  },
+  "workspace_id": "ab58514f-832b-4d8b-8fbd-dc4d774ce2dd"
+}
