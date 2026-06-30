@@ -1,6 +1,6 @@
 # Will Mexico win the 2026 FIFA World Cup?
 
-**Probability:** 4.1% · **Version:** v3 · **Updated:** 2026-06-30 10:41 UTC
+**Probability:** 4.4% · **Version:** v1 · **Updated:** 2026-06-30 10:50 UTC
 
 **Confidence:** Medium (50%) · **Drivers:** 6 · **Evidence:** 4 · **Agents:** 4
 
@@ -11,8 +11,8 @@
 | Metric | Value |
 |---|---|
 | Crowd price | **1.5%** |
-| Fermi estimate | **4.1%** |
-| Divergence | +2.6pp above crowd (Minor divergence) |
+| Fermi estimate | **4.4%** |
+| Divergence | +2.9pp above crowd (Minor divergence) |
 | 24h volume | $2.8M |
 | Market confidence | Very High |
 
@@ -22,13 +22,13 @@
 
 ## Inside View
 
-**Probability: 4.1%**
+**Probability: 4.4%**
 
-Inside view: model evaluates to 2.9% (p5=1.9%, p95=4.0%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.
+Inside view: model evaluates to 3.1% (p5=2.1%, p95=4.4%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.
 
 **Forecast Confidence:** Medium (50%)
 
-**Divergence from base rate:** 2pp above (4.1% vs 2.1%)
+**Divergence from base rate:** 2pp above (4.4% vs 2.1%)
 
 ---
 
@@ -45,46 +45,34 @@ Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverge
 
 ## Simulation Distribution
 
-**10000 iterations** · p5 = 1.9% · median = 2.8% · p95 = 4.0% · σ = 0.006
+**10000 iterations** · p5 = 2.1% · median = 3.0% · p95 = 4.4% · σ = 0.007
 
 ```
-▁▂▂▄▆██▇▆▅▄▃▂▂▁▁▁▁▁▁
+▁▂▃▄▇███▇▆▄▃▃▂▂▁▁▁▁▁
 ```
 
 | Bin center | Count | % of sims |
 |---|---|---|
-| 1.3% | 19 | 0.2% |
-| 1.5% | 109 | 1.1% |
-| 1.8% | 307 | 3.1% |
-| 2.0% | 695 | 7.0% |
-| 2.2% | 1074 | 10.7% |
-| 2.5% | 1456 | 14.6% |
-| 2.7% | 1372 | 13.7% |
-| 2.9% | 1293 | 12.9% |
-| 3.1% | 1140 | 11.4% |
-| 3.4% | 873 | 8.7% |
-| 3.6% | 625 | 6.2% |
-| 3.8% | 455 | 4.5% |
-| 4.1% | 259 | 2.6% |
-| 4.3% | 159 | 1.6% |
-| 4.5% | 86 | 0.9% |
-| 4.8% | 48 | 0.5% |
-| 5.0% | 19 | 0.2% |
-| 5.2% | 4 | 0.0% |
-| 5.4% | 5 | 0.1% |
-| 5.7% | 2 | 0.0% |
-
----
-
-## Forecast Index (version history)
-
-| v | timestamp | model | base | crowd | Δ(model−base) | Δ(model−crowd) | note |
-|---|---|---|---|---|---|---|---|
-| v1 | 2026-06-30 10:41 | 4.1% | 2.1% | 1.5% | +2.0pp | +2.6pp | Initial: 4.1% base=2%, 6 drivers, 4 evidence |
-| v2 | 2026-06-30 10:41 | 2.9% | 2.1% | 1.5% | +0.8pp | +1.4pp | 2.9% (-1pp), 6 drivers, 4 evidence |
-| v3 | 2026-06-30 10:41 | 4.1% | 2.1% | 1.5% | +2.0pp | +2.6pp | 4.1% (+1pp), 6 drivers, 4 evidence |
-
-**Model line:** ```█▁█``` (range 2.9% – 4.1%)
+| 1.4% | 17 | 0.2% |
+| 1.7% | 97 | 1.0% |
+| 1.9% | 310 | 3.1% |
+| 2.1% | 628 | 6.3% |
+| 2.4% | 1066 | 10.7% |
+| 2.6% | 1257 | 12.6% |
+| 2.8% | 1351 | 13.5% |
+| 3.1% | 1281 | 12.8% |
+| 3.3% | 1147 | 11.5% |
+| 3.6% | 906 | 9.1% |
+| 3.8% | 666 | 6.7% |
+| 4.0% | 463 | 4.6% |
+| 4.3% | 332 | 3.3% |
+| 4.5% | 216 | 2.2% |
+| 4.7% | 121 | 1.2% |
+| 5.0% | 67 | 0.7% |
+| 5.2% | 37 | 0.4% |
+| 5.4% | 18 | 0.2% |
+| 5.7% | 16 | 0.2% |
+| 5.9% | 4 | 0.0% |
 
 ---
 
@@ -92,7 +80,7 @@ Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverge
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.83 | 1.03 | 1.23 |  |
 
 > Macro capacity for footballing investment: GDP, population, HDI.
 
@@ -101,90 +89,70 @@ Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverge
 - **macro_data_agent** (schedule: every 1 Month)  
   Query: _GDP per capita, population, HDI for Mexico (2024–2026 latest available)_
 
-### Evidence (1) — Partial quality (65%)
+### Evidence (1) — Strong quality (75%)
 
-#### Agent: macro_data_agent — relevance 50% · quality ●●○ Med (65%) · 2026-06-19
+#### Agent: macro_data_agent — relevance 50% · quality ●●● High (75%) · 2026-06-30
 
-Perfect! Now I have the data I need. Let me compile the findings:
+## MEXICO (MEX) — X1 SOCIOECONOMIC CAPITAL INDICATORS (2024–2026)
 
----
-
-## **MEXICO (MEX) — SOCIOECONOMIC CAPITAL INDICATORS (2024–2025)**
-
-### **Core X1 Indicators**
-
-**[INDICATOR]** GDP per capita (2025, Statista/IMF): **$13,740** (current US$); log₁₀ ≈ **4.138**  
-Source: Statista citing IMF data for 2025; Wikipedia cites 2024 PPP GDP/capita at $25,963 (PPP int'l $).
-
-**[INDICATOR]** Population (2024–2025): **~130.8 million** (Jan 2026 estimate, INEGI/World Bank/UN WPP 2024); log₁₀ ≈ **2.116**  
-Source: World Population Clock citing INEGI, World Bank, UN WPP 2024 Revision. Wikipedia cites ~129M for 2022.
-
-**[INDICATOR]** HDI (2022, UNDP): **0.781** (very high human development)  
-Source: PAHO Health in the Americas 2025, citing UNDP data showing Mexico improved from 0.709 (2000) to 0.781 (2022).  
-Logit transform: logit(0.781) = log(0.781 / (1 − 0.781)) = log(3.566) ≈ **1.271**
-
-**[DATA AGE]** GDP per capita: 2025 (current); Population: 2024–2026 (current); HDI: 2022 (most recent UNDP release as of 2026).
+**[DATA AGE]** Latest available data: GDP per capita and population from 2024–2025 sources; HDI from UNDP 2023 baseline (2024 report not yet released with Mexico-specific update at time of search).
 
 ---
 
-### **Baseline & Transform**
+### CORE INDICATORS
 
-**[BASELINE]** World Cup / upper-middle-income field median benchmarks:  
-• GDP per capita log ≈ **4.05** (~$11,200)  
-• Population log ≈ **1.60** (~40M)  
-• HDI logit ≈ **1.50** (HDI ~0.818)
+**[INDICATOR]** GDP per capita (2024, nominal current US$): **$14,110**  
+Source: GDPIndex.org citing 2024 estimates; IMF WEO April 2026 cites PPP figure of $26,643 for 2026.  
+- Log₁₀ transformation: log₁₀(14,110) ≈ **4.149**
 
-**[TRANSFORM]** Mexico composite socioeconomic score (standard factor weights: 0.4 GDP, 0.3 Pop, 0.3 HDI):  
-Z = (0.4 × 4.138 + 0.3 × 2.116 + 0.3 × 1.271 − 2.6) / 0.7  
-Z = (1.655 + 0.635 + 0.381 − 2.6) / 0.7  
-Z = **0.101** — marginally above the field median
+**[INDICATOR]** Population (2026, total): **131.0 million**  
+Source: World Population Clock / UN WPP 2024 Revision; multiple sources converge on ~130.8–131M for early 2026.  
+- Log₁₀ transformation: log₁₀(131.0) ≈ **2.117**
 
-**Interpretation:**  
-• GDP/capita is **above** the field median (+0.088 log points) — Mexico sits in the 7th decile of upper-middle-income economies.  
-• Population is **well above** the field median (+0.516 log points) — Mexico is the 10th most populous country globally, giving it substantial domestic market scale.  
-• HDI is **below** the field median (−0.229 logit points) — Mexico's human capital (education, health, income equality) lags peer economies at similar GDP levels.
-
-The large population partially offsets the HDI drag; the net effect is a **slight positive** adjustment to X1.
+**[INDICATOR]** HDI (2022, UNDP Human Development Report 2024): **0.780**  
+Source: World Scorecard / UNDP HDR; Mexico peaked at 0.780 in 2017, maintained ~0.78 range through 2022.  
+- Logit transformation: log(0.780 / (1 − 0.780)) ≈ log(3.545) ≈ **1.266**
 
 ---
 
-### **Multiplier Recommendation**
+### BASELINE COMPARISON
 
-**[MULTIPLIER]** Suggested p50: **1.03** (p5: **0.92**, p95: **1.16**) — Mexico's GDP/capita and large domestic market lift X1 marginally above the field median, though HDI underperformance relative to income level introduces downside risk; net adjustment is modest positive.
+**[BASELINE]** World Cup 2026 field median benchmarks (32-team tournament):  
+- GDP per capita (log): ~4.05 (median ~$11,200)  
+- Population (log): ~1.60 (median ~40M)  
+- HDI (logit): ~1.50 (median ~0.818)
+
+**[TRANSFORM]** Mexico composite Z-score calculation:  
+Using standard X1 weights (0.4 GDP, 0.3 Pop, 0.3 HDI):  
+Z = (0.4 × 4.149 + 0.3 × 2.117 + 0.3 × 1.266 − 2.6) / 0.7  
+Z = (1.660 + 0.635 + 0.380 − 2.6) / 0.7  
+Z = **+0.11** — marginally above field median
+
+Mexico's GDP per capita is ~26% above the WC field median, but HDI lags slightly (0.780 vs. ~0.82 median), and population is substantially larger (131M vs. 40M median), which dilutes per-capita resource concentration in tournament contexts.
 
 ---
 
-### **Summary Table**
+### FERMI MULTIPLIER OUTPUT
 
-| Indicator              | Value (2024–2025) | Log/Logit Transform | Field Median | Delta   |
-|------------------------|-------------------|---------------------|--------------|---------|
-| GDP per capita (US$)   | $13,740           | 4.138               | 4.05         | +0.088  |
-| Population (millions)  | 130.8             | 2.116               | 1.60         | +0.516  |
-| HDI                    | 0.781             | 1.271               | 1.50         | −0.229  |
-| **Composite Z-score**  | —                 | **+0.101**          | 0.00         | +0.101  |
-
-**Sources:**  
-• Statista / IMF (GDP per capita 2025)  
-• INEGI / World Bank / UN WPP 2024 (Population 2024–2026)  
-• UNDP Human Development Report via PAHO (HDI 2022)
+**[MULTIPLIER]** Suggested p50: **1.03** (p5: **0.92**, p95: **1.16**) — Mexico's GDP per capita ($14,110, log 4.15) sits modestly above the WC2026 field median, offsetting slightly lower HDI (0.780 vs. 0.82); large population (131M) creates resource diffusion but also deep talent pool; net effect is marginal upward adjustment to X1 Socioeconomic Capital factor.
 
 **Key findings:**
 
-- [INDICATOR]** GDP per capita (2025, Statista/IMF): **$13,740** (current US$); log₁₀ ≈ **4.138**
-- Source: Statista citing IMF data for 2025; Wikipedia cites 2024 PPP GDP/capita at $25,963 (PPP int'l $).
-- [INDICATOR]** Population (2024–2025): **~130.8 million** (Jan 2026 estimate, INEGI/World Bank/UN WPP 2024); log₁₀ ≈ **2.116**
-- [INDICATOR]** HDI (2022, UNDP): **0.781** (very high human development)
-- [DATA AGE]** GDP per capita: 2025 (current); Population: 2024–2026 (current); HDI: 2022 (most recent UNDP release as of 2026).
-- [BASELINE]** World Cup / upper-middle-income field median benchmarks:
-- GDP per capita log ≈ **4.05** (~$11,200)
-- Population log ≈ **1.60** (~40M)
-- HDI logit ≈ **1.50** (HDI ~0.818)
-- [TRANSFORM]** Mexico composite socioeconomic score (standard factor weights: 0.4 GDP, 0.3 Pop, 0.3 HDI):
-- Interpretation:**
-- GDP/capita is **above** the field median (+0.088 log points) — Mexico sits in the 7th decile of upper-middle-income economies.
-- Population is **well above** the field median (+0.516 log points) — Mexico is the 10th most populous country globally, giving it substantial domestic market scale.
-- HDI is **below** the field median (−0.229 logit points) — Mexico's human capital (education, health, income equality) lags peer economies at similar GDP levels.
-- [MULTIPLIER]** Suggested p50: **1.03** (p5: **0.92**, p95: **1.16**) — Mexico's GDP/capita and large domestic market lift X1 marginally above the field median, though HDI underperformance relative to income level introduces downside risk; net adjustment is modest positive.
+- [DATA AGE]** Latest available data: GDP per capita and population from 2024–2025 sources; HDI from UNDP 2023 baseline (2024 report not yet released with Mexico-specific update at time of search).
+- [INDICATOR]** GDP per capita (2024, nominal current US$): **$14,110**
+- Source: GDPIndex.org citing 2024 estimates; IMF WEO April 2026 cites PPP figure of $26,643 for 2026.
+- Log₁₀ transformation: log₁₀(14,110) ≈ **4.149**
+- [INDICATOR]** Population (2026, total): **131.0 million**
+- Log₁₀ transformation: log₁₀(131.0) ≈ **2.117**
+- [INDICATOR]** HDI (2022, UNDP Human Development Report 2024): **0.780**
+- Logit transformation: log(0.780 / (1 − 0.780)) ≈ log(3.545) ≈ **1.266**
+- [BASELINE]** World Cup 2026 field median benchmarks (32-team tournament):
+- GDP per capita (log): ~4.05 (median ~$11,200)
+- Population (log): ~1.60 (median ~40M)
+- HDI (logit): ~1.50 (median ~0.818)
+- [TRANSFORM]** Mexico composite Z-score calculation:
+- Mexico's GDP per capita is ~26% above the WC field median, but HDI lags slightly (0.780 vs. ~0.82 median), and population is substantially larger (131M vs. 40M median), which dilutes per-capita resource concentration in tournament contexts.
+- [MULTIPLIER]** Suggested p50: **1.03** (p5: **0.92**, p95: **1.16**) — Mexico's GDP per capita ($14,110, log 4.15) sits modestly above the WC2026 field median, offsetting slightly lower HDI (0.780 vs. 0.82); large population (131M) creates resource diffusion but also deep talent pool; net effect is marginal upward adjustment to X1 Socioeconomic Capital factor.
 
 ---
 
@@ -192,7 +160,7 @@ The large population partially offsets the HDI drag; the net effect is a **sligh
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.75 | 0.95 | 1.15 |  |
 
 > Federation strength, league development, player pipeline depth.
 
@@ -201,32 +169,32 @@ The large population partially offsets the HDI drag; the net effect is a **sligh
 - **football_institution_agent** (schedule: every 1 Month)  
   Query: _Player registration, top-flight league revenue, confederation coefficient for Mexico_
 
-### Evidence (1) — Partial quality (53%)
+### Evidence (1) — Strong quality (71%)
 
-#### Agent: football_institution_agent — relevance 50% · quality ●●○ Med (53%) · 2026-06-19
+#### Agent: football_institution_agent — relevance 50% · quality ●●● High (71%) · 2026-06-30
 
-Based on the available data, here is the institutional capacity assessment for Mexico:
+Based on the available search results and institutional football infrastructure analysis for Mexico:
 
 ---
 
 ## MEXICO — INSTITUTIONAL CAPACITY (X2) ASSESSMENT
 
-[PENETRATION] FIFA-registered players: **6 million total** (2025 estimate from multiple sources) in a population of ~130 million → **4,615 players per 100k inhabitants**. This is exceptionally high for a large nation — comparable to major European footballing countries. Mexico also leads globally with **9,464 professional players** (FIFA Professional Football Report 2023), the highest count worldwide.
+[PENETRATION] **Professional players only**: FIFA Professional Football Report 2023 confirms Mexico has **9,464 registered professional players** — the highest count globally, ahead of Spain (8,560) and England (5,582). However, this represents only the professional tier. With Mexico's population of ~129.4M (2024), professional penetration = 7.3 per 100k. **[DATA AGE]** — Total grassroots/amateur registration data unavailable in search results; FIFA Big Count comprehensive data not retrieved. Professional-only metric significantly understates true player base in a country where football is the dominant sport (73% self-identify as fans per Wikipedia). Training-data baseline suggests Mexico's total registered player pool (including youth/amateur) likely exceeds 6-8 million, yielding ~5,000-6,200 per 100k — well above global median but below elite European penetration rates (Germany ~8,500/100k, England ~7,000/100k).
 
-[DATA AGE] Total registered player count (6M) sourced from 2025 social media aggregation; professional count (9,464) from FIFA 2023 official report. Population estimate: 130M (2024).
+[LEAGUE REVENUE] **Liga MX financial scale**: Direct revenue figures not retrieved in search results. **[DATA AGE]** — Deloitte Money League 2025 focuses on European clubs; Liga MX clubs do not appear in top-20 global rankings. Training-data baseline: Liga MX aggregate annual revenue estimated at **$650-750M USD** (2023-24 season), making it the wealthiest league in the Americas outside MLS, but ~15-20x smaller than the English Premier League ($7.6B) or La Liga ($4.5B). Log10(700M) ≈ **8.85** — mid-tier among major football nations, comparable to Eredivisie or Belgian Pro League scale.
 
-[LEAGUE REVENUE] Liga MX aggregate revenue estimated at **~$700-800 million USD annually** (2024), based on: (1) Apollo's $1.25B investment offer valuing collective media/sponsorship rights, (2) individual club valuations (Club América ~$770M enterprise value, top clubs $85-97M market value), (3) comparative positioning with MLS (average team value $678M in 2024). Log₁₀(750M) ≈ **8.88** — this places Liga MX in the upper-middle tier globally, well above most non-European leagues but below top-5 European competitions.
+[CONFEDERATION] **CONCACAF coefficient**: Mexico competes in CONCACAF, the third-strongest confederation globally after UEFA and CONMEBOL. Standard coefficient: **0.65** (per agent training baseline). Recent performance signals: CONCACAF clubs have historically struggled in FIFA Club World Cup (34 World Cup wins from 152 matches per search results — 22.4% win rate, lowest among major confederations except OFC). Mexican clubs dominate CONCACAF Champions Cup (Cruz Azul: 119 matches, 69 wins, 271 goals — most in competition history) but rarely advance past quarterfinals in global club competition. The 2025 FIFA Club World Cup showed CONMEBOL clubs outperforming expectations vs UEFA; CONCACAF remains a clear tier below.
 
-[CONFEDERATION] **CONCACAF** — confederation coefficient **~0.65-0.70**. CONCACAF receives 4 automatic slots in the 2025 FIFA Club World Cup (vs 12 for UEFA, 6 for CONMEBOL), reflecting its position as the third-strongest confederation. Mexican clubs (Pachuca, Monterrey, León) have dominated the CONCACAF Champions Cup historically, winning 39 of 59 editions. However, CONCACAF clubs perform poorly in intercontinental competition vs UEFA/CONMEBOL opponents.
+[INSTITUTIONAL SIGNAL] **Structural advantages**: Mexico operates the **largest professional club infrastructure globally** (244 professional clubs per search results) — exceptional depth for talent development. The FMF (Mexican Football Federation, founded 1927, FIFA member since 1929) maintains robust youth national team programs with strong age-group World Cup performance. However, systemic challenges include: (1) pay-to-play barriers limiting grassroots access despite high participation, (2) Liga MX's financial scale constraining ability to retain elite talent vs European leagues, (3) CONCACAF's competitive weakness reducing institutional pressure/learning compared to UEFA/CONMEBOL environments.
 
-[INSTITUTIONAL SIGNAL] Mexico operates **244 professional clubs** (FIFA 2023) — the most of any nation globally — creating an exceptionally deep professional pyramid. The FMF (Mexican Football Federation) maintains structured governance with balanced representation across professional tiers (Liga MX, Expansión MX, Liga Premier) and amateur sectors. Youth development infrastructure is extensive, though not at UEFA elite levels.
-
-[MULTIPLIER] Suggested p50: **1.15** (p5: 0.95, p95: 1.40) — Mexico's institutional capacity significantly exceeds what its economic scale alone would predict: world-leading professional player count, top-tier penetration rate for a large nation, and the strongest domestic league outside Europe/South America. The CONCACAF confederation ceiling limits upside, but domestic infrastructure is world-class.
+[MULTIPLIER] **Suggested p50: 0.95 (p5: 0.80, p95: 1.15)** — Mexico's institutional capacity sits slightly below the global median for major football nations. While professional infrastructure is world-class (most pro players/clubs globally) and domestic league revenue leads the Americas outside MLS, the CONCACAF confederation penalty (-0.35 vs UEFA baseline) and incomplete grassroots penetration data (suggesting barriers despite high participation) offset structural advantages. The 0.95 multiplier reflects a nation punching at its weight institutionally but constrained by confederation weakness and economic scale relative to European powers.
 
 **Key findings:**
 
-- [LEAGUE REVENUE] Liga MX aggregate revenue estimated at **~$700-800 million USD annually** (2024), based on: (1) Apollo's $1.25B investment offer valuing collective media/sponsorship rights, (2) individual club valuations (Club América ~$770M enterprise value, top clubs $85-97M market value), (3) comparative positioning with MLS (average team value $678M in 2024). Log₁₀(750M) ≈ **8.88** — this places Liga MX in the upper-middle tier globally, well above most non-European leagues but below top-5 European competitions.
-- [MULTIPLIER] Suggested p50: **1.15** (p5: 0.95, p95: 1.40) — Mexico's institutional capacity significantly exceeds what its economic scale alone would predict: world-leading professional player count, top-tier penetration rate for a large nation, and the strongest domestic league outside Europe/South America. The CONCACAF confederation ceiling limits upside, but domestic infrastructure is world-class.
+- [PENETRATION] **Professional players only**: FIFA Professional Football Report 2023 confirms Mexico has **9,464 registered professional players** — the highest count globally, ahead of Spain (8,560) and England (5,582). However, this represents only the professional tier. With Mexico's population of ~129.4M (2024), professional penetration = 7.3 per 100k. **[DATA AGE]** — Total grassroots/amateur registration data unavailable in search results; FIFA Big Count comprehensive data not retrieved. Professional-only metric significantly understates true player base in a country where football is the dominant sport (73% self-identify as fans per Wikipedia). Training-data baseline suggests Mexico's total registered player pool (including youth/amateur) likely exceeds 6-8 million, yielding ~5,000-6,200 per 100k — well above global median but below elite European penetration rates (Germany ~8,500/100k, England ~7,000/100k).
+- [LEAGUE REVENUE] **Liga MX financial scale**: Direct revenue figures not retrieved in search results. **[DATA AGE]** — Deloitte Money League 2025 focuses on European clubs; Liga MX clubs do not appear in top-20 global rankings. Training-data baseline: Liga MX aggregate annual revenue estimated at **$650-750M USD** (2023-24 season), making it the wealthiest league in the Americas outside MLS, but ~15-20x smaller than the English Premier League ($7.6B) or La Liga ($4.5B). Log10(700M) ≈ **8.85** — mid-tier among major football nations, comparable to Eredivisie or Belgian Pro League scale.
+- [CONFEDERATION] **CONCACAF coefficient**: Mexico competes in CONCACAF, the third-strongest confederation globally after UEFA and CONMEBOL. Standard coefficient: **0.65** (per agent training baseline). Recent performance signals: CONCACAF clubs have historically struggled in FIFA Club World Cup (34 World Cup wins from 152 matches per search results — 22.4% win rate, lowest among major confederations except OFC). Mexican clubs dominate CONCACAF Champions Cup (Cruz Azul: 119 matches, 69 wins, 271 goals — most in competition history) but rarely advance past quarterfinals in global club competition. The 2025 FIFA Club World Cup showed CONMEBOL clubs outperforming expectations vs UEFA; CONCACAF remains a clear tier below.
+- [MULTIPLIER] **Suggested p50: 0.95 (p5: 0.80, p95: 1.15)** — Mexico's institutional capacity sits slightly below the global median for major football nations. While professional infrastructure is world-class (most pro players/clubs globally) and domestic league revenue leads the Americas outside MLS, the CONCACAF confederation penalty (-0.35 vs UEFA baseline) and incomplete grassroots penetration data (suggesting barriers despite high participation) offset structural advantages. The 0.95 multiplier reflects a nation punching at its weight institutionally but constrained by confederation weakness and economic scale relative to European powers.
 
 ---
 
@@ -234,7 +202,7 @@ Based on the available data, here is the institutional capacity assessment for M
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 1.00 | 1.20 | 1.40 |  |
 
 > Recent form and Elo trajectory — refits as match outcomes accumulate.
 
@@ -245,176 +213,121 @@ Based on the available data, here is the institutional capacity assessment for M
 
 ### Evidence (1) — Strong quality (70%)
 
-#### Agent: football_analyst — relevance 50% · quality ●●● High (70%) · 2026-06-19
+#### Agent: football_analyst — relevance 50% · quality ●●● High (70%) · 2026-06-30
 
 # MEXICO NATIONAL TEAM — COMPREHENSIVE ANALYSIS
 
-Based on available data from web searches and API attempts, here is Mexico's current status:
+## ELO RATING & CURRENT FORM
 
----
+**[BASE RATE]** Mexico's estimated Elo rating: ~1750-1780 (mid-tier World Cup participant). Historical Mexico Elo range: 1700-1850, with peaks during strong CONCACAF cycles. Current FIFA ranking: #14 globally (June 2026).
 
-## ELO RATING & GLOBAL STANDING
+**[MATCH STATS]** Mexico's 2026 World Cup Group A performance (last 5 competitive matches):
+- **3W-0D-0L** in Group A (perfect group stage)
+- Match 1: Mexico 2-0 South Africa (June 11)
+- Match 2: Mexico 1-0 South Korea (June 18)
+- Match 3: Mexico 3-0 Czech Republic (June 24)
+- **Group A Winners** — 9 points, +6 goal difference, 0 goals conceded in group stage
+- Clean sheet streak: 3 consecutive matches (exceptional defensive form)
 
-**[BASE RATE]** Mexico current Elo rating: **1800** (ranked 14th of 48 teams at 2026 World Cup per ESPN's Elo model). This places them 0.33 standard deviations above the tournament field mean (assuming Elo mean ~1700, sd ~300 for WC-quality teams). FIFA World Rankings position them around 15th-20th globally.
+**Recent friendly form (late 2025):**
+- Beat Ghana, Bolivia, Paraguay, USA without conceding
+- Drew 2-2 vs South Africa (Nashville friendly)
+- Only loss: 0-5 vs Brazil at home
 
-**[ELO]** Elo 1800 implies baseline win probability vs average opponent (Elo 1700): P(win) = 1/(1 + 10^((1700-1800)/400)) = **64%**. Against tournament-median opposition, Mexico enters as moderate favorites in neutral-site matches.
+**Aggregate last 5 official results:** 3W-0D-0L, +6 GD, 0 GA in tournament play
 
----
+## KEY PLAYER AVAILABILITY
 
-## RECENT FORM (LAST 5 MATCHES)
+**[INJURY IMPACT]** **No injuries or suspensions reported** ahead of Round of 32 (per multiple sources dated June 29, 2026). Full squad available for knockout stage.
 
-**[MATCH STATS]** Based on 2024-2025 results:
+**Key Players — Current Status:**
+- **Santiago Giménez** (AC Milan, ST) — Available, signed for €43M in Feb 2025
+- **Edson Álvarez** (Fenerbahçe, CDM) — Available, leadership anchor
+- **Raúl Jiménez** (Wolverhampton, ST) — Available, veteran presence
+- **Johan Vásquez** (CB) — Available
+- **Guillermo Ochoa** (GK) — Available, legendary shot-stopper
+- **Álvaro Fidalgo** (Real Betis, CM) — Available
+- **Obed Vargas** (Atletico Madrid, CM) — Available, rising talent
 
-1. **Mexico 2-0 South Africa** (June 12, 2026, World Cup opener) — W
-   - Dominant home performance at Estadio Azteca
-   - Match marred by 3 red cards (César Montes sent off for Mexico)
-   - Clean sheet, controlled possession
-
-2. **Mexico 2-1 Panama** (March 23, 2025, CONCACAF Nations League Final) — W
-   - **First-ever Nations League title for Mexico**
-   - Victory at SoFi Stadium (neutral venue, Los Angeles)
-   - Ended USA's three-title Nations League streak
-
-3. **Mexico 3-0 Honduras** (March 20, 2025, Nations League semi-final) — W
-
-4. **Mexico 2-0 USA** (October 15, 2024, Friendly) — W
-   - Convincing victory over regional rivals
-
-5. **Mexico result vs Costa Rica/other** (2024 Copa America group stage) — Mixed
-   - Underwhelming Copa America 2024 performance led to manager Jaime Lozano's dismissal (July 16, 2024)
-   - **Javier Aguirre appointed** (third spell as Mexico manager, July 22, 2024)
-
-**Form Summary: 4W-0D-1L in last 5 competitive/significant matches** (excluding the Copa America disappointment). Strong momentum entering World Cup 2026 with Nations League title and opening WC win.
-
----
-
-## KEY PLAYER AVAILABILITY & INJURY STATUS
-
-**[INJURY IMPACT]** Current squad status (as of June 2026 World Cup):
-
-**SUSPENDED:**
-- **César Montes (CB)** — Red card vs South Africa (June 12), suspended for next match vs South Korea (June 18)
-- Impact: Montes is first-choice centre-back. Estimated defensive impact: **+0.2-0.3 xGA/90** without him
-- Replacement: **Edson Álvarez** (normally defensive midfielder) moved to centre-back, or **Erik Lira** deputizes
-
-**KEY PLAYERS AVAILABLE:**
-- **Santiago Giménez (ST, AC Milan)** — €37M transfer 2025, top striker
-- **Edson Álvarez (CDM, Fenerbahçe)** — Defensive anchor, versatile (now covering CB)
-- **Raúl Jiménez (ST, Wolves)** — Veteran striker, scored vs South Africa
-- **Guillermo Ochoa (GK, AEL Limassol)** — **Sixth World Cup** (record-tying), age 40+
-- **Johan Vásquez (CB, Genoa)** — First-choice CB partner to Montes
-- **Luis Chávez (CM, Dinamo Moscow)** — Set-piece specialist
-- **Julián Quiñones (FW, Al Qadsiah)** — Attacking option
-- **Álvaro Fidalgo (CM, Real Betis)** — Creative midfielder
-
-**Squad Depth:** 26-man roster with mix of Europe-based (Big-5 leagues + Turkey, Netherlands) and Liga MX players. Depth at forward positions strong; centre-back depth tested by Montes suspension.
-
----
+Manager: **Javier Aguirre** (experienced World Cup tactician, third stint with El Tri)
 
 ## MARKET VALUE DISTRIBUTION
 
-**[X4 SIGNAL]** Mexico squad market value (Transfermarkt estimates, 2025-2026):
+**[X4 SIGNAL]** Total squad market value: **€191.85 million** (27th among 48 World Cup teams per Transfermarkt June 2026)
 
-- **Total squad value: ~€300-400M** (estimated based on available data)
-- **Top-5 players by value:**
-  1. **Santiago Giménez (ST)**: €37M (AC Milan transfer fee, likely €40-45M market value)
-  2. **Edson Álvarez (CDM)**: €30-35M (Fenerbahçe)
-  3. **Johan Vásquez (CB)**: €20-25M (Genoa, Serie A)
-  4. **Julián Quiñones (FW)**: €15-20M (Al Qadsiah)
-  5. **Armando González (FW)**: €15M (Chivas, breakout star — jumped from €7M to €15M in 2025)
+**Top 5 Players by Market Value (estimated):**
+1. **Santiago Giménez** (AC Milan, ST) — ~€40-45M (transfer fee €43M, Feb 2025)
+2. **Edson Álvarez** (Fenerbahçe, CDM) — ~€35-38M
+3. **Obed Vargas** (Atletico Madrid, CM) — ~€15-18M (young talent)
+4. **Johan Vásquez** (CB) — ~€12-15M
+5. **Raúl Jiménez** (Wolverhampton, ST) — ~€10-12M (age-adjusted)
 
-- **Market value concentration:** Top-5 players represent approximately **35-40% of total squad value** — moderate concentration (healthy distribution)
+**Market Value Concentration:** Top 5 players represent approximately **€112-128M** = **58-67% of total squad value** (high concentration, star-dependent structure)
 
-- **Big-5 league representation:** Estimated **~40-50%** of squad plays in Europe's top-5 leagues or strong secondary leagues (Eredivisie, Primeira Liga, Serie A, Turkey). Significant Liga MX contingent (~50%).
+**League Distribution:**
+- **Big-5 European leagues:** ~45-50% of squad (Premier League, Serie A, La Liga representation)
+- **Other European leagues:** ~25-30% (Eredivisie, Turkish Super Lig, Belgian Pro League)
+- **Liga MX (domestic):** ~20-25%
+- **Other leagues:** ~5-10% (MLS, Middle East)
 
-- **Age profile:** Mix of veterans (Ochoa 40+, Jiménez 34) and prime-age players (Giménez 24, González 22, Álvarez 27). Average age ~27-28 (slightly above optimal 26-27 peak).
+**Salary Structure (reported weekly wages):**
+- Raúl Jiménez: ~£100,000/week
+- Edson Álvarez: ~£94,000/week
+- Santiago Giménez: ~£85,000/week
 
-**[X4 SIGNAL]** Squad quality index places Mexico in **upper-middle tier** globally — strong for CONCACAF, competitive but not elite by European/South American standards. Market value ~€350M vs France €1.476B, England €1.310B, Spain €1.267B.
+## TACTICAL & PERFORMANCE METRICS
 
----
-
-## TACTICAL PROFILE & ADVANCED STATS
-
-**[X5 SIGNAL]** Under Javier Aguirre (third spell, appointed July 2024):
-
-- **Formation:** Typically 4-3-3 or 4-2-3-1, flexible based on opposition
-- **Pressing intensity:** Moderate PPDA (~9-11 range estimated) — not ultra-high press, but organized mid-block
-- **Set-piece strength:** Luis Chávez specialist — estimated **0.35-0.40 goals/game from set pieces** (above average)
-- **Defensive solidity:** Clean sheet vs South Africa; Montes suspension creates vulnerability
-- **Shot conversion:** Raúl Jiménez clinical finisher; Giménez high xG per 90 in club football
-- **Transition play:** Counter-attacking threat with pace on wings (Quiñones, Vega)
-
-**xG estimates (based on recent form):**
-- **xG for:** ~1.4-1.6 per game in competitive matches
-- **xGA:** ~0.8-1.0 per game (defensive improvement under Aguirre)
-- **xGD:** +0.5 to +0.7 per game trend
-
----
-
-## FACTOR MODEL SIGNALS (X3/X4/X5)
-
-**[X3 SIGNAL]** Dynamic Performance Signal:
-- Elo 1800 = (1800-1700)/300 = **+0.33 std above WC field mean**
-- Elo trend: **+50-70 points** since Aguirre appointment (July 2024 to June 2026)
-- Goal difference last 10 internationals: Estimated **+12** (1.2/game)
-- Recent xG delta: **+0.5 to +0.7/game** over last 10 matches
-- **X3 deterministic component:** 0.50·(0.33) + 0.10·(+60 Elo trend/300) + 0.15·(1.2 GD) + 0.15·(0.6 xGD) = **+0.44** (strong positive signal)
-
-**[X4 SIGNAL]** Squad Quality Index:
-- Market value concentration: **38%** in top-5 players (moderate, healthy)
-- Big-5 league %: **~45%** (mid-tier for WC participants)
-- Squad depth score: **7/10** (tested by Montes suspension, but adequate replacements)
-- Age-adjusted: **27.5 avg age** (slightly past optimal 26-27, but still competitive)
-- **X4 assessment:** Upper-middle tier globally, strong regionally
+**[X3 SIGNAL]** Dynamic Performance Indicators:
+- **Elo current:** ~1765 (estimated, +65 above CONCACAF average)
+- **Elo trend (12 months):** +40-50 points (positive trajectory through qualifiers and friendlies)
+- **Goal difference (WC group stage):** +6 in 3 matches (+2.0/game)
+- **xG delta (estimated):** Positive — scoring efficiency above expected in group stage
+- **Defensive solidity:** 0 goals conceded in 3 group matches (elite defensive performance)
 
 **[X5 SIGNAL]** Tactical Efficiency:
-- Shot conversion rate: **~14-16%** (above average, clinical strikers)
-- Defensive duel win %: Estimated **54-56%** (solid, weakened without Montes)
-- Pressing intensity: PPDA **~9-11** (moderate, organized)
-- Set-piece efficiency: **0.38 goals/game** from set pieces (top quartile)
-- **X5 assessment:** Tactically sound under Aguirre, set-piece strength notable
+- **Set-piece threat:** Moderate — not a primary strength
+- **Defensive organization:** Elite in group stage (3 clean sheets)
+- **Counter-attacking:** Strong — leveraged against South Korea and Czech Republic
+- **Pressing intensity:** Moderate PPDA (estimated 10-12, balanced approach)
+- **Shot conversion:** High in group stage (6 goals from limited chances)
 
----
+**[FACTOR]** Mexico's X3 (Elo + form), X4 (squad value €192M, 27th/48), and X5 (defensive solidity) signals place them in the **upper-middle tier** of World Cup participants. Strongest discriminator is **X3 via recent form** (perfect group stage) and **defensive organization** (0 GA). Weakness: **squad depth and market value concentration** — heavily reliant on Giménez/Álvarez/Jiménez trio.
 
-## KEY FINDINGS SUMMARY
+## CONTEXT & RISK FACTORS
 
-1. **Elo 1800 (14th/48 at WC2026)** — 0.33 std above tournament mean, 64% win probability vs average opponent
-2. **Form: 4W-0D-1L** in last 5 significant matches — Nations League champions (March 2025), WC opener win
-3. **César Montes suspended** (red card) — defensive vulnerability vs South Korea, estimated +0.25 xGA impact
-4. **Squad value ~€350M** — 38% concentration in top-5 players, 45% Big-5 league representation
-5. **Tactical strengths:** Set-piece efficiency (0.38 goals/game), clinical finishing (Giménez, Jiménez), defensive organization under Aguirre
-6. **Age profile:** 27.5 avg — mix of veterans (Ochoa 40, Jiménez 34) and prime players (Giménez 24, González 22)
-7. **Home advantage:** Playing at Estadio Azteca (altitude 2,240m) and Guadalajara — significant physiological edge vs non-CONCACAF opponents
+**Strengths:**
+- Perfect group stage momentum (3-0-0 record)
+- Defensive excellence (3 consecutive clean sheets)
+- Home continent advantage (tournament in North America)
+- Full squad fitness (no injuries/suspensions)
+- Experienced manager (Aguirre's 3rd World Cup with Mexico)
 
-**Relevance Score:** 0.95 — Comprehensive data on Elo, form, squad, and tactical profile
+**Weaknesses:**
+- Relatively low squad value (27th/48 teams)
+- High market value concentration (top 5 = 60%+ of value)
+- Limited Big-5 league representation (~50% vs 80%+ for elite teams)
+- Historical Round of 16 ceiling (Mexico's "quinto partido" curse — never reached QF since 1986)
+- Aging striker depth (Jiménez 35 years old)
 
-**Confidence in Findings:** 0.80 — Elo and recent results confirmed; market values estimated from partial data; xG figures inferred from match outcomes rather than direct StatsBomb/Opta data
-
----
-
-## FERMI MULTIPLIER OUTPUT
-
-**[FACTOR]** Mexico's X3/X4/X5 signals collectively place them in the **upper-middle tier** of the 48-team World Cup field. X3 (Elo 1800, +0.44 component) is the strongest discriminator, with X5 (set-piece efficiency, clinical finishing) providing secondary boost. X4 (squad quality €350M, 45% Big-5) is competitive but not elite. Montes suspension creates short-term X5 drag.
-
-**[MULTIPLIER]** Suggested p50: **1.10** (p5: 0.85, p95: 1.40) — Elo edge and Nations League momentum support 10% above base-rate expectations for Mexico's tournament performance, tempered by squad depth concerns and Montes absence in match 2.
+**[MULTIPLIER]** Suggested p50: **1.20** (p5: 0.85, p95: 1.65) — Perfect group stage form (+6 GD, 0 GA) and full squad availability support 20% above base rate for Round of 32 advancement probability, but squad value concentration and historical knockout-stage struggles temper optimism beyond moderate boost.
 
 **Key findings:**
 
-- [BASE RATE]** Mexico current Elo rating: **1800** (ranked 14th of 48 teams at 2026 World Cup per ESPN's Elo model). This places them 0.33 standard deviations above the tournament field mean (assuming Elo mean ~1700, sd ~300 for WC-quality teams). FIFA World Rankings position them around 15th-20th globally.
-- [ELO]** Elo 1800 implies baseline win probability vs average opponent (Elo 1700): P(win) = 1/(1 + 10^((1700-1800)/400)) = **64%**. Against tournament-median opposition, Mexico enters as moderate favorites in neutral-site matches.
-- [MATCH STATS]** Based on 2024-2025 results:
-- 1. **Mexico 2-0 South Africa** (June 12, 2026, World Cup opener) — W
-- Dominant home performance at Estadio Azteca
-- Match marred by 3 red cards (César Montes sent off for Mexico)
-- Clean sheet, controlled possession
-- 2. **Mexico 2-1 Panama** (March 23, 2025, CONCACAF Nations League Final) — W
-- **First-ever Nations League title for Mexico**
-- Victory at SoFi Stadium (neutral venue, Los Angeles)
-- Ended USA's three-title Nations League streak
-- 3. **Mexico 3-0 Honduras** (March 20, 2025, Nations League semi-final) — W
-- 4. **Mexico 2-0 USA** (October 15, 2024, Friendly) — W
-- Convincing victory over regional rivals
-- 5. **Mexico result vs Costa Rica/other** (2024 Copa America group stage) — Mixed
+- [BASE RATE]** Mexico's estimated Elo rating: ~1750-1780 (mid-tier World Cup participant). Historical Mexico Elo range: 1700-1850, with peaks during strong CONCACAF cycles. Current FIFA ranking: #14 globally (June 2026).
+- [MATCH STATS]** Mexico's 2026 World Cup Group A performance (last 5 competitive matches):
+- **3W-0D-0L** in Group A (perfect group stage)
+- Match 1: Mexico 2-0 South Africa (June 11)
+- Match 2: Mexico 1-0 South Korea (June 18)
+- Match 3: Mexico 3-0 Czech Republic (June 24)
+- **Group A Winners** — 9 points, +6 goal difference, 0 goals conceded in group stage
+- Clean sheet streak: 3 consecutive matches (exceptional defensive form)
+- Recent friendly form (late 2025):**
+- Beat Ghana, Bolivia, Paraguay, USA without conceding
+- Drew 2-2 vs South Africa (Nashville friendly)
+- Only loss: 0-5 vs Brazil at home
+- Aggregate last 5 official results:** 3W-0D-0L, +6 GD, 0 GA in tournament play
+- [INJURY IMPACT]** **No injuries or suspensions reported** ahead of Round of 32 (per multiple sources dated June 29, 2026). Full squad available for knockout stage.
+- Key Players — Current Status:**
 
 ---
 
@@ -433,176 +346,121 @@ Based on available data from web searches and API attempts, here is Mexico's cur
 
 ### Evidence (1) — Strong quality (70%)
 
-#### Agent: football_analyst — relevance 50% · quality ●●● High (70%) · 2026-06-19
+#### Agent: football_analyst — relevance 50% · quality ●●● High (70%) · 2026-06-30
 
 # MEXICO NATIONAL TEAM — COMPREHENSIVE ANALYSIS
 
-Based on available data from web searches and API attempts, here is Mexico's current status:
+## ELO RATING & CURRENT FORM
 
----
+**[BASE RATE]** Mexico's estimated Elo rating: ~1750-1780 (mid-tier World Cup participant). Historical Mexico Elo range: 1700-1850, with peaks during strong CONCACAF cycles. Current FIFA ranking: #14 globally (June 2026).
 
-## ELO RATING & GLOBAL STANDING
+**[MATCH STATS]** Mexico's 2026 World Cup Group A performance (last 5 competitive matches):
+- **3W-0D-0L** in Group A (perfect group stage)
+- Match 1: Mexico 2-0 South Africa (June 11)
+- Match 2: Mexico 1-0 South Korea (June 18)
+- Match 3: Mexico 3-0 Czech Republic (June 24)
+- **Group A Winners** — 9 points, +6 goal difference, 0 goals conceded in group stage
+- Clean sheet streak: 3 consecutive matches (exceptional defensive form)
 
-**[BASE RATE]** Mexico current Elo rating: **1800** (ranked 14th of 48 teams at 2026 World Cup per ESPN's Elo model). This places them 0.33 standard deviations above the tournament field mean (assuming Elo mean ~1700, sd ~300 for WC-quality teams). FIFA World Rankings position them around 15th-20th globally.
+**Recent friendly form (late 2025):**
+- Beat Ghana, Bolivia, Paraguay, USA without conceding
+- Drew 2-2 vs South Africa (Nashville friendly)
+- Only loss: 0-5 vs Brazil at home
 
-**[ELO]** Elo 1800 implies baseline win probability vs average opponent (Elo 1700): P(win) = 1/(1 + 10^((1700-1800)/400)) = **64%**. Against tournament-median opposition, Mexico enters as moderate favorites in neutral-site matches.
+**Aggregate last 5 official results:** 3W-0D-0L, +6 GD, 0 GA in tournament play
 
----
+## KEY PLAYER AVAILABILITY
 
-## RECENT FORM (LAST 5 MATCHES)
+**[INJURY IMPACT]** **No injuries or suspensions reported** ahead of Round of 32 (per multiple sources dated June 29, 2026). Full squad available for knockout stage.
 
-**[MATCH STATS]** Based on 2024-2025 results:
+**Key Players — Current Status:**
+- **Santiago Giménez** (AC Milan, ST) — Available, signed for €43M in Feb 2025
+- **Edson Álvarez** (Fenerbahçe, CDM) — Available, leadership anchor
+- **Raúl Jiménez** (Wolverhampton, ST) — Available, veteran presence
+- **Johan Vásquez** (CB) — Available
+- **Guillermo Ochoa** (GK) — Available, legendary shot-stopper
+- **Álvaro Fidalgo** (Real Betis, CM) — Available
+- **Obed Vargas** (Atletico Madrid, CM) — Available, rising talent
 
-1. **Mexico 2-0 South Africa** (June 12, 2026, World Cup opener) — W
-   - Dominant home performance at Estadio Azteca
-   - Match marred by 3 red cards (César Montes sent off for Mexico)
-   - Clean sheet, controlled possession
-
-2. **Mexico 2-1 Panama** (March 23, 2025, CONCACAF Nations League Final) — W
-   - **First-ever Nations League title for Mexico**
-   - Victory at SoFi Stadium (neutral venue, Los Angeles)
-   - Ended USA's three-title Nations League streak
-
-3. **Mexico 3-0 Honduras** (March 20, 2025, Nations League semi-final) — W
-
-4. **Mexico 2-0 USA** (October 15, 2024, Friendly) — W
-   - Convincing victory over regional rivals
-
-5. **Mexico result vs Costa Rica/other** (2024 Copa America group stage) — Mixed
-   - Underwhelming Copa America 2024 performance led to manager Jaime Lozano's dismissal (July 16, 2024)
-   - **Javier Aguirre appointed** (third spell as Mexico manager, July 22, 2024)
-
-**Form Summary: 4W-0D-1L in last 5 competitive/significant matches** (excluding the Copa America disappointment). Strong momentum entering World Cup 2026 with Nations League title and opening WC win.
-
----
-
-## KEY PLAYER AVAILABILITY & INJURY STATUS
-
-**[INJURY IMPACT]** Current squad status (as of June 2026 World Cup):
-
-**SUSPENDED:**
-- **César Montes (CB)** — Red card vs South Africa (June 12), suspended for next match vs South Korea (June 18)
-- Impact: Montes is first-choice centre-back. Estimated defensive impact: **+0.2-0.3 xGA/90** without him
-- Replacement: **Edson Álvarez** (normally defensive midfielder) moved to centre-back, or **Erik Lira** deputizes
-
-**KEY PLAYERS AVAILABLE:**
-- **Santiago Giménez (ST, AC Milan)** — €37M transfer 2025, top striker
-- **Edson Álvarez (CDM, Fenerbahçe)** — Defensive anchor, versatile (now covering CB)
-- **Raúl Jiménez (ST, Wolves)** — Veteran striker, scored vs South Africa
-- **Guillermo Ochoa (GK, AEL Limassol)** — **Sixth World Cup** (record-tying), age 40+
-- **Johan Vásquez (CB, Genoa)** — First-choice CB partner to Montes
-- **Luis Chávez (CM, Dinamo Moscow)** — Set-piece specialist
-- **Julián Quiñones (FW, Al Qadsiah)** — Attacking option
-- **Álvaro Fidalgo (CM, Real Betis)** — Creative midfielder
-
-**Squad Depth:** 26-man roster with mix of Europe-based (Big-5 leagues + Turkey, Netherlands) and Liga MX players. Depth at forward positions strong; centre-back depth tested by Montes suspension.
-
----
+Manager: **Javier Aguirre** (experienced World Cup tactician, third stint with El Tri)
 
 ## MARKET VALUE DISTRIBUTION
 
-**[X4 SIGNAL]** Mexico squad market value (Transfermarkt estimates, 2025-2026):
+**[X4 SIGNAL]** Total squad market value: **€191.85 million** (27th among 48 World Cup teams per Transfermarkt June 2026)
 
-- **Total squad value: ~€300-400M** (estimated based on available data)
-- **Top-5 players by value:**
-  1. **Santiago Giménez (ST)**: €37M (AC Milan transfer fee, likely €40-45M market value)
-  2. **Edson Álvarez (CDM)**: €30-35M (Fenerbahçe)
-  3. **Johan Vásquez (CB)**: €20-25M (Genoa, Serie A)
-  4. **Julián Quiñones (FW)**: €15-20M (Al Qadsiah)
-  5. **Armando González (FW)**: €15M (Chivas, breakout star — jumped from €7M to €15M in 2025)
+**Top 5 Players by Market Value (estimated):**
+1. **Santiago Giménez** (AC Milan, ST) — ~€40-45M (transfer fee €43M, Feb 2025)
+2. **Edson Álvarez** (Fenerbahçe, CDM) — ~€35-38M
+3. **Obed Vargas** (Atletico Madrid, CM) — ~€15-18M (young talent)
+4. **Johan Vásquez** (CB) — ~€12-15M
+5. **Raúl Jiménez** (Wolverhampton, ST) — ~€10-12M (age-adjusted)
 
-- **Market value concentration:** Top-5 players represent approximately **35-40% of total squad value** — moderate concentration (healthy distribution)
+**Market Value Concentration:** Top 5 players represent approximately **€112-128M** = **58-67% of total squad value** (high concentration, star-dependent structure)
 
-- **Big-5 league representation:** Estimated **~40-50%** of squad plays in Europe's top-5 leagues or strong secondary leagues (Eredivisie, Primeira Liga, Serie A, Turkey). Significant Liga MX contingent (~50%).
+**League Distribution:**
+- **Big-5 European leagues:** ~45-50% of squad (Premier League, Serie A, La Liga representation)
+- **Other European leagues:** ~25-30% (Eredivisie, Turkish Super Lig, Belgian Pro League)
+- **Liga MX (domestic):** ~20-25%
+- **Other leagues:** ~5-10% (MLS, Middle East)
 
-- **Age profile:** Mix of veterans (Ochoa 40+, Jiménez 34) and prime-age players (Giménez 24, González 22, Álvarez 27). Average age ~27-28 (slightly above optimal 26-27 peak).
+**Salary Structure (reported weekly wages):**
+- Raúl Jiménez: ~£100,000/week
+- Edson Álvarez: ~£94,000/week
+- Santiago Giménez: ~£85,000/week
 
-**[X4 SIGNAL]** Squad quality index places Mexico in **upper-middle tier** globally — strong for CONCACAF, competitive but not elite by European/South American standards. Market value ~€350M vs France €1.476B, England €1.310B, Spain €1.267B.
+## TACTICAL & PERFORMANCE METRICS
 
----
-
-## TACTICAL PROFILE & ADVANCED STATS
-
-**[X5 SIGNAL]** Under Javier Aguirre (third spell, appointed July 2024):
-
-- **Formation:** Typically 4-3-3 or 4-2-3-1, flexible based on opposition
-- **Pressing intensity:** Moderate PPDA (~9-11 range estimated) — not ultra-high press, but organized mid-block
-- **Set-piece strength:** Luis Chávez specialist — estimated **0.35-0.40 goals/game from set pieces** (above average)
-- **Defensive solidity:** Clean sheet vs South Africa; Montes suspension creates vulnerability
-- **Shot conversion:** Raúl Jiménez clinical finisher; Giménez high xG per 90 in club football
-- **Transition play:** Counter-attacking threat with pace on wings (Quiñones, Vega)
-
-**xG estimates (based on recent form):**
-- **xG for:** ~1.4-1.6 per game in competitive matches
-- **xGA:** ~0.8-1.0 per game (defensive improvement under Aguirre)
-- **xGD:** +0.5 to +0.7 per game trend
-
----
-
-## FACTOR MODEL SIGNALS (X3/X4/X5)
-
-**[X3 SIGNAL]** Dynamic Performance Signal:
-- Elo 1800 = (1800-1700)/300 = **+0.33 std above WC field mean**
-- Elo trend: **+50-70 points** since Aguirre appointment (July 2024 to June 2026)
-- Goal difference last 10 internationals: Estimated **+12** (1.2/game)
-- Recent xG delta: **+0.5 to +0.7/game** over last 10 matches
-- **X3 deterministic component:** 0.50·(0.33) + 0.10·(+60 Elo trend/300) + 0.15·(1.2 GD) + 0.15·(0.6 xGD) = **+0.44** (strong positive signal)
-
-**[X4 SIGNAL]** Squad Quality Index:
-- Market value concentration: **38%** in top-5 players (moderate, healthy)
-- Big-5 league %: **~45%** (mid-tier for WC participants)
-- Squad depth score: **7/10** (tested by Montes suspension, but adequate replacements)
-- Age-adjusted: **27.5 avg age** (slightly past optimal 26-27, but still competitive)
-- **X4 assessment:** Upper-middle tier globally, strong regionally
+**[X3 SIGNAL]** Dynamic Performance Indicators:
+- **Elo current:** ~1765 (estimated, +65 above CONCACAF average)
+- **Elo trend (12 months):** +40-50 points (positive trajectory through qualifiers and friendlies)
+- **Goal difference (WC group stage):** +6 in 3 matches (+2.0/game)
+- **xG delta (estimated):** Positive — scoring efficiency above expected in group stage
+- **Defensive solidity:** 0 goals conceded in 3 group matches (elite defensive performance)
 
 **[X5 SIGNAL]** Tactical Efficiency:
-- Shot conversion rate: **~14-16%** (above average, clinical strikers)
-- Defensive duel win %: Estimated **54-56%** (solid, weakened without Montes)
-- Pressing intensity: PPDA **~9-11** (moderate, organized)
-- Set-piece efficiency: **0.38 goals/game** from set pieces (top quartile)
-- **X5 assessment:** Tactically sound under Aguirre, set-piece strength notable
+- **Set-piece threat:** Moderate — not a primary strength
+- **Defensive organization:** Elite in group stage (3 clean sheets)
+- **Counter-attacking:** Strong — leveraged against South Korea and Czech Republic
+- **Pressing intensity:** Moderate PPDA (estimated 10-12, balanced approach)
+- **Shot conversion:** High in group stage (6 goals from limited chances)
 
----
+**[FACTOR]** Mexico's X3 (Elo + form), X4 (squad value €192M, 27th/48), and X5 (defensive solidity) signals place them in the **upper-middle tier** of World Cup participants. Strongest discriminator is **X3 via recent form** (perfect group stage) and **defensive organization** (0 GA). Weakness: **squad depth and market value concentration** — heavily reliant on Giménez/Álvarez/Jiménez trio.
 
-## KEY FINDINGS SUMMARY
+## CONTEXT & RISK FACTORS
 
-1. **Elo 1800 (14th/48 at WC2026)** — 0.33 std above tournament mean, 64% win probability vs average opponent
-2. **Form: 4W-0D-1L** in last 5 significant matches — Nations League champions (March 2025), WC opener win
-3. **César Montes suspended** (red card) — defensive vulnerability vs South Korea, estimated +0.25 xGA impact
-4. **Squad value ~€350M** — 38% concentration in top-5 players, 45% Big-5 league representation
-5. **Tactical strengths:** Set-piece efficiency (0.38 goals/game), clinical finishing (Giménez, Jiménez), defensive organization under Aguirre
-6. **Age profile:** 27.5 avg — mix of veterans (Ochoa 40, Jiménez 34) and prime players (Giménez 24, González 22)
-7. **Home advantage:** Playing at Estadio Azteca (altitude 2,240m) and Guadalajara — significant physiological edge vs non-CONCACAF opponents
+**Strengths:**
+- Perfect group stage momentum (3-0-0 record)
+- Defensive excellence (3 consecutive clean sheets)
+- Home continent advantage (tournament in North America)
+- Full squad fitness (no injuries/suspensions)
+- Experienced manager (Aguirre's 3rd World Cup with Mexico)
 
-**Relevance Score:** 0.95 — Comprehensive data on Elo, form, squad, and tactical profile
+**Weaknesses:**
+- Relatively low squad value (27th/48 teams)
+- High market value concentration (top 5 = 60%+ of value)
+- Limited Big-5 league representation (~50% vs 80%+ for elite teams)
+- Historical Round of 16 ceiling (Mexico's "quinto partido" curse — never reached QF since 1986)
+- Aging striker depth (Jiménez 35 years old)
 
-**Confidence in Findings:** 0.80 — Elo and recent results confirmed; market values estimated from partial data; xG figures inferred from match outcomes rather than direct StatsBomb/Opta data
-
----
-
-## FERMI MULTIPLIER OUTPUT
-
-**[FACTOR]** Mexico's X3/X4/X5 signals collectively place them in the **upper-middle tier** of the 48-team World Cup field. X3 (Elo 1800, +0.44 component) is the strongest discriminator, with X5 (set-piece efficiency, clinical finishing) providing secondary boost. X4 (squad quality €350M, 45% Big-5) is competitive but not elite. Montes suspension creates short-term X5 drag.
-
-**[MULTIPLIER]** Suggested p50: **1.10** (p5: 0.85, p95: 1.40) — Elo edge and Nations League momentum support 10% above base-rate expectations for Mexico's tournament performance, tempered by squad depth concerns and Montes absence in match 2.
+**[MULTIPLIER]** Suggested p50: **1.20** (p5: 0.85, p95: 1.65) — Perfect group stage form (+6 GD, 0 GA) and full squad availability support 20% above base rate for Round of 32 advancement probability, but squad value concentration and historical knockout-stage struggles temper optimism beyond moderate boost.
 
 **Key findings:**
 
-- [BASE RATE]** Mexico current Elo rating: **1800** (ranked 14th of 48 teams at 2026 World Cup per ESPN's Elo model). This places them 0.33 standard deviations above the tournament field mean (assuming Elo mean ~1700, sd ~300 for WC-quality teams). FIFA World Rankings position them around 15th-20th globally.
-- [ELO]** Elo 1800 implies baseline win probability vs average opponent (Elo 1700): P(win) = 1/(1 + 10^((1700-1800)/400)) = **64%**. Against tournament-median opposition, Mexico enters as moderate favorites in neutral-site matches.
-- [MATCH STATS]** Based on 2024-2025 results:
-- 1. **Mexico 2-0 South Africa** (June 12, 2026, World Cup opener) — W
-- Dominant home performance at Estadio Azteca
-- Match marred by 3 red cards (César Montes sent off for Mexico)
-- Clean sheet, controlled possession
-- 2. **Mexico 2-1 Panama** (March 23, 2025, CONCACAF Nations League Final) — W
-- **First-ever Nations League title for Mexico**
-- Victory at SoFi Stadium (neutral venue, Los Angeles)
-- Ended USA's three-title Nations League streak
-- 3. **Mexico 3-0 Honduras** (March 20, 2025, Nations League semi-final) — W
-- 4. **Mexico 2-0 USA** (October 15, 2024, Friendly) — W
-- Convincing victory over regional rivals
-- 5. **Mexico result vs Costa Rica/other** (2024 Copa America group stage) — Mixed
+- [BASE RATE]** Mexico's estimated Elo rating: ~1750-1780 (mid-tier World Cup participant). Historical Mexico Elo range: 1700-1850, with peaks during strong CONCACAF cycles. Current FIFA ranking: #14 globally (June 2026).
+- [MATCH STATS]** Mexico's 2026 World Cup Group A performance (last 5 competitive matches):
+- **3W-0D-0L** in Group A (perfect group stage)
+- Match 1: Mexico 2-0 South Africa (June 11)
+- Match 2: Mexico 1-0 South Korea (June 18)
+- Match 3: Mexico 3-0 Czech Republic (June 24)
+- **Group A Winners** — 9 points, +6 goal difference, 0 goals conceded in group stage
+- Clean sheet streak: 3 consecutive matches (exceptional defensive form)
+- Recent friendly form (late 2025):**
+- Beat Ghana, Bolivia, Paraguay, USA without conceding
+- Drew 2-2 vs South Africa (Nashville friendly)
+- Only loss: 0-5 vs Brazil at home
+- Aggregate last 5 official results:** 3W-0D-0L, +6 GD, 0 GA in tournament play
+- [INJURY IMPACT]** **No injuries or suspensions reported** ahead of Round of 32 (per multiple sources dated June 29, 2026). Full squad available for knockout stage.
+- Key Players — Current Status:**
 
 ---
 
@@ -621,176 +479,121 @@ Based on available data from web searches and API attempts, here is Mexico's cur
 
 ### Evidence (1) — Strong quality (70%)
 
-#### Agent: football_analyst — relevance 50% · quality ●●● High (70%) · 2026-06-19
+#### Agent: football_analyst — relevance 50% · quality ●●● High (70%) · 2026-06-30
 
 # MEXICO NATIONAL TEAM — COMPREHENSIVE ANALYSIS
 
-Based on available data from web searches and API attempts, here is Mexico's current status:
+## ELO RATING & CURRENT FORM
 
----
+**[BASE RATE]** Mexico's estimated Elo rating: ~1750-1780 (mid-tier World Cup participant). Historical Mexico Elo range: 1700-1850, with peaks during strong CONCACAF cycles. Current FIFA ranking: #14 globally (June 2026).
 
-## ELO RATING & GLOBAL STANDING
+**[MATCH STATS]** Mexico's 2026 World Cup Group A performance (last 5 competitive matches):
+- **3W-0D-0L** in Group A (perfect group stage)
+- Match 1: Mexico 2-0 South Africa (June 11)
+- Match 2: Mexico 1-0 South Korea (June 18)
+- Match 3: Mexico 3-0 Czech Republic (June 24)
+- **Group A Winners** — 9 points, +6 goal difference, 0 goals conceded in group stage
+- Clean sheet streak: 3 consecutive matches (exceptional defensive form)
 
-**[BASE RATE]** Mexico current Elo rating: **1800** (ranked 14th of 48 teams at 2026 World Cup per ESPN's Elo model). This places them 0.33 standard deviations above the tournament field mean (assuming Elo mean ~1700, sd ~300 for WC-quality teams). FIFA World Rankings position them around 15th-20th globally.
+**Recent friendly form (late 2025):**
+- Beat Ghana, Bolivia, Paraguay, USA without conceding
+- Drew 2-2 vs South Africa (Nashville friendly)
+- Only loss: 0-5 vs Brazil at home
 
-**[ELO]** Elo 1800 implies baseline win probability vs average opponent (Elo 1700): P(win) = 1/(1 + 10^((1700-1800)/400)) = **64%**. Against tournament-median opposition, Mexico enters as moderate favorites in neutral-site matches.
+**Aggregate last 5 official results:** 3W-0D-0L, +6 GD, 0 GA in tournament play
 
----
+## KEY PLAYER AVAILABILITY
 
-## RECENT FORM (LAST 5 MATCHES)
+**[INJURY IMPACT]** **No injuries or suspensions reported** ahead of Round of 32 (per multiple sources dated June 29, 2026). Full squad available for knockout stage.
 
-**[MATCH STATS]** Based on 2024-2025 results:
+**Key Players — Current Status:**
+- **Santiago Giménez** (AC Milan, ST) — Available, signed for €43M in Feb 2025
+- **Edson Álvarez** (Fenerbahçe, CDM) — Available, leadership anchor
+- **Raúl Jiménez** (Wolverhampton, ST) — Available, veteran presence
+- **Johan Vásquez** (CB) — Available
+- **Guillermo Ochoa** (GK) — Available, legendary shot-stopper
+- **Álvaro Fidalgo** (Real Betis, CM) — Available
+- **Obed Vargas** (Atletico Madrid, CM) — Available, rising talent
 
-1. **Mexico 2-0 South Africa** (June 12, 2026, World Cup opener) — W
-   - Dominant home performance at Estadio Azteca
-   - Match marred by 3 red cards (César Montes sent off for Mexico)
-   - Clean sheet, controlled possession
-
-2. **Mexico 2-1 Panama** (March 23, 2025, CONCACAF Nations League Final) — W
-   - **First-ever Nations League title for Mexico**
-   - Victory at SoFi Stadium (neutral venue, Los Angeles)
-   - Ended USA's three-title Nations League streak
-
-3. **Mexico 3-0 Honduras** (March 20, 2025, Nations League semi-final) — W
-
-4. **Mexico 2-0 USA** (October 15, 2024, Friendly) — W
-   - Convincing victory over regional rivals
-
-5. **Mexico result vs Costa Rica/other** (2024 Copa America group stage) — Mixed
-   - Underwhelming Copa America 2024 performance led to manager Jaime Lozano's dismissal (July 16, 2024)
-   - **Javier Aguirre appointed** (third spell as Mexico manager, July 22, 2024)
-
-**Form Summary: 4W-0D-1L in last 5 competitive/significant matches** (excluding the Copa America disappointment). Strong momentum entering World Cup 2026 with Nations League title and opening WC win.
-
----
-
-## KEY PLAYER AVAILABILITY & INJURY STATUS
-
-**[INJURY IMPACT]** Current squad status (as of June 2026 World Cup):
-
-**SUSPENDED:**
-- **César Montes (CB)** — Red card vs South Africa (June 12), suspended for next match vs South Korea (June 18)
-- Impact: Montes is first-choice centre-back. Estimated defensive impact: **+0.2-0.3 xGA/90** without him
-- Replacement: **Edson Álvarez** (normally defensive midfielder) moved to centre-back, or **Erik Lira** deputizes
-
-**KEY PLAYERS AVAILABLE:**
-- **Santiago Giménez (ST, AC Milan)** — €37M transfer 2025, top striker
-- **Edson Álvarez (CDM, Fenerbahçe)** — Defensive anchor, versatile (now covering CB)
-- **Raúl Jiménez (ST, Wolves)** — Veteran striker, scored vs South Africa
-- **Guillermo Ochoa (GK, AEL Limassol)** — **Sixth World Cup** (record-tying), age 40+
-- **Johan Vásquez (CB, Genoa)** — First-choice CB partner to Montes
-- **Luis Chávez (CM, Dinamo Moscow)** — Set-piece specialist
-- **Julián Quiñones (FW, Al Qadsiah)** — Attacking option
-- **Álvaro Fidalgo (CM, Real Betis)** — Creative midfielder
-
-**Squad Depth:** 26-man roster with mix of Europe-based (Big-5 leagues + Turkey, Netherlands) and Liga MX players. Depth at forward positions strong; centre-back depth tested by Montes suspension.
-
----
+Manager: **Javier Aguirre** (experienced World Cup tactician, third stint with El Tri)
 
 ## MARKET VALUE DISTRIBUTION
 
-**[X4 SIGNAL]** Mexico squad market value (Transfermarkt estimates, 2025-2026):
+**[X4 SIGNAL]** Total squad market value: **€191.85 million** (27th among 48 World Cup teams per Transfermarkt June 2026)
 
-- **Total squad value: ~€300-400M** (estimated based on available data)
-- **Top-5 players by value:**
-  1. **Santiago Giménez (ST)**: €37M (AC Milan transfer fee, likely €40-45M market value)
-  2. **Edson Álvarez (CDM)**: €30-35M (Fenerbahçe)
-  3. **Johan Vásquez (CB)**: €20-25M (Genoa, Serie A)
-  4. **Julián Quiñones (FW)**: €15-20M (Al Qadsiah)
-  5. **Armando González (FW)**: €15M (Chivas, breakout star — jumped from €7M to €15M in 2025)
+**Top 5 Players by Market Value (estimated):**
+1. **Santiago Giménez** (AC Milan, ST) — ~€40-45M (transfer fee €43M, Feb 2025)
+2. **Edson Álvarez** (Fenerbahçe, CDM) — ~€35-38M
+3. **Obed Vargas** (Atletico Madrid, CM) — ~€15-18M (young talent)
+4. **Johan Vásquez** (CB) — ~€12-15M
+5. **Raúl Jiménez** (Wolverhampton, ST) — ~€10-12M (age-adjusted)
 
-- **Market value concentration:** Top-5 players represent approximately **35-40% of total squad value** — moderate concentration (healthy distribution)
+**Market Value Concentration:** Top 5 players represent approximately **€112-128M** = **58-67% of total squad value** (high concentration, star-dependent structure)
 
-- **Big-5 league representation:** Estimated **~40-50%** of squad plays in Europe's top-5 leagues or strong secondary leagues (Eredivisie, Primeira Liga, Serie A, Turkey). Significant Liga MX contingent (~50%).
+**League Distribution:**
+- **Big-5 European leagues:** ~45-50% of squad (Premier League, Serie A, La Liga representation)
+- **Other European leagues:** ~25-30% (Eredivisie, Turkish Super Lig, Belgian Pro League)
+- **Liga MX (domestic):** ~20-25%
+- **Other leagues:** ~5-10% (MLS, Middle East)
 
-- **Age profile:** Mix of veterans (Ochoa 40+, Jiménez 34) and prime-age players (Giménez 24, González 22, Álvarez 27). Average age ~27-28 (slightly above optimal 26-27 peak).
+**Salary Structure (reported weekly wages):**
+- Raúl Jiménez: ~£100,000/week
+- Edson Álvarez: ~£94,000/week
+- Santiago Giménez: ~£85,000/week
 
-**[X4 SIGNAL]** Squad quality index places Mexico in **upper-middle tier** globally — strong for CONCACAF, competitive but not elite by European/South American standards. Market value ~€350M vs France €1.476B, England €1.310B, Spain €1.267B.
+## TACTICAL & PERFORMANCE METRICS
 
----
-
-## TACTICAL PROFILE & ADVANCED STATS
-
-**[X5 SIGNAL]** Under Javier Aguirre (third spell, appointed July 2024):
-
-- **Formation:** Typically 4-3-3 or 4-2-3-1, flexible based on opposition
-- **Pressing intensity:** Moderate PPDA (~9-11 range estimated) — not ultra-high press, but organized mid-block
-- **Set-piece strength:** Luis Chávez specialist — estimated **0.35-0.40 goals/game from set pieces** (above average)
-- **Defensive solidity:** Clean sheet vs South Africa; Montes suspension creates vulnerability
-- **Shot conversion:** Raúl Jiménez clinical finisher; Giménez high xG per 90 in club football
-- **Transition play:** Counter-attacking threat with pace on wings (Quiñones, Vega)
-
-**xG estimates (based on recent form):**
-- **xG for:** ~1.4-1.6 per game in competitive matches
-- **xGA:** ~0.8-1.0 per game (defensive improvement under Aguirre)
-- **xGD:** +0.5 to +0.7 per game trend
-
----
-
-## FACTOR MODEL SIGNALS (X3/X4/X5)
-
-**[X3 SIGNAL]** Dynamic Performance Signal:
-- Elo 1800 = (1800-1700)/300 = **+0.33 std above WC field mean**
-- Elo trend: **+50-70 points** since Aguirre appointment (July 2024 to June 2026)
-- Goal difference last 10 internationals: Estimated **+12** (1.2/game)
-- Recent xG delta: **+0.5 to +0.7/game** over last 10 matches
-- **X3 deterministic component:** 0.50·(0.33) + 0.10·(+60 Elo trend/300) + 0.15·(1.2 GD) + 0.15·(0.6 xGD) = **+0.44** (strong positive signal)
-
-**[X4 SIGNAL]** Squad Quality Index:
-- Market value concentration: **38%** in top-5 players (moderate, healthy)
-- Big-5 league %: **~45%** (mid-tier for WC participants)
-- Squad depth score: **7/10** (tested by Montes suspension, but adequate replacements)
-- Age-adjusted: **27.5 avg age** (slightly past optimal 26-27, but still competitive)
-- **X4 assessment:** Upper-middle tier globally, strong regionally
+**[X3 SIGNAL]** Dynamic Performance Indicators:
+- **Elo current:** ~1765 (estimated, +65 above CONCACAF average)
+- **Elo trend (12 months):** +40-50 points (positive trajectory through qualifiers and friendlies)
+- **Goal difference (WC group stage):** +6 in 3 matches (+2.0/game)
+- **xG delta (estimated):** Positive — scoring efficiency above expected in group stage
+- **Defensive solidity:** 0 goals conceded in 3 group matches (elite defensive performance)
 
 **[X5 SIGNAL]** Tactical Efficiency:
-- Shot conversion rate: **~14-16%** (above average, clinical strikers)
-- Defensive duel win %: Estimated **54-56%** (solid, weakened without Montes)
-- Pressing intensity: PPDA **~9-11** (moderate, organized)
-- Set-piece efficiency: **0.38 goals/game** from set pieces (top quartile)
-- **X5 assessment:** Tactically sound under Aguirre, set-piece strength notable
+- **Set-piece threat:** Moderate — not a primary strength
+- **Defensive organization:** Elite in group stage (3 clean sheets)
+- **Counter-attacking:** Strong — leveraged against South Korea and Czech Republic
+- **Pressing intensity:** Moderate PPDA (estimated 10-12, balanced approach)
+- **Shot conversion:** High in group stage (6 goals from limited chances)
 
----
+**[FACTOR]** Mexico's X3 (Elo + form), X4 (squad value €192M, 27th/48), and X5 (defensive solidity) signals place them in the **upper-middle tier** of World Cup participants. Strongest discriminator is **X3 via recent form** (perfect group stage) and **defensive organization** (0 GA). Weakness: **squad depth and market value concentration** — heavily reliant on Giménez/Álvarez/Jiménez trio.
 
-## KEY FINDINGS SUMMARY
+## CONTEXT & RISK FACTORS
 
-1. **Elo 1800 (14th/48 at WC2026)** — 0.33 std above tournament mean, 64% win probability vs average opponent
-2. **Form: 4W-0D-1L** in last 5 significant matches — Nations League champions (March 2025), WC opener win
-3. **César Montes suspended** (red card) — defensive vulnerability vs South Korea, estimated +0.25 xGA impact
-4. **Squad value ~€350M** — 38% concentration in top-5 players, 45% Big-5 league representation
-5. **Tactical strengths:** Set-piece efficiency (0.38 goals/game), clinical finishing (Giménez, Jiménez), defensive organization under Aguirre
-6. **Age profile:** 27.5 avg — mix of veterans (Ochoa 40, Jiménez 34) and prime players (Giménez 24, González 22)
-7. **Home advantage:** Playing at Estadio Azteca (altitude 2,240m) and Guadalajara — significant physiological edge vs non-CONCACAF opponents
+**Strengths:**
+- Perfect group stage momentum (3-0-0 record)
+- Defensive excellence (3 consecutive clean sheets)
+- Home continent advantage (tournament in North America)
+- Full squad fitness (no injuries/suspensions)
+- Experienced manager (Aguirre's 3rd World Cup with Mexico)
 
-**Relevance Score:** 0.95 — Comprehensive data on Elo, form, squad, and tactical profile
+**Weaknesses:**
+- Relatively low squad value (27th/48 teams)
+- High market value concentration (top 5 = 60%+ of value)
+- Limited Big-5 league representation (~50% vs 80%+ for elite teams)
+- Historical Round of 16 ceiling (Mexico's "quinto partido" curse — never reached QF since 1986)
+- Aging striker depth (Jiménez 35 years old)
 
-**Confidence in Findings:** 0.80 — Elo and recent results confirmed; market values estimated from partial data; xG figures inferred from match outcomes rather than direct StatsBomb/Opta data
-
----
-
-## FERMI MULTIPLIER OUTPUT
-
-**[FACTOR]** Mexico's X3/X4/X5 signals collectively place them in the **upper-middle tier** of the 48-team World Cup field. X3 (Elo 1800, +0.44 component) is the strongest discriminator, with X5 (set-piece efficiency, clinical finishing) providing secondary boost. X4 (squad quality €350M, 45% Big-5) is competitive but not elite. Montes suspension creates short-term X5 drag.
-
-**[MULTIPLIER]** Suggested p50: **1.10** (p5: 0.85, p95: 1.40) — Elo edge and Nations League momentum support 10% above base-rate expectations for Mexico's tournament performance, tempered by squad depth concerns and Montes absence in match 2.
+**[MULTIPLIER]** Suggested p50: **1.20** (p5: 0.85, p95: 1.65) — Perfect group stage form (+6 GD, 0 GA) and full squad availability support 20% above base rate for Round of 32 advancement probability, but squad value concentration and historical knockout-stage struggles temper optimism beyond moderate boost.
 
 **Key findings:**
 
-- [BASE RATE]** Mexico current Elo rating: **1800** (ranked 14th of 48 teams at 2026 World Cup per ESPN's Elo model). This places them 0.33 standard deviations above the tournament field mean (assuming Elo mean ~1700, sd ~300 for WC-quality teams). FIFA World Rankings position them around 15th-20th globally.
-- [ELO]** Elo 1800 implies baseline win probability vs average opponent (Elo 1700): P(win) = 1/(1 + 10^((1700-1800)/400)) = **64%**. Against tournament-median opposition, Mexico enters as moderate favorites in neutral-site matches.
-- [MATCH STATS]** Based on 2024-2025 results:
-- 1. **Mexico 2-0 South Africa** (June 12, 2026, World Cup opener) — W
-- Dominant home performance at Estadio Azteca
-- Match marred by 3 red cards (César Montes sent off for Mexico)
-- Clean sheet, controlled possession
-- 2. **Mexico 2-1 Panama** (March 23, 2025, CONCACAF Nations League Final) — W
-- **First-ever Nations League title for Mexico**
-- Victory at SoFi Stadium (neutral venue, Los Angeles)
-- Ended USA's three-title Nations League streak
-- 3. **Mexico 3-0 Honduras** (March 20, 2025, Nations League semi-final) — W
-- 4. **Mexico 2-0 USA** (October 15, 2024, Friendly) — W
-- Convincing victory over regional rivals
-- 5. **Mexico result vs Costa Rica/other** (2024 Copa America group stage) — Mixed
+- [BASE RATE]** Mexico's estimated Elo rating: ~1750-1780 (mid-tier World Cup participant). Historical Mexico Elo range: 1700-1850, with peaks during strong CONCACAF cycles. Current FIFA ranking: #14 globally (June 2026).
+- [MATCH STATS]** Mexico's 2026 World Cup Group A performance (last 5 competitive matches):
+- **3W-0D-0L** in Group A (perfect group stage)
+- Match 1: Mexico 2-0 South Africa (June 11)
+- Match 2: Mexico 1-0 South Korea (June 18)
+- Match 3: Mexico 3-0 Czech Republic (June 24)
+- **Group A Winners** — 9 points, +6 goal difference, 0 goals conceded in group stage
+- Clean sheet streak: 3 consecutive matches (exceptional defensive form)
+- Recent friendly form (late 2025):**
+- Beat Ghana, Bolivia, Paraguay, USA without conceding
+- Drew 2-2 vs South Africa (Nashville friendly)
+- Only loss: 0-5 vs Brazil at home
+- Aggregate last 5 official results:** 3W-0D-0L, +6 GD, 0 GA in tournament play
+- [INJURY IMPACT]** **No injuries or suspensions reported** ahead of Round of 32 (per multiple sources dated June 29, 2026). Full squad available for knockout stage.
+- Key Players — Current Status:**
 
 ---
 
@@ -798,7 +601,7 @@ Based on available data from web searches and API attempts, here is Mexico's cur
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 1.35 | 1.55 | 1.75 |  |
 
 > Per-fixture context: venue, climate, rest, altitude.
 
@@ -809,94 +612,101 @@ Based on available data from web searches and API attempts, here is Mexico's cur
 
 ### Evidence (1) — Strong quality (70%)
 
-#### Agent: fixture_context_agent — relevance 50% · quality ●●● High (70%) · 2026-06-25
+#### Agent: fixture_context_agent — relevance 50% · quality ●●● High (70%) · 2026-06-30
 
-# FIXTURE CONTEXT ANALYSIS: MEXICO — 2026 FIFA WORLD CUP GROUP STAGE
+# MEXICO FIXTURE CONTEXT ANALYSIS — 2026 FIFA WORLD CUP
 
-## FIXTURE SCHEDULE (GROUP A)
+## FIXTURE OVERVIEW
 
-**Match 1: Mexico vs South Africa**
-- Date: Thursday, June 11, 2026 (8:00 PM local)
-- Venue: Estadio Azteca (Mexico City Stadium), Mexico City
-- Result: Mexico 2-0 South Africa ✓
+Mexico is currently competing in the **2026 FIFA World Cup** as a co-host nation. Based on gathered data:
 
-**Match 2: Mexico vs South Korea**
-- Date: Wednesday, June 18, 2026 (9:00 PM local)
-- Venue: Estadio Akron, Guadalajara
-- Result: Mexico 1-0 South Korea ✓
+**GROUP STAGE (COMPLETED):**
+- **Match 1:** June 11, 2026 — Mexico 2-0 South Africa @ **Estadio Azteca, Mexico City**
+- **Match 2:** June 18, 2026 — Mexico 1-0 South Korea @ **Estadio Akron, Guadalajara**
+- **Match 3:** June 24, 2026 — Mexico 3-0 Czechia @ **Estadio Azteca, Mexico City**
 
-**Match 3: Czech Republic vs Mexico**
-- Date: Tuesday, June 24, 2026 (7:00 PM local)
-- Venue: Estadio Azteca (Mexico City Stadium), Mexico City
-- Result: Mexico 3-0 Czech Republic ✓
+**KNOCKOUT STAGE (UPCOMING):**
+- **Round of 32:** June 30, 2026 (9:00 PM ET) — Mexico vs Ecuador @ **Estadio Azteca, Mexico City**
 
 ---
 
-## FACTOR ANALYSIS
+## FACTOR X6 FINDINGS
 
-### [HOST] Co-host nation with home venue advantage
-Mexico is a co-host of the 2026 World Cup (alongside USA and Canada). **All three group-stage matches were played on Mexican soil** — two at the iconic Estadio Azteca in Mexico City (opening match + final group match) and one at Estadio Akron in Guadalajara. This represents **maximum host advantage**: home crowds (87,000+ capacity at Azteca, 46,000+ at Akron), zero travel burden, familiar conditions, and psychological edge. Host status = **1.0 (full binary advantage)**.
+### [HOST]
+Mexico is a **co-host nation** (alongside USA and Canada) for the 2026 World Cup. All four fixtures analyzed (3 group stage + 1 Round of 32) are played **on Mexican soil**, with three at the iconic Estadio Azteca in Mexico City. Host status = **1.0** (full home advantage). Historical WC data shows host nations gain +0.3 to +0.5 implied Elo in group stages; Mexico's 3-0-0 record with 6 goals scored and 0 conceded validates this premium.
 
-Historical precedent: Host nations in World Cup group stages outperform baseline Elo by +0.3 to +0.5 goals expected. Mexico's opening match drew 87,523 fans — the largest crowd in World Cup 2026 to date.
+### [CLIMATE]
+Mexico's fixtures span three venues in June (late spring/early summer in Northern Hemisphere):
+- **Mexico City** (19.3°N, 2,240m elevation): June average temp ~18-22°C, moderate humidity (~50-60%)
+- **Guadalajara** (20.7°N, 1,566m elevation): June average temp ~20-26°C, moderate humidity
+- **Monterrey** (25.7°N, 540m elevation): June average temp ~26-32°C, higher humidity (~60-70%)
 
-### [ALTITUDE] Extreme elevation advantage at both venues
-- **Estadio Azteca (Mexico City)**: 2,200m (7,220 feet) above sea level
-- **Estadio Akron (Guadalajara)**: 1,566m (5,138 feet) above sea level
+Mexico's squad trains domestically in these exact climate zones. **Climate_delta ≈ 0.0** for Mexico. Opponents face disadvantage:
+- **South Africa** (temperate Southern Hemisphere winter, sea-level): moderate climate shock
+- **South Korea** (temperate East Asia, sea-level): moderate climate shock
+- **Czechia** (Central European temperate, sea-level): moderate climate shock
+- **Ecuador** (equatorial Andes, 2,850m Quito): climate-neutral but altitude-advantaged at home
 
-Both venues sit well above the 1,500m threshold where physiological disadvantage becomes measurable for visiting teams. Mexico's squad trains regularly at altitude (Liga MX clubs operate at these elevations year-round). 
+### [REST DAYS]
+Mexico's fixture congestion:
+- Match 1 → Match 2: **7 days** (June 11 → June 18)
+- Match 2 → Match 3: **6 days** (June 18 → June 24)
+- Match 3 → Round of 32: **6 days** (June 24 → June 30)
 
-**Opponent altitude deltas:**
-- **South Africa**: Sea-level nation (Johannesburg is 1,753m but national team trains primarily at coastal venues). Altitude_delta ≈ +2,000m disadvantage.
-- **South Korea**: Sea-level nation (Seoul at 38m). Altitude_delta ≈ +2,100m disadvantage.
-- **Czech Republic**: Low-altitude European nation (Prague at 191m). Altitude_delta ≈ +2,000m disadvantage.
+All rest intervals are **≥6 days**, placing Mexico at optimal recovery baseline. Normalized rest_days score: **0.85** (well-rested, no fixture congestion). FIFA's 2026 schedule deliberately spaces group-stage matches to minimize fatigue for hosts.
 
-CONMEBOL home-altitude studies (Bolivia at La Paz 3,640m, Ecuador at Quito 2,850m) show visiting teams from low-altitude federations lose 5-8% on xG creation in the first 30 minutes. Mexico's venues are slightly lower but still impose significant burden. **Altitude advantage = 0.85 (strong tailwind)**.
+### [ALTITUDE]
+This is Mexico's **dominant exogenous advantage**:
 
-### [CLIMATE] Home climate acclimation
-Mexico City in June: Average high 24°C (75°F), low 12°C (54°F), humidity ~50-60%. Guadalajara in June: Average high 28°C (82°F), low 15°C (59°F), humidity ~40-50%. Both are temperate, dry conditions during Mexico's rainy season onset.
+**Estadio Azteca, Mexico City:** 2,240 meters (7,349 feet) above sea level
+**Estadio Akron, Guadalajara:** ~1,566 meters (5,138 feet) above sea level
+**Estadio BBVA, Monterrey:** ~540 meters (1,772 feet) above sea level
 
-**Opponent climate deltas:**
-- **South Africa**: Johannesburg winter (June) averages 17°C high, 4°C low — cooler and drier than Mexico. Climate_delta ≈ +7°C warmer for South Africa. Moderate disadvantage.
-- **South Korea**: Seoul summer (June) averages 27°C high, 18°C low, 70% humidity — similar temperature but higher humidity. Climate_delta ≈ -10% RH drier. Minimal disadvantage.
-- **Czech Republic**: Prague summer (June) averages 22°C high, 12°C low, 65% humidity — nearly identical to Mexico City. Climate_delta ≈ 0. Neutral.
+Mexico's domestic league (Liga MX) features multiple high-altitude venues. Players are physiologically adapted. Opponents face:
+- **Acute altitude exposure** (<72 hours acclimatization before match)
+- **Reduced VO2 max** (~10-15% at 2,240m for sea-level athletes)
+- **Increased fatigue** in final 30 minutes
 
-Mexico-based players (majority from Liga MX) are fully acclimated. **Climate advantage = 0.65 (moderate tailwind, varies by opponent)**.
+Historical data: Mexico has lost only **2 matches in history** at Estadio Azteca in competitive fixtures. CONMEBOL studies (Bolivia at La Paz 3,640m, Ecuador at Quito 2,850m) show visiting teams lose 5-8% xG creation capacity in first half, with performance degradation accelerating post-60 minutes.
 
-### [REST DAYS] Standard group-stage fixture congestion
-- Match 1 (June 11) → Match 2 (June 18): **7 rest days**
-- Match 2 (June 18) → Match 3 (June 24): **6 rest days**
+**Opponent altitude burden:**
+- South Africa (sea-level): altitude_delta = **+2,240m** (severe disadvantage)
+- South Korea (sea-level): altitude_delta = **+2,240m** (severe disadvantage)
+- Czechia (sea-level): altitude_delta = **+2,240m** (severe disadvantage)
+- Ecuador (Quito 2,850m): altitude_delta = **-610m** (Ecuador slightly advantaged, but Mexico still adapted)
 
-Both intervals exceed the 5-day threshold where rest-day advantage plateaus. Mexico faced **zero fixture congestion** in the group stage. Opponents faced similar schedules (standard FIFA tournament spacing). **Rest_days = 0.55 (neutral to slight advantage — no congestion penalty)**.
+### [OPPONENT TRAVEL BURDEN]
+All opponents face **intercontinental travel** to Mexico:
+- **South Africa:** ~16,000 km from Johannesburg, 18+ hour flight, 7-hour time zone shift
+- **South Korea:** ~11,000 km from Seoul, 14+ hour flight, 15-hour time zone shift (crosses International Date Line)
+- **Czechia:** ~9,500 km from Prague, 12+ hour flight, 7-hour time zone shift
+- **Ecuador:** ~3,200 km from Quito, 5-hour flight, 1-hour time zone shift (minimal burden)
 
-### [OPPONENT TRAVEL BURDEN] Intercontinental travel fatigue
-All three opponents traveled from other continents:
-- **South Africa**: ~15,000 km flight from Johannesburg to Mexico City (14-16 hours), crossing 7 time zones. Arrived ~5 days before opening match.
-- **South Korea**: ~11,000 km flight from Seoul to Mexico City (13-15 hours), crossing 15 time zones (Pacific route). Arrived ~6 days before first match.
-- **Czech Republic**: ~9,500 km flight from Prague to Mexico City (12-14 hours), crossing 7 time zones. Arrived ~4 days before match.
-
-Mexico had **zero travel burden** (domestic movement only: Mexico City ↔ Guadalajara 550 km, 1-hour flight). Opponents faced jet lag, altitude acclimatization stress, and long-haul fatigue. FIFA medical research shows intercontinental travel reduces performance by ~8-12% in the first 72 hours post-arrival. **Travel burden delta = 0.90 (extreme advantage for Mexico)**.
+Mexico's squad is **domestically based** with zero long-haul travel. Travel burden compounds altitude shock for European/Asian/African opponents.
 
 ---
 
-## [MULTIPLIER] Suggested p50: **1.45** (p5: 1.25, p95: 1.70) — Host status + altitude create a compounding environmental fortress; Mexico played all three matches on home soil at extreme elevation against jet-lagged, sea-level opponents with zero travel burden of their own.
+## [MULTIPLIER]
+
+**Suggested p50: 1.55 (p5: 1.30, p95: 1.85)** — Host status + extreme altitude advantage at Estadio Azteca (2,240m) creates a compounding exogenous tailwind. Mexico's 3-0-0 group stage with zero goals conceded validates the upper bound. Altitude is the dominant signal (worth ~+0.4 to +0.6 Elo at this elevation), host status adds another +0.3 to +0.5, climate neutrality and optimal rest days prevent any offsetting headwinds. Ecuador match (June 30) slightly reduces the multiplier since Ecuador is altitude-adapted, but Mexico retains home crowd and venue familiarity advantages.
 
 **Key findings:**
 
-- Match 1: Mexico vs South Africa**
-- Date: Thursday, June 11, 2026 (8:00 PM local)
-- Venue: Estadio Azteca (Mexico City Stadium), Mexico City
-- Result: Mexico 2-0 South Africa ✓
-- Match 2: Mexico vs South Korea**
-- Date: Wednesday, June 18, 2026 (9:00 PM local)
-- Venue: Estadio Akron, Guadalajara
-- Result: Mexico 1-0 South Korea ✓
-- Match 3: Czech Republic vs Mexico**
-- Date: Tuesday, June 24, 2026 (7:00 PM local)
-- Venue: Estadio Azteca (Mexico City Stadium), Mexico City
-- Result: Mexico 3-0 Czech Republic ✓
-- **Estadio Azteca (Mexico City)**: 2,200m (7,220 feet) above sea level
-- **Estadio Akron (Guadalajara)**: 1,566m (5,138 feet) above sea level
-- Opponent altitude deltas:**
+- GROUP STAGE (COMPLETED):**
+- **Match 1:** June 11, 2026 — Mexico 2-0 South Africa @ **Estadio Azteca, Mexico City**
+- **Match 2:** June 18, 2026 — Mexico 1-0 South Korea @ **Estadio Akron, Guadalajara**
+- **Match 3:** June 24, 2026 — Mexico 3-0 Czechia @ **Estadio Azteca, Mexico City**
+- KNOCKOUT STAGE (UPCOMING):**
+- **Round of 32:** June 30, 2026 (9:00 PM ET) — Mexico vs Ecuador @ **Estadio Azteca, Mexico City**
+- **Mexico City** (19.3°N, 2,240m elevation): June average temp ~18-22°C, moderate humidity (~50-60%)
+- **Guadalajara** (20.7°N, 1,566m elevation): June average temp ~20-26°C, moderate humidity
+- **Monterrey** (25.7°N, 540m elevation): June average temp ~26-32°C, higher humidity (~60-70%)
+- **South Africa** (temperate Southern Hemisphere winter, sea-level): moderate climate shock
+- **South Korea** (temperate East Asia, sea-level): moderate climate shock
+- **Czechia** (Central European temperate, sea-level): moderate climate shock
+- **Ecuador** (equatorial Andes, 2,850m Quito): climate-neutral but altitude-advantaged at home
+- Match 1 → Match 2: **7 days** (June 11 → June 18)
+- Match 2 → Match 3: **6 days** (June 18 → June 24)
 
 ---
 
@@ -927,4 +737,4 @@ model: socio_capital * institutional_capacity * dynamic_performance * squad_qual
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v3 · 2026-06-30 10:41 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v1 · 2026-06-30 10:50 UTC_
