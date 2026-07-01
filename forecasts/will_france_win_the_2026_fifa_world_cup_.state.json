@@ -1,37 +1,18 @@
 {
   "forecast_id": "1bc38d64-e05e-47ac-b26c-872cecee3821",
-  "current_version": 3,
-  "predicted_probability": 0.17332219495875398,
-  "inside_view_explanation": "Inside view: model evaluates to 11.5% (p5=8.5%, p95=14.9%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "current_version": 1,
+  "predicted_probability": 0.17331844568252563,
+  "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-01 08:34",
-      "probability": 0.163021981716156,
-      "change_summary": "Initial: 16.3% base=2%, 6 drivers, 4 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-07-01 08:34",
-      "probability": 0.17377900356273945,
-      "change_summary": "17.4% (+1pp), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-07-01 08:34",
-      "probability": 0.17332219495875398,
-      "change_summary": "17.3% (→), 6 drivers, 4 evidence"
+      "timestamp": "2026-07-01 10:54",
+      "probability": 0.17331844568252563,
+      "change_summary": "Initial: 17.3% base=2%, 6 drivers, 4 evidence"
     }
   ],
-  "sim_results": {
-    "mean": 0.11470179442206149,
-    "median": 0.11329434180484708,
-    "p5": 0.08468875925017036,
-    "p95": 0.14892943639344072,
-    "std_dev": 0.019726876649426787,
-    "iterations": 10000
-  },
+  "sim_results": null,
   "base_rate": {
     "reference_class": "FIFA World Cup winners 1930–2022",
     "historical_frequency": 0.0208,
@@ -183,7 +164,12 @@
     "confidence": "Very High",
     "price_change_1w": null,
     "url": "https://polymarket.com/event/world-cup-winner",
-    "price_history": []
+    "price_history": [
+      {
+        "t": 1782903247,
+        "p": 0.1845
+      }
+    ]
   },
   "workspace_id": "6ad9e6f1-0019-4cdd-af6a-29351f23dabc"
 }
