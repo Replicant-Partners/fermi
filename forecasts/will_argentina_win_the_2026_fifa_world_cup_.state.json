@@ -1,37 +1,31 @@
 {
   "forecast_id": "9f1adf4c-ad59-4c6a-bb80-06d78c430eae",
-  "current_version": 2,
-  "predicted_probability": 0.12021331792580896,
-  "inside_view_explanation": "Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.2%). Outside view (base rate): 11.6%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "current_version": 1,
+  "predicted_probability": 0.08424409926515143,
+  "inside_view_explanation": "Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.2%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-06-30 12:33",
-      "probability": 0.12021331792580896,
-      "change_summary": "Initial: 12.0% base=12%, 6 drivers, 6 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-06-30 12:33",
-      "probability": 0.12021331792580896,
-      "change_summary": "12.0% (→), 6 drivers, 6 evidence"
+      "timestamp": "2026-07-01 08:40",
+      "probability": 0.08424409926515143,
+      "change_summary": "Initial: 8.4% base=2%, 6 drivers, 6 evidence"
     }
   ],
   "sim_results": {
-    "mean": 0.08429785748025638,
-    "median": 0.08313116264432402,
-    "p5": 0.06101353605078309,
-    "p95": 0.11160669047187985,
-    "std_dev": 0.01550263036996684,
+    "mean": 0.08424409926515143,
+    "median": 0.08314947098681544,
+    "p5": 0.06115015437416401,
+    "p95": 0.1115357291543657,
+    "std_dev": 0.015298697010744156,
     "iterations": 10000
   },
   "base_rate": {
-    "reference_class": "Polymarket crowd-implied probability (Will Argentina win the 2026 FIFA World Cup?)",
-    "historical_frequency": 0.1155,
-    "sample_size": null,
-    "source": "Polymarket",
-    "reasoning": "Crowd price backed by $6.1M volume,  liquidity. Very High confidence."
+    "reference_class": "FIFA World Cup winners 1930–2022",
+    "historical_frequency": 0.0208,
+    "sample_size": 22,
+    "source": "FIFA tournament archive — 22 prior World Cups",
+    "reasoning": "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via the six factor-derived drivers."
   },
   "evidence": [
     {
