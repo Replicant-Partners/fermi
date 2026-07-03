@@ -1,71 +1,23 @@
 {
   "forecast_id": "4084aecc-9f12-4649-a30a-a5d06e734541",
-  "current_version": 9,
-  "predicted_probability": 0.17020178763058763,
-  "inside_view_explanation": "Inside view: model evaluates to 11.9% (p5=8.8%, p95=15.6%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "current_version": 1,
+  "predicted_probability": 0.11914908955152348,
+  "inside_view_explanation": "Inside view: model evaluates to 11.9% (p5=8.9%, p95=15.6%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-06-30 12:35",
-      "probability": 0.11945729729737885,
+      "timestamp": "2026-07-03 12:28",
+      "probability": 0.11914908955152348,
       "change_summary": "Initial: 11.9% base=2%, 6 drivers, 3 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-06-30 12:36",
-      "probability": 0.17020178763058763,
-      "change_summary": "17.0% (+5pp), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-06-30 12:36",
-      "probability": 0.17020178763058763,
-      "change_summary": "17.0% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-06-30 12:36",
-      "probability": 0.17020178763058763,
-      "change_summary": "17.0% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 5,
-      "timestamp": "2026-06-30 12:36",
-      "probability": 0.17020178763058763,
-      "change_summary": "17.0% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 6,
-      "timestamp": "2026-06-30 12:36",
-      "probability": 0.17020178763058763,
-      "change_summary": "17.0% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 7,
-      "timestamp": "2026-06-30 12:36",
-      "probability": 0.17020178763058763,
-      "change_summary": "17.0% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 8,
-      "timestamp": "2026-06-30 12:36",
-      "probability": 0.17020178763058763,
-      "change_summary": "17.0% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 9,
-      "timestamp": "2026-06-30 12:36",
-      "probability": 0.17020178763058763,
-      "change_summary": "17.0% (→), 6 drivers, 3 evidence"
     }
   ],
   "sim_results": {
-    "mean": 0.11934969776360317,
-    "median": 0.11773635384253583,
-    "p5": 0.08804521177564671,
-    "p95": 0.15552356622265961,
-    "std_dev": 0.020328466414376425,
+    "mean": 0.11914908955152348,
+    "median": 0.11747327384386125,
+    "p5": 0.08850883829123216,
+    "p95": 0.15575555097430624,
+    "std_dev": 0.02043536020715829,
     "iterations": 10000
   },
   "base_rate": {
