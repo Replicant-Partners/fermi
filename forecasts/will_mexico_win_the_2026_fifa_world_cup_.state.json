@@ -1,33 +1,15 @@
 {
   "forecast_id": "863c1d58-c435-430c-b0fa-eb158adbafb7",
-  "current_version": 4,
-  "predicted_probability": 0.048232559114694595,
+  "current_version": 1,
+  "predicted_probability": 0.05280878022313118,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-02 12:38",
-      "probability": 0.048232559114694595,
-      "change_summary": "Initial: 4.8% base=2%, 6 drivers, 4 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-07-02 12:38",
-      "probability": 0.048232559114694595,
-      "change_summary": "4.8% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-07-02 12:38",
-      "probability": 0.048232559114694595,
-      "change_summary": "4.8% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-07-02 12:38",
-      "probability": 0.048232559114694595,
-      "change_summary": "4.8% (→), 6 drivers, 4 evidence"
+      "timestamp": "2026-07-06 11:01",
+      "probability": 0.05280878022313118,
+      "change_summary": "Initial: 5.3% base=2%, 6 drivers, 4 evidence"
     }
   ],
   "sim_results": null,
