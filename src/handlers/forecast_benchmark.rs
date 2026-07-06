@@ -84,16 +84,11 @@ pub async fn anchor_forecast(
     anchor_note: Option<&str>,
 ) -> Result<String, String> {
     let fpl_hash = fpl_source.map(sha256_str);
-    let hash = commitment_hash(
-        forecast_id,
-        probability,
-        fpl_hash.as_deref(),
-        &emitted_at,
-    );
+    let hash = commitment_hash(forecast_id, probability, fpl_hash.as_deref(), &emitted_at);
 
     // Check if already exists (idempotent)
     let exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM forecast_commitments WHERE commitment_hash = $1)"
+        "SELECT EXISTS(SELECT 1 FROM forecast_commitments WHERE commitment_hash = $1)",
     )
     .bind(&hash)
     .fetch_one(pool)
@@ -117,7 +112,7 @@ pub async fn anchor_forecast(
         r#"INSERT INTO forecast_commitments
            (forecast_id, revision_id, predicted_probability, fpl_source_hash,
             commitment_hash, anchor_method, anchor_note, emitted_at, committed_at)
-           VALUES ($1, $2, $3, $4, $5, 'db_timestamp', $6, $7, NOW())"#
+           VALUES ($1, $2, $3, $4, $5, 'db_timestamp', $6, $7, NOW())"#,
     )
     .bind(forecast_id)
     .bind(revision_id)
@@ -159,20 +154,21 @@ pub async fn ensure_split(
     salt: &str,
 ) -> Result<String, String> {
     // Check if already assigned
-    if let Ok(Some(row)) = sqlx::query(
-        "SELECT split FROM forecast_splits WHERE forecast_id = $1"
-    )
-    .bind(forecast_id)
-    .fetch_optional(pool)
-    .await
+    if let Ok(Some(row)) = sqlx::query("SELECT split FROM forecast_splits WHERE forecast_id = $1")
+        .bind(forecast_id)
+        .fetch_optional(pool)
+        .await
     {
         return Ok(row.try_get::<String, _>("split").unwrap_or_default());
     }
 
     // Table may not exist yet
     let table_exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='forecast_splits')"
-    ).fetch_one(pool).await.unwrap_or(false);
+        "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='forecast_splits')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
     if !table_exists {
         return Err("forecast_splits table not yet created".into());
     }
@@ -184,7 +180,7 @@ pub async fn ensure_split(
         r#"INSERT INTO forecast_splits
            (forecast_id, split, split_hash_input, split_salt, assigned_at)
            VALUES ($1, $2, $3, $4, NOW())
-           ON CONFLICT (forecast_id) DO NOTHING"#
+           ON CONFLICT (forecast_id) DO NOTHING"#,
     )
     .bind(forecast_id)
     .bind(split)
@@ -247,7 +243,7 @@ pub async fn anchor_sweep_handler(
                  AND c.revision_id IS NULL
                  AND ABS(c.predicted_probability - f.predicted_probability) < 0.0001
              )
-           LIMIT 500"#
+           LIMIT 500"#,
     )
     .fetch_all(pool)
     .await
@@ -271,7 +267,9 @@ pub async fn anchor_sweep_handler(
             fpl.as_deref(),
             created_at,
             Some(&note),
-        ).await {
+        )
+        .await
+        {
             Ok(_) => {
                 // Also ensure split assignment
                 let _ = ensure_split(pool, &fid, &salt).await;
@@ -319,7 +317,7 @@ pub async fn forecast_spacetime_handler(
         "SELECT id, owner_id, question_text, predicted_probability, status,
                 brier_score, actual_outcome, resolved_at, fpl_source,
                 simulation_results, drivers, created_at, team_id
-         FROM fermi_forecasts WHERE id = $1"
+         FROM fermi_forecasts WHERE id = $1",
     )
     .bind(&forecast_id)
     .fetch_optional(pool)
@@ -386,7 +384,7 @@ pub async fn forecast_spacetime_handler(
                AND ABS(c.predicted_probability - st.predicted_probability) < 0.0001
                AND c.revision_id IS NULL
             WHERE st.forecast_id = $1
-            ORDER BY st.revision_seq ASC"#
+            ORDER BY st.revision_seq ASC"#,
         )
         .bind(&forecast_id)
         .fetch_all(pool)
@@ -451,7 +449,7 @@ pub async fn forecast_spacetime_handler(
                     evidence_added, created_at
              FROM fermi_forecast_updates
              WHERE forecast_id = $1
-             ORDER BY created_at ASC"
+             ORDER BY created_at ASC",
         )
         .bind(&forecast_id)
         .fetch_all(pool)
@@ -490,14 +488,18 @@ pub async fn forecast_spacetime_handler(
 
     // Summary metrics across all revisions
     let n = revisions.len();
-    let total_movement: f64 = revisions.windows(2).map(|w| {
-        let p1 = w[0]["predicted_probability"].as_f64().unwrap_or(0.0);
-        let p2 = w[1]["predicted_probability"].as_f64().unwrap_or(0.0);
-        (p2 - p1).abs()
-    }).sum();
+    let total_movement: f64 = revisions
+        .windows(2)
+        .map(|w| {
+            let p1 = w[0]["predicted_probability"].as_f64().unwrap_or(0.0);
+            let p2 = w[1]["predicted_probability"].as_f64().unwrap_or(0.0);
+            (p2 - p1).abs()
+        })
+        .sum();
 
     let final_prob: f32 = forecast.get("predicted_probability");
-    let initial_prob = revisions.first()
+    let initial_prob = revisions
+        .first()
         .and_then(|r| r["predicted_probability"].as_f64())
         .unwrap_or(final_prob as f64);
     let net_movement = final_prob as f64 - initial_prob;
@@ -556,7 +558,7 @@ pub async fn commit_forecast_handler(
 
     let row = sqlx::query(
         "SELECT id, owner_id, predicted_probability, fpl_source, created_at
-         FROM fermi_forecasts WHERE id = $1"
+         FROM fermi_forecasts WHERE id = $1",
     )
     .bind(&forecast_id)
     .fetch_optional(pool)
@@ -581,10 +583,14 @@ pub async fn commit_forecast_handler(
         fpl.as_deref(),
         created_at,
         Some("explicit commit"),
-    ).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     let salt = std::env::var("BENCHMARK_SPLIT_SALT").unwrap_or_else(|_| "fermi-v1-2026".into());
-    let split = ensure_split(pool, &forecast_id, &salt).await.unwrap_or_else(|_| "unassigned".into());
+    let split = ensure_split(pool, &forecast_id, &salt)
+        .await
+        .unwrap_or_else(|_| "unassigned".into());
 
     Ok(Json(json!({
         "forecast_id": forecast_id,
@@ -609,7 +615,7 @@ pub async fn commit_forecast_handler(
 pub async fn capture_harness_snapshot(
     pool: &sqlx::PgPool,
     conductor_version: &str,
-    specialist_roster: &serde_json::Value,  // [{agent_id, version, calibration_score}]
+    specialist_roster: &serde_json::Value, // [{agent_id, version, calibration_score}]
     routing_weights: Option<&serde_json::Value>,
     bayesops_params: Option<&serde_json::Value>,
 ) -> Option<uuid::Uuid> {
@@ -617,26 +623,36 @@ pub async fn capture_harness_snapshot(
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='harness_snapshots')"
     ).fetch_one(pool).await.unwrap_or(false);
-    if !exists { return None; }
+    if !exists {
+        return None;
+    }
 
     // Compute component hashes
     let conductor_hash = sha256_str(conductor_version);
     let roster_hash = sha256_str(&serde_json::to_string(specialist_roster).unwrap_or_default());
-    let weights_hash = routing_weights.map(|w| sha256_str(&serde_json::to_string(w).unwrap_or_default()));
-    let bayesops_hash = bayesops_params.map(|b| sha256_str(&serde_json::to_string(b).unwrap_or_default()));
+    let weights_hash =
+        routing_weights.map(|w| sha256_str(&serde_json::to_string(w).unwrap_or_default()));
+    let bayesops_hash =
+        bayesops_params.map(|b| sha256_str(&serde_json::to_string(b).unwrap_or_default()));
 
     // Content hash over all components
     let mut h = Sha256::new();
-    h.update(conductor_hash.as_bytes()); h.update(b"|");
-    h.update(roster_hash.as_bytes()); h.update(b"|");
-    h.update(weights_hash.as_deref().unwrap_or("").as_bytes()); h.update(b"|");
+    h.update(conductor_hash.as_bytes());
+    h.update(b"|");
+    h.update(roster_hash.as_bytes());
+    h.update(b"|");
+    h.update(weights_hash.as_deref().unwrap_or("").as_bytes());
+    h.update(b"|");
     h.update(bayesops_hash.as_deref().unwrap_or("").as_bytes());
     let content_hash = format!("{:x}", h.finalize());
 
     // Check if already exists
-    if let Ok(Some(row)) = sqlx::query(
-        "SELECT snapshot_id FROM harness_snapshots WHERE content_hash = $1"
-    ).bind(&content_hash).fetch_optional(pool).await {
+    if let Ok(Some(row)) =
+        sqlx::query("SELECT snapshot_id FROM harness_snapshots WHERE content_hash = $1")
+            .bind(&content_hash)
+            .fetch_optional(pool)
+            .await
+    {
         return row.try_get("snapshot_id").ok();
     }
 
@@ -647,7 +663,7 @@ pub async fn capture_harness_snapshot(
            (snapshot_id, content_hash, conductor_card_hash, routing_weights_hash,
             specialist_roster_hash, bayesops_params_hash, conductor_version,
             specialist_roster, routing_weights, bayesops_params, captured_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())"#
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())"#,
     )
     .bind(snapshot_id)
     .bind(&content_hash)
@@ -883,8 +899,20 @@ pub async fn forecast_timeline_handler(
         Vec::new()
     };
 
-    // ── 4. Market data: Polymarket observations ────────────────────
-    let market_series: Vec<Value> = sqlx::query(
+    // ── 4. Market data: Polymarket observations ────────────────
+    //
+    // We build two representations of the same rows:
+    //   * `market_series` — kept as its own dense array for the client's
+    //     crowd-worm chart trace (parallel to `rate_series`).
+    //   * `market_events` — sparse dots on the merged event timeline
+    //     (bottom rug + hover chips) so the operator can eye-trace when
+    //     the crowd price ticked relative to their applied revisions.
+    let market_rows: Vec<(
+        chrono::DateTime<chrono::Utc>,
+        Option<f32>,
+        Option<f32>,
+        Option<String>,
+    )> = sqlx::query(
         "SELECT market_price, volume_total, observation_time, pm_event_id
          FROM fermi_market_observations
          WHERE forecast_id = $1
@@ -899,25 +927,55 @@ pub async fn forecast_timeline_handler(
         let ts = row
             .try_get::<chrono::DateTime<chrono::Utc>, _>("observation_time")
             .ok()?;
-        Some(json!({
-            "ts": ts.to_rfc3339(),
-            "market_price": row.try_get::<f32, _>("market_price").ok(),
-            "volume_total": row.try_get::<Option<f32>, _>("volume_total").ok().flatten(),
-            "pm_event_id": row.try_get::<Option<String>, _>("pm_event_id").ok().flatten(),
-        }))
+        let price = row.try_get::<f32, _>("market_price").ok();
+        let volume = row.try_get::<Option<f32>, _>("volume_total").ok().flatten();
+        let event_id = row
+            .try_get::<Option<String>, _>("pm_event_id")
+            .ok()
+            .flatten();
+        Some((ts, price, volume, event_id))
     })
     .collect();
+
+    let market_series: Vec<Value> = market_rows
+        .iter()
+        .map(|(ts, price, volume, event_id)| {
+            json!({
+                "ts": ts.to_rfc3339(),
+                "market_price": price,
+                "volume_total": volume,
+                "pm_event_id": event_id,
+            })
+        })
+        .collect();
+
+    let market_events: Vec<Value> = market_rows
+        .iter()
+        .map(|(ts, price, volume, _event_id)| {
+            json!({
+                "kind": "market_observation",
+                "ts": ts.to_rfc3339(),
+                // Chart drops market dots at the crowd price line (in
+                // pct), so the y-coord matches the crowd worm exactly.
+                // rate_pct sits under `predicted_probability` to reuse
+                // the client's existing event-y-lookup path.
+                "predicted_probability": price.map(|p| p as f64),
+                "volume_total": volume,
+            })
+        })
+        .collect();
 
     // ── 5. Merge into one chronologically-ordered event list ──────
     // The client needs `events` chronological so it can render them as
     // dots on a shared time axis. `rate_series` and `market_series` are
     // kept as separate arrays for the line-chart traces.
     let mut events: Vec<Value> = Vec::with_capacity(
-        revisions.len() + bayesops_events.len() + workspace_events.len(),
+        revisions.len() + bayesops_events.len() + workspace_events.len() + market_events.len(),
     );
     events.extend(revisions);
     events.extend(bayesops_events);
     events.extend(workspace_events);
+    events.extend(market_events);
     events.sort_by(|a, b| {
         let ta = a.get("ts").and_then(|v| v.as_str()).unwrap_or("");
         let tb = b.get("ts").and_then(|v| v.as_str()).unwrap_or("");

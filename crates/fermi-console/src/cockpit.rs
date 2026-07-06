@@ -37,8 +37,8 @@ use fermi::ast::{
 };
 
 use crate::api::client::{
-    AgentExecutionResult, ApiClient, CreateForecastRequest, ForecastSchedule, InviteRequest,
-    ShareEntry, ShareRequest, UpsertScheduleRequest,
+    AgentExecutionResult, ApiClient, CreateForecastRequest, ForecastSchedule, Invite,
+    InviteRequest, ShareEntry, ShareRequest, UpsertScheduleRequest,
 };
 use crate::text_input::TextInput;
 use crate::theme;
@@ -273,7 +273,7 @@ pub struct CockpitState {
     /// disagree with the value the sim settles on.
     pub recomposing: bool,
 
-    // ── Access / sharing (Spec 24 §3.5.2) ─────────────────────────
+    // ── Access / sharing (Spec 24 §3.5.2) ─────────────────────
     /// Current object_shares rows for this forecast (Access tab).
     pub shares: Vec<ShareEntry>,
     pub shares_loading: bool,
@@ -285,6 +285,14 @@ pub struct CockpitState {
     pub share_error: Option<String>,
     /// Loaded-shares marker so we only auto-fetch once per forecast_id.
     pub shares_loaded_for: Option<String>,
+    /// Pending / recent invites for this forecast. Loaded alongside
+    /// `shares` so the operator can see outbound invitations (Alice —
+    /// pending) sitting alongside materialised shares. Powers the
+    /// "Sent invites" section of the Access tab.
+    pub forecast_invites: Vec<Invite>,
+    pub forecast_invites_loading: bool,
+    /// Invite IDs with a revoke in flight (disables the button).
+    pub forecast_invite_revoke_in_flight: HashSet<String>,
     /// Share targets collected in the commit sheet (target, permission),
     /// applied right after the forecast row is created/updated on publish.
     pub pending_publish_shares: Vec<(String, String)>,
@@ -540,9 +548,7 @@ impl CockpitState {
                 .with_placeholder("What does this evidence say?")
                 .with_label("Summary")
         });
-        let share_input = cx.new(|cx| {
-            TextInput::new(cx).with_placeholder("email or user id…")
-        });
+        let share_input = cx.new(|cx| TextInput::new(cx).with_placeholder("email or user id…"));
         let (tx, rx) = std_mpsc::channel::<SseEvent>();
         let s = Self {
             program: Program::empty(),
@@ -605,6 +611,9 @@ impl CockpitState {
             share_add_loading: false,
             share_error: None,
             shares_loaded_for: None,
+            forecast_invites: Vec::new(),
+            forecast_invites_loading: false,
+            forecast_invite_revoke_in_flight: HashSet::new(),
             pending_publish_shares: Vec::new(),
             registry,
             cached_fpl: String::new(),
@@ -657,67 +666,131 @@ impl CockpitState {
 
         // Start Polymarket price polling timer — fetches crowd price
         // at the configured interval when a PM market is linked.
-        cx.spawn(async move |this, cx| loop {
-            // Check interval (default: sleep 30s, check if polling is active)
-            let interval = this
-                .update(cx, |state, _cx| state.pm_poll_interval)
-                .ok()
-                .flatten();
+        //
+        // The FIRST tick fires after only 1 s (not the full poll
+        // interval) so a freshly-loaded forecast doesn't sit with a
+        // stale `last_market_price` from the DB for 5 minutes before
+        // the operator sees the current crowd number. Subsequent ticks
+        // use the configured interval.
+        cx.spawn(async move |this, cx| {
+            let mut first_tick = true;
+            loop {
+                let interval = this
+                    .update(cx, |state, _cx| state.pm_poll_interval)
+                    .ok()
+                    .flatten();
 
-            let sleep_ms = interval
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(30_000);
-            cx.background_executor()
-                .timer(std::time::Duration::from_millis(sleep_ms))
-                .await;
+                let sleep_ms = if first_tick {
+                    // Give the load path a moment to hydrate
+                    // pm_event_id/pm_market_id, then fire once.
+                    1_000
+                } else {
+                    interval.map(|d| d.as_millis() as u64).unwrap_or(30_000)
+                };
+                first_tick = false;
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(sleep_ms))
+                    .await;
 
-            // Only poll if we have a linked market and polling is enabled
-            let poll_data = this
-                .update(cx, |state, _cx| {
-                    if state.pm_poll_interval.is_some() {
-                        if let (Some(ref eid), Some(ref mid)) =
-                            (state.pm_event_id.clone(), state.pm_market_id.clone())
-                        {
-                            return Some((state.api.clone(), eid.clone(), mid.clone(),
-                                         state.forecast_id.clone()));
-                        }
-                    }
-                    None
-                })
-                .ok()
-                .flatten();
-
-            if let Some((api, _eid, mid, forecast_id)) = poll_data {
-                let fid = forecast_id.unwrap_or_default();
-                let result = tokio::spawn(async move {
-                    api.pm_snapshot(&fid, &mid).await
-                })
-                .await;
-
-                if let Ok(Ok(resp)) = result {
-                    let price = resp.get("market_price")
-                        .and_then(|v| v.as_f64())
-                        .or_else(|| resp.get("snapshot")
-                            .and_then(|s| s.get("market_price"))
-                            .and_then(|v| v.as_f64()));
-
-                    if let Some(p) = price {
-                        this.update(cx, |state, cx| {
-                            let now = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs();
-                            state.pm_market_price = Some(p);
-                            state.pm_price_history.push((now, p));
-                            // Cap history at 500 points
-                            if state.pm_price_history.len() > 500 {
-                                state.pm_price_history.remove(0);
+                // Only poll if we have a linked market and polling is enabled
+                let poll_data = this
+                    .update(cx, |state, _cx| {
+                        if state.pm_poll_interval.is_some() {
+                            if let (Some(ref eid), Some(ref mid)) =
+                                (state.pm_event_id.clone(), state.pm_market_id.clone())
+                            {
+                                return Some((
+                                    state.api.clone(),
+                                    eid.clone(),
+                                    mid.clone(),
+                                    state.forecast_id.clone(),
+                                ));
                             }
-                            log::info!("[pm-poll] Price update: {:.2}% ({} history points)",
-                                p * 100.0, state.pm_price_history.len());
-                            cx.notify();
-                        })
-                        .ok();
+                        }
+                        None
+                    })
+                    .ok()
+                    .flatten();
+
+                if let Some((api, eid, mid, forecast_id)) = poll_data {
+                    let fid = forecast_id.unwrap_or_default();
+                    let result =
+                        tokio::spawn(async move { api.pm_snapshot(&fid, &eid, &mid).await }).await;
+
+                    match &result {
+                        Ok(Ok(resp)) => {
+                            let price =
+                                resp.get("market_price")
+                                    .and_then(|v| v.as_f64())
+                                    .or_else(|| {
+                                        resp.get("snapshot")
+                                            .and_then(|s| s.get("market_price"))
+                                            .and_then(|v| v.as_f64())
+                                    });
+                            let vol_24h = resp.get("volume_24h").and_then(|v| v.as_f64());
+                            let liquidity = resp.get("liquidity").and_then(|v| v.as_f64());
+                            let price_change_1w =
+                                resp.get("price_change_1w").and_then(|v| v.as_f64());
+                            let confidence = resp
+                                .get("confidence_signal")
+                                .and_then(|v| v.as_str())
+                                .map(String::from);
+
+                            if let Some(p) = price {
+                                this.update(cx, |state, cx| {
+                                    let now = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs();
+                                    // Only overwrite if the value actually
+                                    // changed enough to matter (>0.05pp)
+                                    // OR if we haven't recorded any history
+                                    // yet — avoids spamming the sparkline
+                                    // when the market is quiet.
+                                    let changed = state
+                                        .pm_market_price
+                                        .map(|prev| (prev - p).abs() > 0.0005)
+                                        .unwrap_or(true);
+                                    state.pm_market_price = Some(p);
+                                    if vol_24h.is_some() {
+                                        state.pm_volume_24h = vol_24h;
+                                    }
+                                    if liquidity.is_some() {
+                                        state.pm_liquidity = liquidity;
+                                    }
+                                    if price_change_1w.is_some() {
+                                        state.pm_price_change_1w = price_change_1w;
+                                    }
+                                    if confidence.is_some() {
+                                        state.pm_confidence = confidence;
+                                    }
+                                    if changed || state.pm_price_history.is_empty() {
+                                        state.pm_price_history.push((now, p));
+                                        if state.pm_price_history.len() > 500 {
+                                            state.pm_price_history.remove(0);
+                                        }
+                                    }
+                                    log::info!(
+                                        "[pm-poll] Price update: {:.2}% ({} history points)",
+                                        p * 100.0,
+                                        state.pm_price_history.len()
+                                    );
+                                    cx.notify();
+                                })
+                                .ok();
+                            } else {
+                                log::warn!(
+                                    "[pm-poll] Snapshot response missing market_price: {}",
+                                    resp
+                                );
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            log::warn!("[pm-poll] Snapshot API error: {}", e);
+                        }
+                        Err(e) => {
+                            log::warn!("[pm-poll] Snapshot task join error: {}", e);
+                        }
                     }
                 }
             }
@@ -741,6 +814,85 @@ impl CockpitState {
             }
         }
         cx.notify();
+    }
+
+    /// Immediately fetch a fresh Polymarket snapshot for the linked
+    /// market and update the cockpit's crowd fields. Called from the
+    /// forecast load path so the operator doesn't see the stale
+    /// `last_market_price` cached in `metadata.polymarket` for the full
+    /// poll interval (5 min) before the first background tick fires.
+    ///
+    /// Silent no-op if there's no linked market on the current
+    /// forecast, or if `pm_snapshot` errors (background poll will retry
+    /// on its normal cadence).
+    pub fn refresh_pm_price_now(&mut self, cx: &mut Context<Self>) {
+        let (Some(eid), Some(mid)) = (self.pm_event_id.clone(), self.pm_market_id.clone()) else {
+            return;
+        };
+        let api = self.api.clone();
+        let fid = self.forecast_id.clone().unwrap_or_default();
+        cx.spawn(async move |this, cx| {
+            let result = tokio::spawn(async move { api.pm_snapshot(&fid, &eid, &mid).await }).await;
+            match result {
+                Ok(Ok(resp)) => {
+                    let price = resp
+                        .get("market_price")
+                        .and_then(|v| v.as_f64())
+                        .or_else(|| {
+                            resp.get("snapshot")
+                                .and_then(|s| s.get("market_price"))
+                                .and_then(|v| v.as_f64())
+                        });
+                    let vol_24h = resp.get("volume_24h").and_then(|v| v.as_f64());
+                    let liquidity = resp.get("liquidity").and_then(|v| v.as_f64());
+                    let price_change_1w = resp.get("price_change_1w").and_then(|v| v.as_f64());
+                    let confidence = resp
+                        .get("confidence_signal")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    if let Some(p) = price {
+                        this.update(cx, |state, cx| {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs();
+                            state.pm_market_price = Some(p);
+                            if vol_24h.is_some() {
+                                state.pm_volume_24h = vol_24h;
+                            }
+                            if liquidity.is_some() {
+                                state.pm_liquidity = liquidity;
+                            }
+                            if price_change_1w.is_some() {
+                                state.pm_price_change_1w = price_change_1w;
+                            }
+                            if confidence.is_some() {
+                                state.pm_confidence = confidence;
+                            }
+                            state.pm_price_history.push((now, p));
+                            if state.pm_price_history.len() > 500 {
+                                state.pm_price_history.remove(0);
+                            }
+                            log::info!(
+                                "[pm-refresh] Snapshot: {:.2}% (was {:.2}%)",
+                                p * 100.0,
+                                state.pm_market_price.map(|_| p * 100.0).unwrap_or(0.0)
+                            );
+                            cx.notify();
+                        })
+                        .ok();
+                    } else {
+                        log::warn!(
+                            "[pm-refresh] Snapshot response missing market_price: {}",
+                            resp
+                        );
+                    }
+                }
+                Ok(Err(e)) => log::warn!("[pm-refresh] Snapshot API error: {}", e),
+                Err(e) => log::warn!("[pm-refresh] Snapshot task join error: {}", e),
+            }
+        })
+        .detach();
     }
 
     /// Stop PM polling.
@@ -1086,7 +1238,8 @@ impl CockpitState {
             if let Some(c) = run.credits_charged {
                 self.session_cost += c;
             }
-            self.pending_toasts.push(format!("✓ {} finished", completed_name));
+            self.pending_toasts
+                .push(format!("✓ {} finished", completed_name));
         }
 
         // Try to parse structured JSON from the agent's reasoning
@@ -1402,15 +1555,24 @@ impl CockpitState {
         if let Some(ref ws_id) = self.workspace_id {
             let api = self.api.clone();
             let ws = ws_id.clone();
-            let driver_names: Vec<String> = self.program.drivers().iter()
+            let driver_names: Vec<String> = self
+                .program
+                .drivers()
+                .iter()
                 .map(|d| d.display_name.as_deref().unwrap_or(&d.name).to_string())
                 .collect();
-            let question = self.program.question().map(|q| q.text.clone()).unwrap_or_default();
+            let question = self
+                .program
+                .question()
+                .map(|q| q.text.clone())
+                .unwrap_or_default();
             let content = format!(
                 "**Decomposition complete** for: \"{}\"\n\n{} drivers identified:\n{}",
                 question.chars().take(100).collect::<String>(),
                 driver_names.len(),
-                driver_names.iter().enumerate()
+                driver_names
+                    .iter()
+                    .enumerate()
                     .map(|(i, n)| format!("{}. {}", i + 1, n))
                     .collect::<Vec<_>>()
                     .join("\n"),
@@ -1423,8 +1585,13 @@ impl CockpitState {
             tokio::spawn(async move {
                 let _ = api
                     .post_workspace_message(
-                        &ws, "agent", "fermi", Some("Fermi Decomposer"),
-                        &content, "execution_result", Some(&meta),
+                        &ws,
+                        "agent",
+                        "fermi",
+                        Some("Fermi Decomposer"),
+                        &content,
+                        "execution_result",
+                        Some(&meta),
                     )
                     .await;
             });
@@ -1496,170 +1663,173 @@ impl CockpitState {
                 // ── Per-driver agent selection ────────────────────
                 // Use fermi's suggestion if present and the agent exists in the
                 // registry; fall back to keyword heuristics otherwise.
-                let (agent_to_use, query) =
-                    if let Some((suggested_agent, suggested_query)) =
-                        fermi_suggestions.get(driver_name)
-                    {
-                        let agent = if self.registry.get(suggested_agent.as_str()).is_ok() {
-                            log::info!(
-                                "[composer] Using fermi suggestion for {}: {}",
-                                driver_name,
-                                suggested_agent
-                            );
-                            suggested_agent.as_str()
-                        } else {
-                            log::warn!(
+                let (agent_to_use, query) = if let Some((suggested_agent, suggested_query)) =
+                    fermi_suggestions.get(driver_name)
+                {
+                    let agent = if self.registry.get(suggested_agent.as_str()).is_ok() {
+                        log::info!(
+                            "[composer] Using fermi suggestion for {}: {}",
+                            driver_name,
+                            suggested_agent
+                        );
+                        suggested_agent.as_str()
+                    } else {
+                        log::warn!(
                                 "[composer] Fermi suggested {} for {} but agent not in registry — falling back",
                                 suggested_agent,
                                 driver_name
                             );
-                            domain_agent
-                        };
-                        let agent = if self.registry.get(agent).is_ok() {
-                            agent
-                        } else {
-                            "macro_forecaster"
-                        };
-                        (agent.to_string(), suggested_query.clone())
-                    } else {
-                        // Keyword heuristics — fermi didn't provide a suggestion
-                        let dl = driver_name.to_lowercase();
-                        let rl = rationale.to_lowercase();
-                        let combined = format!("{} {}", dl, rl);
-
-                        let heuristic_agent = if combined.contains("sentiment")
-                            || combined.contains("opinion")
-                            || combined.contains("perception")
-                            || combined.contains("buzz")
-                            || combined.contains("narrative")
-                            || combined.contains("social media")
-                            || combined.contains("public opinion")
-                        {
-                            "sentiment_analyzer"
-                        } else if combined.contains("entity")
-                            || combined.contains("ownership")
-                            || combined.contains("leadership")
-                            || combined.contains("management")
-                            || combined.contains("regulatory")
-                            || combined.contains("legal")
-                            || combined.contains("compliance")
-                            || combined.contains("investigation")
-                            || combined.contains("regime")
-                            || combined.contains("government")
-                            || combined.contains("military")
-                            || combined.contains("security apparatus")
-                            || combined.contains("cohesion")
-                            || combined.contains("supreme leader")
-                            || combined.contains("succession")
-                        {
-                            "entity_investigator"
-                        } else if combined.contains("protest")
-                            || combined.contains("revolution")
-                            || combined.contains("uprising")
-                            || combined.contains("momentum")
-                            || combined.contains("unrest")
-                            || combined.contains("civil")
-                            || combined.contains("dissent")
-                            || combined.contains("demonstration")
-                        {
-                            "sentiment_analyzer"
-                        } else if combined.contains("market")
-                            || combined.contains("competition")
-                            || combined.contains("competitor")
-                            || combined.contains("partnership")
-                            || combined.contains("revenue")
-                            || combined.contains("pricing")
-                            || combined.contains("demand")
-                            || combined.contains("adoption")
-                            || combined.contains("customer")
-                            || combined.contains("commercial")
-                            || combined.contains("sales")
-                        {
-                            "market_research"
-                        } else if combined.contains("macro")
-                            || combined.contains("economic")
-                            || combined.contains("gdp")
-                            || combined.contains("inflation")
-                            || combined.contains("interest rate")
-                            || combined.contains("fed")
-                            || combined.contains("recession")
-                            || combined.contains("valuation")
-                            || combined.contains("currency")
-                            || combined.contains("sanction")
-                            || combined.contains("crisis")
-                            || combined.contains("trade")
-                            || combined.contains("fiscal")
-                            || combined.contains("monetary")
-                        {
-                            "macro_forecaster"
-                        } else if combined.contains("policy")
-                            || combined.contains("geopolit")
-                            || combined.contains("diplomat")
-                            || combined.contains("interven")
-                            || combined.contains("external")
-                            || combined.contains("foreign")
-                            || combined.contains("international")
-                            || combined.contains("alliance")
-                            || combined.contains("nuclear")
-                        {
-                            "macro_forecaster"
-                        } else if combined.contains("clinical")
-                            || combined.contains("trial")
-                            || combined.contains("fda")
-                            || combined.contains("drug")
-                            || combined.contains("pipeline")
-                            || combined.contains("approval")
-                        {
-                            "biotech_analyst"
-                        } else if combined.contains("stock")
-                            || combined.contains("equity")
-                            || combined.contains("eps")
-                            || combined.contains("p/e")
-                            || combined.contains("earnings")
-                            || combined.contains("share price")
-                            || combined.contains("shareholder")
-                        {
-                            "equity_analyst"
-                        } else if combined.contains("energy")
-                            || combined.contains("oil")
-                            || combined.contains("gas")
-                            || combined.contains("renewable")
-                            || combined.contains("solar")
-                            || combined.contains("wind power")
-                            || combined.contains("carbon")
-                            || combined.contains("emission")
-                        {
-                            "energy_advisor"
-                        } else if combined.contains("nba")
-                            || combined.contains("basketball")
-                            || combined.contains("elo")
-                            || combined.contains("home court")
-                            || (combined.contains("injury")
-                                && (domain.contains("nba") || domain.contains("basketball")))
-                        {
-                            "nba_analyst"
-                        } else {
-                            let has_domain = self.registry.get(domain_agent).is_ok();
-                            if has_domain { domain_agent } else { "macro_forecaster" }
-                        };
-
-                        let agent = if self.registry.get(heuristic_agent).is_ok() {
-                            heuristic_agent
-                        } else {
-                            "macro_forecaster"
-                        };
-                        let q = formulate_research_query(
-                            &question_text,
-                            &driver_display,
-                            &rationale,
-                            agent,
-                            &domain,
-                            p5,
-                            p50,
-                            p95,
-                        );
-                        (agent.to_string(), q)
+                        domain_agent
                     };
+                    let agent = if self.registry.get(agent).is_ok() {
+                        agent
+                    } else {
+                        "macro_forecaster"
+                    };
+                    (agent.to_string(), suggested_query.clone())
+                } else {
+                    // Keyword heuristics — fermi didn't provide a suggestion
+                    let dl = driver_name.to_lowercase();
+                    let rl = rationale.to_lowercase();
+                    let combined = format!("{} {}", dl, rl);
+
+                    let heuristic_agent = if combined.contains("sentiment")
+                        || combined.contains("opinion")
+                        || combined.contains("perception")
+                        || combined.contains("buzz")
+                        || combined.contains("narrative")
+                        || combined.contains("social media")
+                        || combined.contains("public opinion")
+                    {
+                        "sentiment_analyzer"
+                    } else if combined.contains("entity")
+                        || combined.contains("ownership")
+                        || combined.contains("leadership")
+                        || combined.contains("management")
+                        || combined.contains("regulatory")
+                        || combined.contains("legal")
+                        || combined.contains("compliance")
+                        || combined.contains("investigation")
+                        || combined.contains("regime")
+                        || combined.contains("government")
+                        || combined.contains("military")
+                        || combined.contains("security apparatus")
+                        || combined.contains("cohesion")
+                        || combined.contains("supreme leader")
+                        || combined.contains("succession")
+                    {
+                        "entity_investigator"
+                    } else if combined.contains("protest")
+                        || combined.contains("revolution")
+                        || combined.contains("uprising")
+                        || combined.contains("momentum")
+                        || combined.contains("unrest")
+                        || combined.contains("civil")
+                        || combined.contains("dissent")
+                        || combined.contains("demonstration")
+                    {
+                        "sentiment_analyzer"
+                    } else if combined.contains("market")
+                        || combined.contains("competition")
+                        || combined.contains("competitor")
+                        || combined.contains("partnership")
+                        || combined.contains("revenue")
+                        || combined.contains("pricing")
+                        || combined.contains("demand")
+                        || combined.contains("adoption")
+                        || combined.contains("customer")
+                        || combined.contains("commercial")
+                        || combined.contains("sales")
+                    {
+                        "market_research"
+                    } else if combined.contains("macro")
+                        || combined.contains("economic")
+                        || combined.contains("gdp")
+                        || combined.contains("inflation")
+                        || combined.contains("interest rate")
+                        || combined.contains("fed")
+                        || combined.contains("recession")
+                        || combined.contains("valuation")
+                        || combined.contains("currency")
+                        || combined.contains("sanction")
+                        || combined.contains("crisis")
+                        || combined.contains("trade")
+                        || combined.contains("fiscal")
+                        || combined.contains("monetary")
+                    {
+                        "macro_forecaster"
+                    } else if combined.contains("policy")
+                        || combined.contains("geopolit")
+                        || combined.contains("diplomat")
+                        || combined.contains("interven")
+                        || combined.contains("external")
+                        || combined.contains("foreign")
+                        || combined.contains("international")
+                        || combined.contains("alliance")
+                        || combined.contains("nuclear")
+                    {
+                        "macro_forecaster"
+                    } else if combined.contains("clinical")
+                        || combined.contains("trial")
+                        || combined.contains("fda")
+                        || combined.contains("drug")
+                        || combined.contains("pipeline")
+                        || combined.contains("approval")
+                    {
+                        "biotech_analyst"
+                    } else if combined.contains("stock")
+                        || combined.contains("equity")
+                        || combined.contains("eps")
+                        || combined.contains("p/e")
+                        || combined.contains("earnings")
+                        || combined.contains("share price")
+                        || combined.contains("shareholder")
+                    {
+                        "equity_analyst"
+                    } else if combined.contains("energy")
+                        || combined.contains("oil")
+                        || combined.contains("gas")
+                        || combined.contains("renewable")
+                        || combined.contains("solar")
+                        || combined.contains("wind power")
+                        || combined.contains("carbon")
+                        || combined.contains("emission")
+                    {
+                        "energy_advisor"
+                    } else if combined.contains("nba")
+                        || combined.contains("basketball")
+                        || combined.contains("elo")
+                        || combined.contains("home court")
+                        || (combined.contains("injury")
+                            && (domain.contains("nba") || domain.contains("basketball")))
+                    {
+                        "nba_analyst"
+                    } else {
+                        let has_domain = self.registry.get(domain_agent).is_ok();
+                        if has_domain {
+                            domain_agent
+                        } else {
+                            "macro_forecaster"
+                        }
+                    };
+
+                    let agent = if self.registry.get(heuristic_agent).is_ok() {
+                        heuristic_agent
+                    } else {
+                        "macro_forecaster"
+                    };
+                    let q = formulate_research_query(
+                        &question_text,
+                        &driver_display,
+                        &rationale,
+                        agent,
+                        &domain,
+                        p5,
+                        p50,
+                        p95,
+                    );
+                    (agent.to_string(), q)
+                };
 
                 // Create compound agent name for this driver
                 let compound_name = format!("{}_{}", agent_to_use, sanitize_name(driver_name));
@@ -2364,7 +2534,8 @@ impl CockpitState {
                 self.session_cost += c;
             }
             run.latest_finding = first_finding;
-            self.pending_toasts.push(format!("✓ {} finished research", completed_name));
+            self.pending_toasts
+                .push(format!("✓ {} finished research", completed_name));
         }
 
         if let Some(evidence_arr) = result.get("evidence").and_then(|v| v.as_array()) {
@@ -2398,15 +2569,11 @@ impl CockpitState {
                 });
                 count += 1;
             }
-            if let Some(run) = self
-                .agent_runs
-                .iter_mut()
-                .find(|r| {
-                    r.agent_name == agent_id
-                        || base_agent_name(&r.agent_name) == agent_id
-                        || r.agent_name.starts_with(agent_id)
-                })
-            {
+            if let Some(run) = self.agent_runs.iter_mut().find(|r| {
+                r.agent_name == agent_id
+                    || base_agent_name(&r.agent_name) == agent_id
+                    || r.agent_name.starts_with(agent_id)
+            }) {
                 run.evidence_count = count;
             }
 
@@ -2633,12 +2800,15 @@ impl CockpitState {
             match api.update_forecast(&fid, &body).await {
                 Ok(_) => log::info!(
                     "[research-persist] forecast {} → {} evidence, {} agents",
-                    fid, n_evidence, n_agents
+                    fid,
+                    n_evidence,
+                    n_agents
                 ),
                 Err(e) => log::warn!(
                     "[research-persist] update_forecast failed for {}: {} \
                      — research will be lost if you close before publishing",
-                    fid, e
+                    fid,
+                    e
                 ),
             }
         });
@@ -2971,9 +3141,10 @@ impl CockpitState {
                 // Skip if this exact (agent, driver) pair is already
                 // persisted on the server — we don't want to nag the user
                 // to re-save schedules that exist.
-                let already_persisted = self.schedules.iter().any(|s| {
-                    s.agent_id == agent.name && s.driver_name == *driver_name
-                });
+                let already_persisted = self
+                    .schedules
+                    .iter()
+                    .any(|s| s.agent_id == agent.name && s.driver_name == *driver_name);
                 if already_persisted {
                     continue;
                 }
@@ -3016,8 +3187,8 @@ impl CockpitState {
             query: draft.query.clone(),
             interval_hours: draft.interval_hours,
         };
-        cx.spawn(async move |this, cx| {
-            match api.upsert_forecast_schedule(&fid, &req).await {
+        cx.spawn(
+            async move |this, cx| match api.upsert_forecast_schedule(&fid, &req).await {
                 Ok(_) => {
                     this.update(cx, |state, cx| {
                         state.messages.push(AssistantMessage {
@@ -3045,8 +3216,8 @@ impl CockpitState {
                     })
                     .ok();
                 }
-            }
-        })
+            },
+        )
         .detach();
     }
 
@@ -3309,18 +3480,12 @@ impl CockpitState {
                     // The handler returns either {"value": <obj>} or the
                     // raw object directly depending on whether the row
                     // exists. Tolerate both shapes.
-                    let value = resp
-                        .get("value")
-                        .cloned()
-                        .unwrap_or(resp);
+                    let value = resp.get("value").cloned().unwrap_or(resp);
                     let map = value.as_object().cloned().unwrap_or_default();
                     let n = map.len();
                     this.update(cx, |state, cx| {
                         state.workspace_params = map;
-                        log::info!(
-                            "[workspace-params] loaded {} keys for {}",
-                            n, ws_id
-                        );
+                        log::info!("[workspace-params] loaded {} keys for {}", n, ws_id);
                         cx.notify();
                     })
                     .ok();
@@ -3329,7 +3494,8 @@ impl CockpitState {
                     log::warn!(
                         "[workspace-params] load failed for {}: {} \
                          — sim will fall back to empty param context",
-                        ws_id, e
+                        ws_id,
+                        e
                     );
                 }
             }
@@ -3343,8 +3509,8 @@ impl CockpitState {
         };
         let ws_id = ws_id.clone();
         let api = self.api.clone();
-        cx.spawn(async move |this, cx| {
-            match api.workspace_bayesops_state(&ws_id).await {
+        cx.spawn(
+            async move |this, cx| match api.workspace_bayesops_state(&ws_id).await {
                 Ok(state_value) => {
                     let drivers = state_value
                         .get("drivers")
@@ -3375,7 +3541,9 @@ impl CockpitState {
                                 continue;
                             }
                             let n_observations =
-                                p.get("n_observations").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                                p.get("n_observations")
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(0) as i32;
                             let n_eff = p.get("n_eff").and_then(|v| v.as_f64()).unwrap_or(0.0);
                             let ci_width =
                                 p.get("ci_width").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -3402,8 +3570,8 @@ impl CockpitState {
                 Err(e) => {
                     log::warn!("[bayesops] load_bayesops_state failed: {}", e);
                 }
-            }
-        })
+            },
+        )
         .detach();
     }
 
@@ -3695,14 +3863,14 @@ impl CockpitState {
                 interval_hours: hours,
             };
             let api = self.api.clone();
-            cx.spawn(async move |this, cx| {
-                match api.upsert_forecast_schedule(&fid, &req).await {
+            cx.spawn(
+                async move |this, cx| match api.upsert_forecast_schedule(&fid, &req).await {
                     Ok(_) => {
                         this.update(cx, |state, cx| state.load_schedules(cx)).ok();
                     }
                     Err(e) => log::warn!("[schedule] upsert failed: {}", e),
-                }
-            })
+                },
+            )
             .detach();
         }
 
@@ -3820,9 +3988,7 @@ impl CockpitState {
                     })
                     .detach();
                 } else {
-                    log::info!(
-                        "[schedule] no forecast_id yet — schedule only persisted in AST"
-                    );
+                    log::info!("[schedule] no forecast_id yet — schedule only persisted in AST");
                 }
             }
             Schedule::Cron(_) => {
@@ -4266,28 +4432,20 @@ impl CockpitState {
             .cloned();
 
         let param_names: Option<(String, String, String)> = match &driver_dist_shape {
-            Some(Distribution::Triangular { p5, p50, p95 }) => {
-                match (p5, p50, p95) {
-                    (
-                        Expression::Identifier(p5_name),
-                        Expression::Identifier(p50_name),
-                        Expression::Identifier(p95_name),
-                    ) => Some((p5_name.clone(), p50_name.clone(), p95_name.clone())),
-                    _ => None,
-                }
-            }
+            Some(Distribution::Triangular { p5, p50, p95 }) => match (p5, p50, p95) {
+                (
+                    Expression::Identifier(p5_name),
+                    Expression::Identifier(p50_name),
+                    Expression::Identifier(p95_name),
+                ) => Some((p5_name.clone(), p50_name.clone(), p95_name.clone())),
+                _ => None,
+            },
             _ => None,
         };
 
         if let Some((p5_name, p50_name, p95_name)) = param_names {
             // ── Path A: parameterized → write through to workspace params
-            self.apply_suggestion_to_workspace_params(
-                sug,
-                &p5_name,
-                &p50_name,
-                &p95_name,
-                cx,
-            );
+            self.apply_suggestion_to_workspace_params(sug, &p5_name, &p50_name, &p95_name, cx);
         } else {
             // ── Path B: literal-args distribution, mutate AST directly
             self.apply_suggestion_to_ast_literals(sug, cx);
@@ -4396,7 +4554,8 @@ impl CockpitState {
                     log::warn!(
                         "[apply→params] PUT failed for {}: {} — local cache has the new triple, \
                          next workspace-params reload will revert it",
-                        ws, e
+                        ws,
+                        e
                     );
                 }
                 let _ = api
@@ -4867,15 +5026,14 @@ impl CockpitState {
                     // preserved FPL picks them up. The editor was pre-filled
                     // from these same params on focus, so an un-edited save
                     // round-trips the existing values without clobbering.
-                    let param_refs: Option<(String, String, String)> =
-                        match &driver.distribution {
-                            Some(Distribution::Triangular {
-                                p5: Expression::Identifier(a),
-                                p50: Expression::Identifier(b),
-                                p95: Expression::Identifier(c),
-                            }) => Some((a.clone(), b.clone(), c.clone())),
-                            _ => None,
-                        };
+                    let param_refs: Option<(String, String, String)> = match &driver.distribution {
+                        Some(Distribution::Triangular {
+                            p5: Expression::Identifier(a),
+                            p50: Expression::Identifier(b),
+                            p95: Expression::Identifier(c),
+                        }) => Some((a.clone(), b.clone(), c.clone())),
+                        _ => None,
+                    };
 
                     if param_refs.is_none() {
                         // Literal-args distribution (legacy hand-authored
@@ -4983,7 +5141,8 @@ impl CockpitState {
         if self.is_locked() {
             self.sim_error = Some(format!(
                 "Locked: {}. Re-running a simulation is disabled.",
-                self.lock_reason().unwrap_or_else(|| "forecast is resolved".into())
+                self.lock_reason()
+                    .unwrap_or_else(|| "forecast is resolved".into())
             ));
             self.messages.push(AssistantMessage {
                 node: "simulation".into(),
@@ -5216,7 +5375,8 @@ impl CockpitState {
         executor.set_json_params(json_params);
         log::info!(
             "[sim] Bound {} scalar + {} JSON params from workspace",
-            n_numeric, n_json
+            n_numeric,
+            n_json
         );
 
         match executor.execute(&parsed) {
@@ -5228,8 +5388,7 @@ impl CockpitState {
                 // Capture bin_starts + bin_width so the interactive
                 // histogram (Wiki tab) can map cursor x → outcome value
                 // without re-executing the simulation.
-                let bin_starts: Vec<f64> =
-                    histogram_data.iter().map(|(start, _)| *start).collect();
+                let bin_starts: Vec<f64> = histogram_data.iter().map(|(start, _)| *start).collect();
                 let bin_width = if bin_starts.len() >= 2 {
                     bin_starts[1] - bin_starts[0]
                 } else {
@@ -5245,10 +5404,18 @@ impl CockpitState {
                             ::fermi::executor::LearnableSource::Fitted { fitted } => {
                                 LearnableBadgeStatus::Fitted {
                                     family: match fitted {
-                                        ::posterior::FittedDistribution::Beta { .. } => "beta".into(),
-                                        ::posterior::FittedDistribution::Normal { .. } => "normal".into(),
-                                        ::posterior::FittedDistribution::Lognormal { .. } => "lognormal".into(),
-                                        ::posterior::FittedDistribution::Triangular { .. } => "triangular".into(),
+                                        ::posterior::FittedDistribution::Beta { .. } => {
+                                            "beta".into()
+                                        }
+                                        ::posterior::FittedDistribution::Normal { .. } => {
+                                            "normal".into()
+                                        }
+                                        ::posterior::FittedDistribution::Lognormal { .. } => {
+                                            "lognormal".into()
+                                        }
+                                        ::posterior::FittedDistribution::Triangular { .. } => {
+                                            "triangular".into()
+                                        }
                                     },
                                     n_eff: fitted.n_eff(),
                                     ci_width: fitted.ci_width(),
@@ -5265,7 +5432,10 @@ impl CockpitState {
                                 LearnableBadgeStatus::PriorFallback
                             }
                         };
-                        LearnableDriverBadge { driver_name: r.name.clone(), status }
+                        LearnableDriverBadge {
+                            driver_name: r.name.clone(),
+                            status,
+                        }
                     })
                     .collect();
 
@@ -5374,7 +5544,9 @@ impl CockpitState {
                     format!(
                         "Inside view: model evaluates to {:.3} (p5={:.3}, p95={:.3}). \
                          Key drivers: {}.",
-                        results.mean, results.p5, results.p95,
+                        results.mean,
+                        results.p5,
+                        results.p95,
                         top_drivers.join(", "),
                     )
                 };
@@ -5580,46 +5752,81 @@ impl CockpitState {
                     // Collect Sobol indices if available
                     let sobol = sensitivity.as_ref().ok().map(|sa| {
                         let top = sa.top_drivers(10);
-                        top.iter().map(|ds| {
-                            (ds.driver_name.clone(), serde_json::json!({
-                                "first_order": ds.first_order_index,
-                                "total_order": ds.total_order_index,
-                            }))
-                        }).collect::<serde_json::Map<String, serde_json::Value>>()
+                        top.iter()
+                            .map(|ds| {
+                                (
+                                    ds.driver_name.clone(),
+                                    serde_json::json!({
+                                        "first_order": ds.first_order_index,
+                                        "total_order": ds.total_order_index,
+                                    }),
+                                )
+                            })
+                            .collect::<serde_json::Map<String, serde_json::Value>>()
                     });
                     // Driver scores
-                    let driver_scores: serde_json::Map<String, serde_json::Value> = self.program.drivers().iter().map(|d| {
-                        let val = match d.driver_type {
-                            DriverType::Continuous => {
-                                if let Some(Distribution::Triangular { ref p50, .. }) = d.distribution {
-                                    expr_to_f64(p50)
-                                } else { 1.0 }
-                            }
-                            DriverType::Binary => d.probability.unwrap_or(0.5),
-                            _ => 1.0,
-                        };
-                        (d.name.clone(), serde_json::json!(val))
-                    }).collect();
+                    let driver_scores: serde_json::Map<String, serde_json::Value> = self
+                        .program
+                        .drivers()
+                        .iter()
+                        .map(|d| {
+                            let val = match d.driver_type {
+                                DriverType::Continuous => {
+                                    if let Some(Distribution::Triangular { ref p50, .. }) =
+                                        d.distribution
+                                    {
+                                        expr_to_f64(p50)
+                                    } else {
+                                        1.0
+                                    }
+                                }
+                                DriverType::Binary => d.probability.unwrap_or(0.5),
+                                _ => 1.0,
+                            };
+                            (d.name.clone(), serde_json::json!(val))
+                        })
+                        .collect();
 
                     tokio::spawn(async move {
                         // Publish predicted_probability
-                        let _ = api.set_workspace_output(&ws, "predicted_probability",
-                            &serde_json::json!(prob)).await;
+                        let _ = api
+                            .set_workspace_output(
+                                &ws,
+                                "predicted_probability",
+                                &serde_json::json!(prob),
+                            )
+                            .await;
                         // Publish forecast_confidence
-                        let _ = api.set_workspace_output(&ws, "forecast_confidence",
-                            &serde_json::json!(conf)).await;
+                        let _ = api
+                            .set_workspace_output(
+                                &ws,
+                                "forecast_confidence",
+                                &serde_json::json!(conf),
+                            )
+                            .await;
                         // Publish simulation_results
-                        let _ = api.set_workspace_output(&ws, "simulation_results",
-                            &serde_json::json!({
-                                "mean": mean, "p5": p5, "p95": p95, "std_dev": std_dev,
-                            })).await;
+                        let _ = api
+                            .set_workspace_output(
+                                &ws,
+                                "simulation_results",
+                                &serde_json::json!({
+                                    "mean": mean, "p5": p5, "p95": p95, "std_dev": std_dev,
+                                }),
+                            )
+                            .await;
                         // Publish driver_scores
-                        let _ = api.set_workspace_output(&ws, "driver_scores",
-                            &serde_json::json!(driver_scores)).await;
+                        let _ = api
+                            .set_workspace_output(
+                                &ws,
+                                "driver_scores",
+                                &serde_json::json!(driver_scores),
+                            )
+                            .await;
                         // Publish sobol_indices if available
                         if let Some(si) = sobol {
-                            let _ = api.set_workspace_output(&ws, "sobol_indices",
-                                &serde_json::json!(si)).await;
+                            let _ = api
+                                .set_workspace_output(&ws, "sobol_indices", &serde_json::json!(si))
+                                .await;
                         }
                         log::info!("[workspace] Published outputs to {}", ws);
                     });
@@ -5795,9 +6002,7 @@ impl CockpitState {
         // Use line-start matching where possible to avoid false positives
         // from prose ("the macro factor agent reads..."). agent / param at
         // line start is unambiguously a statement keyword.
-        let has_top_level = |kw: &str| {
-            fpl.starts_with(kw) || fpl.contains(&format!("\n{}", kw))
-        };
+        let has_top_level = |kw: &str| fpl.starts_with(kw) || fpl.contains(&format!("\n{}", kw));
         has_top_level("agent ")
             || has_top_level("param ")
             || has_top_level("factor ")
@@ -6115,22 +6320,40 @@ impl CockpitState {
                 }
                 // Restore Polymarket link
                 if let Some(pm) = state_json.get("polymarket").and_then(|v| v.as_object()) {
-                    self.pm_event_id = pm.get("event_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    self.pm_market_id = pm.get("market_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    self.pm_question = pm.get("question").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    self.pm_event_id = pm
+                        .get("event_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    self.pm_market_id = pm
+                        .get("market_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    self.pm_question = pm
+                        .get("question")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     self.pm_market_price = pm.get("market_price").and_then(|v| v.as_f64());
                     self.pm_volume_24h = pm.get("volume_24h").and_then(|v| v.as_f64());
                     self.pm_liquidity = pm.get("liquidity").and_then(|v| v.as_f64());
-                    self.pm_confidence = pm.get("confidence").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    self.pm_confidence = pm
+                        .get("confidence")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     self.pm_price_change_1w = pm.get("price_change_1w").and_then(|v| v.as_f64());
-                    self.pm_url = pm.get("url").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    self.pm_url = pm
+                        .get("url")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     // Restore price history
                     if let Some(hist) = pm.get("price_history").and_then(|v| v.as_array()) {
-                        self.pm_price_history = hist.iter().filter_map(|h| {
-                            let t = h.get("t").and_then(|v| v.as_u64())?;
-                            let p = h.get("p").and_then(|v| v.as_f64())?;
-                            Some((t, p))
-                        }).collect();
+                        self.pm_price_history = hist
+                            .iter()
+                            .filter_map(|h| {
+                                let t = h.get("t").and_then(|v| v.as_u64())?;
+                                let p = h.get("p").and_then(|v| v.as_f64())?;
+                                Some((t, p))
+                            })
+                            .collect();
                     }
                     if self.pm_event_id.is_some() {
                         log::info!("[load] Restored Polymarket link: event={}, price={:.1}%, {} history points",
@@ -6139,6 +6362,10 @@ impl CockpitState {
                             self.pm_price_history.len());
                         // Auto-resume PM polling at 5-minute interval
                         self.pm_poll_interval = Some(std::time::Duration::from_secs(5 * 60));
+                        // Fire one immediate snapshot so the crowd
+                        // number is live-accurate on restore rather
+                        // than the last-saved value.
+                        self.refresh_pm_price_now(cx);
                     }
                 }
                 // Restore workspace_id
@@ -6507,6 +6734,8 @@ impl CockpitState {
     // ── Access / sharing (Spec 24 §3.5.2) ──────────────────────────────
 
     /// Fetch the current shares for this forecast into the Access tab.
+    /// Also kicks off a parallel invite-list fetch so the operator sees
+    /// outbound pending invitations alongside materialised shares.
     pub fn load_shares(&mut self, cx: &mut Context<Self>) {
         let Some(fid) = self.forecast_id.clone() else {
             return;
@@ -6517,6 +6746,7 @@ impl CockpitState {
         cx.notify();
 
         let api = self.api.clone();
+        let fid_clone = fid.clone();
         cx.spawn(async move |this, cx| {
             let result = api.list_forecast_shares(&fid).await;
             this.update(cx, |state, cx| {
@@ -6524,6 +6754,69 @@ impl CockpitState {
                 match result {
                     Ok(resp) => state.shares = resp.shares,
                     Err(e) => state.share_error = Some(e.to_string()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+
+        self.load_forecast_invites(fid_clone, cx);
+    }
+
+    /// Fetch pending/terminal invites for this forecast into
+    /// `forecast_invites`. Called by `load_shares` and after every
+    /// send/revoke so the Access tab stays in sync.
+    pub fn load_forecast_invites(&mut self, forecast_id: String, cx: &mut Context<Self>) {
+        self.forecast_invites_loading = true;
+        cx.notify();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.list_forecast_invites(&forecast_id).await;
+            this.update(cx, |state, cx| {
+                state.forecast_invites_loading = false;
+                match result {
+                    Ok(resp) => {
+                        if state.forecast_id.as_deref() == Some(forecast_id.as_str()) {
+                            state.forecast_invites = resp.invites;
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to fetch forecast invites: {}", e);
+                        // Non-fatal — keep existing list.
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Revoke a pending forecast invite by id, then refresh.
+    pub fn revoke_forecast_invite(&mut self, invite_id: String, cx: &mut Context<Self>) {
+        if !self
+            .forecast_invite_revoke_in_flight
+            .insert(invite_id.clone())
+        {
+            return;
+        }
+        cx.notify();
+        let api = self.api.clone();
+        let fid = self.forecast_id.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.revoke_invite(&invite_id).await;
+            this.update(cx, |state, cx| {
+                state.forecast_invite_revoke_in_flight.remove(&invite_id);
+                match result {
+                    Ok(()) => {
+                        if let Some(fid) = fid {
+                            state.load_forecast_invites(fid, cx);
+                        }
+                    }
+                    Err(e) => {
+                        state.share_error = Some(format!("Revoke failed: {}", e));
+                    }
                 }
                 cx.notify();
             })
@@ -6557,7 +6850,11 @@ impl CockpitState {
             let is_email = raw.contains('@');
             // Resolve emails to a user_id when an account exists.
             let resolved_user = if is_email {
-                api.lookup_user(&raw).await.ok().flatten().map(|u| u.user_id)
+                api.lookup_user(&raw)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|u| u.user_id)
             } else {
                 Some(raw.clone())
             };
@@ -6648,7 +6945,11 @@ impl CockpitState {
             for (raw, permission) in targets {
                 let is_email = raw.contains('@');
                 let resolved = if is_email {
-                    api.lookup_user(&raw).await.ok().flatten().map(|u| u.user_id)
+                    api.lookup_user(&raw)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|u| u.user_id)
                 } else {
                     Some(raw.clone())
                 };
@@ -6689,9 +6990,10 @@ impl CockpitState {
                         total,
                         failures.join("; ")
                     ));
-                    state
-                        .pending_toasts
-                        .push(format!("{} share(s) failed — see publish status", failures.len()));
+                    state.pending_toasts.push(format!(
+                        "{} share(s) failed — see publish status",
+                        failures.len()
+                    ));
                 } else if ok > 0 {
                     state.pending_toasts.push(format!("Shared with {}", ok));
                 }
@@ -6712,7 +7014,8 @@ impl CockpitState {
         if self.is_locked() {
             self.publish_status = Some(format!(
                 "Locked: {}. Saving new snapshots is disabled.",
-                self.lock_reason().unwrap_or_else(|| "forecast is resolved".into())
+                self.lock_reason()
+                    .unwrap_or_else(|| "forecast is resolved".into())
             ));
             cx.notify();
             return;
@@ -6777,13 +7080,16 @@ impl CockpitState {
         let api = self.api.clone();
         let fpl = self.cached_fpl.clone();
         let prob = self.predicted_probability;
-        let res_crit = self.program.question().and_then(|q| q.resolution_criteria.clone());
+        let res_crit = self
+            .program
+            .question()
+            .and_then(|q| q.resolution_criteria.clone());
         let target_date = self.program.question().and_then(|q| q.target_date.clone());
         let ci_low = self.sim_results.as_ref().map(|s| s.p5);
         let ci_high = self.sim_results.as_ref().map(|s| s.p95);
-        let sim_results_json = self.sim_results.as_ref().map(|s| {
-            serde_json::json!({ "mean": s.mean, "median": s.median, "p5": s.p5, "p95": s.p95 })
-        });
+        let sim_results_json = self.sim_results.as_ref().map(
+            |s| serde_json::json!({ "mean": s.mean, "median": s.median, "p5": s.p5, "p95": s.p95 }),
+        );
         let existing_fid = self.forecast_id.clone();
 
         cx.spawn(async move |this, cx| {
@@ -7485,7 +7791,10 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
                     // the full message lives in the assistant messages
                     // panel (the messages.push at the publish call site).
                     let msg = state.publish_status.as_deref().unwrap_or("").to_string();
-                    let color = if msg.starts_with("Failed") || msg.contains("error") || msg.contains("Error") {
+                    let color = if msg.starts_with("Failed")
+                        || msg.contains("error")
+                        || msg.contains("Error")
+                    {
                         theme::RED
                     } else if msg.contains("Publishing") || msg.contains("…") {
                         theme::GOLD
@@ -7600,9 +7909,7 @@ impl AnchorTriad {
     /// True when there's at least one delta to display (so we have a reason
     /// to render the chip strip at all).
     fn has_any_delta(&self) -> bool {
-        self.delta_io_pp.is_some()
-            || self.delta_ic_pp.is_some()
-            || self.delta_oc_pp.is_some()
+        self.delta_io_pp.is_some() || self.delta_ic_pp.is_some() || self.delta_oc_pp.is_some()
     }
 }
 
@@ -7775,8 +8082,7 @@ fn render_interactive_histogram(
                 0.0
             };
             // CDF up to end of this bin
-            let cdf_count: u64 =
-                sim.histogram[..=idx].iter().map(|&c| c as u64).sum();
+            let cdf_count: u64 = sim.histogram[..=idx].iter().map(|&c| c as u64).sum();
             let cdf_pct = if total > 0 {
                 cdf_count as f64 / total as f64 * 100.0
             } else {
@@ -7788,7 +8094,10 @@ fn render_interactive_histogram(
                 format!("CDF: {:.0}th percentile", cdf_pct),
             ];
             // Signed distance to each anchor (in pp of outcome).
-            lines.push(format!("Δ from model: {:+.1}pp", outcome - triad.inside_pct));
+            lines.push(format!(
+                "Δ from model: {:+.1}pp",
+                outcome - triad.inside_pct
+            ));
             if let Some(o) = triad.outside_pct {
                 lines.push(format!("Δ from base: {:+.1}pp", outcome - o));
             }
@@ -7929,16 +8238,12 @@ fn render_interactive_histogram(
                 .when(triad.crowd_pct.is_some(), |el| {
                     el.child(div().text_color(rgb(theme::PURPLE)).child("│ crowd"))
                 })
-                .child(
-                    div()
-                        .text_color(rgb(theme::FG_FAINT))
-                        .child(format!(
-                            "p5–p95: {:.0}% – {:.0}% · {} iters",
-                            sim.p5 * 100.0,
-                            sim.p95 * 100.0,
-                            sim.iterations
-                        )),
-                ),
+                .child(div().text_color(rgb(theme::FG_FAINT)).child(format!(
+                    "p5–p95: {:.0}% – {:.0}% · {} iters",
+                    sim.p5 * 100.0,
+                    sim.p95 * 100.0,
+                    sim.iterations
+                ))),
         )
         .into_any_element()
 }
@@ -7989,12 +8294,8 @@ fn render_interactive_index_chart(
     let n = history.len();
     let chart_w_u = chart_w as u32;
     let chart_h_u = chart_h as u32;
-    let rgb_buf = crate::charts::render_index_chart(
-        &history,
-        n.saturating_sub(1),
-        chart_w_u,
-        chart_h_u,
-    );
+    let rgb_buf =
+        crate::charts::render_index_chart(&history, n.saturating_sub(1), chart_w_u, chart_h_u);
     let render_img = crate::charts::rgb_to_render_image(&rgb_buf, chart_w_u, chart_h_u);
 
     // Per-version hover columns. Each column is centered on the x-pixel
@@ -8022,7 +8323,9 @@ fn render_interactive_index_chart(
                 "model: {:.1}%   base: {:.1}%{}",
                 inside,
                 outside,
-                crowd.map(|c| format!("   crowd: {:.1}%", c)).unwrap_or_default()
+                crowd
+                    .map(|c| format!("   crowd: {:.1}%", c))
+                    .unwrap_or_default()
             ));
             lines.push(format!(
                 "Δ(model−base): {:+.1}pp{}",
@@ -8539,6 +8842,27 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                                     .text_color(rgb(theme::FG_FAINT))
                                     .child("Crowd price refresh:"),
                             )
+                            // Manual "refresh now" — fires an immediate
+                            // snapshot regardless of the polling cadence,
+                            // so the operator never has to wait 5–60 min
+                            // to see a live crowd value after landing on
+                            // the forecast.
+                            .child(
+                                div()
+                                    .id("pm-refresh-now")
+                                    .px(px(6.0))
+                                    .py(px(1.0))
+                                    .rounded(px(2.0))
+                                    .text_size(px(8.0))
+                                    .bg(rgb(theme::BG))
+                                    .text_color(rgb(theme::CYAN))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.refresh_pm_price_now(cx);
+                                    }))
+                                    .child("↻ Refresh now"),
+                            )
                             .children(schedules.into_iter().map(|(label, secs)| {
                                 let is_active = if secs == 0 {
                                     current_interval == 0
@@ -8705,10 +9029,7 @@ fn render_driver_card(
                         // this and breaks the card header layout).
                         .overflow_hidden()
                         .child({
-                            let raw = driver
-                                .display_name
-                                .as_deref()
-                                .unwrap_or(&driver.name);
+                            let raw = driver.display_name.as_deref().unwrap_or(&driver.name);
                             // Soft cap at 22 chars so 'institutional_capacity'
                             // and 'tactical_efficiency' fit alongside the
                             // type/learnable chips without truncation
@@ -8741,9 +9062,13 @@ fn render_driver_card(
                 .when(driver.learnable, |el| {
                     match learnable_status {
                         Some(LearnableDriverBadge {
-                            status: LearnableBadgeStatus::PendingReview {
-                                pending_id, delta_pp, n_observations, ..
-                            },
+                            status:
+                                LearnableBadgeStatus::PendingReview {
+                                    pending_id,
+                                    delta_pp,
+                                    n_observations,
+                                    ..
+                                },
                             driver_name: pending_driver,
                         }) => {
                             // Compose label: "↻ pending +6pp" or "↻ pending"
@@ -8828,10 +9153,12 @@ fn render_driver_card(
                         _ => {
                             let (badge_text, badge_color) = match learnable_status {
                                 Some(LearnableDriverBadge {
-                                    status: LearnableBadgeStatus::Fitted { n_eff, .. }, ..
+                                    status: LearnableBadgeStatus::Fitted { n_eff, .. },
+                                    ..
                                 }) => (format!("✓ fit n={:.0}", n_eff), theme::GREEN),
                                 Some(LearnableDriverBadge {
-                                    status: LearnableBadgeStatus::PriorFallback, ..
+                                    status: LearnableBadgeStatus::PriorFallback,
+                                    ..
                                 }) => ("⏳ prior".to_string(), theme::GOLD),
                                 _ => ("◌ learnable".to_string(), theme::CYAN),
                             };
@@ -8873,9 +9200,9 @@ fn render_driver_card(
                         if v95 > v5 {
                             // Match sparkline bg to card bg so it blends seamlessly
                             let card_bg = if is_focused {
-                                plotters::prelude::RGBColor(61, 68, 85)  // BG_ACTIVE
+                                plotters::prelude::RGBColor(61, 68, 85) // BG_ACTIVE
                             } else {
-                                plotters::prelude::RGBColor(39, 45, 56)  // BG_ELEVATED
+                                plotters::prelude::RGBColor(39, 45, 56) // BG_ELEVATED
                             };
                             let chart_w = 120u32;
                             let chart_h = 24u32;
@@ -8898,7 +9225,11 @@ fn render_driver_card(
                             let evidence_label = if ev_count == 0 {
                                 "no evidence yet".to_string()
                             } else {
-                                format!("{} evidence item{}", ev_count, if ev_count == 1 { "" } else { "s" })
+                                format!(
+                                    "{} evidence item{}",
+                                    ev_count,
+                                    if ev_count == 1 { "" } else { "s" }
+                                )
                             };
 
                             el.child(
@@ -10305,10 +10636,20 @@ fn render_learnable_toggle(
         // tightness signal. This is the magic moment for the user: their
         // hand-typed prior was just replaced by a data-informed posterior.
         Some(LearnableDriverBadge {
-            status: LearnableBadgeStatus::Fitted { family, n_eff, ci_width },
+            status:
+                LearnableBadgeStatus::Fitted {
+                    family,
+                    n_eff,
+                    ci_width,
+                },
             ..
         }) => Some((
-            format!("✓ fitted · {} · n={:.0} · 90% CI ±{:.2}", family, n_eff, ci_width / 2.0),
+            format!(
+                "✓ fitted · {} · n={:.0} · 90% CI ±{:.2}",
+                family,
+                n_eff,
+                ci_width / 2.0
+            ),
             theme::GREEN,
         )),
         // Driver is learnable but no fit was found — cold start. The prior
@@ -10324,11 +10665,19 @@ fn render_learnable_toggle(
         // doesn't gate the decision — the per-driver sparkline badge has the
         // accept/dismiss buttons. We just show a heads-up chip here.
         Some(LearnableDriverBadge {
-            status: LearnableBadgeStatus::PendingReview { delta_pp, n_observations, .. },
+            status:
+                LearnableBadgeStatus::PendingReview {
+                    delta_pp,
+                    n_observations,
+                    ..
+                },
             ..
         }) => Some((
             match delta_pp {
-                Some(d) => format!("↻ pending fit · Δ{:+.1}pp · n={} · review in sparkline", d, n_observations),
+                Some(d) => format!(
+                    "↻ pending fit · Δ{:+.1}pp · n={} · review in sparkline",
+                    d, n_observations
+                ),
                 None => format!("↻ pending fit · n={} · review in sparkline", n_observations),
             },
             theme::GOLD,
@@ -10361,12 +10710,7 @@ fn render_learnable_toggle(
         .child(toggle);
 
     if let Some((text, color)) = status_chip {
-        row = row.child(
-            div()
-                .text_size(px(10.0))
-                .text_color(rgb(color))
-                .child(text),
-        );
+        row = row.child(div().text_size(px(10.0)).text_color(rgb(color)).child(text));
     }
 
     row
@@ -10617,13 +10961,12 @@ fn render_driver_editor_and_evidence(
             // Persisted schedules for this driver (so the operator can
             // tell at a glance which agents are already on a recurring
             // schedule vs which are just attached).
-            let driver_schedules: std::collections::HashMap<String, ForecastSchedule> =
-                state
-                    .schedules
-                    .iter()
-                    .filter(|s| s.driver_name == name && s.enabled)
-                    .map(|s| (s.agent_id.clone(), s.clone()))
-                    .collect();
+            let driver_schedules: std::collections::HashMap<String, ForecastSchedule> = state
+                .schedules
+                .iter()
+                .filter(|s| s.driver_name == name && s.enabled)
+                .map(|s| (s.agent_id.clone(), s.clone()))
+                .collect();
 
             el.child(
                 div()
@@ -10639,10 +10982,7 @@ fn render_driver_editor_and_evidence(
                             .text_size(px(11.0))
                             .text_color(rgb(theme::CYAN))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(format!(
-                                "Scheduled research ({})",
-                                assigned_agents.len()
-                            )),
+                            .child(format!("Scheduled research ({})", assigned_agents.len())),
                     )
                     .child({
                         let mut col = div().flex().flex_col().gap(px(6.0));
@@ -10653,8 +10993,7 @@ fn render_driver_editor_and_evidence(
                             // once here so closures + lookups use the
                             // right id.
                             let bound = bound_name.clone();
-                            let base_id =
-                                base_agent_id_for_bound(&bound, &driver_name_owned);
+                            let base_id = base_agent_id_for_bound(&bound, &driver_name_owned);
 
                             let dn_run = driver_name_owned.clone();
                             let baid_run = base_id.clone();
@@ -10723,9 +11062,7 @@ fn render_driver_editor_and_evidence(
                                                         .bg(rgb(theme::BG))
                                                         .border_1()
                                                         .border_color(rgb(theme::GREEN))
-                                                        .child(
-                                                            active_label.unwrap().clone(),
-                                                        ),
+                                                        .child(active_label.unwrap().clone()),
                                                 )
                                             })
                                             .child(
@@ -10743,11 +11080,8 @@ fn render_driver_editor_and_evidence(
                                             .child(
                                                 div()
                                                     .id(ElementId::Name(
-                                                        format!(
-                                                            "editor-run-{}-{}",
-                                                            name, base_id
-                                                        )
-                                                        .into(),
+                                                        format!("editor-run-{}-{}", name, base_id)
+                                                            .into(),
                                                     ))
                                                     .text_size(px(10.0))
                                                     .text_color(rgb(theme::CYAN))
@@ -10875,13 +11209,9 @@ fn render_driver_editor_and_evidence(
                         // Char-aware truncation — `&str[..117]` panics if
                         // byte 117 lands mid-codepoint. Agent output can
                         // contain Unicode (em-dashes, 'Türkiye' etc.).
-                        let display_summary = if is_collapsed
-                            && summary_text.chars().count() > 120
+                        let display_summary = if is_collapsed && summary_text.chars().count() > 120
                         {
-                            format!(
-                                "{}…",
-                                summary_text.chars().take(117).collect::<String>()
-                            )
+                            format!("{}…", summary_text.chars().take(117).collect::<String>())
                         } else {
                             summary_text.clone()
                         };
@@ -11249,11 +11579,10 @@ fn render_assistant_panel(messages: &[AssistantMessage]) -> impl IntoElement {
 /// settled state — and the fact that re-sims / new snapshots are disabled —
 /// explicit, so the operator doesn't have to carry that context. Includes a
 /// ↻ Reconcile button to re-pull server state on demand.
-fn render_locked_banner(
-    state: &CockpitState,
-    cx: &mut Context<CockpitState>,
-) -> impl IntoElement {
-    let reason = state.lock_reason().unwrap_or_else(|| "Resolved".to_string());
+fn render_locked_banner(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl IntoElement {
+    let reason = state
+        .lock_reason()
+        .unwrap_or_else(|| "Resolved".to_string());
     let outcome_color = match state.forecast_outcome {
         Some(true) => theme::GREEN,
         Some(false) => theme::RED,
@@ -11269,7 +11598,12 @@ fn render_locked_banner(
         .bg(rgb(theme::BG_ELEVATED))
         .border_b_1()
         .border_color(rgb(outcome_color))
-        .child(div().text_size(px(14.0)).text_color(rgb(outcome_color)).child("🔒"))
+        .child(
+            div()
+                .text_size(px(14.0))
+                .text_color(rgb(outcome_color))
+                .child("🔒"),
+        )
         .child(
             div()
                 .text_size(px(12.0))
@@ -11281,7 +11615,10 @@ fn render_locked_banner(
             div()
                 .text_size(px(11.0))
                 .text_color(rgb(theme::FG_DIM))
-                .child(format!("settled at {} · re-sims & new snapshots disabled", pct)),
+                .child(format!(
+                    "settled at {} · re-sims & new snapshots disabled",
+                    pct
+                )),
         )
         .child(div().flex_grow())
         .child(
@@ -11296,7 +11633,11 @@ fn render_locked_banner(
                 .cursor_pointer()
                 .hover(|s| s.bg(rgb(theme::BG_HOVER)))
                 .on_click(cx.listener(|this, _, _w, cx| this.reconcile_forecast(cx)))
-                .child(if state.reconciling { "↻ Reconciling…" } else { "↻ Reconcile" }),
+                .child(if state.reconciling {
+                    "↻ Reconciling…"
+                } else {
+                    "↻ Reconcile"
+                }),
         )
 }
 
@@ -11439,10 +11780,7 @@ fn render_fermi_banner(
 /// Forecast Index — the key visualization section shown above drivers.
 /// Displays inside/outside divergence, simulation stats, histogram,
 /// index comparison chart, and evidence treemap.
-fn render_forecast_index(
-    state: &CockpitState,
-    cx: &mut Context<CockpitState>,
-) -> impl IntoElement {
+fn render_forecast_index(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl IntoElement {
     let has_base_rate = state
         .program
         .question()
@@ -11903,8 +12241,7 @@ fn render_pinned_suggestions(
                 .children(driver_suggestions.iter().map(|sug| {
                     let accept_id = sug.id.clone();
                     let reject_id = sug.id.clone();
-                    let delta_pct =
-                        (sug.suggested_p50 / sug.current_p50.max(0.001) - 1.0) * 100.0;
+                    let delta_pct = (sug.suggested_p50 / sug.current_p50.max(0.001) - 1.0) * 100.0;
                     let (arrow, delta_color) = if delta_pct > 0.0 {
                         ("↑", theme::GREEN)
                     } else {
@@ -11980,11 +12317,9 @@ fn render_pinned_suggestions(
                                         .font_weight(FontWeight::BOLD)
                                         .cursor_pointer()
                                         .hover(|s| s.opacity(0.8))
-                                        .on_click(cx.listener(
-                                            move |this, _event, _window, cx| {
-                                                this.accept_suggestion(&accept_id, cx);
-                                            },
-                                        ))
+                                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                                            this.accept_suggestion(&accept_id, cx);
+                                        }))
                                         .child("✓ Apply"),
                                 )
                                 .child(
@@ -12002,11 +12337,9 @@ fn render_pinned_suggestions(
                                         .text_size(px(11.0))
                                         .cursor_pointer()
                                         .hover(|s| s.bg(rgb(theme::BG_HOVER)))
-                                        .on_click(cx.listener(
-                                            move |this, _event, _window, cx| {
-                                                this.reject_suggestion(&reject_id, cx);
-                                            },
-                                        ))
+                                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                                            this.reject_suggestion(&reject_id, cx);
+                                        }))
                                         .child("✗ Reject"),
                                 ),
                         )
@@ -12237,10 +12570,7 @@ fn render_tab_bar(active: RightTab, cx: &mut Context<CockpitState>) -> impl Into
 /// Spec 24 §3.5.2 — the cockpit "Access" tab. Lists who can see/edit this
 /// forecast and lets the owner add (by user_id or email) or revoke
 /// collaborators at view/edit/admin granularity.
-fn render_access_tab(
-    state: &CockpitState,
-    cx: &mut Context<CockpitState>,
-) -> impl IntoElement {
+fn render_access_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl IntoElement {
     let container = div()
         .id("access-tab")
         .flex()
@@ -12256,9 +12586,7 @@ fn render_access_tab(
                 .p(px(8.0))
                 .text_size(px(11.0))
                 .text_color(rgb(theme::FG_DIM))
-                .child(
-                    "Publish this forecast first (Ctrl+P) to share it with people or teams.",
-                ),
+                .child("Publish this forecast first (Ctrl+P) to share it with people or teams."),
         );
     }
 
@@ -12326,7 +12654,11 @@ fn render_access_tab(
                         .on_click(cx.listener(|this, _, _w, cx| {
                             this.add_share_from_input(cx);
                         }))
-                        .child(if state.share_add_loading { "Adding…" } else { "Add" }),
+                        .child(if state.share_add_loading {
+                            "Adding…"
+                        } else {
+                            "Add"
+                        }),
                 ),
         )
         // Error line
@@ -12361,7 +12693,17 @@ fn render_access_tab(
         // Share rows
         .children(state.shares.iter().map(|s| {
             let sid = s.id.clone();
-            let icon = if s.share_type == "team" { "👥" } else { "🧑" };
+            let icon = if s.share_type == "team" {
+                "👥"
+            } else {
+                "🧑"
+            };
+            // Prefer server-resolved display name; fall back to raw id.
+            let primary_label = s
+                .share_target_display_name
+                .clone()
+                .unwrap_or_else(|| s.share_target.clone());
+            let show_subtitle = s.share_target_display_name.is_some();
             div()
                 .flex()
                 .items_center()
@@ -12375,9 +12717,23 @@ fn render_access_tab(
                     div()
                         .flex_grow()
                         .overflow_hidden()
-                        .text_size(px(11.0))
-                        .text_color(rgb(theme::FG))
-                        .child(s.share_target.clone()),
+                        .flex()
+                        .flex_col()
+                        .gap(px(1.0))
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(rgb(theme::FG))
+                                .child(primary_label),
+                        )
+                        .when(show_subtitle, |el| {
+                            el.child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(theme::FG_FAINT))
+                                    .child(s.share_target.clone()),
+                            )
+                        }),
                 )
                 .child(
                     div()
@@ -12408,12 +12764,147 @@ fn render_access_tab(
                         .child("✕"),
                 )
         }))
+        // ── Sent invites (pending + recent terminal) ──────────────────
+        //
+        // Distinct from shares: an invite is an INTENT to grant access,
+        // which materialises as a share row on accept. Surfacing them
+        // here means the operator can see "Alice — pending (view)"
+        // right after clicking Add, without waiting for the invitee to
+        // accept and the row to move from `forecast_invites` into
+        // `shares`.
+        .child(render_forecast_invites_section(state, cx))
 }
 
-fn render_schedules_tab(
+fn render_forecast_invites_section(
     state: &CockpitState,
     cx: &mut Context<CockpitState>,
 ) -> impl IntoElement {
+    let pending: Vec<&Invite> = state
+        .forecast_invites
+        .iter()
+        .filter(|i| i.status == "pending")
+        .collect();
+    let recent_terminal: Vec<&Invite> = state
+        .forecast_invites
+        .iter()
+        .filter(|i| i.status != "pending")
+        .take(3)
+        .collect();
+
+    let mut container = div().flex().flex_col().gap(px(6.0)).mt(px(8.0)).child(
+        div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(theme::FG_DIM))
+                    .child(format!("Sent invites ({} pending)", pending.len())),
+            )
+            .when(state.forecast_invites_loading, |el| {
+                el.child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG_FAINT))
+                        .child("loading…"),
+                )
+            }),
+    );
+
+    if pending.is_empty() && recent_terminal.is_empty() && !state.forecast_invites_loading {
+        container = container.child(
+            div()
+                .text_size(px(10.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .child("No outbound invitations. Add an email above to send one."),
+        );
+        return container;
+    }
+
+    for inv in pending.iter().chain(recent_terminal.iter()) {
+        let iid = inv.id.clone();
+        let is_pending = inv.status == "pending";
+        let in_flight = state.forecast_invite_revoke_in_flight.contains(&inv.id);
+        let recipient = inv
+            .invitee_display_name
+            .clone()
+            .or_else(|| inv.invitee_email.clone())
+            .or_else(|| inv.invitee_user_id.clone())
+            .unwrap_or_else(|| "(unknown)".to_string());
+        let status_color = match inv.status.as_str() {
+            "pending" => rgb(theme::GOLD),
+            "accepted" => rgb(theme::GREEN),
+            "declined" => rgb(theme::RED),
+            "revoked" => rgb(theme::FG_DIM),
+            "expired" => rgb(theme::FG_FAINT),
+            _ => rgb(theme::FG_DIM),
+        };
+        let mut row = div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .px(px(10.0))
+            .py(px(6.0))
+            .rounded(px(6.0))
+            .bg(rgb(theme::BG_ELEVATED))
+            .child(div().text_size(px(12.0)).child("✉"))
+            .child(
+                div()
+                    .flex_grow()
+                    .flex()
+                    .flex_col()
+                    .gap(px(1.0))
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(rgb(theme::FG))
+                            .child(recipient),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(9.0))
+                            .text_color(rgb(theme::FG_FAINT))
+                            .child(format!("{} access", inv.permission)),
+                    ),
+            )
+            .child(
+                div()
+                    .px(px(8.0))
+                    .py(px(2.0))
+                    .rounded(px(4.0))
+                    .bg(rgb(theme::BG_ACTIVE))
+                    .text_size(px(10.0))
+                    .text_color(status_color)
+                    .child(inv.status.clone()),
+            );
+        if is_pending {
+            row = row.child(
+                div()
+                    .id(ElementId::Name(format!("finv-revoke-{}", iid).into()))
+                    .px(px(6.0))
+                    .py(px(2.0))
+                    .rounded(px(4.0))
+                    .text_size(px(11.0))
+                    .text_color(rgb(theme::FG_DIM))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::RED)))
+                    .on_click(cx.listener({
+                        let iid = iid.clone();
+                        move |this, _, _w, cx| {
+                            this.revoke_forecast_invite(iid.clone(), cx);
+                        }
+                    }))
+                    .child(if in_flight { "…" } else { "Revoke" }),
+            );
+        }
+        container = container.child(row);
+    }
+    container
+}
+
+fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl IntoElement {
     let has_forecast_id = state.forecast_id.is_some();
     let schedules = state.schedules.clone();
     let now = chrono::Utc::now();
@@ -12569,7 +13060,10 @@ fn render_schedules_tab(
                                         .child({
                                             let q = &draft.query;
                                             if q.chars().count() > 110 {
-                                                format!("{}…", q.chars().take(108).collect::<String>())
+                                                format!(
+                                                    "{}…",
+                                                    q.chars().take(108).collect::<String>()
+                                                )
                                             } else {
                                                 q.clone()
                                             }
@@ -12693,72 +13187,104 @@ fn render_schedules_tab(
                                         let sid_o = sched.id.clone();
                                         let is_active = sched.interval_hours == 0;
                                         div()
-                                            .id(ElementId::Name(format!("schedules-tab-o-{}", sid_o).into()))
+                                            .id(ElementId::Name(
+                                                format!("schedules-tab-o-{}", sid_o).into(),
+                                            ))
                                             .text_size(px(10.0))
-                                            .text_color(if is_active { rgb(theme::GOLD) } else { rgb(theme::FG_DIM) })
+                                            .text_color(if is_active {
+                                                rgb(theme::GOLD)
+                                            } else {
+                                                rgb(theme::FG_DIM)
+                                            })
                                             .px(px(6.0))
                                             .py(px(3.0))
                                             .rounded(px(3.0))
                                             .bg(rgb(theme::BG))
                                             .cursor_pointer()
                                             .hover(|s| s.bg(rgb(theme::BG_HOVER)))
-                                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                this.change_schedule_interval(&sid_o, 0, cx);
-                                            }))
+                                            .on_click(cx.listener(
+                                                move |this, _event, _window, cx| {
+                                                    this.change_schedule_interval(&sid_o, 0, cx);
+                                                },
+                                            ))
                                             .child("On-demand")
                                     })
                                     .child({
                                         let sid_d = sched.id.clone();
                                         let is_active = sched.interval_hours == 24;
                                         div()
-                                            .id(ElementId::Name(format!("schedules-tab-d-{}", sid_d).into()))
+                                            .id(ElementId::Name(
+                                                format!("schedules-tab-d-{}", sid_d).into(),
+                                            ))
                                             .text_size(px(10.0))
-                                            .text_color(if is_active { rgb(theme::GOLD) } else { rgb(theme::FG_DIM) })
+                                            .text_color(if is_active {
+                                                rgb(theme::GOLD)
+                                            } else {
+                                                rgb(theme::FG_DIM)
+                                            })
                                             .px(px(6.0))
                                             .py(px(3.0))
                                             .rounded(px(3.0))
                                             .bg(rgb(theme::BG))
                                             .cursor_pointer()
                                             .hover(|s| s.bg(rgb(theme::BG_HOVER)))
-                                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                this.change_schedule_interval(&sid_d, 24, cx);
-                                            }))
+                                            .on_click(cx.listener(
+                                                move |this, _event, _window, cx| {
+                                                    this.change_schedule_interval(&sid_d, 24, cx);
+                                                },
+                                            ))
                                             .child("Daily")
                                     })
                                     .child({
                                         let sid_w = sched.id.clone();
                                         let is_active = sched.interval_hours == 168;
                                         div()
-                                            .id(ElementId::Name(format!("schedules-tab-w-{}", sid_w).into()))
+                                            .id(ElementId::Name(
+                                                format!("schedules-tab-w-{}", sid_w).into(),
+                                            ))
                                             .text_size(px(10.0))
-                                            .text_color(if is_active { rgb(theme::GOLD) } else { rgb(theme::FG_DIM) })
+                                            .text_color(if is_active {
+                                                rgb(theme::GOLD)
+                                            } else {
+                                                rgb(theme::FG_DIM)
+                                            })
                                             .px(px(6.0))
                                             .py(px(3.0))
                                             .rounded(px(3.0))
                                             .bg(rgb(theme::BG))
                                             .cursor_pointer()
                                             .hover(|s| s.bg(rgb(theme::BG_HOVER)))
-                                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                this.change_schedule_interval(&sid_w, 168, cx);
-                                            }))
+                                            .on_click(cx.listener(
+                                                move |this, _event, _window, cx| {
+                                                    this.change_schedule_interval(&sid_w, 168, cx);
+                                                },
+                                            ))
                                             .child("Weekly")
                                     })
                                     .child({
                                         let sid_m = sched.id.clone();
                                         let is_active = sched.interval_hours == 720;
                                         div()
-                                            .id(ElementId::Name(format!("schedules-tab-m-{}", sid_m).into()))
+                                            .id(ElementId::Name(
+                                                format!("schedules-tab-m-{}", sid_m).into(),
+                                            ))
                                             .text_size(px(10.0))
-                                            .text_color(if is_active { rgb(theme::GOLD) } else { rgb(theme::FG_DIM) })
+                                            .text_color(if is_active {
+                                                rgb(theme::GOLD)
+                                            } else {
+                                                rgb(theme::FG_DIM)
+                                            })
                                             .px(px(6.0))
                                             .py(px(3.0))
                                             .rounded(px(3.0))
                                             .bg(rgb(theme::BG))
                                             .cursor_pointer()
                                             .hover(|s| s.bg(rgb(theme::BG_HOVER)))
-                                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                this.change_schedule_interval(&sid_m, 720, cx);
-                                            }))
+                                            .on_click(cx.listener(
+                                                move |this, _event, _window, cx| {
+                                                    this.change_schedule_interval(&sid_m, 720, cx);
+                                                },
+                                            ))
                                             .child("Monthly")
                                     })
                                     .child(
@@ -12776,9 +13302,11 @@ fn render_schedules_tab(
                                             .border_color(rgb(theme::CYAN))
                                             .cursor_pointer()
                                             .hover(|s| s.bg(rgb(theme::BG_HOVER)))
-                                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                this.run_now_schedule(&sid_run, cx);
-                                            }))
+                                            .on_click(cx.listener(
+                                                move |this, _event, _window, cx| {
+                                                    this.run_now_schedule(&sid_run, cx);
+                                                },
+                                            ))
                                             .child("▶ Run Now"),
                                     )
                                     .child(
@@ -12794,9 +13322,11 @@ fn render_schedules_tab(
                                             .bg(rgb(theme::BG))
                                             .cursor_pointer()
                                             .hover(|s| s.text_color(rgb(theme::RED)))
-                                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                this.delete_schedule(&sid_del, cx);
-                                            }))
+                                            .on_click(cx.listener(
+                                                move |this, _event, _window, cx| {
+                                                    this.delete_schedule(&sid_del, cx);
+                                                },
+                                            ))
                                             .child("× Delete"),
                                     ),
                             )
@@ -12810,26 +13340,18 @@ fn render_schedules_tab(
                                             .text_color(rgb(theme::FG_FAINT))
                                             .child(format!("last: {}", last_str)),
                                     )
-                                    .child(
-                                        div()
-                                            .text_color(next_color)
-                                            .child(format!(
-                                                "next: {}{}",
-                                                next_str,
-                                                if is_overdue { " (overdue)" } else { "" }
-                                            )),
-                                    ),
+                                    .child(div().text_color(next_color).child(format!(
+                                        "next: {}{}",
+                                        next_str,
+                                        if is_overdue { " (overdue)" } else { "" }
+                                    ))),
                             )
                             .child(
                                 div()
                                     .text_size(px(9.0))
                                     .text_color(rgb(theme::FG_FAINT))
                                     .child(
-                                        sched
-                                            .query
-                                            .chars()
-                                            .take(120)
-                                            .collect::<String>()
+                                        sched.query.chars().take(120).collect::<String>()
                                             + if sched.query.len() > 120 { "…" } else { "" },
                                     ),
                             )
@@ -12916,10 +13438,7 @@ fn render_schedules_tab(
 // load-bearing affordance — the user can trace causation by reading
 // rows.
 
-fn render_trajectory_tab(
-    state: &CockpitState,
-    cx: &mut Context<CockpitState>,
-) -> impl IntoElement {
+fn render_trajectory_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl IntoElement {
     let body = if state.timeline_loading {
         div()
             .flex()
@@ -13054,9 +13573,7 @@ fn render_trajectory_body(
                 "rate_revision" => crate::charts::TrajectoryEventKind::RateRevision,
                 "bayesops_fit" => crate::charts::TrajectoryEventKind::BayesOpsFit,
                 "agent_run" => crate::charts::TrajectoryEventKind::AgentRun,
-                "market_observation" => {
-                    crate::charts::TrajectoryEventKind::MarketObservation
-                }
+                "market_observation" => crate::charts::TrajectoryEventKind::MarketObservation,
                 _ => crate::charts::TrajectoryEventKind::AgentRun,
             };
             let rate_pct = ev
@@ -13083,10 +13600,61 @@ fn render_trajectory_body(
         .map(|br| br.historical_frequency * 100.0);
     let crowd_price_pct = state.pm_market_price.map(|p| p * 100.0);
 
+    // ── Crowd worm: parse `market_series` from the timeline response.
+    //
+    // Each entry is `{ ts, market_price }` on the same wall-clock axis
+    // as the model's rate series. Convert to the chart's chart
+    // (seconds-since-earliest, percent) coordinate space — same origin
+    // as `worm_points` so the two lines share a time axis exactly.
+    //
+    // We also append the operator's LIVE `pm_market_price` (from the
+    // 5-min PM poll) as a final synthetic point at "now" so the worm
+    // extends up to the current moment even if the last recorded
+    // observation is stale. Without this, a forecast whose last
+    // snapshot was 20 min ago shows the crowd line ending well before
+    // the model line — misleading, since the crowd DOES have a
+    // current value.
+    let market_series_json = data
+        .get("market_series")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut crowd_points: Vec<crate::charts::TrajectoryPoint> = market_series_json
+        .iter()
+        .filter_map(|p| {
+            let ts = parse_ts(p.get("ts")?.as_str()?)?;
+            let price = p.get("market_price")?.as_f64()?;
+            let t_secs = (ts - earliest?).num_milliseconds() as f64 / 1000.0;
+            Some(crate::charts::TrajectoryPoint {
+                t_seconds: t_secs,
+                rate_pct: price * 100.0,
+            })
+        })
+        .collect();
+    // Append "now" as a synthetic tip so the crowd worm always reaches
+    // the right edge of the chart. Skip when the live price agrees with
+    // the last recorded observation (avoids a duplicate point).
+    if let (Some(price), Some(base)) = (state.pm_market_price, earliest) {
+        let now = chrono::Utc::now();
+        let t_secs = (now - base).num_milliseconds() as f64 / 1000.0;
+        let live_pct = price * 100.0;
+        let is_dupe = crowd_points
+            .last()
+            .map(|p| (p.rate_pct - live_pct).abs() < 0.05 && (t_secs - p.t_seconds).abs() < 30.0)
+            .unwrap_or(false);
+        if !is_dupe {
+            crowd_points.push(crate::charts::TrajectoryPoint {
+                t_seconds: t_secs,
+                rate_pct: live_pct,
+            });
+        }
+    }
+
     let chart_w: u32 = 800;
     let chart_h: u32 = 240;
     let worm_buf = crate::charts::render_trajectory_worm(
         &worm_points,
+        &crowd_points,
         &worm_events,
         base_rate_pct,
         crowd_price_pct,
@@ -13100,6 +13668,7 @@ fn render_trajectory_body(
     let event_pixels = crate::charts::trajectory_event_pixel_positions(
         &worm_events,
         &worm_points,
+        &crowd_points,
         base_rate_pct,
         crowd_price_pct,
         chart_w,
@@ -13131,23 +13700,33 @@ fn render_trajectory_body(
                 .child(format!("{} rate revisions", rate_count))
                 .child(format!("{} market observations", market_count))
                 .child(match (first_rate, last_rate, net_change_pp) {
-                    (Some(f), Some(l), Some(d)) => format!(
-                        "{:.1}% → {:.1}% ({:+.1}pp)",
-                        f * 100.0,
-                        l * 100.0,
-                        d
-                    ),
+                    (Some(f), Some(l), Some(d)) => {
+                        format!("model {:.1}% → {:.1}% ({:+.1}pp)", f * 100.0, l * 100.0, d)
+                    }
                     _ => "no rate revisions yet".into(),
                 })
+                // Crowd trajectory delta — shows first → last crowd price
+                // across the same window as the model row above. If the
+                // model moved +8pp but the crowd moved +9pp, they're
+                // walking together; if the model moved +8pp and the
+                // crowd moved −2pp, we're the ones taking a position.
+                .when(!crowd_points.is_empty(), {
+                    let first = crowd_points.first().map(|p| p.rate_pct);
+                    let last = crowd_points.last().map(|p| p.rate_pct);
+                    move |el| match (first, last) {
+                        (Some(f), Some(l)) => {
+                            el.child(format!("crowd {:.1}% → {:.1}% ({:+.1}pp)", f, l, l - f))
+                        }
+                        _ => el,
+                    }
+                })
                 .when(crowd_price_pct.is_some(), move |el| {
+                    // Live divergence: latest model rate vs latest crowd price.
                     let div_pp = match (last_rate, crowd_price_pct) {
                         (Some(l), Some(c)) => Some(l * 100.0 - c),
                         _ => None,
                     };
-                    el.child(format!(
-                        "vs crowd: {:+.1}pp",
-                        div_pp.unwrap_or(0.0)
-                    ))
+                    el.child(format!("vs crowd: {:+.1}pp", div_pp.unwrap_or(0.0)))
                 }),
         );
 
@@ -13187,19 +13766,17 @@ fn render_trajectory_body(
                 .w(px(hit_size))
                 .h(px(hit_size))
                 .cursor_pointer()
-                .on_hover(cx.listener(
-                    move |this, hovered: &bool, _window, cx| {
-                        if *hovered {
-                            if this.hovered_trajectory_event != Some(idx) {
-                                this.hovered_trajectory_event = Some(idx);
-                                cx.notify();
-                            }
-                        } else if this.hovered_trajectory_event == Some(idx) {
-                            this.hovered_trajectory_event = None;
+                .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
+                    if *hovered {
+                        if this.hovered_trajectory_event != Some(idx) {
+                            this.hovered_trajectory_event = Some(idx);
                             cx.notify();
                         }
-                    },
-                )),
+                    } else if this.hovered_trajectory_event == Some(idx) {
+                        this.hovered_trajectory_event = None;
+                        cx.notify();
+                    }
+                })),
         );
     }
 
@@ -13274,11 +13851,7 @@ fn legend_chip(glyph: &str, color: u32, label: &str) -> impl IntoElement {
         .flex()
         .items_center()
         .gap(px(4.0))
-        .child(
-            div()
-                .text_color(rgb(color))
-                .child(glyph.to_string()),
-        )
+        .child(div().text_color(rgb(color)).child(glyph.to_string()))
         .child(label.to_string())
 }
 
@@ -13318,9 +13891,7 @@ fn render_trajectory_event(ev: &JsonValue) -> AnyElement {
                 .get("predicted_probability")
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.0);
-            let prev = ev
-                .get("previous_probability")
-                .and_then(|v| v.as_f64());
+            let prev = ev.get("previous_probability").and_then(|v| v.as_f64());
             let trigger = ev
                 .get("revision_trigger")
                 .and_then(|v| v.as_str())
@@ -13343,12 +13914,18 @@ fn render_trajectory_event(ev: &JsonValue) -> AnyElement {
             (theme::CYAN, "●", headline, detail)
         }
         "bayesops_fit" => {
-            let driver = ev.get("driver_name").and_then(|v| v.as_str()).unwrap_or("?");
+            let driver = ev
+                .get("driver_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             let decision = ev
                 .get("decision")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown");
-            let n = ev.get("n_observations").and_then(|v| v.as_i64()).unwrap_or(0);
+            let n = ev
+                .get("n_observations")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
             let delta_pp = ev.get("delta_pp").and_then(|v| v.as_f64());
             let headline = match delta_pp {
                 Some(d) => format!(
@@ -13435,7 +14012,12 @@ fn render_trajectory_event(ev: &JsonValue) -> AnyElement {
                 .chars()
                 .take(120)
                 .collect::<String>();
-            (theme::FG_DIM, "·", format!("{} · {}", kind, headline), String::new())
+            (
+                theme::FG_DIM,
+                "·",
+                format!("{} · {}", kind, headline),
+                String::new(),
+            )
         }
     };
 
@@ -15214,7 +15796,11 @@ fn generate_evidence_wiki(
         } else {
             "Significant disagreement — verify assumptions"
         };
-        let direction = if divergence_pp >= 0.0 { "above" } else { "below" };
+        let direction = if divergence_pp >= 0.0 {
+            "above"
+        } else {
+            "below"
+        };
         md.push_str(&format!(
             "| Metric | Value |\n|---|---|\n| Crowd price | **{:.1}%** |\n| Fermi estimate | **{:.1}%** |\n| Divergence | {:+.1}pp {} crowd ({}) |\n",
             crowd_price * 100.0,
@@ -15237,8 +15823,18 @@ fn generate_evidence_wiki(
             md.push_str(&format!("| Market confidence | {} |\n", conf));
         }
         if let Some(chg) = pm_price_change_1w {
-            let arrow = if chg > 0.005 { "↑" } else if chg < -0.005 { "↓" } else { "→" };
-            md.push_str(&format!("| 1-week trend | {} {:+.1}pp |\n", arrow, chg * 100.0));
+            let arrow = if chg > 0.005 {
+                "↑"
+            } else if chg < -0.005 {
+                "↓"
+            } else {
+                "→"
+            };
+            md.push_str(&format!(
+                "| 1-week trend | {} {:+.1}pp |\n",
+                arrow,
+                chg * 100.0
+            ));
         }
         if let Some(url) = pm_url {
             md.push_str(&format!("\n[View on Polymarket]({})\n", url));

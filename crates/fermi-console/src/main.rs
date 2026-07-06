@@ -15,7 +15,6 @@ use api::client::{
     PatchPortfolioRequest, Portfolio, PortfolioForecast, PortfolioStats, ShareEntry, ShareRequest,
     Team, TeamDetail,
 };
-use std::collections::{HashMap, HashSet};
 use cockpit::CockpitState;
 use composer::ComposerState;
 use fermi::agent_backend::{
@@ -24,6 +23,7 @@ use fermi::agent_backend::{
 use gpui::prelude::*;
 use gpui::*;
 use serde_json::Value as JsonValue;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use text_input::TextInput;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -487,6 +487,15 @@ struct FermiConsole {
     /// Loaded detail (team + members) for `selected_team_id`.
     selected_team_detail: Option<TeamDetail>,
     team_detail_loading: bool,
+    /// Pending + terminal invites addressed to the selected team,
+    /// keyed by team_id. Populated by `fetch_team_invites` after each
+    /// team-detail load so the operator can see outbound invitations
+    /// ("Alice — pending (member) · [Revoke]") alongside the accepted
+    /// members list.
+    team_invites: Vec<Invite>,
+    team_invites_loading: bool,
+    /// Invite IDs with a revoke in flight; disables the button.
+    team_invite_revoke_in_flight: std::collections::HashSet<String>,
     /// "Create team" modal state.
     team_create_showing: bool,
     team_create_name_input: Entity<TextInput>,
@@ -566,15 +575,12 @@ impl FermiConsole {
                 .with_placeholder("team-slug (lowercase, no spaces)")
                 .with_label("Slug")
         });
-        let team_invite_input = cx.new(|cx| {
-            TextInput::new(cx).with_placeholder("email or user id…")
-        });
-        let commit_share_input = cx.new(|cx| {
-            TextInput::new(cx).with_placeholder("Add person by email or user id…")
-        });
-        let portfolio_share_input = cx.new(|cx| {
-            TextInput::new(cx).with_placeholder("email or user id…")
-        });
+        let team_invite_input =
+            cx.new(|cx| TextInput::new(cx).with_placeholder("email or user id…"));
+        let commit_share_input =
+            cx.new(|cx| TextInput::new(cx).with_placeholder("Add person by email or user id…"));
+        let portfolio_share_input =
+            cx.new(|cx| TextInput::new(cx).with_placeholder("email or user id…"));
 
         let mut console = Self {
             active_panel: Panel::Dashboard,
@@ -664,6 +670,9 @@ impl FermiConsole {
             selected_team_id: None,
             selected_team_detail: None,
             team_detail_loading: false,
+            team_invites: Vec::new(),
+            team_invites_loading: false,
+            team_invite_revoke_in_flight: std::collections::HashSet::new(),
             team_create_showing: false,
             team_create_name_input,
             team_create_slug_input,
@@ -772,8 +781,8 @@ impl FermiConsole {
                                 this.sign_in_loading = false;
                                 this.sign_in_error = None;
                                 this.oauth_port = None;
-                                this.user_display_name = me.display_name.clone();
-                                log::info!("[oauth] Connected as: {:?}", me.display_name);
+                                this.user_display_name = Some(me.friendly_label());
+                                log::info!("[oauth] Connected as: {:?}", me.friendly_label());
                                 this.fetch_all_data(cx);
                                 cx.notify();
                             })
@@ -823,7 +832,13 @@ impl FermiConsole {
 
     /// Show a transient toast notification. Auto-dismisses after 3 seconds.
     /// `icon` is a short emoji/symbol, `color` is a theme constant.
-    fn show_toast(&mut self, message: impl Into<String>, icon: &'static str, color: u32, cx: &mut Context<Self>) {
+    fn show_toast(
+        &mut self,
+        message: impl Into<String>,
+        icon: &'static str,
+        color: u32,
+        cx: &mut Context<Self>,
+    ) {
         self.toast = Some((message.into(), icon, color));
         cx.notify();
         // Schedule dismissal after 3 s.
@@ -857,8 +872,8 @@ impl FermiConsole {
                         this.connected = true;
                         this.sign_in_loading = false;
                         this.sign_in_error = None;
-                        this.user_display_name = me.display_name.clone();
-                        log::info!("Connected as: {:?}", me.display_name);
+                        this.user_display_name = Some(me.friendly_label());
+                        log::info!("Connected as: {:?}", me.friendly_label());
                         this.fetch_all_data(cx);
                     })
                     .ok();
@@ -1008,33 +1023,101 @@ impl FermiConsole {
         .detach();
     }
 
-    /// Load the member roster for one team into the right pane.
+    /// Load the member roster for one team into the right pane. Also
+    /// kicks off a parallel fetch of the team's pending/terminal invite
+    /// list so the operator sees invitations they've sent alongside the
+    /// members list — the two views together tell the whole story.
     fn fetch_team_detail(&mut self, team_id: &str, cx: &mut Context<Self>) {
         self.team_detail_loading = true;
         let api = self.api.clone();
         let team_id = team_id.to_string();
+        // Kick off the invite fetch in parallel with the detail fetch;
+        // both target the same team_id but have disjoint state slots.
+        self.fetch_team_invites(team_id.clone(), cx);
 
-        cx.spawn(async move |this, cx| match api.get_team_detail(&team_id).await {
-            Ok(detail) => {
-                this.update(cx, |this, cx| {
-                    // Ignore stale responses if the user clicked away.
-                    if this.selected_team_id.as_deref() == Some(detail.team.id.as_str()) {
-                        this.selected_team_detail = Some(detail);
+        cx.spawn(
+            async move |this, cx| match api.get_team_detail(&team_id).await {
+                Ok(detail) => {
+                    this.update(cx, |this, cx| {
+                        // Ignore stale responses if the user clicked away.
+                        if this.selected_team_id.as_deref() == Some(detail.team.id.as_str()) {
+                            this.selected_team_detail = Some(detail);
+                        }
+                        this.team_detail_loading = false;
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => {
+                    log::error!("Failed to fetch team detail: {}", e);
+                    this.update(cx, |this, cx| {
+                        this.team_detail_loading = false;
+                        this.team_action_error = Some(e.to_string());
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            },
+        )
+        .detach();
+    }
+
+    /// Fetch the pending+terminal invite list for a team into
+    /// `team_invites`. Called by `fetch_team_detail` and after every
+    /// send/revoke action so the UI stays in sync.
+    fn fetch_team_invites(&mut self, team_id: String, cx: &mut Context<Self>) {
+        self.team_invites_loading = true;
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.list_team_invites(&team_id).await;
+            this.update(cx, |this, cx| {
+                this.team_invites_loading = false;
+                match result {
+                    Ok(resp) => {
+                        // Guard against stale responses if the user clicked away.
+                        if this.selected_team_id.as_deref() == Some(team_id.as_str()) {
+                            this.team_invites = resp.invites;
+                        }
                     }
-                    this.team_detail_loading = false;
-                    cx.notify();
-                })
-                .ok();
-            }
-            Err(e) => {
-                log::error!("Failed to fetch team detail: {}", e);
-                this.update(cx, |this, cx| {
-                    this.team_detail_loading = false;
-                    this.team_action_error = Some(e.to_string());
-                    cx.notify();
-                })
-                .ok();
-            }
+                    Err(e) => {
+                        log::warn!("Failed to fetch team invites: {}", e);
+                        // Non-fatal — leave existing list alone so a
+                        // transient blip doesn't clear the UI.
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Revoke a pending invite for the selected team, then refresh both
+    /// the members roster (no-op since it hasn't accepted) and the
+    /// invite list (which will show status='revoked' next fetch).
+    fn revoke_team_invite(&mut self, invite_id: String, cx: &mut Context<Self>) {
+        if !self.team_invite_revoke_in_flight.insert(invite_id.clone()) {
+            return;
+        }
+        cx.notify();
+        let api = self.api.clone();
+        let team_id = self.selected_team_id.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.revoke_invite(&invite_id).await;
+            this.update(cx, |this, cx| {
+                this.team_invite_revoke_in_flight.remove(&invite_id);
+                match result {
+                    Ok(()) => {
+                        this.show_toast("Invite revoked", "✓", theme::FG_DIM, cx);
+                        if let Some(tid) = team_id {
+                            this.fetch_team_invites(tid, cx);
+                        }
+                    }
+                    Err(e) => this.show_toast(format!("Revoke failed: {}", e), "✕", theme::RED, cx),
+                }
+                cx.notify();
+            })
+            .ok();
         })
         .detach();
     }
@@ -1045,6 +1128,7 @@ impl FermiConsole {
         }
         self.selected_team_id = Some(team_id.clone());
         self.selected_team_detail = None;
+        self.team_invites.clear();
         self.team_invite_showing = false;
         self.team_action_error = None;
         self.fetch_team_detail(&team_id, cx);
@@ -1053,8 +1137,18 @@ impl FermiConsole {
 
     /// Create a team from the modal inputs, then refresh the team list.
     fn create_team_from_input(&mut self, cx: &mut Context<Self>) {
-        let name = self.team_create_name_input.read(cx).text().trim().to_string();
-        let slug = self.team_create_slug_input.read(cx).text().trim().to_string();
+        let name = self
+            .team_create_name_input
+            .read(cx)
+            .text()
+            .trim()
+            .to_string();
+        let slug = self
+            .team_create_slug_input
+            .read(cx)
+            .text()
+            .trim()
+            .to_string();
         if name.is_empty() || slug.is_empty() {
             self.team_create_error = Some("Name and slug are required".into());
             cx.notify();
@@ -1140,6 +1234,10 @@ impl FermiConsole {
                         this.team_invite_showing = false;
                         invite_input.update(cx, |inp, cx| inp.set_text("", cx));
                         this.show_toast("Invite sent", "✓", theme::GREEN, cx);
+                        // Refresh both the roster (in case the invitee
+                        // was already a member and it degenerated to
+                        // an idempotent noop) AND the invite list so
+                        // the pending row appears immediately.
                         this.fetch_team_detail(&team_id, cx);
                     }
                     Err(e) => {
@@ -1302,7 +1400,12 @@ impl FermiConsole {
         let Some(pid) = self.selected_portfolio_id.clone() else {
             return;
         };
-        let raw = self.portfolio_share_input.read(cx).text().trim().to_string();
+        let raw = self
+            .portfolio_share_input
+            .read(cx)
+            .text()
+            .trim()
+            .to_string();
         if raw.is_empty() {
             return;
         }
@@ -1314,7 +1417,11 @@ impl FermiConsole {
         cx.spawn(async move |this, cx| {
             let is_email = raw.contains('@');
             let resolved = if is_email {
-                api.lookup_user(&raw).await.ok().flatten().map(|u| u.user_id)
+                api.lookup_user(&raw)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|u| u.user_id)
             } else {
                 Some(raw.clone())
             };
@@ -1456,19 +1563,20 @@ impl FermiConsole {
                         .child(self.portfolio_share_error.clone().unwrap_or_default()),
                 )
             })
-            .child(
-                div()
-                    .text_size(px(10.0))
-                    .text_color(theme::fg_dim())
-                    .child(if self.portfolio_shares_loading {
-                        "Loading shares…".to_string()
-                    } else {
-                        format!("Shared with ({})", self.portfolio_shares.len())
-                    }),
-            )
+            .child(div().text_size(px(10.0)).text_color(theme::fg_dim()).child(
+                if self.portfolio_shares_loading {
+                    "Loading shares…".to_string()
+                } else {
+                    format!("Shared with ({})", self.portfolio_shares.len())
+                },
+            ))
             .children(self.portfolio_shares.iter().map(|s| {
                 let sid = s.id.clone();
-                let icon = if s.share_type == "team" { "👥" } else { "🧑" };
+                let icon = if s.share_type == "team" {
+                    "👥"
+                } else {
+                    "🧑"
+                };
                 div()
                     .flex()
                     .items_center()
@@ -1733,10 +1841,7 @@ impl FermiConsole {
         let api = self.api.clone();
         cx.spawn(async move |this, cx| {
             // Spawn onto tokio runtime for proper I/O
-            let result = tokio::spawn(async move {
-                api.list_forecast_workspaces().await
-            })
-            .await;
+            let result = tokio::spawn(async move { api.list_forecast_workspaces().await }).await;
 
             match result {
                 Ok(Ok(resp)) => {
@@ -1745,29 +1850,56 @@ impl FermiConsole {
                         .and_then(|v| v.as_array())
                         .cloned()
                         .unwrap_or_default();
-                    log::info!("[workspaces] Fetched {} fermi_forecast workspaces", workspaces.len());
+                    log::info!(
+                        "[workspaces] Fetched {} fermi_forecast workspaces",
+                        workspaces.len()
+                    );
 
                     // Parse workspace metadata from the list response — no per-workspace
                     // HTTP calls. Params are extracted from workspace name pattern.
                     let mut forecasts: Vec<WorkspaceForecast> = Vec::new();
                     for ws in &workspaces {
-                        let ws_id = ws.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let name = ws.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let created = ws.get("created_at").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let forecast_id = ws.get("forecast_id").and_then(|v| v.as_str()).map(String::from);
+                        let ws_id = ws
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let name = ws
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let created = ws
+                            .get("created_at")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let forecast_id = ws
+                            .get("forecast_id")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
 
                         // Parse team info from workspace name pattern:
                         // "Team Prior — Argentina (ARG)" or "Tournament Path — Group B"
-                        let (team_name, team_id, group, program_type, elo) = if name.starts_with("Team Prior") {
+                        let (team_name, team_id, group, program_type, elo) = if name
+                            .starts_with("Team Prior")
+                        {
                             // Extract team name from "Team Prior — Name (ID)"
                             let after_dash = name.strip_prefix("Team Prior — ").unwrap_or(&name);
-                            let tn = after_dash.split(" (").next().unwrap_or(after_dash).to_string();
-                            let tid = after_dash.split('(').nth(1)
+                            let tn = after_dash
+                                .split(" (")
+                                .next()
+                                .unwrap_or(after_dash)
+                                .to_string();
+                            let tid = after_dash
+                                .split('(')
+                                .nth(1)
                                 .and_then(|s| s.strip_suffix(')'))
                                 .map(|s| s.to_string());
                             (Some(tn), tid, None, Some("TEAM_PRIOR".to_string()), None)
                         } else if name.starts_with("Tournament Path") {
-                            let grp = name.strip_prefix("Tournament Path — Group ")
+                            let grp = name
+                                .strip_prefix("Tournament Path — Group ")
                                 .map(|s| s.to_string());
                             (None, None, grp, Some("TOURNAMENT_PATH".to_string()), None)
                         } else {
@@ -1791,27 +1923,31 @@ impl FermiConsole {
                     this.update(cx, |this, cx| {
                         // Dedup by workspace name (batch script re-runs create duplicates)
                         let mut seen = std::collections::HashSet::new();
-                        let deduped: Vec<WorkspaceForecast> = forecasts.into_iter()
+                        let deduped: Vec<WorkspaceForecast> = forecasts
+                            .into_iter()
                             .filter(|wf| seen.insert(wf.workspace_name.clone()))
                             .collect();
                         this.workspace_forecasts = deduped;
                         this.workspace_forecasts_loading = false;
                         cx.notify();
-                    }).ok();
+                    })
+                    .ok();
                 }
                 Ok(Err(e)) => {
                     log::error!("[workspaces] Failed to fetch: {}", e);
                     this.update(cx, |this, cx| {
                         this.workspace_forecasts_loading = false;
                         cx.notify();
-                    }).ok();
+                    })
+                    .ok();
                 }
                 Err(e) => {
                     log::error!("[workspaces] Task error: {}", e);
                     this.update(cx, |this, cx| {
                         this.workspace_forecasts_loading = false;
                         cx.notify();
-                    }).ok();
+                    })
+                    .ok();
                 }
             }
         })
@@ -1953,29 +2089,31 @@ impl FermiConsole {
     fn fetch_pending_cascades(&mut self, cx: &mut Context<Self>) {
         self.pending_cascades_loading = true;
         let api = self.api.clone();
-        cx.spawn(async move |this, cx| match api.list_pending_cascades().await {
-            Ok(resp) => {
-                let pending = resp
-                    .get("pending")
-                    .and_then(|v| v.as_array())
-                    .cloned()
-                    .unwrap_or_default();
-                this.update(cx, |this, cx| {
-                    this.pending_cascades = pending;
-                    this.pending_cascades_loading = false;
-                    cx.notify();
-                })
-                .ok();
-            }
-            Err(e) => {
-                log::warn!("[pending-cascades] fetch failed: {}", e);
-                this.update(cx, |this, cx| {
-                    this.pending_cascades_loading = false;
-                    cx.notify();
-                })
-                .ok();
-            }
-        })
+        cx.spawn(
+            async move |this, cx| match api.list_pending_cascades().await {
+                Ok(resp) => {
+                    let pending = resp
+                        .get("pending")
+                        .and_then(|v| v.as_array())
+                        .cloned()
+                        .unwrap_or_default();
+                    this.update(cx, |this, cx| {
+                        this.pending_cascades = pending;
+                        this.pending_cascades_loading = false;
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => {
+                    log::warn!("[pending-cascades] fetch failed: {}", e);
+                    this.update(cx, |this, cx| {
+                        this.pending_cascades_loading = false;
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            },
+        )
         .detach();
     }
 
@@ -1991,10 +2129,7 @@ impl FermiConsole {
                 this.cascade_action_in_flight.remove(&cid);
                 match result {
                     Ok(resp) => {
-                        let n = resp
-                            .get("n_updated")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
+                        let n = resp.get("n_updated").and_then(|v| v.as_u64()).unwrap_or(0);
                         this.toast = Some((
                             format!("Cascade applied — {} forecasts updated.", n),
                             "✓",
@@ -2011,11 +2146,7 @@ impl FermiConsole {
                         }
                     }
                     Err(e) => {
-                        this.toast = Some((
-                            format!("Apply failed: {}", e),
-                            "✗",
-                            theme::RED,
-                        ));
+                        this.toast = Some((format!("Apply failed: {}", e), "✗", theme::RED));
                     }
                 }
                 cx.notify();
@@ -2037,19 +2168,11 @@ impl FermiConsole {
                 this.cascade_action_in_flight.remove(&cid);
                 match result {
                     Ok(_) => {
-                        this.toast = Some((
-                            "Cascade dismissed.".into(),
-                            "○",
-                            theme::FG_DIM,
-                        ));
+                        this.toast = Some(("Cascade dismissed.".into(), "○", theme::FG_DIM));
                         this.fetch_pending_cascades(cx);
                     }
                     Err(e) => {
-                        this.toast = Some((
-                            format!("Dismiss failed: {}", e),
-                            "✗",
-                            theme::RED,
-                        ));
+                        this.toast = Some((format!("Dismiss failed: {}", e), "✗", theme::RED));
                     }
                 }
                 cx.notify();
@@ -2081,13 +2204,13 @@ impl FermiConsole {
             let cockpit_entity = cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx));
             // Observe cockpit changes to drain toast notifications.
             cx.observe(&cockpit_entity, |this, cockpit_ref, cx| {
-                let toasts: Vec<String> = cockpit_ref.update(cx, |state, _| {
-                    std::mem::take(&mut state.pending_toasts)
-                });
+                let toasts: Vec<String> =
+                    cockpit_ref.update(cx, |state, _| std::mem::take(&mut state.pending_toasts));
                 for msg in toasts {
                     this.show_toast(msg, "✓", theme::GREEN, cx);
                 }
-            }).detach();
+            })
+            .detach();
             self.cockpit = Some(cockpit_entity);
         }
         // Refresh data when switching to agent fleet or leaderboard
@@ -3157,22 +3280,37 @@ impl FermiConsole {
                         return Err("Not signed in — sign in first to search Polymarket".into());
                     }
                     if status == 402 {
-                        return Err("Insufficient credits — top up your ABW balance to search Polymarket".into());
+                        return Err(
+                            "Insufficient credits — top up your ABW balance to search Polymarket"
+                                .into(),
+                        );
                     }
                     if !status.is_success() {
                         let body = resp.text().await.unwrap_or_default();
-                        return Err(format!("Server error {}: {}", status.as_u16(), body.chars().take(120).collect::<String>()));
+                        return Err(format!(
+                            "Server error {}: {}",
+                            status.as_u16(),
+                            body.chars().take(120).collect::<String>()
+                        ));
                     }
 
-                    let bytes = resp.bytes().await.map_err(|e| format!("Failed to read body: {}", e))?;
+                    let bytes = resp
+                        .bytes()
+                        .await
+                        .map_err(|e| format!("Failed to read body: {}", e))?;
                     let body = String::from_utf8_lossy(&bytes);
                     log::debug!(
                         "[polymarket] Raw response ({} bytes): {}",
                         bytes.len(),
                         body.chars().take(500).collect::<String>()
                     );
-                    let data: serde_json::Value = serde_json::from_slice(&bytes)
-                        .map_err(|e| format!("Bad response ({}): {}", e, body.chars().take(120).collect::<String>()))?;
+                    let data: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
+                        format!(
+                            "Bad response ({}): {}",
+                            e,
+                            body.chars().take(120).collect::<String>()
+                        )
+                    })?;
                     let matches = data
                         .get("matches")
                         .and_then(|v| v.as_array())
@@ -3255,7 +3393,12 @@ impl FermiConsole {
     // ── Portfolio management ──────────────────────────────────────────────────
 
     fn create_portfolio_from_input(&mut self, cx: &mut Context<Self>) {
-        let title = self.portfolio_create_input.read(cx).text().trim().to_string();
+        let title = self
+            .portfolio_create_input
+            .read(cx)
+            .text()
+            .trim()
+            .to_string();
         if title.is_empty() {
             return;
         }
@@ -3301,8 +3444,8 @@ impl FermiConsole {
         let api = self.api.clone();
         let pid = portfolio_id.clone();
 
-        cx.spawn(async move |this, cx| {
-            match api.portfolio_stats(&pid).await {
+        cx.spawn(
+            async move |this, cx| match api.portfolio_stats(&pid).await {
                 Ok(stats) => {
                     this.update(cx, |this, cx| {
                         this.portfolio_stats_cache.insert(pid, stats);
@@ -3313,8 +3456,8 @@ impl FermiConsole {
                 Err(e) => {
                     log::warn!("Failed to fetch portfolio stats {}: {}", pid, e);
                 }
-            }
-        })
+            },
+        )
         .detach();
     }
 
@@ -3358,12 +3501,13 @@ impl FermiConsole {
         if self.portfolio_forecasts_loading.contains(&portfolio_id) {
             return;
         }
-        self.portfolio_forecasts_loading.insert(portfolio_id.clone());
+        self.portfolio_forecasts_loading
+            .insert(portfolio_id.clone());
         let api = self.api.clone();
         let pid = portfolio_id.clone();
 
-        cx.spawn(async move |this, cx| {
-            match api.list_portfolio_forecasts(&pid).await {
+        cx.spawn(
+            async move |this, cx| match api.list_portfolio_forecasts(&pid).await {
                 Ok(resp) => {
                     this.update(cx, |this, cx| {
                         this.portfolio_forecasts.insert(pid.clone(), resp.forecasts);
@@ -3380,8 +3524,8 @@ impl FermiConsole {
                     })
                     .ok();
                 }
-            }
-        })
+            },
+        )
         .detach();
     }
 
@@ -3418,8 +3562,8 @@ impl FermiConsole {
         let api = self.api.clone();
         let pid = portfolio_id.clone();
 
-        cx.spawn(async move |this, cx| {
-            match api.delete_portfolio(&portfolio_id).await {
+        cx.spawn(
+            async move |this, cx| match api.delete_portfolio(&portfolio_id).await {
                 Ok(_) => {
                     this.update(cx, |this, cx| {
                         this.portfolios.retain(|p| p.id != pid);
@@ -3434,18 +3578,26 @@ impl FermiConsole {
                     .ok();
                 }
                 Err(e) => log::warn!("Failed to delete portfolio {}: {}", pid, e),
-            }
-        })
+            },
+        )
         .detach();
     }
 
-    fn rename_portfolio(&mut self, portfolio_id: String, new_title: String, cx: &mut Context<Self>) {
+    fn rename_portfolio(
+        &mut self,
+        portfolio_id: String,
+        new_title: String,
+        cx: &mut Context<Self>,
+    ) {
         let api = self.api.clone();
         let pid = portfolio_id.clone();
         let title = new_title.clone();
 
         cx.spawn(async move |this, cx| {
-            let req = PatchPortfolioRequest { title: Some(title), description: None };
+            let req = PatchPortfolioRequest {
+                title: Some(title),
+                description: None,
+            };
             match api.patch_portfolio(&portfolio_id, &req).await {
                 Ok(_) => {
                     this.update(cx, |this, cx| {
@@ -3506,7 +3658,11 @@ impl FermiConsole {
                     this.update(cx, |this, cx| {
                         this.resolve_loading = false;
                         // Move forecast from active to resolved in local state
-                        if let Some(pos) = this.active_forecasts.iter().position(|f| f.id == forecast_id) {
+                        if let Some(pos) = this
+                            .active_forecasts
+                            .iter()
+                            .position(|f| f.id == forecast_id)
+                        {
                             let mut f = this.active_forecasts.remove(pos);
                             f.status = "resolved".into();
                             f.brier_score = Some(resp.brier_score);
@@ -3570,14 +3726,8 @@ impl FermiConsole {
             });
             match api.propagate_relationship(&relationship_id, &body).await {
                 Ok(resp) => {
-                    let n_updated = resp
-                        .get("n_updated")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
-                    let note = resp
-                        .get("note")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
+                    let n_updated = resp.get("n_updated").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let note = resp.get("note").and_then(|v| v.as_str()).unwrap_or("");
                     this.update(cx, |this, cx| {
                         this.cascade_loading = false;
                         this.cascade_summary = Some(if note.is_empty() {
@@ -3640,7 +3790,11 @@ impl FermiConsole {
         let ws_id = workspace_id.to_string();
 
         // Find the workspace forecast data
-        let wf = self.workspace_forecasts.iter().find(|w| w.workspace_id == ws_id).cloned();
+        let wf = self
+            .workspace_forecasts
+            .iter()
+            .find(|w| w.workspace_id == ws_id)
+            .cloned();
         let forecast_id = wf.as_ref().and_then(|w| w.forecast_id.clone());
 
         // Always create a fresh cockpit for each workspace — don't reuse
@@ -3700,7 +3854,9 @@ impl FermiConsole {
                 kind: crate::cockpit::MessageKind::Info,
                 text: format!(
                     "Workspace: {}. Press Ctrl+Enter to decompose, or Ctrl+R to simulate.",
-                    wf.as_ref().map(|w| w.workspace_name.as_str()).unwrap_or(&ws_id),
+                    wf.as_ref()
+                        .map(|w| w.workspace_name.as_str())
+                        .unwrap_or(&ws_id),
                 ),
             });
             cx.notify();
@@ -3712,14 +3868,15 @@ impl FermiConsole {
         if let Some(fid) = forecast_id {
             let cockpit_handle = cockpit.clone();
             cx.spawn(async move |_this, cx| {
-                let result = tokio::spawn(async move {
-                    api.get_forecast(&fid).await
-                }).await;
+                let result = tokio::spawn(async move { api.get_forecast(&fid).await }).await;
 
                 match result {
                     Ok(Ok(forecast)) => {
                         let Some(fpl_text) = forecast.fpl_source else {
-                            log::warn!("[workspace-open] forecast {} has no fpl_source", forecast.id);
+                            log::warn!(
+                                "[workspace-open] forecast {} has no fpl_source",
+                                forecast.id
+                            );
                             return;
                         };
                         // Parse on the runtime thread; mutate cockpit on the UI thread.
@@ -3728,38 +3885,42 @@ impl FermiConsole {
                             .ok()
                             .and_then(|tokens| ::fermi::parser::Parser::new(tokens).parse().ok());
 
-                        cockpit_handle.update(cx, |cockpit, cx| {
-                            cockpit.cached_fpl = fpl_text.clone();
-                            match parsed {
-                                Some(program) => {
-                                    cockpit.program = program;
-                                    // Re-derive question from parsed program if present —
-                                    // the FPL is the source of truth for resolution criteria.
-                                    if let Some(q) = cockpit.program.question() {
-                                        cockpit.question_input.update(cx, |input, cx| {
-                                            input.set_text(&q.text, cx);
+                        cockpit_handle
+                            .update(cx, |cockpit, cx| {
+                                cockpit.cached_fpl = fpl_text.clone();
+                                match parsed {
+                                    Some(program) => {
+                                        cockpit.program = program;
+                                        // Re-derive question from parsed program if present —
+                                        // the FPL is the source of truth for resolution criteria.
+                                        if let Some(q) = cockpit.program.question() {
+                                            cockpit.question_input.update(cx, |input, cx| {
+                                                input.set_text(&q.text, cx);
+                                            });
+                                        }
+                                        cockpit.predicted_probability =
+                                            forecast.predicted_probability;
+                                        cockpit.messages.push(crate::cockpit::AssistantMessage {
+                                            node: "load".into(),
+                                            kind: crate::cockpit::MessageKind::Info,
+                                            text: format!(
+                                                "Loaded FPL from forecast ({} bytes).",
+                                                fpl_text.len()
+                                            ),
                                         });
                                     }
-                                    cockpit.predicted_probability = forecast.predicted_probability;
-                                    cockpit.messages.push(crate::cockpit::AssistantMessage {
-                                        node: "load".into(),
-                                        kind: crate::cockpit::MessageKind::Info,
-                                        text: format!(
-                                            "Loaded FPL from forecast ({} bytes).",
-                                            fpl_text.len()
-                                        ),
-                                    });
+                                    None => {
+                                        cockpit.messages.push(crate::cockpit::AssistantMessage {
+                                            node: "load".into(),
+                                            kind: crate::cockpit::MessageKind::Warning,
+                                            text: "FPL parse failed — showing raw source only."
+                                                .into(),
+                                        });
+                                    }
                                 }
-                                None => {
-                                    cockpit.messages.push(crate::cockpit::AssistantMessage {
-                                        node: "load".into(),
-                                        kind: crate::cockpit::MessageKind::Warning,
-                                        text: "FPL parse failed — showing raw source only.".into(),
-                                    });
-                                }
-                            }
-                            cx.notify();
-                        }).ok();
+                                cx.notify();
+                            })
+                            .ok();
                     }
                     Ok(Err(e)) => {
                         log::error!("[workspace-open] get_forecast failed: {}", e);
@@ -3768,7 +3929,8 @@ impl FermiConsole {
                         log::error!("[workspace-open] task join error: {}", e);
                     }
                 }
-            }).detach();
+            })
+            .detach();
         }
 
         self.active_panel = Panel::Composer;
@@ -3864,11 +4026,19 @@ impl FermiConsole {
                             cockpit.load_schedules(cx);
                         }
 
-                        // ── Polymarket hydration ────────────────────────
+                        // ── Polymarket hydration ────────────────────────────
                         // metadata.polymarket shape is what
                         // polymarket::link_handler wrote. The pm_market_price
                         // etc. fields on the cockpit are what the right-side
                         // panel reads to render the crowd-vs-fermi delta.
+                        //
+                        // These cached values can be MINUTES–HOURS stale
+                        // depending on when the market was last snapshotted.
+                        // We seed them so the panel isn't blank, then fire
+                        // `refresh_pm_price_now` to force a fresh Gamma-API
+                        // fetch — without this, opening a WC-team forecast
+                        // showed e.g. "France 18.4%" for 5 min when the
+                        // real live crowd was already at 33%.
                         if let Some(pm) = pm.as_ref() {
                             cockpit.pm_event_id = pm.get("pm_event_id").and_then(|v| v.as_str()).map(String::from);
                             cockpit.pm_market_id = pm.get("pm_market_id").and_then(|v| v.as_str()).map(String::from);
@@ -3881,6 +4051,10 @@ impl FermiConsole {
                             // legacy local-mode restore behavior.
                             if cockpit.pm_event_id.is_some() {
                                 cockpit.pm_poll_interval = Some(std::time::Duration::from_secs(5 * 60));
+                                // Force an immediate fresh snapshot so the
+                                // crowd number is live-accurate on load,
+                                // not "whatever the DB happened to cache".
+                                cockpit.refresh_pm_price_now(cx);
                             }
                         }
 
@@ -4933,7 +5107,8 @@ impl FermiConsole {
                     let fid2 = fid.clone();
                     let label = truncate(&p.title, 18);
                     // Check if this forecast is already in this portfolio (from cache)
-                    let already_in = self.portfolio_forecasts
+                    let already_in = self
+                        .portfolio_forecasts
                         .get(&p.id)
                         .map(|fs| fs.iter().any(|f| f.id == fid))
                         .unwrap_or(false);
@@ -6509,16 +6684,13 @@ impl FermiConsole {
             .gap(px(16.0));
 
         let Some(detail) = self.selected_team_detail.as_ref() else {
-            return container.child(
-                div()
-                    .text_size(px(12.0))
-                    .text_color(theme::fg_dim())
-                    .child(if self.selected_team_id.is_some() {
-                        "Loading team…"
-                    } else {
-                        "Select a team to view its members."
-                    }),
-            );
+            return container.child(div().text_size(px(12.0)).text_color(theme::fg_dim()).child(
+                if self.selected_team_id.is_some() {
+                    "Loading team…"
+                } else {
+                    "Select a team to view its members."
+                },
+            ));
         };
 
         let invite_role = self.team_invite_role.clone();
@@ -6656,6 +6828,13 @@ impl FermiConsole {
                     .children(detail.members.iter().map(|m| {
                         let mid = m.member_id.clone();
                         let is_owner_role = m.role == "owner";
+                        // Prefer server-resolved display name. Fall back
+                        // to a short-id (first 8 of a UUID) so the row
+                        // stays readable when the users JOIN missed.
+                        let label = m
+                            .member_display_name
+                            .clone()
+                            .unwrap_or_else(|| short_user_label(&m.member_id));
                         div()
                             .flex()
                             .items_center()
@@ -6676,9 +6855,23 @@ impl FermiConsole {
                             .child(
                                 div()
                                     .flex_grow()
-                                    .text_size(px(12.0))
-                                    .text_color(theme::fg())
-                                    .child(m.member_id.clone()),
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(1.0))
+                                    .child(
+                                        div()
+                                            .text_size(px(12.0))
+                                            .text_color(theme::fg())
+                                            .child(label),
+                                    )
+                                    .when(m.member_display_name.is_some(), |el| {
+                                        el.child(
+                                            div()
+                                                .text_size(px(9.0))
+                                                .text_color(theme::fg_faint())
+                                                .child(short_user_label(&m.member_id)),
+                                        )
+                                    }),
                             )
                             // Role chip
                             .child(
@@ -6702,9 +6895,7 @@ impl FermiConsole {
                                         .text_size(px(12.0))
                                         .text_color(theme::fg_dim())
                                         .cursor_pointer()
-                                        .hover(|s| {
-                                            s.bg(theme::bg_hover()).text_color(theme::red())
-                                        })
+                                        .hover(|s| s.bg(theme::bg_hover()).text_color(theme::red()))
                                         .on_click(cx.listener({
                                             let mid = mid.clone();
                                             move |this, _, _w, cx| {
@@ -6716,6 +6907,137 @@ impl FermiConsole {
                             })
                     })),
             )
+            // ── Pending / recent invites ───────────────────────────
+            .child(self.render_team_invites_section(cx))
+    }
+
+    /// Pending / recent invite list for the selected team. Rendered
+    /// below the members roster so the operator sees invites they've
+    /// sent (and their status) without having to leave the team panel.
+    fn render_team_invites_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let pending: Vec<&Invite> = self
+            .team_invites
+            .iter()
+            .filter(|i| i.status == "pending")
+            .collect();
+        let terminal: Vec<&Invite> = self
+            .team_invites
+            .iter()
+            .filter(|i| i.status != "pending")
+            .take(5) // most recent 5 non-pending, purely informational
+            .collect();
+
+        let mut container = div().flex().flex_col().gap(px(6.0)).mt(px(8.0)).child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme::cyan())
+                        .child(format!("Invites ({} pending)", pending.len())),
+                )
+                .when(self.team_invites_loading, |el| {
+                    el.child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_faint())
+                            .child("loading…"),
+                    )
+                }),
+        );
+
+        if pending.is_empty() && terminal.is_empty() && !self.team_invites_loading {
+            container = container.child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(theme::fg_faint())
+                    .child("No invites yet. Use + Invite above to bring someone in."),
+            );
+            return container;
+        }
+
+        for inv in pending.iter().chain(terminal.iter()) {
+            let iid = inv.id.clone();
+            let in_flight = self.team_invite_revoke_in_flight.contains(&inv.id);
+            let is_pending = inv.status == "pending";
+            let recipient = inv
+                .invitee_display_name
+                .clone()
+                .or_else(|| inv.invitee_email.clone())
+                .or_else(|| inv.invitee_user_id.clone())
+                .unwrap_or_else(|| "(unknown)".to_string());
+            let status_color = match inv.status.as_str() {
+                "pending" => theme::gold(),
+                "accepted" => theme::green(),
+                "declined" => theme::red(),
+                "revoked" => theme::fg_dim(),
+                "expired" => theme::fg_faint(),
+                _ => theme::fg_dim(),
+            };
+            let mut row = div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .px(px(12.0))
+                .py(px(6.0))
+                .rounded(px(6.0))
+                .bg(theme::bg_elevated())
+                .child(div().text_size(px(12.0)).child("✉"))
+                .child(
+                    div()
+                        .flex_grow()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
+                        .child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(theme::fg())
+                                .child(recipient),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(theme::fg_faint())
+                                .child(format!("role: {}", inv.permission)),
+                        ),
+                )
+                .child(
+                    div()
+                        .px(px(8.0))
+                        .py(px(2.0))
+                        .rounded(px(4.0))
+                        .bg(theme::bg_active())
+                        .text_size(px(10.0))
+                        .text_color(status_color)
+                        .child(inv.status.clone()),
+                );
+            if is_pending {
+                row = row.child(
+                    div()
+                        .id(SharedString::from(format!("tinv-revoke-{}", iid)))
+                        .px(px(6.0))
+                        .py(px(2.0))
+                        .rounded(px(4.0))
+                        .text_size(px(11.0))
+                        .text_color(theme::fg_dim())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::bg_hover()).text_color(theme::red()))
+                        .on_click(cx.listener({
+                            let iid = iid.clone();
+                            move |this, _, _w, cx| {
+                                this.revoke_team_invite(iid.clone(), cx);
+                            }
+                        }))
+                        .child(if in_flight { "…" } else { "Revoke" }),
+                );
+            }
+            container = container.child(row);
+        }
+        container
     }
 
     fn render_team_create_modal(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -7359,11 +7681,7 @@ impl FermiConsole {
                                                 this.commit_sheet_visibility = "private".into();
                                                 cx.notify();
                                             }))
-                                            .child(
-                                                div()
-                                                    .text_size(px(18.0))
-                                                    .child("🔒"),
-                                            )
+                                            .child(div().text_size(px(18.0)).child("🔒"))
                                             .child(
                                                 div()
                                                     .text_size(px(11.0))
@@ -7407,11 +7725,7 @@ impl FermiConsole {
                                                 this.commit_sheet_visibility = "public".into();
                                                 cx.notify();
                                             }))
-                                            .child(
-                                                div()
-                                                    .text_size(px(18.0))
-                                                    .child("🌐"),
-                                            )
+                                            .child(div().text_size(px(18.0)).child("🌐"))
                                             .child(
                                                 div()
                                                     .text_size(px(11.0))
@@ -7448,9 +7762,7 @@ impl FermiConsole {
                                     .flex()
                                     .items_center()
                                     .gap(px(8.0))
-                                    .child(
-                                        div().flex_grow().child(self.commit_share_input.clone()),
-                                    )
+                                    .child(div().flex_grow().child(self.commit_share_input.clone()))
                                     .child(
                                         div()
                                             .id("commit-share-perm")
@@ -7533,8 +7845,7 @@ impl FermiConsole {
                                                 .text_color(theme::fg_dim())
                                                 .cursor_pointer()
                                                 .hover(|s| {
-                                                    s.bg(theme::bg_hover())
-                                                        .text_color(theme::red())
+                                                    s.bg(theme::bg_hover()).text_color(theme::red())
                                                 })
                                                 .on_click(cx.listener(move |this, _, _w, cx| {
                                                     if i < this.commit_share_targets.len() {
@@ -7565,7 +7876,9 @@ impl FermiConsole {
                                     .text_size(px(13.0))
                                     .text_color(theme::fg_faint())
                                     .cursor_pointer()
-                                    .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::FG)))
+                                    .hover(|s| {
+                                        s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::FG))
+                                    })
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.commit_sheet_showing = false;
                                         cx.notify();
@@ -7604,8 +7917,8 @@ impl FermiConsole {
         // "Cascade to N forecasts" button per relationship instead of
         // the resolve form. Operator clicks → propagation fires →
         // siblings get their probabilities updated.
-        let in_cascade_mode = self.cascade_resolved_forecast_id.is_some()
-            && !self.cascade_relationships.is_empty();
+        let in_cascade_mode =
+            self.cascade_resolved_forecast_id.is_some() && !self.cascade_relationships.is_empty();
         if in_cascade_mode {
             return self.render_cascade_sheet(cx).into_any_element();
         }
@@ -7645,7 +7958,9 @@ impl FermiConsole {
                                 div()
                                     .text_size(px(11.0))
                                     .text_color(theme::fg_faint())
-                                    .child("Record the actual outcome. This locks in your Brier score."),
+                                    .child(
+                                    "Record the actual outcome. This locks in your Brier score.",
+                                ),
                             ),
                     )
                     // Question summary
@@ -7703,11 +8018,7 @@ impl FermiConsole {
                                                 this.resolve_outcome = Some(true);
                                                 cx.notify();
                                             }))
-                                            .child(
-                                                div()
-                                                    .text_size(px(24.0))
-                                                    .child("✓"),
-                                            )
+                                            .child(div().text_size(px(24.0)).child("✓"))
                                             .child(
                                                 div()
                                                     .text_size(px(13.0))
@@ -7751,11 +8062,7 @@ impl FermiConsole {
                                                 this.resolve_outcome = Some(false);
                                                 cx.notify();
                                             }))
-                                            .child(
-                                                div()
-                                                    .text_size(px(24.0))
-                                                    .child("✗"),
-                                            )
+                                            .child(div().text_size(px(24.0)).child("✗"))
                                             .child(
                                                 div()
                                                     .text_size(px(13.0))
@@ -7778,12 +8085,7 @@ impl FermiConsole {
                             div()
                                 .text_size(px(11.0))
                                 .text_color(theme::red())
-                                .child(
-                                    self.resolve_error
-                                        .as_deref()
-                                        .unwrap_or("")
-                                        .to_string(),
-                                ),
+                                .child(self.resolve_error.as_deref().unwrap_or("").to_string()),
                         )
                     })
                     // Action buttons
@@ -7831,16 +8133,15 @@ impl FermiConsole {
                                             }))
                                     })
                                     .when(!has_selection || self.resolve_loading, |el| {
-                                        el.bg(theme::bg_hover())
-                                            .text_color(theme::fg_faint())
+                                        el.bg(theme::bg_hover()).text_color(theme::fg_faint())
                                     })
                                     .child(if self.resolve_loading {
                                         "Resolving…"
                                     } else {
-                                         "Confirm"
-                                     }),
-                             ),
-                     ),
+                                        "Confirm"
+                                    }),
+                            ),
+                    ),
             )
             .into_any_element()
     }
@@ -7881,10 +8182,7 @@ impl FermiConsole {
                         div()
                             .text_size(px(11.0))
                             .text_color(theme::fg_dim())
-                            .child(format!(
-                                "{} pending review · operator-gate enabled",
-                                n
-                            )),
+                            .child(format!("{} pending review · operator-gate enabled", n)),
                     )
                     .child(div().flex_grow())
                     .child(
@@ -7902,15 +8200,12 @@ impl FermiConsole {
                     ),
             )
             .child(
-                div()
-                    .text_size(px(11.0))
-                    .text_color(theme::fg_dim())
-                    .child(
-                        "Each entry below was queued by a forecast resolution. \
+                div().text_size(px(11.0)).text_color(theme::fg_dim()).child(
+                    "Each entry below was queued by a forecast resolution. \
                          Apply fires the propagation; Dismiss closes the entry \
                          without changing any siblings."
-                            .to_string(),
-                    ),
+                        .to_string(),
+                ),
             );
 
         if loading && self.pending_cascades.is_empty() {
@@ -7997,8 +8292,16 @@ impl FermiConsole {
                 // to see the biggest movers, not the smallest noise.
                 let mut top_deltas: Vec<&JsonValue> = deltas.iter().collect();
                 top_deltas.sort_by(|a, b| {
-                    let av = a.get("delta_pp").and_then(|v| v.as_f64()).unwrap_or(0.0).abs();
-                    let bv = b.get("delta_pp").and_then(|v| v.as_f64()).unwrap_or(0.0).abs();
+                    let av = a
+                        .get("delta_pp")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0)
+                        .abs();
+                    let bv = b
+                        .get("delta_pp")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0)
+                        .abs();
                     bv.partial_cmp(&av).unwrap_or(std::cmp::Ordering::Equal)
                 });
                 top_deltas.truncate(5);
@@ -8065,10 +8368,7 @@ impl FermiConsole {
                             .mt(px(2.0))
                             .child(label),
                     );
-                    let mut deltas_box = div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(2.0));
+                    let mut deltas_box = div().flex().flex_col().gap(px(2.0));
                     for d in &top_deltas {
                         let fid = d
                             .get("forecast_id")
@@ -8085,10 +8385,7 @@ impl FermiConsole {
                             .get("new_probability")
                             .and_then(|v| v.as_f64())
                             .unwrap_or(0.0);
-                        let dpp = d
-                            .get("delta_pp")
-                            .and_then(|v| v.as_f64())
-                            .unwrap_or(0.0);
+                        let dpp = d.get("delta_pp").and_then(|v| v.as_f64()).unwrap_or(0.0);
                         let arrow_color = if dpp > 0.0 {
                             theme::GREEN
                         } else if dpp < 0.0 {
@@ -8096,38 +8393,27 @@ impl FermiConsole {
                         } else {
                             theme::FG_DIM
                         };
-                        deltas_box = deltas_box.child(
-                            div()
-                                .flex()
-                                .gap(px(10.0))
-                                .text_size(px(10.0))
-                                .child(
-                                    div()
-                                        .w(px(70.0))
-                                        .text_color(theme::fg_dim())
-                                        .child(fid),
-                                )
-                                .child(
-                                    div()
-                                        .w(px(140.0))
-                                        .text_color(rgb(theme::FG))
-                                        .child(format!(
-                                            "{:.1}% → {:.1}%",
-                                            prev * 100.0,
-                                            new_p * 100.0
-                                        )),
-                                )
-                                .child(
-                                    div()
-                                        .text_color(rgb(arrow_color))
-                                        .font_weight(FontWeight::BOLD)
-                                        .child(format!(
-                                            "{}{:.2}pp",
-                                            if dpp >= 0.0 { "+" } else { "" },
-                                            dpp
-                                        )),
-                                ),
-                        );
+                        deltas_box =
+                            deltas_box.child(
+                                div()
+                                    .flex()
+                                    .gap(px(10.0))
+                                    .text_size(px(10.0))
+                                    .child(div().w(px(70.0)).text_color(theme::fg_dim()).child(fid))
+                                    .child(div().w(px(140.0)).text_color(rgb(theme::FG)).child(
+                                        format!("{:.1}% → {:.1}%", prev * 100.0, new_p * 100.0),
+                                    ))
+                                    .child(
+                                        div()
+                                            .text_color(rgb(arrow_color))
+                                            .font_weight(FontWeight::BOLD)
+                                            .child(format!(
+                                                "{}{:.2}pp",
+                                                if dpp >= 0.0 { "+" } else { "" },
+                                                dpp
+                                            )),
+                                    ),
+                            );
                     }
                     row = row.child(deltas_box);
                 }
@@ -8162,7 +8448,11 @@ impl FermiConsole {
                                     this.apply_pending_cascade(cid_apply.clone(), cx);
                                 }));
                             }
-                            btn.child(if in_flight { "Applying…" } else { "✓ Apply" })
+                            btn.child(if in_flight {
+                                "Applying…"
+                            } else {
+                                "✓ Apply"
+                            })
                         })
                         .child({
                             let mut btn = div()
@@ -8316,16 +8606,13 @@ impl FermiConsole {
                                             )),
                                     ),
                             )
-                            .child(
-                                div()
-                                    .text_size(px(10.0))
-                                    .text_color(theme::fg_dim())
-                                    .child(if description.is_empty() {
-                                        "(no description)".to_string()
-                                    } else {
-                                        description
-                                    }),
-                            )
+                            .child(div().text_size(px(10.0)).text_color(theme::fg_dim()).child(
+                                if description.is_empty() {
+                                    "(no description)".to_string()
+                                } else {
+                                    description
+                                },
+                            ))
                             .child({
                                 let is_loading = self.cascade_loading;
                                 div()
@@ -8376,31 +8663,27 @@ impl FermiConsole {
 
                 // Done / Skip buttons
                 content = content.child(
-                    div()
-                        .flex()
-                        .gap(px(12.0))
-                        .justify_end()
-                        .child(
-                            div()
-                                .id("cascade-skip")
-                                .px(px(16.0))
-                                .py(px(8.0))
-                                .rounded(px(6.0))
-                                .border_1()
-                                .border_color(rgb(theme::FG_FAINT))
-                                .text_size(px(13.0))
-                                .text_color(theme::fg_dim())
-                                .cursor_pointer()
-                                .hover(|s| s.bg(rgb(theme::BG_HOVER)))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.dismiss_cascade(cx);
-                                }))
-                                .child(if self.cascade_summary.is_some() {
-                                    "Done"
-                                } else {
-                                    "Skip"
-                                }),
-                        ),
+                    div().flex().gap(px(12.0)).justify_end().child(
+                        div()
+                            .id("cascade-skip")
+                            .px(px(16.0))
+                            .py(px(8.0))
+                            .rounded(px(6.0))
+                            .border_1()
+                            .border_color(rgb(theme::FG_FAINT))
+                            .text_size(px(13.0))
+                            .text_color(theme::fg_dim())
+                            .cursor_pointer()
+                            .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.dismiss_cascade(cx);
+                            }))
+                            .child(if self.cascade_summary.is_some() {
+                                "Done"
+                            } else {
+                                "Skip"
+                            }),
+                    ),
                 );
 
                 content
@@ -8514,12 +8797,7 @@ impl Render for FermiConsole {
                             .border_1()
                             .border_color(rgb(color))
                             .shadow_lg()
-                            .child(
-                                div()
-                                    .text_size(px(14.0))
-                                    .text_color(rgb(color))
-                                    .child(icon),
-                            )
+                            .child(div().text_size(px(14.0)).text_color(rgb(color)).child(icon))
                             .child(
                                 div()
                                     .text_size(px(12.0))
@@ -8561,6 +8839,30 @@ fn truncate(s: &str, max_chars: usize) -> String {
 /// strict: `origin == "fermi_forecast"`. Against API builds that don't yet
 /// return `origin`, fall back to hiding the obvious other-vertical
 /// auto-created workspaces by slug/description so the list is usable now.
+/// Format a user_id for compact display when the server didn't return
+/// a display_name. UUIDs collapse to their leading 8 chars ("9c3a4b12");
+/// short opaque IDs pass through unchanged. Keeps the UI readable
+/// without leaking the full identifier at hover-glance distance.
+fn short_user_label(user_id: &str) -> String {
+    let trimmed = user_id.trim();
+    if trimmed.is_empty() {
+        return "(unknown)".into();
+    }
+    // UUIDs are 36 chars with dashes; anything longer than ~24 is
+    // almost certainly an opaque token — shorten it.
+    if trimmed.len() >= 24 {
+        // For a canonical UUID keep the pre-dash prefix ("9c3a4b12") so
+        // it still looks like a familiar handle.
+        if let Some(head) = trimmed.split('-').next() {
+            if head.len() >= 6 {
+                return format!("{}…", head);
+            }
+        }
+        return format!("{}…", &trimmed[..8]);
+    }
+    trimmed.to_string()
+}
+
 fn is_fermi_team(t: &Team) -> bool {
     match t.origin.as_deref() {
         Some(o) => o == "fermi_forecast",
@@ -8927,9 +9229,7 @@ fn render_fleet_agent_row(
                 .when(
                     run.and_then(|r| r.latest_finding.as_ref()).is_some(),
                     |el| {
-                        let finding = run
-                            .and_then(|r| r.latest_finding.as_deref())
-                            .unwrap_or("");
+                        let finding = run.and_then(|r| r.latest_finding.as_deref()).unwrap_or("");
                         el.child(
                             div()
                                 .text_size(px(10.0))
@@ -8975,18 +9275,15 @@ fn render_fleet_agent_row(
                     )
                 })
                 // Credits charged
-                .when(
-                    run.and_then(|r| r.credits_charged).is_some(),
-                    |el| {
-                        let c = run.and_then(|r| r.credits_charged).unwrap_or(0.0);
-                        el.child(
-                            div()
-                                .text_size(px(9.0))
-                                .text_color(theme::fg_faint())
-                                .child(format!("⚡ {:.1} cr", c)),
-                        )
-                    },
-                )
+                .when(run.and_then(|r| r.credits_charged).is_some(), |el| {
+                    let c = run.and_then(|r| r.credits_charged).unwrap_or(0.0);
+                    el.child(
+                        div()
+                            .text_size(px(9.0))
+                            .text_color(theme::fg_faint())
+                            .child(format!("⚡ {:.1} cr", c)),
+                    )
+                })
                 // Model
                 .child(
                     div()
@@ -9137,54 +9434,51 @@ fn render_portfolio_stats_panel(stats: &PortfolioStats) -> impl IntoElement {
                 ]),
         )
         // Calibration row
-        .when(
-            cal_buckets.iter().any(|(_, v, _)| v.is_some()),
-            |el| {
-                el.child(
-                    div()
-                        .flex()
-                        .items_end()
-                        .gap(px(10.0))
-                        .child(
-                            div()
-                                .text_size(px(10.0))
-                                .text_color(theme::fg_faint())
-                                .child("Calibration:"),
-                        )
-                        .children(cal_buckets.iter().map(|(label, val, ideal)| {
-                            let error = val.map(|v| (v - ideal).abs()).unwrap_or(0.5);
-                            let bar_color = if error < 0.08 {
-                                theme::GREEN
-                            } else if error < 0.18 {
-                                theme::GOLD
-                            } else {
-                                theme::ORANGE
-                            };
-                            div()
-                                .flex()
-                                .flex_col()
-                                .items_center()
-                                .gap(px(2.0))
-                                .child(
-                                    div()
-                                        .text_size(px(11.0))
-                                        .text_color(rgb(bar_color))
-                                        .font_weight(FontWeight::BOLD)
-                                        .child(
-                                            val.map(|v| format!("{:.0}%", v * 100.0))
-                                                .unwrap_or_else(|| "—".into()),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(9.0))
-                                        .text_color(theme::fg_faint())
-                                        .child(label.to_string()),
-                                )
-                        }))
-                )
-            },
-        )
+        .when(cal_buckets.iter().any(|(_, v, _)| v.is_some()), |el| {
+            el.child(
+                div()
+                    .flex()
+                    .items_end()
+                    .gap(px(10.0))
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_faint())
+                            .child("Calibration:"),
+                    )
+                    .children(cal_buckets.iter().map(|(label, val, ideal)| {
+                        let error = val.map(|v| (v - ideal).abs()).unwrap_or(0.5);
+                        let bar_color = if error < 0.08 {
+                            theme::GREEN
+                        } else if error < 0.18 {
+                            theme::GOLD
+                        } else {
+                            theme::ORANGE
+                        };
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .gap(px(2.0))
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(bar_color))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(
+                                        val.map(|v| format!("{:.0}%", v * 100.0))
+                                            .unwrap_or_else(|| "—".into()),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(theme::fg_faint())
+                                    .child(label.to_string()),
+                            )
+                    })),
+            )
+        })
         // Recent resolutions
         .when(!stats.recent_resolutions.is_empty(), |el| {
             el.child(
@@ -9223,20 +9517,14 @@ fn render_portfolio_stats_panel(stats: &PortfolioStats) -> impl IntoElement {
                                     .flex_grow()
                                     .text_size(px(11.0))
                                     .text_color(theme::fg_dim())
-                                    .child(truncate(
-                                        r.question_text.as_deref().unwrap_or("?"),
-                                        52,
-                                    )),
+                                    .child(truncate(r.question_text.as_deref().unwrap_or("?"), 52)),
                             )
                             .when(r.brier_score.is_some(), |el| {
                                 el.child(
                                     div()
                                         .text_size(px(10.0))
                                         .text_color(theme::fg_faint())
-                                        .child(format!(
-                                            "{:.3}",
-                                            r.brier_score.unwrap_or(0.0)
-                                        )),
+                                        .child(format!("{:.3}", r.brier_score.unwrap_or(0.0))),
                                 )
                             })
                     })),

@@ -485,13 +485,43 @@ pub struct AgentExecutionResult {
     pub metadata: Option<JsonValue>,
 }
 
-// ── Auth ───────────────────────────────────────────────────────────
+// ── Auth ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthMe {
     pub user_id: String,
     pub display_name: Option<String>,
     pub email: Option<String>,
+}
+
+impl AuthMe {
+    /// Best label to show in a compact UI cell. Prefers `display_name`,
+    /// then `email`, then a shortened form of the raw user_id (never
+    /// the full UUID — that's what the footer used to render and looks
+    /// like a system error to end users).
+    pub fn friendly_label(&self) -> String {
+        if let Some(name) = &self.display_name {
+            if !name.trim().is_empty() {
+                return name.clone();
+            }
+        }
+        if let Some(email) = &self.email {
+            if !email.trim().is_empty() {
+                return email.clone();
+            }
+        }
+        // Shorten UUIDs to their leading segment.
+        let uid = self.user_id.trim();
+        if uid.len() >= 24 {
+            if let Some(head) = uid.split('-').next() {
+                if head.len() >= 6 {
+                    return format!("{}…", head);
+                }
+            }
+            return format!("{}…", &uid[..8]);
+        }
+        uid.to_string()
+    }
 }
 
 // ── Collaboration: shares / teams / invites (Spec 24) ──────────────
@@ -508,6 +538,14 @@ pub struct ShareEntry {
     pub share_target: String,
     pub permission: String,
     pub granted_by: String,
+    /// Display name of `share_target` resolved by the server via a JOIN
+    /// to `users` (user shares) or `teams` (team shares). Renders as the
+    /// primary label in the Access UI, falling back to `share_target`.
+    #[serde(default)]
+    pub share_target_display_name: Option<String>,
+    /// Display name of `granted_by` — who created this share row.
+    #[serde(default)]
+    pub granted_by_display_name: Option<String>,
 }
 
 /// Response envelope for `GET /api/{forecasts|portfolios}/:id/shares`.
@@ -560,6 +598,11 @@ pub struct TeamMember {
     pub member_id: String,
     pub role: String,
     pub joined_at: Option<String>,
+    /// Server-resolved display name for user members. `None` for agent
+    /// members or when the users row is missing. The UI falls back to
+    /// `member_id` when unset.
+    #[serde(default)]
+    pub member_display_name: Option<String>,
 }
 
 /// Response for `GET /api/teams/:id` — the team plus its members.
@@ -614,10 +657,20 @@ pub struct InviteRequest {
 
 /// One pending invite from `GET /api/me/invites`. The server omits the
 /// token deliberately (the invitee sees the row in their inbox already).
+///
+/// Also returned by the target-scoped list endpoints
+/// (`GET /api/{forecasts,portfolios,teams}/:id/invites`) and the
+/// outbound view (`GET /api/me/invites/sent`); the display-name fields
+/// arrive populated on those paths (JOINed to `users` server-side) so
+/// the console can render "Alice — pending (view)" instead of a UUID.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Invite {
     pub id: String,
     pub target_type: String,
+    /// The forecast/portfolio/team UUID this invite targets. Present on
+    /// all invite list responses, including `/api/me/invites/sent` where
+    /// the caller needs to render "invited X to <target>".
+    #[serde(default)]
     pub target_id: String,
     pub permission: String,
     #[serde(default)]
@@ -630,6 +683,10 @@ pub struct Invite {
     pub status: String,
     pub expires_at: String,
     pub created_at: String,
+    #[serde(default)]
+    pub invitee_display_name: Option<String>,
+    #[serde(default)]
+    pub inviter_display_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1180,14 +1237,25 @@ impl ApiClient {
     }
 
     /// Refresh the latest crowd price for a linked forecast.
+    ///
+    /// The server's `SnapshotRequest` REQUIRES both `pm_event_id` and
+    /// `pm_market_id` — the Gamma API is keyed by (event, market) and
+    /// omitting `pm_event_id` causes the request body to fail to
+    /// deserialize (which historically manifested as "Polymarket is not
+    /// updating" for linked forecasts like the WC winner event).
     pub async fn pm_snapshot(
         &self,
         forecast_id: &str,
+        pm_event_id: &str,
         pm_market_id: &str,
     ) -> Result<JsonValue, ApiError> {
         self.post(
             "/api/polymarket/snapshot",
-            &json!({ "forecast_id": forecast_id, "pm_market_id": pm_market_id }),
+            &json!({
+                "forecast_id": forecast_id,
+                "pm_event_id": pm_event_id,
+                "pm_market_id": pm_market_id,
+            }),
         )
         .await
     }
@@ -1349,11 +1417,8 @@ impl ApiClient {
         if let Some(meta) = metadata {
             body["metadata"] = meta.clone();
         }
-        self.post(
-            &format!("/api/workspaces/{}/messages", workspace_id),
-            &body,
-        )
-        .await
+        self.post(&format!("/api/workspaces/{}/messages", workspace_id), &body)
+            .await
     }
 
     /// Set a workspace output (typed KV for cross-workspace consumption).
@@ -1381,10 +1446,7 @@ impl ApiClient {
     }
 
     /// List all outputs for a workspace.
-    pub async fn list_workspace_outputs(
-        &self,
-        workspace_id: &str,
-    ) -> Result<JsonValue, ApiError> {
+    pub async fn list_workspace_outputs(&self, workspace_id: &str) -> Result<JsonValue, ApiError> {
         self.get(&format!("/api/workspaces/{}/outputs", workspace_id))
             .await
     }
@@ -1553,10 +1615,7 @@ impl ApiClient {
         req: &JsonValue,
     ) -> Result<JsonValue, ApiError> {
         self.post(
-            &format!(
-                "/api/forecast-relationships/{}/propagate",
-                relationship_id
-            ),
+            &format!("/api/forecast-relationships/{}/propagate", relationship_id),
             req,
         )
         .await
@@ -1585,8 +1644,11 @@ impl ApiClient {
         notes: Option<&str>,
     ) -> Result<JsonValue, ApiError> {
         let body = serde_json::json!({ "notes": notes });
-        self.post(&format!("/api/pending-cascades/{}/apply", cascade_id), &body)
-            .await
+        self.post(
+            &format!("/api/pending-cascades/{}/apply", cascade_id),
+            &body,
+        )
+        .await
     }
 
     pub async fn dismiss_pending_cascade(
@@ -1702,11 +1764,7 @@ impl ApiClient {
     }
 
     /// Remove a member from a team.
-    pub async fn remove_team_member(
-        &self,
-        team_id: &str,
-        member_id: &str,
-    ) -> Result<(), ApiError> {
+    pub async fn remove_team_member(&self, team_id: &str, member_id: &str) -> Result<(), ApiError> {
         self.delete(&format!("/api/teams/{}/members/{}", team_id, member_id))
             .await
     }
@@ -1759,6 +1817,39 @@ impl ApiClient {
     /// List the calling user's pending invites (the Inbox feed).
     pub async fn list_my_invites(&self) -> Result<InviteListResponse, ApiError> {
         self.get("/api/me/invites").await
+    }
+
+    /// List invites the calling user has SENT (all statuses). Used by
+    /// the console to surface outbound invitations that haven't yet
+    /// been accepted or declined — without this endpoint the send
+    /// action is fire-and-forget from the operator's perspective.
+    pub async fn list_my_sent_invites(&self) -> Result<InviteListResponse, ApiError> {
+        self.get("/api/me/invites/sent").await
+    }
+
+    /// List invites (pending + terminal) attached to a specific forecast.
+    /// Caller must be a forecast admin. Powers the "Pending invites"
+    /// section of the Access tab.
+    pub async fn list_forecast_invites(
+        &self,
+        forecast_id: &str,
+    ) -> Result<InviteListResponse, ApiError> {
+        self.get(&format!("/api/forecasts/{}/invites", forecast_id))
+            .await
+    }
+
+    /// Symmetric with `list_forecast_invites` for portfolios.
+    pub async fn list_portfolio_invites(
+        &self,
+        portfolio_id: &str,
+    ) -> Result<InviteListResponse, ApiError> {
+        self.get(&format!("/api/portfolios/{}/invites", portfolio_id))
+            .await
+    }
+
+    /// List invites attached to a team. Caller must be an owner/admin.
+    pub async fn list_team_invites(&self, team_id: &str) -> Result<InviteListResponse, ApiError> {
+        self.get(&format!("/api/teams/{}/invites", team_id)).await
     }
 
     /// Accept an invite. Materialises the grant server-side.

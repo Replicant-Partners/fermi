@@ -234,8 +234,15 @@ pub async fn auth_logout() -> Result<Response, (StatusCode, String)> {
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
 
-/// Get current authenticated user
-pub async fn auth_me(principal: AuthPrincipal) -> Json<Value> {
+/// Get current authenticated user.
+///
+/// For API-key principals we ALSO fetch the underlying user's display_name
+/// / email from the `users` table so downstream UIs (the Fermi console
+/// footer, share/invite dialogs) can render a friendly label instead of
+/// the raw `user_id` UUID. Without this join, callers authenticated via
+/// `FERMI_API_KEY` see the UUID as "who am I" — which is what the console
+/// operator was hitting.
+pub async fn auth_me(State(state): State<AppState>, principal: AuthPrincipal) -> Json<Value> {
     match principal {
         AuthPrincipal::User(user) => Json(json!({
             "user_id": user.user_id,
@@ -245,12 +252,29 @@ pub async fn auth_me(principal: AuthPrincipal) -> Json<Value> {
             "auth_provider": user.auth_provider,
             "github_username": user.github_username,
         })),
-        AuthPrincipal::ApiKey(key) => Json(json!({
-            "user_id": key.user_id,
-            "auth_type": "api_key",
-            "key_name": key.name,
-            "scopes": key.scopes,
-        })),
+        AuthPrincipal::ApiKey(key) => {
+            // Best-effort lookup — if the row is missing (dev fixture,
+            // orphaned key) we still return the key info.
+            let profile =
+                sqlx::query("SELECT display_name, email FROM users WHERE user_id = $1 LIMIT 1")
+                    .bind(&key.user_id)
+                    .fetch_optional(&state.db)
+                    .await
+                    .ok()
+                    .flatten();
+            let display_name: Option<String> = profile
+                .as_ref()
+                .and_then(|r| r.try_get("display_name").ok());
+            let email: Option<String> = profile.as_ref().and_then(|r| r.try_get("email").ok());
+            Json(json!({
+                "user_id": key.user_id,
+                "auth_type": "api_key",
+                "key_name": key.name,
+                "scopes": key.scopes,
+                "display_name": display_name,
+                "email": email,
+            }))
+        }
     }
 }
 
@@ -407,14 +431,10 @@ pub async fn auth_cli_finish(
         .unwrap_or_else(|| "cli".to_string());
     let key_name = format!("abw-cli ({})", cb_host);
 
-    let (plaintext_key, _info) = api_keys::create_api_key(
-        &state.db,
-        &user_id,
-        &key_name,
-        &["cli".to_string()],
-    )
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let (plaintext_key, _info) =
+        api_keys::create_api_key(&state.db, &user_id, &key_name, &["cli".to_string()])
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Surface display name in the redirect (CLI shows it under `abw whoami`).
     let display = principal_display(&principal);
@@ -443,10 +463,13 @@ fn is_safe_cli_callback(url: &str) -> bool {
 
 fn principal_display(p: &AuthPrincipal) -> String {
     match p {
-        AuthPrincipal::User(u) => u.display_name.clone()
-            .unwrap_or_else(|| {
-                if !u.email.is_empty() { u.email.clone() } else { u.user_id.clone() }
-            }),
+        AuthPrincipal::User(u) => u.display_name.clone().unwrap_or_else(|| {
+            if !u.email.is_empty() {
+                u.email.clone()
+            } else {
+                u.user_id.clone()
+            }
+        }),
         AuthPrincipal::ApiKey(k) => format!("api_key:{}", k.name),
     }
 }
@@ -610,12 +633,8 @@ pub async fn siwe_verify_handler(
     // and we honour any pending invites addressed to it. Best-effort:
     // failure does not block sign-in.
     if !user.email.is_empty() {
-        match fermi_auth::invites::claim_pending_for_email(
-            &state.db,
-            &user.user_id,
-            &user.email,
-        )
-        .await
+        match fermi_auth::invites::claim_pending_for_email(&state.db, &user.user_id, &user.email)
+            .await
         {
             Ok(0) => {}
             Ok(n) => eprintln!(
