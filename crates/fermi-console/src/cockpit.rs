@@ -388,6 +388,22 @@ pub struct CockpitState {
     pub hovered_trajectory_event: Option<usize>,
     /// Polling interval for PM price updates. None = no polling.
     pub pm_poll_interval: Option<std::time::Duration>,
+
+    // ── PM refresh telemetry ──────────────────────────────────
+    //
+    // Written by refresh_pm_price_now() and the polling loop so the
+    // Polymarket panel can render "updated 3 s ago" / "refreshing…" /
+    // "failed: Bad Gateway" — without this the operator has no way to
+    // tell whether the crowd number they see is live, stale-and-being-
+    // refreshed, or silently failing every poll.
+    /// Unix epoch seconds when the last successful PM snapshot landed.
+    pub pm_last_refresh_at: Option<u64>,
+    /// Error message from the most recent failed snapshot attempt.
+    /// Cleared on next success.
+    pub pm_last_refresh_error: Option<String>,
+    /// True while a snapshot request is in flight (from either the
+    /// interval poll or the manual ↻ Refresh now button).
+    pub pm_refresh_in_flight: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -635,6 +651,9 @@ impl CockpitState {
             timeline_error: None,
             pm_price_history: Vec::new(),
             pm_poll_interval: None,
+            pm_last_refresh_at: None,
+            pm_last_refresh_error: None,
+            pm_refresh_in_flight: false,
             hovered_histogram_bin: None,
             hovered_index_version: None,
             hovered_trajectory_event: None,
@@ -714,39 +733,59 @@ impl CockpitState {
 
                 if let Some((api, eid, mid, forecast_id)) = poll_data {
                     let fid = forecast_id.unwrap_or_default();
+                    // Signal "refresh in flight" so the UI status chip
+                    // shows the same "refreshing…" state as a manual
+                    // click. Skip if a manual refresh is already
+                    // running to avoid clobbering its outcome.
+                    let should_fire = this
+                        .update(cx, |state, _cx| {
+                            if state.pm_refresh_in_flight {
+                                false
+                            } else {
+                                state.pm_refresh_in_flight = true;
+                                true
+                            }
+                        })
+                        .unwrap_or(false);
+                    if !should_fire {
+                        continue;
+                    }
                     let result =
                         tokio::spawn(async move { api.pm_snapshot(&fid, &eid, &mid).await }).await;
 
-                    match &result {
-                        Ok(Ok(resp)) => {
-                            let price =
-                                resp.get("market_price")
+                    this.update(cx, |state, cx| {
+                        state.pm_refresh_in_flight = false;
+                        match &result {
+                            Ok(Ok(resp)) => {
+                                let price = resp
+                                    .get("market_price")
                                     .and_then(|v| v.as_f64())
                                     .or_else(|| {
                                         resp.get("snapshot")
                                             .and_then(|s| s.get("market_price"))
                                             .and_then(|v| v.as_f64())
                                     });
-                            let vol_24h = resp.get("volume_24h").and_then(|v| v.as_f64());
-                            let liquidity = resp.get("liquidity").and_then(|v| v.as_f64());
-                            let price_change_1w =
-                                resp.get("price_change_1w").and_then(|v| v.as_f64());
-                            let confidence = resp
-                                .get("confidence_signal")
-                                .and_then(|v| v.as_str())
-                                .map(String::from);
-
-                            if let Some(p) = price {
-                                this.update(cx, |state, cx| {
+                                let vol_24h = resp.get("volume_24h").and_then(|v| v.as_f64());
+                                let liquidity = resp.get("liquidity").and_then(|v| v.as_f64());
+                                let price_change_1w =
+                                    resp.get("price_change_1w").and_then(|v| v.as_f64());
+                                let confidence = resp
+                                    .get("confidence_signal")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from);
+                                if let Some(p) = price {
                                     let now = std::time::SystemTime::now()
                                         .duration_since(std::time::UNIX_EPOCH)
                                         .unwrap_or_default()
                                         .as_secs();
-                                    // Only overwrite if the value actually
-                                    // changed enough to matter (>0.05pp)
-                                    // OR if we haven't recorded any history
-                                    // yet — avoids spamming the sparkline
-                                    // when the market is quiet.
+                                    // Only overwrite the history point if
+                                    // the value actually changed enough to
+                                    // matter (>0.05pp) OR if we haven't
+                                    // recorded any history yet — avoids
+                                    // spamming the sparkline when the
+                                    // market is quiet. The refresh
+                                    // timestamp is always updated so the
+                                    // UI can show "last checked: now".
                                     let changed = state
                                         .pm_market_price
                                         .map(|prev| (prev - p).abs() > 0.0005)
@@ -770,28 +809,33 @@ impl CockpitState {
                                             state.pm_price_history.remove(0);
                                         }
                                     }
+                                    state.pm_last_refresh_at = Some(now);
+                                    state.pm_last_refresh_error = None;
                                     log::info!(
                                         "[pm-poll] Price update: {:.2}% ({} history points)",
                                         p * 100.0,
                                         state.pm_price_history.len()
                                     );
-                                    cx.notify();
-                                })
-                                .ok();
-                            } else {
-                                log::warn!(
-                                    "[pm-poll] Snapshot response missing market_price: {}",
-                                    resp
-                                );
+                                } else {
+                                    let msg = "snapshot response missing market_price".to_string();
+                                    log::warn!("[pm-poll] {}: {}", msg, resp);
+                                    state.pm_last_refresh_error = Some(msg);
+                                }
+                            }
+                            Ok(Err(e)) => {
+                                let msg = e.to_string();
+                                log::warn!("[pm-poll] Snapshot API error: {}", msg);
+                                state.pm_last_refresh_error = Some(msg);
+                            }
+                            Err(e) => {
+                                let msg = format!("task join error: {}", e);
+                                log::warn!("[pm-poll] {}", msg);
+                                state.pm_last_refresh_error = Some(msg);
                             }
                         }
-                        Ok(Err(e)) => {
-                            log::warn!("[pm-poll] Snapshot API error: {}", e);
-                        }
-                        Err(e) => {
-                            log::warn!("[pm-poll] Snapshot task join error: {}", e);
-                        }
-                    }
+                        cx.notify();
+                    })
+                    .ok();
                 }
             }
         })
@@ -829,33 +873,43 @@ impl CockpitState {
         let (Some(eid), Some(mid)) = (self.pm_event_id.clone(), self.pm_market_id.clone()) else {
             return;
         };
+        // Guard against double-clicks / overlapping polls firing the
+        // manual refresh; the button/status chip reads this flag.
+        if self.pm_refresh_in_flight {
+            return;
+        }
+        self.pm_refresh_in_flight = true;
+        self.pm_last_refresh_error = None;
+        cx.notify();
         let api = self.api.clone();
         let fid = self.forecast_id.clone().unwrap_or_default();
         cx.spawn(async move |this, cx| {
             let result = tokio::spawn(async move { api.pm_snapshot(&fid, &eid, &mid).await }).await;
-            match result {
-                Ok(Ok(resp)) => {
-                    let price = resp
-                        .get("market_price")
-                        .and_then(|v| v.as_f64())
-                        .or_else(|| {
-                            resp.get("snapshot")
-                                .and_then(|s| s.get("market_price"))
+            this.update(cx, |state, cx| {
+                state.pm_refresh_in_flight = false;
+                match result {
+                    Ok(Ok(resp)) => {
+                        let price =
+                            resp.get("market_price")
                                 .and_then(|v| v.as_f64())
-                        });
-                    let vol_24h = resp.get("volume_24h").and_then(|v| v.as_f64());
-                    let liquidity = resp.get("liquidity").and_then(|v| v.as_f64());
-                    let price_change_1w = resp.get("price_change_1w").and_then(|v| v.as_f64());
-                    let confidence = resp
-                        .get("confidence_signal")
-                        .and_then(|v| v.as_str())
-                        .map(String::from);
-                    if let Some(p) = price {
-                        this.update(cx, |state, cx| {
+                                .or_else(|| {
+                                    resp.get("snapshot")
+                                        .and_then(|s| s.get("market_price"))
+                                        .and_then(|v| v.as_f64())
+                                });
+                        let vol_24h = resp.get("volume_24h").and_then(|v| v.as_f64());
+                        let liquidity = resp.get("liquidity").and_then(|v| v.as_f64());
+                        let price_change_1w = resp.get("price_change_1w").and_then(|v| v.as_f64());
+                        let confidence = resp
+                            .get("confidence_signal")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
+                        if let Some(p) = price {
                             let now = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap_or_default()
                                 .as_secs();
+                            let prev = state.pm_market_price;
                             state.pm_market_price = Some(p);
                             if vol_24h.is_some() {
                                 state.pm_volume_24h = vol_24h;
@@ -873,24 +927,33 @@ impl CockpitState {
                             if state.pm_price_history.len() > 500 {
                                 state.pm_price_history.remove(0);
                             }
+                            state.pm_last_refresh_at = Some(now);
+                            state.pm_last_refresh_error = None;
                             log::info!(
                                 "[pm-refresh] Snapshot: {:.2}% (was {:.2}%)",
                                 p * 100.0,
-                                state.pm_market_price.map(|_| p * 100.0).unwrap_or(0.0)
+                                prev.map(|q| q * 100.0).unwrap_or(0.0)
                             );
-                            cx.notify();
-                        })
-                        .ok();
-                    } else {
-                        log::warn!(
-                            "[pm-refresh] Snapshot response missing market_price: {}",
-                            resp
-                        );
+                        } else {
+                            let msg = "snapshot response missing market_price".to_string();
+                            log::warn!("[pm-refresh] {}: {}", msg, resp);
+                            state.pm_last_refresh_error = Some(msg);
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        let msg = e.to_string();
+                        log::warn!("[pm-refresh] Snapshot API error: {}", msg);
+                        state.pm_last_refresh_error = Some(msg);
+                    }
+                    Err(e) => {
+                        let msg = format!("task join error: {}", e);
+                        log::warn!("[pm-refresh] {}", msg);
+                        state.pm_last_refresh_error = Some(msg);
                     }
                 }
-                Ok(Err(e)) => log::warn!("[pm-refresh] Snapshot API error: {}", e),
-                Err(e) => log::warn!("[pm-refresh] Snapshot task join error: {}", e),
-            }
+                cx.notify();
+            })
+            .ok();
         })
         .detach();
     }
@@ -8831,6 +8894,43 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                             ("1 hr", 3600),
                             ("Daily", 86400),
                         ];
+                        // Build the status chip: "refreshing…" while a
+                        // request is in flight, "failed: <err>" when
+                        // the last attempt errored, "updated 3 s ago"
+                        // otherwise. Colour signals status at a glance.
+                        let (status_text, status_color) = if state.pm_refresh_in_flight {
+                            ("refreshing…".to_string(), rgb(theme::CYAN))
+                        } else if let Some(err) = state.pm_last_refresh_error.as_ref() {
+                            // Truncate long errors so the chip doesn't blow up.
+                            let short = if err.len() > 40 {
+                                format!("failed: {}…", &err[..40])
+                            } else {
+                                format!("failed: {}", err)
+                            };
+                            (short, rgb(theme::RED))
+                        } else if let Some(ts) = state.pm_last_refresh_at {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(ts);
+                            let secs = now.saturating_sub(ts);
+                            let rel = if secs < 5 {
+                                "just now".to_string()
+                            } else if secs < 60 {
+                                format!("{}s ago", secs)
+                            } else if secs < 3600 {
+                                format!("{}m ago", secs / 60)
+                            } else if secs < 86400 {
+                                format!("{}h ago", secs / 3600)
+                            } else {
+                                format!("{}d ago", secs / 86400)
+                            };
+                            (format!("updated {}", rel), rgb(theme::GREEN))
+                        } else {
+                            ("never refreshed".to_string(), rgb(theme::FG_FAINT))
+                        };
+                        let refresh_disabled = state.pm_refresh_in_flight;
+
                         div()
                             .flex()
                             .items_center()
@@ -8846,7 +8946,8 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                             // snapshot regardless of the polling cadence,
                             // so the operator never has to wait 5–60 min
                             // to see a live crowd value after landing on
-                            // the forecast.
+                            // the forecast. Grays out while a refresh is
+                            // in flight so double-clicks can't stack.
                             .child(
                                 div()
                                     .id("pm-refresh-now")
@@ -8855,13 +8956,35 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                                     .rounded(px(2.0))
                                     .text_size(px(8.0))
                                     .bg(rgb(theme::BG))
-                                    .text_color(rgb(theme::CYAN))
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(rgb(theme::BG_HOVER)))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.refresh_pm_price_now(cx);
-                                    }))
-                                    .child("↻ Refresh now"),
+                                    .text_color(if refresh_disabled {
+                                        rgb(theme::FG_FAINT)
+                                    } else {
+                                        rgb(theme::CYAN)
+                                    })
+                                    .when(!refresh_disabled, |el| {
+                                        el.cursor_pointer().hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.refresh_pm_price_now(cx);
+                                            }))
+                                    })
+                                    .child(if refresh_disabled {
+                                        "↻ Refreshing…"
+                                    } else {
+                                        "↻ Refresh now"
+                                    }),
+                            )
+                            // Status chip — the whole point of this
+                            // block: gives the operator confidence the
+                            // refresh is actually firing (and surfaces
+                            // silent server errors when it isn't).
+                            .child(
+                                div()
+                                    .px(px(6.0))
+                                    .py(px(1.0))
+                                    .rounded(px(2.0))
+                                    .text_size(px(8.0))
+                                    .text_color(status_color)
+                                    .child(status_text),
                             )
                             .children(schedules.into_iter().map(|(label, secs)| {
                                 let is_active = if secs == 0 {

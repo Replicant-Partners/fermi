@@ -990,7 +990,16 @@ impl FermiConsole {
                     // ABW is shared substrate: /api/teams returns every
                     // vertical's teams (rabble swarms, kask workspaces, …).
                     // The Fermi console only manages fermi_forecast teams.
-                    this.teams = resp.teams.into_iter().filter(is_fermi_team).collect();
+                    // Filter twice: the fermi vertical AND out the
+                    // auto-created workspace-prior team wrappers (one
+                    // per Team-Prior workspace, 62+ for the WC event)
+                    // that would otherwise drown out real collaboration
+                    // teams in the left pane.
+                    this.teams = resp
+                        .teams
+                        .into_iter()
+                        .filter(is_collaboration_team)
+                        .collect();
                     this.teams_loading = false;
                     // Keep the current selection if it's still present,
                     // otherwise default to the first team.
@@ -6620,11 +6629,27 @@ impl FermiConsole {
                             .when(self.teams.is_empty() && !self.teams_loading, |el| {
                                 el.child(
                                     div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap(px(6.0))
                                         .p(px(20.0))
-                                        .text_size(px(12.0))
-                                        .text_color(theme::fg_dim())
                                         .child(
-                                            "No teams yet. Create one to share forecasts with a group.",
+                                            div()
+                                                .text_size(px(12.0))
+                                                .text_color(theme::fg_dim())
+                                                .child(
+                                                    "No collaboration teams yet. Create one to share forecasts with a group.",
+                                                ),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(10.0))
+                                                .text_color(theme::fg_faint())
+                                                .child(
+                                                    "Auto-created workspace teams (Team Prior — X, Tournament Path — X) \
+                                                     are hidden from this panel — they're implementation plumbing, \
+                                                     not human teams.",
+                                                ),
                                         ),
                                 )
                             })
@@ -8875,6 +8900,55 @@ fn is_fermi_team(t: &Team) -> bool {
             !(is_vertical || desc.contains("auto-created workspace"))
         }
     }
+}
+
+/// Every ABW workspace (spawn_forecast_workspace) auto-creates a team
+/// wrapper so shares can bind to it. For the WC forecast infrastructure
+/// that means one ABW team per team-prior workspace — 62+ entries with
+/// names like "Team Prior — Argentina (ARG)" and slugs like
+/// `fermi-forecast-<hex>`. These are IMPLEMENTATION plumbing, not
+/// collaboration teams; surfacing them in the Teams panel drowns out
+/// the actual human teams the operator wants to manage.
+///
+/// Detect them by the workspace-team fingerprint:
+///   * name starts with "Team Prior —" or "Tournament Path —"
+///     (the WC template's two workspace kinds)
+///   * OR slug matches `fermi-forecast-<8+ hex chars>` (the
+///     auto-spawn slug pattern from spawn_forecast_workspace)
+///   * OR description contains "Tournament win probability prior"
+///
+/// Anything else — slugs the user chose, human names, empty
+/// descriptions — is treated as a real collaboration team.
+fn is_workspace_prior_team(t: &Team) -> bool {
+    // Name prefixes emitted by the WC template's workspace spawner.
+    if t.name.starts_with("Team Prior — ")
+        || t.name.starts_with("Team Prior - ")
+        || t.name.starts_with("Tournament Path — ")
+        || t.name.starts_with("Tournament Path - ")
+    {
+        return true;
+    }
+    // spawn_forecast_workspace slug pattern: `fermi-forecast-<hex>`.
+    // We match by prefix + a trailing hex-ish tail so a user who
+    // happens to name their team "fermi-forecast-collab" isn't hidden.
+    let slug = t.slug.to_ascii_lowercase();
+    if let Some(tail) = slug.strip_prefix("fermi-forecast-") {
+        // The auto tail is 8+ chars, all lowercase hex. Reject only
+        // when the tail matches that shape exactly — anything with a
+        // dash, letter outside a–f, etc. is user-chosen.
+        if tail.len() >= 6 && tail.chars().all(|c| c.is_ascii_hexdigit()) {
+            return true;
+        }
+    }
+    // Fallback: description written by the WC template's team
+    // constructor for team-prior workspaces.
+    let desc = t.description.as_deref().unwrap_or("").to_ascii_lowercase();
+    desc.contains("tournament win probability prior") || desc.contains("auto-created workspace")
+}
+
+/// True when a team should appear in the Teams collaboration panel.
+fn is_collaboration_team(t: &Team) -> bool {
+    is_fermi_team(t) && !is_workspace_prior_team(t)
 }
 
 /// Render an RFC3339 timestamp as a compact "now / 5m / 3h / 2d / 4w / 8mo / 2y"
