@@ -1,18 +1,25 @@
 {
   "forecast_id": "2b60260e-bff4-48b8-85e5-093b2eb679f3",
   "current_version": 1,
-  "predicted_probability": 0.160185769200325,
-  "inside_view_explanation": "",
+  "predicted_probability": 0.22490595173593828,
+  "inside_view_explanation": "Inside view: model evaluates to 10.6% (p5=7.7%, p95=13.9%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-02 07:09",
-      "probability": 0.160185769200325,
-      "change_summary": "Initial: 16.0% base=2%, 6 drivers, 4 evidence"
+      "timestamp": "2026-07-06 14:45",
+      "probability": 0.22490595173593828,
+      "change_summary": "Initial: 22.5% base=2%, 6 drivers, 4 evidence"
     }
   ],
-  "sim_results": null,
+  "sim_results": {
+    "mean": 0.10575496747013158,
+    "median": 0.10434906228416821,
+    "p5": 0.07738111262064011,
+    "p95": 0.13909446824640712,
+    "std_dev": 0.018704286245881496,
+    "iterations": 10000
+  },
   "base_rate": {
     "reference_class": "FIFA World Cup winners 1930–2022",
     "historical_frequency": 0.0208,
@@ -149,13 +156,18 @@
     "event_id": "30615",
     "market_id": "558935",
     "question": "Will England win the 2026 FIFA World Cup?",
-    "market_price": 0.1045,
-    "volume_24h": 1199750.674903999,
-    "liquidity": null,
+    "market_price": 0.1405,
+    "volume_24h": 4874961.007713023,
+    "liquidity": 5909824.84618,
     "confidence": "Very High",
-    "price_change_1w": null,
+    "price_change_1w": 0.038,
     "url": "https://polymarket.com/event/world-cup-winner",
-    "price_history": []
+    "price_history": [
+      {
+        "t": 1783349115,
+        "p": 0.1405
+      }
+    ]
   },
   "workspace_id": "50c8d897-b6f5-45e8-b684-d2b1062351bf"
 }
