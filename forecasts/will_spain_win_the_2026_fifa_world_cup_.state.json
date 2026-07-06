@@ -1,141 +1,15 @@
 {
   "forecast_id": "4084aecc-9f12-4649-a30a-a5d06e734541",
-  "current_version": 22,
-  "predicted_probability": 0.25378933548927307,
+  "current_version": 1,
+  "predicted_probability": 0.2539636194705963,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
+      "timestamp": "2026-07-06 19:18",
+      "probability": 0.2539636194705963,
       "change_summary": "Initial: 25.4% base=2%, 6 drivers, 3 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
-      "change_summary": "25.4% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
-      "change_summary": "25.4% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
-      "change_summary": "25.4% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 5,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
-      "change_summary": "25.4% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 6,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
-      "change_summary": "25.4% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 7,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
-      "change_summary": "25.4% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 8,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
-      "change_summary": "25.4% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 9,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
-      "change_summary": "25.4% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 10,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
-      "change_summary": "25.4% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 11,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
-      "change_summary": "25.4% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 12,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
-      "change_summary": "25.4% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 13,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
-      "change_summary": "25.4% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 14,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
-      "change_summary": "25.4% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 15,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
-      "change_summary": "25.4% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 16,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
-      "change_summary": "25.4% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 17,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
-      "change_summary": "25.4% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 18,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
-      "change_summary": "25.4% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 19,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
-      "change_summary": "25.4% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 20,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
-      "change_summary": "25.4% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 21,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
-      "change_summary": "25.4% (→), 6 drivers, 3 evidence"
-    },
-    {
-      "version": 22,
-      "timestamp": "2026-07-06 18:40",
-      "probability": 0.25378933548927307,
-      "change_summary": "25.4% (→), 6 drivers, 3 evidence"
     }
   ],
   "sim_results": null,
@@ -265,80 +139,24 @@
     "event_id": "30615",
     "market_id": "558934",
     "question": "Will Spain win the 2026 FIFA World Cup?",
-    "market_price": 0.1205,
-    "volume_24h": 2988925.414309993,
-    "liquidity": 5262804.0944,
+    "market_price": 0.1285,
+    "volume_24h": 3358713.016062,
+    "liquidity": 742228.6578,
     "confidence": "Very High",
-    "price_change_1w": 0.01,
+    "price_change_1w": 0.018,
     "url": "https://polymarket.com/event/world-cup-winner",
     "price_history": [
       {
-        "t": 1783363132,
-        "p": 0.1205
+        "t": 1783365513,
+        "p": 0.1285
       },
       {
-        "t": 1783363157,
-        "p": 0.1205
+        "t": 1783365517,
+        "p": 0.1285
       },
       {
-        "t": 1783363158,
-        "p": 0.1205
-      },
-      {
-        "t": 1783363159,
-        "p": 0.1205
-      },
-      {
-        "t": 1783363159,
-        "p": 0.1205
-      },
-      {
-        "t": 1783363159,
-        "p": 0.1205
-      },
-      {
-        "t": 1783363160,
-        "p": 0.1205
-      },
-      {
-        "t": 1783363185,
-        "p": 0.1205
-      },
-      {
-        "t": 1783363187,
-        "p": 0.1205
-      },
-      {
-        "t": 1783363187,
-        "p": 0.1205
-      },
-      {
-        "t": 1783363188,
-        "p": 0.1205
-      },
-      {
-        "t": 1783363188,
-        "p": 0.1205
-      },
-      {
-        "t": 1783363189,
-        "p": 0.1205
-      },
-      {
-        "t": 1783363189,
-        "p": 0.1205
-      },
-      {
-        "t": 1783363189,
-        "p": 0.1205
-      },
-      {
-        "t": 1783363189,
-        "p": 0.1205
-      },
-      {
-        "t": 1783363189,
-        "p": 0.1205
+        "t": 1783365519,
+        "p": 0.1285
       }
     ]
   },
