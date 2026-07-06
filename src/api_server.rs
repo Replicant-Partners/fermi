@@ -457,8 +457,8 @@ async fn run_migrations(db: &PgPool) {
         "migrations/045_rabble_funding.sql",
         "migrations/046_rabble_visibility.sql",
         "migrations/047_flight_path_samples.sql",
-        "migrations/048_fermi_notebooks.sql",   // was wrongly listed as 048_voice_assets.sql
-        "migrations/049_akp_foundation.sql",    // AKP protocol tables (deferred but idempotent)
+        "migrations/048_fermi_notebooks.sql", // was wrongly listed as 048_voice_assets.sql
+        "migrations/049_akp_foundation.sql",  // AKP protocol tables (deferred but idempotent)
         "migrations/048b_voice_assets.sql",
         "migrations/050_fix_tx_type_constraint_rabble.sql",
         "migrations/051_swarm_telemetry.sql",
@@ -1028,7 +1028,10 @@ async fn ensure_critical_schema(db: &PgPool) {
               FOR EACH ROW EXECUTE FUNCTION public.fn_forecast_spacetime_on_update()"),
     ];
 
-    println!("[ensure_critical_schema] running {} column ensures…", alters.len());
+    println!(
+        "[ensure_critical_schema] running {} column ensures…",
+        alters.len()
+    );
     for (label, stmt) in alters {
         match sqlx::query(stmt).execute(db).await {
             Ok(_) => println!("[ensure_critical_schema] ✓ {}", label),
@@ -1117,8 +1120,8 @@ async fn main() {
         .statement_cache_capacity(0);
 
     let db = PgPoolOptions::new()
-        .max_connections(25)   // raised from 10 — headroom for concurrent LLM + API requests
-        .min_connections(2)    // keep warm connections for fast cold starts
+        .max_connections(25) // raised from 10 — headroom for concurrent LLM + API requests
+        .min_connections(2) // keep warm connections for fast cold starts
         .acquire_timeout(std::time::Duration::from_secs(30))
         .test_before_acquire(true)
         .after_connect(|conn, _meta| {
@@ -1287,7 +1290,11 @@ async fn main() {
                     match sqlx::postgres::PgListener::connect(&db_url_bg).await {
                         Ok(mut listener) => {
                             if let Err(e) = listener
-                                .listen_all(vec!["workspace_messages", "creature_events", "rabble_events"])
+                                .listen_all(vec![
+                                    "workspace_messages",
+                                    "creature_events",
+                                    "rabble_events",
+                                ])
                                 .await
                             {
                                 tracing::error!("pg_notify listen_all failed: {e}");
@@ -1461,13 +1468,31 @@ async fn main() {
         )
         // ─── Phase 4 — Observatory (Plane D) ─────────────────────────
         // Fleet
-        .route("/api/observatory/fleet/summary",  get(handlers::observatory::fleet_summary_handler))
-        .route("/api/observatory/fleet/scan",     post(handlers::observatory::fleet_scan_handler))
-        .route("/api/observatory/fleet/agents",   get(handlers::observatory::fleet_agents_handler))
+        .route(
+            "/api/observatory/fleet/summary",
+            get(handlers::observatory::fleet_summary_handler),
+        )
+        .route(
+            "/api/observatory/fleet/scan",
+            post(handlers::observatory::fleet_scan_handler),
+        )
+        .route(
+            "/api/observatory/fleet/agents",
+            get(handlers::observatory::fleet_agents_handler),
+        )
         // Dyads
-        .route("/api/observatory/dyads/auto-form",        post(handlers::observatory::auto_form_dyads_handler))
-        .route("/api/observatory/dyads/:dyad_id",         axum::routing::patch(handlers::observatory::patch_dyad_profile_handler))
-        .route("/api/observatory/agents/:agent_id/relationships", get(handlers::observatory::agent_relationships_handler))
+        .route(
+            "/api/observatory/dyads/auto-form",
+            post(handlers::observatory::auto_form_dyads_handler),
+        )
+        .route(
+            "/api/observatory/dyads/:dyad_id",
+            axum::routing::patch(handlers::observatory::patch_dyad_profile_handler),
+        )
+        .route(
+            "/api/observatory/agents/:agent_id/relationships",
+            get(handlers::observatory::agent_relationships_handler),
+        )
         // Per-agent
         .route(
             "/api/observatory/agents/:agent_id/timeline",
@@ -1781,7 +1806,8 @@ async fn main() {
         // tooling that adds members directly without an invite step.
         .route(
             "/api/teams/:team_id/invites",
-            post(handlers::invites::invite_to_team_handler),
+            post(handlers::invites::invite_to_team_handler)
+                .get(handlers::invites::list_team_invites_handler),
         )
         // ── Invite inbox + state-transition routes (Spec 24 §3.3) ──────
         //
@@ -1792,6 +1818,10 @@ async fn main() {
         .route(
             "/api/me/invites",
             get(handlers::invites::list_my_invites_handler),
+        )
+        .route(
+            "/api/me/invites/sent",
+            get(handlers::invites::list_sent_invites_handler),
         )
         .route(
             "/api/invites/:invite_id/decline",
@@ -1944,61 +1974,137 @@ async fn main() {
         // itself uses Option<AuthPrincipal> to surface caller-owned
         // private/unlisted Apps when a token is present.
         .route("/api/apps", post(handlers::apps::create_app_handler))
-        .route("/api/apps/:slug", put(handlers::apps::update_app_handler_full))
-        .route("/api/apps/:slug/workspaces", post(handlers::apps::spawn_workspace_handler))
-        .route("/api/apps/:slug/workspaces", get(handlers::apps::list_app_workspaces_handler))
-        .route("/api/apps/:slug/workspaces/batch", post(handlers::apps::batch_spawn_workspaces_handler))
-        .route("/api/apps/:slug/publish", post(handlers::apps::publish_app_handler))
-        .route("/api/apps/:slug/archive", post(handlers::apps::archive_app_handler))
+        .route(
+            "/api/apps/:slug",
+            put(handlers::apps::update_app_handler_full),
+        )
+        .route(
+            "/api/apps/:slug/workspaces",
+            post(handlers::apps::spawn_workspace_handler),
+        )
+        .route(
+            "/api/apps/:slug/workspaces",
+            get(handlers::apps::list_app_workspaces_handler),
+        )
+        .route(
+            "/api/apps/:slug/workspaces/batch",
+            post(handlers::apps::batch_spawn_workspaces_handler),
+        )
+        .route(
+            "/api/apps/:slug/publish",
+            post(handlers::apps::publish_app_handler),
+        )
+        .route(
+            "/api/apps/:slug/archive",
+            post(handlers::apps::archive_app_handler),
+        )
         // Batch-reconcile auto_hire across all existing workspaces of an App.
         // Used when auto_hire is edited after workspaces have spawned. The
         // alternative (manual hire per workspace × per added agent) doesn't
         // scale once a fleet exists. Idempotent — safe to re-run.
-        .route("/api/apps/:slug/sync-auto-hire", post(handlers::apps::sync_auto_hire_handler))
+        .route(
+            "/api/apps/:slug/sync-auto-hire",
+            post(handlers::apps::sync_auto_hire_handler),
+        )
         // ── SimOps direct computation (no LLM — for Compose mode live feedback) ─
-        .route("/api/simops/cascade", post(handlers::simops::cascade_handler))
+        .route(
+            "/api/simops/cascade",
+            post(handlers::simops::cascade_handler),
+        )
         // ── SimOps distributional projection (Digital Twin "Generate distribution") ─
-        .route("/api/simops/project", post(handlers::simops::project_handler))
+        .route(
+            "/api/simops/project",
+            post(handlers::simops::project_handler),
+        )
         // ── SimOps slot-match binding suggestions (spec 36a A.1.1 + A.1.4) ──────
-        .route("/api/simops/cascade/suggest-bindings",
-            post(handlers::workspace::actions::suggest_bindings_handler))
+        .route(
+            "/api/simops/cascade/suggest-bindings",
+            post(handlers::workspace::actions::suggest_bindings_handler),
+        )
         // ── SimOps dynamics (ODE time-series projection) ─────────────────────────
-        .route("/api/simops/dynamics", post(handlers::simops::dynamics_handler))
-        .route("/api/simops/dynamics/models", get(handlers::simops::dynamics_list_handler))
+        .route(
+            "/api/simops/dynamics",
+            post(handlers::simops::dynamics_handler),
+        )
+        .route(
+            "/api/simops/dynamics/models",
+            get(handlers::simops::dynamics_list_handler),
+        )
         // ── SimOps rheology (instantaneous fluid property calculator) ─────────
-        .route("/api/simops/rheology", post(handlers::simops::rheology_handler))
-        .route("/api/simops/rheology/models", get(handlers::simops::rheology_list_handler))
+        .route(
+            "/api/simops/rheology",
+            post(handlers::simops::rheology_handler),
+        )
+        .route(
+            "/api/simops/rheology/models",
+            get(handlers::simops::rheology_list_handler),
+        )
         // ── BayesOps (Spec 14 §5.6) — domain-neutral parameter fitting ─────────
         // Phase 1 (marginal): /fit_marginal
         // Phase 2 (conditional): /fit_conditional → /predict, /input_sensitivity,
         //                        /compare_scenarios, /prob_exceeds, /optimise_for_target
         // Posteriors are cached in-memory (session-scoped). Persistent posterior
         // store is Phase 5. No auth — these endpoints are pure compute.
-        .route("/api/bayesops/fit_marginal", post(handlers::bayesops::fit_marginal_handler))
-        .route("/api/bayesops/fit_conditional", post(handlers::bayesops::fit_conditional_handler))
-        .route("/api/bayesops/predict", post(handlers::bayesops::predict_handler))
-        .route("/api/bayesops/input_sensitivity", post(handlers::bayesops::input_sensitivity_handler))
-        .route("/api/bayesops/compare_scenarios", post(handlers::bayesops::compare_scenarios_handler))
-        .route("/api/bayesops/prob_exceeds", post(handlers::bayesops::prob_exceeds_handler))
-        .route("/api/bayesops/optimise_for_target", post(handlers::bayesops::optimise_for_target_handler))
-        .route("/api/bayesops/posteriors", get(handlers::bayesops::list_posteriors_handler))
-        .route("/api/bayesops/posteriors/:id", delete(handlers::bayesops::evict_posterior_handler))
+        .route(
+            "/api/bayesops/fit_marginal",
+            post(handlers::bayesops::fit_marginal_handler),
+        )
+        .route(
+            "/api/bayesops/fit_conditional",
+            post(handlers::bayesops::fit_conditional_handler),
+        )
+        .route(
+            "/api/bayesops/predict",
+            post(handlers::bayesops::predict_handler),
+        )
+        .route(
+            "/api/bayesops/input_sensitivity",
+            post(handlers::bayesops::input_sensitivity_handler),
+        )
+        .route(
+            "/api/bayesops/compare_scenarios",
+            post(handlers::bayesops::compare_scenarios_handler),
+        )
+        .route(
+            "/api/bayesops/prob_exceeds",
+            post(handlers::bayesops::prob_exceeds_handler),
+        )
+        .route(
+            "/api/bayesops/optimise_for_target",
+            post(handlers::bayesops::optimise_for_target_handler),
+        )
+        .route(
+            "/api/bayesops/posteriors",
+            get(handlers::bayesops::list_posteriors_handler),
+        )
+        .route(
+            "/api/bayesops/posteriors/:id",
+            delete(handlers::bayesops::evict_posterior_handler),
+        )
         // ── R-2: Sparkline UX endpoints (Spec 23 §4.3) ────────────────────────
         // Single round-trip for the editor to render every learnable-driver
         // sparkline in a forecast workspace, plus inline accept/reject.
-        .route("/api/workspaces/:workspace_id/bayesops/state",
-            get(handlers::bayesops::workspace_bayesops_state_handler))
-        .route("/api/bayesops/pending/:pending_id/accept",
-            post(handlers::bayesops::accept_pending_handler))
-        .route("/api/bayesops/pending/:pending_id/reject",
-            post(handlers::bayesops::reject_pending_handler))
+        .route(
+            "/api/workspaces/:workspace_id/bayesops/state",
+            get(handlers::bayesops::workspace_bayesops_state_handler),
+        )
+        .route(
+            "/api/bayesops/pending/:pending_id/accept",
+            post(handlers::bayesops::accept_pending_handler),
+        )
+        .route(
+            "/api/bayesops/pending/:pending_id/reject",
+            post(handlers::bayesops::reject_pending_handler),
+        )
         // ── BayesOps refit hook (Spec 23 R-1) ─────────────────────────────────
         // Manual trigger for the same refit_workspace function that fires
         // automatically post-commit from POST /api/workspaces/:id/resolve.
         // Useful for re-fitting after observation arrays are updated without
         // a full resolution, and for the cockpit's "refit now" button.
-        .route("/api/workspaces/:workspace_id/refit",
-            post(handlers::workspace::refit::refit_workspace_handler))
+        .route(
+            "/api/workspaces/:workspace_id/refit",
+            post(handlers::workspace::refit::refit_workspace_handler),
+        )
         // Workspace routes
         .route(
             "/api/workspaces",
@@ -2023,19 +2129,19 @@ async fn main() {
         // ── Workspace-aware cascade (reads process + twin from workspace git) ──
         .route(
             "/api/workspaces/:workspace_id/cascade",
-             post(handlers::simops::workspace_cascade_handler),
-         )
-         // ── SimOps benchmark: process spacetime + sample config ───────────────
-         .route(
-             "/api/simops/workspaces/:workspace_id/process-spacetime",
-             get(handlers::simops_benchmark::process_spacetime_handler),
-         )
-         .route(
-             "/api/simops/workspaces/:workspace_id/sample-config",
-             get(handlers::simops_benchmark::get_sample_config_handler)
-                 .put(handlers::simops_benchmark::put_sample_config_handler),
-         )
-         // ── Generalised App action protocol ──────────────────────────────────
+            post(handlers::simops::workspace_cascade_handler),
+        )
+        // ── SimOps benchmark: process spacetime + sample config ───────────────
+        .route(
+            "/api/simops/workspaces/:workspace_id/process-spacetime",
+            get(handlers::simops_benchmark::process_spacetime_handler),
+        )
+        .route(
+            "/api/simops/workspaces/:workspace_id/sample-config",
+            get(handlers::simops_benchmark::get_sample_config_handler)
+                .put(handlers::simops_benchmark::put_sample_config_handler),
+        )
+        // ── Generalised App action protocol ──────────────────────────────────
         // Six action types + list/pending/accept/reject + annotations.
         // Isomorphic across companion action blocks, abw CLI, and MCP tools/call.
         .route(
@@ -2166,13 +2272,34 @@ async fn main() {
             delete(handlers::workspace::remove_workspace_agent_handler),
         )
         // Xaman Ek session API
-        .route("/api/xaman/sessions", get(handlers::xaman::list_xaman_sessions_handler))
-        .route("/api/xaman/sessions", post(handlers::xaman::create_xaman_session_handler))
-        .route("/api/xaman/sessions/:id", get(handlers::xaman::get_xaman_session_handler))
-        .route("/api/xaman/sessions/:id/message", post(handlers::xaman::xaman_session_message_handler))
-        .route("/api/xaman/sessions/:id/complete", post(handlers::xaman::complete_xaman_session_handler))
-        .route("/api/xaman/sessions/:id/create-app", post(handlers::xaman::create_app_from_session_handler))
-        .route("/api/xaman/sessions/:id", delete(handlers::xaman::abandon_xaman_session_handler))
+        .route(
+            "/api/xaman/sessions",
+            get(handlers::xaman::list_xaman_sessions_handler),
+        )
+        .route(
+            "/api/xaman/sessions",
+            post(handlers::xaman::create_xaman_session_handler),
+        )
+        .route(
+            "/api/xaman/sessions/:id",
+            get(handlers::xaman::get_xaman_session_handler),
+        )
+        .route(
+            "/api/xaman/sessions/:id/message",
+            post(handlers::xaman::xaman_session_message_handler),
+        )
+        .route(
+            "/api/xaman/sessions/:id/complete",
+            post(handlers::xaman::complete_xaman_session_handler),
+        )
+        .route(
+            "/api/xaman/sessions/:id/create-app",
+            post(handlers::xaman::create_app_from_session_handler),
+        )
+        .route(
+            "/api/xaman/sessions/:id",
+            delete(handlers::xaman::abandon_xaman_session_handler),
+        )
         // Set workspace composition identity (mission + strategist)
         .route(
             "/api/workspaces/:workspace_id/composition/identity",
@@ -2407,117 +2534,118 @@ async fn main() {
             delete(handlers::forecasts::delete_forecast_schedule_handler),
         )
         .route(
-             "/api/forecasts/:forecast_id/schedules/:schedule_id/run",
-             post(handlers::forecasts::record_schedule_run_handler),
-         )
-         // ── Benchmark routes ───────────────────────────────────────────
-         .route(
-             "/api/forecasts/:forecast_id/spacetime",
-             get(handlers::forecast_benchmark::forecast_spacetime_handler),
-         )
-         // Spec 23 R-3 Piece 2: unified timeline aggregator. Pulls rate
-         // revisions, BayesOps fit events, agent runs, system events, and
-         // polymarket observations into one chronological event list +
-         // separate trace arrays for the line chart.
-         .route(
-             "/api/forecasts/:forecast_id/timeline",
-             get(handlers::forecast_benchmark::forecast_timeline_handler),
-         )
-         .route(
-             "/api/forecasts/:forecast_id/commit",
-             post(handlers::forecast_benchmark::commit_forecast_handler),
-         )
-         .route(
-             "/api/benchmark/anchor-sweep",
-             post(handlers::forecast_benchmark::anchor_sweep_handler),
-         )
-         // ── Per-forecast sharing (Spec 24 §3.3) ────────────────────────
-         //
-         // Distinct from the generic /api/shares which performs zero
-         // authorization. These routes pin object_type='forecast' at the
-         // route level and gate writes on ownership of the forecast.
-         .route(
-             "/api/forecasts/:forecast_id/shares",
-             get(handlers::shares::list_forecast_shares_handler)
-                 .post(handlers::shares::create_forecast_share_handler),
-         )
-         .route(
-             "/api/forecasts/:forecast_id/shares/:share_id",
-             delete(handlers::shares::revoke_forecast_share_handler),
-         )
-         // Spec 24 §3.3 / Sprint 2.3a: invite someone to a forecast.
-         // The invitee discovers the invite via /api/me/invites and
-         // accepts in Sprint 2.3b. Permission vocab: view|edit|admin.
-         .route(
-             "/api/forecasts/:forecast_id/invites",
-             post(handlers::invites::invite_to_forecast_handler),
-         )
-          // ── Forecast relationships (legacy — mig 150) ────────────────
-          .route(
-              "/api/forecast-relationships",
-              post(handlers::relationships::legacy::create_relationship_handler)
-                  .get(handlers::relationships::legacy::list_relationships_handler),
-          )
-          .route(
-              "/api/forecast-relationships/:rel_id",
-              delete(handlers::relationships::legacy::delete_relationship_handler),
-          )
-          .route(
-              "/api/forecast-relationships/:rel_id/propagate",
-              post(handlers::relationships::legacy::propagate_relationship_handler),
-          )
-          // ── Relationship groups (Spec 25 §6.1) ────────────────────────
-          .route(
-              "/api/relationship-groups",
-              post(handlers::relationships::groups::create_group_handler)
-                  .get(handlers::relationships::groups::list_groups_handler),
-          )
-          .route(
-              "/api/relationship-groups/:group_id",
-              get(handlers::relationships::groups::get_group_handler)
-                  .patch(handlers::relationships::groups::patch_group_handler)
-                  .delete(handlers::relationships::groups::delete_group_handler),
-          )
-          .route(
-              "/api/relationship-groups/:group_id/members",
-              get(handlers::relationships::groups::get_group_members_handler),
-          )
-          // ── Forecast group membership (Spec 25 §6.2) ────────────────
-          .route(
-              "/api/forecasts/:forecast_id/groups",
-              put(handlers::relationships::membership::set_forecast_groups_handler),
-          )
-          .route(
-              "/api/forecasts/:forecast_id/groups/:group_id",
-              post(handlers::relationships::membership::add_forecast_to_group_handler)
-                  .delete(handlers::relationships::membership::remove_forecast_from_group_handler),
-          )
-          // ── Pending cascades — operator-gated cascade queue ──────────
-          .route(
-              "/api/pending-cascades",
-              get(handlers::pending_cascades::list_pending_cascades_handler),
-          )
-          .route(
-              "/api/pending-cascades/:cascade_id/apply",
-              post(handlers::relationships::apply::apply_pending_cascade_handler),
-          )
-          .route(
-              "/api/pending-cascades/:cascade_id/dismiss",
-              post(handlers::pending_cascades::dismiss_pending_cascade_handler),
-          )
-          .route(
-              "/api/pending-cascades/:cascade_id/undo",
-              post(handlers::relationships::undo::undo_pending_cascade_handler),
-          )
-          .route(
-              "/api/pending-cascades/requeue",
-              post(handlers::relationships::requeue::requeue_cascade_handler),
-          )
-          .route(
-              "/api/forecasts/:forecast_id/cascade-history",
-              get(handlers::pending_cascades::cascade_history_handler),
-          )
-         // ── Portfolio routes ───────────────────────────────────────────
+            "/api/forecasts/:forecast_id/schedules/:schedule_id/run",
+            post(handlers::forecasts::record_schedule_run_handler),
+        )
+        // ── Benchmark routes ───────────────────────────────────────────
+        .route(
+            "/api/forecasts/:forecast_id/spacetime",
+            get(handlers::forecast_benchmark::forecast_spacetime_handler),
+        )
+        // Spec 23 R-3 Piece 2: unified timeline aggregator. Pulls rate
+        // revisions, BayesOps fit events, agent runs, system events, and
+        // polymarket observations into one chronological event list +
+        // separate trace arrays for the line chart.
+        .route(
+            "/api/forecasts/:forecast_id/timeline",
+            get(handlers::forecast_benchmark::forecast_timeline_handler),
+        )
+        .route(
+            "/api/forecasts/:forecast_id/commit",
+            post(handlers::forecast_benchmark::commit_forecast_handler),
+        )
+        .route(
+            "/api/benchmark/anchor-sweep",
+            post(handlers::forecast_benchmark::anchor_sweep_handler),
+        )
+        // ── Per-forecast sharing (Spec 24 §3.3) ────────────────────────
+        //
+        // Distinct from the generic /api/shares which performs zero
+        // authorization. These routes pin object_type='forecast' at the
+        // route level and gate writes on ownership of the forecast.
+        .route(
+            "/api/forecasts/:forecast_id/shares",
+            get(handlers::shares::list_forecast_shares_handler)
+                .post(handlers::shares::create_forecast_share_handler),
+        )
+        .route(
+            "/api/forecasts/:forecast_id/shares/:share_id",
+            delete(handlers::shares::revoke_forecast_share_handler),
+        )
+        // Spec 24 §3.3 / Sprint 2.3a: invite someone to a forecast.
+        // The invitee discovers the invite via /api/me/invites and
+        // accepts in Sprint 2.3b. Permission vocab: view|edit|admin.
+        .route(
+            "/api/forecasts/:forecast_id/invites",
+            post(handlers::invites::invite_to_forecast_handler)
+                .get(handlers::invites::list_forecast_invites_handler),
+        )
+        // ── Forecast relationships (legacy — mig 150) ────────────────
+        .route(
+            "/api/forecast-relationships",
+            post(handlers::relationships::legacy::create_relationship_handler)
+                .get(handlers::relationships::legacy::list_relationships_handler),
+        )
+        .route(
+            "/api/forecast-relationships/:rel_id",
+            delete(handlers::relationships::legacy::delete_relationship_handler),
+        )
+        .route(
+            "/api/forecast-relationships/:rel_id/propagate",
+            post(handlers::relationships::legacy::propagate_relationship_handler),
+        )
+        // ── Relationship groups (Spec 25 §6.1) ────────────────────────
+        .route(
+            "/api/relationship-groups",
+            post(handlers::relationships::groups::create_group_handler)
+                .get(handlers::relationships::groups::list_groups_handler),
+        )
+        .route(
+            "/api/relationship-groups/:group_id",
+            get(handlers::relationships::groups::get_group_handler)
+                .patch(handlers::relationships::groups::patch_group_handler)
+                .delete(handlers::relationships::groups::delete_group_handler),
+        )
+        .route(
+            "/api/relationship-groups/:group_id/members",
+            get(handlers::relationships::groups::get_group_members_handler),
+        )
+        // ── Forecast group membership (Spec 25 §6.2) ────────────────
+        .route(
+            "/api/forecasts/:forecast_id/groups",
+            put(handlers::relationships::membership::set_forecast_groups_handler),
+        )
+        .route(
+            "/api/forecasts/:forecast_id/groups/:group_id",
+            post(handlers::relationships::membership::add_forecast_to_group_handler)
+                .delete(handlers::relationships::membership::remove_forecast_from_group_handler),
+        )
+        // ── Pending cascades — operator-gated cascade queue ──────────
+        .route(
+            "/api/pending-cascades",
+            get(handlers::pending_cascades::list_pending_cascades_handler),
+        )
+        .route(
+            "/api/pending-cascades/:cascade_id/apply",
+            post(handlers::relationships::apply::apply_pending_cascade_handler),
+        )
+        .route(
+            "/api/pending-cascades/:cascade_id/dismiss",
+            post(handlers::pending_cascades::dismiss_pending_cascade_handler),
+        )
+        .route(
+            "/api/pending-cascades/:cascade_id/undo",
+            post(handlers::relationships::undo::undo_pending_cascade_handler),
+        )
+        .route(
+            "/api/pending-cascades/requeue",
+            post(handlers::relationships::requeue::requeue_cascade_handler),
+        )
+        .route(
+            "/api/forecasts/:forecast_id/cascade-history",
+            get(handlers::pending_cascades::cascade_history_handler),
+        )
+        // ── Portfolio routes ───────────────────────────────────────────
         .route(
             "/api/portfolios",
             post(handlers::forecasts::create_portfolio_handler),
@@ -2557,7 +2685,8 @@ async fn main() {
         // Spec 24 §3.3 / Sprint 2.3a: invite someone to a portfolio.
         .route(
             "/api/portfolios/:portfolio_id/invites",
-            post(handlers::invites::invite_to_portfolio_handler),
+            post(handlers::invites::invite_to_portfolio_handler)
+                .get(handlers::invites::list_portfolio_invites_handler),
         )
         // ── Leaderboard routes ─────────────────────────────────────────
         .route(
@@ -3330,7 +3459,7 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
     // User-created agents are never seeded here — they go through hire_agent_handler
     // which sets owner_id from the calling principal.
     let admin_user_id: Option<String> = sqlx::query_scalar(
-        "SELECT user_id FROM users WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1"
+        "SELECT user_id FROM users WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1",
     )
     .fetch_optional(memory_store.pool())
     .await
@@ -3347,7 +3476,8 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
     let xaman_card = cards.iter().find(|c| c.agent_id == "xaman_ek");
     if let Some(xc) = xaman_card {
         let prompt = xc.system_prompt.as_deref().unwrap_or("");
-        let missing: Vec<&str> = cards.iter()
+        let missing: Vec<&str> = cards
+            .iter()
             .filter(|c| c.agent_id != "xaman_ek")
             .filter(|c| !prompt.contains(&format!("**{}**", c.agent_id)))
             .map(|c| c.agent_id.as_str())
@@ -3446,7 +3576,9 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
         if !executable_skills.is_empty() {
             println!(
                 "  Agent '{}' has {} executable skill(s): {:?}",
-                card.agent_id, executable_skills.len(), executable_skills
+                card.agent_id,
+                executable_skills.len(),
+                executable_skills
             );
         }
 
@@ -3545,10 +3677,15 @@ async fn seed_apps_to_database(db: &sqlx::PgPool) {
         let icon_url = manifest["icon_url"].as_str().map(str::to_string);
         let composition_slug = manifest["composition_slug"].as_str().map(str::to_string);
         let schema_slug = manifest["schema_slug"].as_str().map(str::to_string);
-        let schema_json = manifest.get("schema_json").cloned()
+        let schema_json = manifest
+            .get("schema_json")
+            .cloned()
             .filter(|v| !v.is_null());
         let description = manifest["description"].as_str().map(str::to_string);
-        let visibility = manifest["visibility"].as_str().unwrap_or("public").to_string();
+        let visibility = manifest["visibility"]
+            .as_str()
+            .unwrap_or("public")
+            .to_string();
         let workspace_template = manifest["workspace_template"].clone();
         let metadata = manifest["metadata"].clone();
 
@@ -3609,9 +3746,7 @@ async fn seed_cep_entities(
         .get_agent_entities(agent_uuid)
         .await
         .unwrap_or_default();
-    let has_cep = existing
-        .iter()
-        .any(|e| e.entity_type.starts_with("cep_"));
+    let has_cep = existing.iter().any(|e| e.entity_type.starts_with("cep_"));
     if has_cep {
         return;
     }
@@ -3698,8 +3833,7 @@ pub(crate) fn agent_card_from_db(agent: &Agent) -> AgentCard {
             model: agent.model.clone(),
             temperature: agent.temperature,
             provider: agent.llm_provider.clone(),
-            model_ladder: serde_json::from_value(agent.model_ladder.clone())
-                .unwrap_or_default(),
+            model_ladder: serde_json::from_value(agent.model_ladder.clone()).unwrap_or_default(),
             min_tier: match agent.min_tier.as_str() {
                 "standard" => fermi::agent_backend::agent_card::CognitionTier::Standard,
                 "premium" => fermi::agent_backend::agent_card::CognitionTier::Premium,
@@ -3918,13 +4052,21 @@ pub(crate) fn agent_output_to_episode(
         // by provider and per-provider calibration can work (Loop 5).
         model_used: output.metadata.model_used.clone(),
         provider_used: output.metadata.model_used.as_deref().map(|m| {
-            if m.starts_with("claude") { "anthropic".to_string() }
-            else if m.starts_with("gpt") || m.starts_with("o1") || m.starts_with("o3") { "openai".to_string() }
-            else if m.starts_with("mistral") || m.starts_with("open-mistral") { "mistral".to_string() }
-            else if m.starts_with("qwen") { "qwen".to_string() }
-            else if m.starts_with("deepseek") { "deepseek".to_string() }
-            else if m.contains("openrouter") || m.contains("/") { "openrouter".to_string() }
-            else { "ollama".to_string() }
+            if m.starts_with("claude") {
+                "anthropic".to_string()
+            } else if m.starts_with("gpt") || m.starts_with("o1") || m.starts_with("o3") {
+                "openai".to_string()
+            } else if m.starts_with("mistral") || m.starts_with("open-mistral") {
+                "mistral".to_string()
+            } else if m.starts_with("qwen") {
+                "qwen".to_string()
+            } else if m.starts_with("deepseek") {
+                "deepseek".to_string()
+            } else if m.contains("openrouter") || m.contains("/") {
+                "openrouter".to_string()
+            } else {
+                "ollama".to_string()
+            }
         }),
     }
 }

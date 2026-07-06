@@ -7,19 +7,23 @@ use plotters::prelude::*;
 use std::sync::Arc;
 
 // Canvas backgrounds — match GPUI theme values exactly
-const BG: RGBColor = RGBColor(31, 36, 48);          // matches theme::BG (0x1F2430) — main content area
-const BG_CARD: RGBColor = RGBColor(39, 45, 56);     // matches theme::BG_ELEVATED — cards, panels
+const BG: RGBColor = RGBColor(31, 36, 48); // matches theme::BG (0x1F2430) — main content area
+const BG_CARD: RGBColor = RGBColor(39, 45, 56); // matches theme::BG_ELEVATED — cards, panels
 const CHROME: RGBColor = RGBColor(50, 58, 72);
 const LABEL: RGBColor = RGBColor(92, 103, 115);
 
 // Data colors — one per meaning
-const CYAN: RGBColor = RGBColor(92, 207, 230);      // inside view / your model
-const GOLD: RGBColor = RGBColor(255, 204, 102);     // base rate / reference
-const GREEN: RGBColor = RGBColor(186, 230, 126);    // p50 markers
-const PURPLE: RGBColor = RGBColor(212, 191, 255);   // crowd price (Polymarket)
+const CYAN: RGBColor = RGBColor(92, 207, 230); // inside view / your model
+const GOLD: RGBColor = RGBColor(255, 204, 102); // base rate / reference
+const GREEN: RGBColor = RGBColor(186, 230, 126); // p50 markers
+const PURPLE: RGBColor = RGBColor(212, 191, 255); // crowd price (Polymarket)
 
 // Muted cyan for bar fills — hand-picked to read as clearly cyan on dark BG.
 const CYAN_BAR: RGBColor = RGBColor(35, 100, 120);
+// Muted purple underlay for the crowd worm — gives visual weight parity
+// with the CYAN_BAR underlay of the model worm so the two trails read
+// as peers rather than "real data + faint hint".
+const PURPLE_BAR: RGBColor = RGBColor(80, 60, 140);
 
 // ═══════════════════════════════════════════════════════════════════
 // Public data types
@@ -36,7 +40,7 @@ pub struct IndexPoint {
     pub label: String,
     pub inside_view: f64,
     pub outside_view: f64,
-    pub crowd_price: Option<f64>,  // Polymarket crowd-implied probability
+    pub crowd_price: Option<f64>, // Polymarket crowd-implied probability
 }
 
 /// One point on the trajectory worm. `t_seconds` is seconds since the
@@ -53,7 +57,7 @@ pub struct TrajectoryPoint {
 /// when each Apply / BayesOps fit / agent run / market tick happened.
 pub struct TrajectoryEvent {
     pub t_seconds: f64,
-    pub rate_pct: f64,         // y-position of the dot
+    pub rate_pct: f64, // y-position of the dot
     pub kind: TrajectoryEventKind,
 }
 
@@ -87,26 +91,36 @@ pub fn render_index_chart(
 
         if history.len() >= 2 {
             // Collect all values including crowd price for y-axis range
-            let mut vals: Vec<f64> = history.iter()
+            let mut vals: Vec<f64> = history
+                .iter()
                 .flat_map(|p| {
                     let mut v = vec![p.inside_view, p.outside_view];
-                    if let Some(cp) = p.crowd_price { v.push(cp); }
+                    if let Some(cp) = p.crowd_price {
+                        v.push(cp);
+                    }
                     v
                 })
                 .collect();
-            if vals.is_empty() { vals.push(50.0); }
+            if vals.is_empty() {
+                vals.push(50.0);
+            }
             let min_v = vals.iter().cloned().fold(f64::INFINITY, f64::min) - 2.0;
             let max_v = vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max) + 2.0;
             let n = history.len();
 
             if let Ok(mut chart) = ChartBuilder::on(&root)
-                .margin_top(6).margin_right(8).margin_bottom(4).margin_left(4)
+                .margin_top(6)
+                .margin_right(8)
+                .margin_bottom(4)
+                .margin_left(4)
                 .x_label_area_size(14)
                 .y_label_area_size(30)
                 .build_cartesian_2d(0usize..n.saturating_sub(1), min_v..max_v)
             {
-                let _ = chart.configure_mesh()
-                    .x_labels(4).y_labels(3)
+                let _ = chart
+                    .configure_mesh()
+                    .x_labels(4)
+                    .y_labels(3)
                     .label_style(("sans-serif", 8).into_font().color(&LABEL))
                     .axis_style(ShapeStyle::from(CHROME).stroke_width(1))
                     .light_line_style(ShapeStyle::from(CHROME).stroke_width(1))
@@ -123,7 +137,9 @@ pub fn render_index_chart(
                 // Crowd price — purple line (only where data exists)
                 let has_crowd = history.iter().any(|p| p.crowd_price.is_some());
                 if has_crowd {
-                    let crowd_points: Vec<(usize, f64)> = history.iter().enumerate()
+                    let crowd_points: Vec<(usize, f64)> = history
+                        .iter()
+                        .enumerate()
                         .filter_map(|(i, p)| p.crowd_price.map(|cp| (i, cp)))
                         .collect();
                     if crowd_points.len() >= 2 {
@@ -135,7 +151,9 @@ pub fn render_index_chart(
                     // Crowd dots
                     for (i, cp) in &crowd_points {
                         let _ = chart.draw_series(std::iter::once(Circle::new(
-                            (*i, *cp), 2, ShapeStyle::from(PURPLE).filled(),
+                            (*i, *cp),
+                            2,
+                            ShapeStyle::from(PURPLE).filled(),
                         )));
                     }
                 }
@@ -148,9 +166,15 @@ pub fn render_index_chart(
 
                 // Dots on inside line
                 for (i, p) in history.iter().enumerate() {
-                    let (size, col) = if i == current_idx { (4, CYAN) } else { (2, CHROME) };
+                    let (size, col) = if i == current_idx {
+                        (4, CYAN)
+                    } else {
+                        (2, CHROME)
+                    };
                     let _ = chart.draw_series(std::iter::once(Circle::new(
-                        (i, p.inside_view), size, ShapeStyle::from(col).filled(),
+                        (i, p.inside_view),
+                        size,
+                        ShapeStyle::from(col).filled(),
                     )));
                 }
             }
@@ -191,14 +215,19 @@ pub fn render_histogram_with_percentiles(
             let n = bins.len();
 
             if let Ok(mut chart) = ChartBuilder::on(&root)
-                .margin_top(4).margin_right(4).margin_bottom(4).margin_left(4)
+                .margin_top(4)
+                .margin_right(4)
+                .margin_bottom(4)
+                .margin_left(4)
                 .x_label_area_size(12)
                 .y_label_area_size(0)
                 .build_cartesian_2d(0f64..n as f64, 0.0..max_count * 1.08)
             {
-                let _ = chart.configure_mesh()
+                let _ = chart
+                    .configure_mesh()
                     .disable_mesh()
-                    .x_labels(0).y_labels(0)
+                    .x_labels(0)
+                    .y_labels(0)
                     .draw();
 
                 // Bars — hand-picked muted cyan, NOT blended
@@ -324,8 +353,19 @@ pub fn render_distribution_sparkline_on(
 // the crowd price?
 // ═══════════════════════════════════════════════════════════════════
 
+/// Render the trajectory worm.
+///
+/// * `series` — the operator's inside-view rate points (cyan).
+/// * `crowd_series` — optional Polymarket crowd-price points (purple).
+///   When non-empty this replaces the flat `crowd_price_pct` horizontal
+///   with a real worm so the operator can see whether the model is
+///   walking TOWARD, AWAY from, or PAST the crowd over time — the
+///   entire point of the trajectory view.
+/// * `crowd_price_pct` — fallback horizontal shown only when there's no
+///   `crowd_series` history yet (fresh forecast, no snapshots recorded).
 pub fn render_trajectory_worm(
     series: &[TrajectoryPoint],
+    crowd_series: &[TrajectoryPoint],
     events: &[TrajectoryEvent],
     base_rate_pct: Option<f64>,
     crowd_price_pct: Option<f64>,
@@ -340,7 +380,7 @@ pub fn render_trajectory_worm(
 
     let mut buf = vec![0u8; (width * height * 3) as usize];
 
-    if series.is_empty() && events.is_empty() {
+    if series.is_empty() && crowd_series.is_empty() && events.is_empty() {
         // Degenerate: no data. Render a centered hint and bail.
         let root = BitMapBackend::with_buffer(&mut buf, (width, height)).into_drawing_area();
         let _ = root.fill(&BG);
@@ -357,6 +397,7 @@ pub fn render_trajectory_worm(
     // ── Compute axis ranges before drawing so we can use the same
     //    coords for chart, rug, and event-position math.
     let mut all_y: Vec<f64> = series.iter().map(|p| p.rate_pct).collect();
+    all_y.extend(crowd_series.iter().map(|p| p.rate_pct));
     all_y.extend(events.iter().map(|e| e.rate_pct));
     if let Some(b) = base_rate_pct {
         all_y.push(b);
@@ -376,6 +417,7 @@ pub fn render_trajectory_worm(
     let y_max = raw_max + y_pad;
 
     let mut all_x: Vec<f64> = series.iter().map(|p| p.t_seconds).collect();
+    all_x.extend(crowd_series.iter().map(|p| p.t_seconds));
     all_x.extend(events.iter().map(|e| e.t_seconds));
     let x_min = all_x.iter().cloned().fold(f64::INFINITY, f64::min).min(0.0);
     let x_max_raw = all_x.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
@@ -387,8 +429,7 @@ pub fn render_trajectory_worm(
 
     // ── Pass 1: the main chart in the upper area ─────────────────────
     {
-        let chart_root = BitMapBackend::with_buffer(&mut buf, (width, height))
-            .into_drawing_area();
+        let chart_root = BitMapBackend::with_buffer(&mut buf, (width, height)).into_drawing_area();
         let _ = chart_root.fill(&BG);
 
         // Carve out top region for the chart, leaving the rug strip
@@ -403,7 +444,7 @@ pub fn render_trajectory_worm(
         if let Ok(mut chart) = ChartBuilder::on(&upper)
             .margin_top(10)
             .margin_right(60) // big right margin so the inline
-                              // base-rate / crowd-price labels fit
+            // base-rate / crowd-price labels fit
             .margin_bottom(8)
             .margin_left(6)
             .x_label_area_size(20)
@@ -461,8 +502,25 @@ pub fn render_trajectory_worm(
                     ));
                 }
             }
-            // Reference: crowd price — solid purple, slightly heavier.
-            if let Some(c) = crowd_price_pct {
+            // Reference / crowd worm.
+            //
+            // If we have a proper crowd time-series, draw it as a purple
+            // worm (matches the visual weight of the model worm so the
+            // two are directly comparable). Falls back to a flat purple
+            // horizontal at the latest crowd price when we only have a
+            // point-in-time reading — e.g. right after linking a market
+            // and before the poll has accumulated history.
+            if crowd_series.len() >= 2 {
+                // Purple underlay for weight parity with the cyan worm.
+                let _ = chart.draw_series(LineSeries::new(
+                    crowd_series.iter().map(|p| (p.t_seconds, p.rate_pct)),
+                    ShapeStyle::from(PURPLE_BAR).stroke_width(5),
+                ));
+                let _ = chart.draw_series(LineSeries::new(
+                    crowd_series.iter().map(|p| (p.t_seconds, p.rate_pct)),
+                    ShapeStyle::from(PURPLE).stroke_width(2),
+                ));
+            } else if let Some(c) = crowd_price_pct {
                 let _ = chart.draw_series(LineSeries::new(
                     vec![(x_min, c), (x_max, c)],
                     ShapeStyle::from(PURPLE).stroke_width(2),
@@ -471,7 +529,10 @@ pub fn render_trajectory_worm(
 
             // The worm: cyan trail. Two-pass for visual weight — a
             // muted underlay first, then the bright core on top. Reads
-            // as having heft instead of being a hairline.
+            // as having heft instead of being a hairline. Drawn AFTER
+            // the crowd worm so the operator's inside view is the
+            // visually-dominant line — they should see their own model
+            // first, then read the crowd context around it.
             if series.len() >= 2 {
                 // Underlay — slightly thicker, dimmer cyan
                 let _ = chart.draw_series(LineSeries::new(
@@ -545,8 +606,7 @@ pub fn render_trajectory_worm(
     // chart with explicit text annotations inside the data area, which
     // collides with the plot when y-values cluster near the references.
     {
-        let label_root = BitMapBackend::with_buffer(&mut buf, (width, height))
-            .into_drawing_area();
+        let label_root = BitMapBackend::with_buffer(&mut buf, (width, height)).into_drawing_area();
         let y_to_px = |y: f64| -> i32 {
             // chart's plot area: top 10px margin, bottom RUG_HEIGHT + 8 + 20 (x-label area).
             let plot_top = 10i32;
@@ -583,8 +643,7 @@ pub fn render_trajectory_worm(
     // Vertical tick per event. Density = where the operator's been
     // active. Reads at a glance even when the trail is flat.
     {
-        let rug_root = BitMapBackend::with_buffer(&mut buf, (width, height))
-            .into_drawing_area();
+        let rug_root = BitMapBackend::with_buffer(&mut buf, (width, height)).into_drawing_area();
         let rug_top = height as i32 - RUG_HEIGHT as i32 + 2;
         let rug_bot = height as i32 - 2;
         // Padding mirroring the chart's margin so the rug aligns
@@ -634,6 +693,7 @@ pub fn render_trajectory_worm(
 pub fn trajectory_event_pixel_positions(
     events: &[TrajectoryEvent],
     series: &[TrajectoryPoint],
+    crowd_series: &[TrajectoryPoint],
     base_rate_pct: Option<f64>,
     crowd_price_pct: Option<f64>,
     width: u32,
@@ -650,6 +710,7 @@ pub fn trajectory_event_pixel_positions(
     // duplicated logic but keeping it here avoids a multi-return-tuple
     // inside the renderer that would clutter that function further.
     let mut all_y: Vec<f64> = series.iter().map(|p| p.rate_pct).collect();
+    all_y.extend(crowd_series.iter().map(|p| p.rate_pct));
     all_y.extend(events.iter().map(|e| e.rate_pct));
     if let Some(b) = base_rate_pct {
         all_y.push(b);
@@ -667,10 +728,15 @@ pub fn trajectory_event_pixel_positions(
     let y_max = raw_max + y_pad;
 
     let mut all_x: Vec<f64> = series.iter().map(|p| p.t_seconds).collect();
+    all_x.extend(crowd_series.iter().map(|p| p.t_seconds));
     all_x.extend(events.iter().map(|e| e.t_seconds));
     let x_min = all_x.iter().cloned().fold(f64::INFINITY, f64::min).min(0.0);
     let x_max_raw = all_x.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-    let x_max = if x_max_raw <= x_min { x_min + 60.0 } else { x_max_raw };
+    let x_max = if x_max_raw <= x_min {
+        x_min + 60.0
+    } else {
+        x_max_raw
+    };
 
     // Mirror the chart's plot-area pixel inset. These constants come
     // from the chart.margin_* + label-area calls above.
@@ -736,12 +802,17 @@ pub fn render_treemap(drivers: &[DriverViz], width: u32, height: u32) -> Vec<u8>
                 if cell_w > 30.0 {
                     let max_chars = ((cell_w - 8.0) / 5.5) as usize;
                     let label: String = if d.name.len() > max_chars {
-                        d.name.chars().take(max_chars.saturating_sub(1)).collect::<String>() + "…"
+                        d.name
+                            .chars()
+                            .take(max_chars.saturating_sub(1))
+                            .collect::<String>()
+                            + "…"
                     } else {
                         d.name.clone()
                     };
                     let _ = root.draw(&Text::new(
-                        label, (x as i32 + 4, 3),
+                        label,
+                        (x as i32 + 4, 3),
                         ("sans-serif", 8u32).into_font().color(&LABEL),
                     ));
                 }

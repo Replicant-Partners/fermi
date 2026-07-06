@@ -5,7 +5,11 @@
 //!   POST   /api/forecasts/:id/invites          (2.3a)
 //!   POST   /api/portfolios/:id/invites         (2.3a)
 //!   POST   /api/teams/:id/invites              (2.3a)
+//!   GET    /api/forecasts/:id/invites          (target-scoped, admin view)
+//!   GET    /api/portfolios/:id/invites         (target-scoped, admin view)
+//!   GET    /api/teams/:id/invites              (target-scoped, admin view)
 //!   GET    /api/me/invites                     (2.3a)
+//!   GET    /api/me/invites/sent                (invites the caller has sent)
 //!   POST   /api/invites/:id/decline            (2.3a)
 //!   DELETE /api/invites/:id                    (2.3a)
 //!   POST   /api/invites/:id/accept             (2.3b)
@@ -99,20 +103,26 @@ async fn require_admin_of_forecast(
     forecast_id: &str,
     principal: &AuthPrincipal,
 ) -> Result<(), (StatusCode, String)> {
-    let row: Option<(String, String)> = sqlx::query_as(
-        "SELECT owner_id::text, visibility FROM fermi_forecasts WHERE id = $1",
-    )
-    .bind(forecast_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let row: Option<(String, String)> =
+        sqlx::query_as("SELECT owner_id::text, visibility FROM fermi_forecasts WHERE id = $1")
+            .bind(forecast_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     match row {
         None => Err((StatusCode::NOT_FOUND, "Forecast not found".into())),
         Some((owner_id, visibility)) => {
             let vis = Visibility::from_legacy(&visibility);
-            let level = can_access(pool, principal, ObjectType::Forecast, forecast_id, &owner_id, vis)
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            let level = can_access(
+                pool,
+                principal,
+                ObjectType::Forecast,
+                forecast_id,
+                &owner_id,
+                vis,
+            )
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             if level.has_admin() {
                 Ok(())
             } else {
@@ -127,20 +137,26 @@ async fn require_admin_of_portfolio(
     portfolio_id: &str,
     principal: &AuthPrincipal,
 ) -> Result<(), (StatusCode, String)> {
-    let row: Option<(String, String)> = sqlx::query_as(
-        "SELECT owner_id::text, visibility FROM fermi_portfolios WHERE id = $1",
-    )
-    .bind(portfolio_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let row: Option<(String, String)> =
+        sqlx::query_as("SELECT owner_id::text, visibility FROM fermi_portfolios WHERE id = $1")
+            .bind(portfolio_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     match row {
         None => Err((StatusCode::NOT_FOUND, "Portfolio not found".into())),
         Some((owner_id, visibility)) => {
             let vis = Visibility::from_legacy(&visibility);
-            let level = can_access(pool, principal, ObjectType::Portfolio, portfolio_id, &owner_id, vis)
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            let level = can_access(
+                pool,
+                principal,
+                ObjectType::Portfolio,
+                portfolio_id,
+                &owner_id,
+                vis,
+            )
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             if level.has_admin() {
                 Ok(())
             } else {
@@ -241,29 +257,39 @@ async fn create_invite_row(
     // INSERT and return the row. The DB enforces
     // forecast_invites_recipient_exactly_one as a backstop in case the
     // Rust-side check above ever drifts.
-    let row: (Uuid, String, String, String, Option<String>, Option<String>,
-             Option<String>, String, Option<String>, String,
-             chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) =
-        sqlx::query_as(
-            "INSERT INTO forecast_invites
+    let row: (
+        Uuid,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        String,
+        Option<String>,
+        String,
+        chrono::DateTime<chrono::Utc>,
+        chrono::DateTime<chrono::Utc>,
+    ) = sqlx::query_as(
+        "INSERT INTO forecast_invites
                 (target_type, target_id, permission, invitee_user_id, invitee_email,
                  token, inviter_id, message)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              RETURNING id, target_type, target_id, permission,
                        invitee_user_id, invitee_email, token, inviter_id,
                        message, status, expires_at, created_at",
-        )
-        .bind(target_type)
-        .bind(target_id)
-        .bind(permission)
-        .bind(user_id)
-        .bind(email.as_deref())
-        .bind(token.as_deref())
-        .bind(inviter_id)
-        .bind(body.message.as_deref())
-        .fetch_one(pool)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    )
+    .bind(target_type)
+    .bind(target_id)
+    .bind(permission)
+    .bind(user_id)
+    .bind(email.as_deref())
+    .bind(token.as_deref())
+    .bind(inviter_id)
+    .bind(body.message.as_deref())
+    .fetch_one(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Notification on creation (Spec 24 §3.7). Fire only when the
     // recipient is a known user — for email-only invites we can't
@@ -467,13 +493,12 @@ pub async fn decline_invite_handler(
 
     if updated.rows_affected() == 0 {
         // Disambiguate: does the row even exist?
-        let row_exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM forecast_invites WHERE id = $1)",
-        )
-        .bind(invite_id)
-        .fetch_one(&state.db)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let row_exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM forecast_invites WHERE id = $1)")
+                .bind(invite_id)
+                .fetch_one(&state.db)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         if !row_exists {
             return Err((StatusCode::NOT_FOUND, "Invite not found".into()));
         }
@@ -510,8 +535,8 @@ pub async fn revoke_invite_handler(
     .fetch_optional(&state.db)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let (target_type, target_id, inviter_id, status) = invite
-        .ok_or((StatusCode::NOT_FOUND, "Invite not found".into()))?;
+    let (target_type, target_id, inviter_id, status) =
+        invite.ok_or((StatusCode::NOT_FOUND, "Invite not found".into()))?;
     if status != "pending" {
         return Err((
             StatusCode::CONFLICT,
@@ -688,8 +713,7 @@ fn require_caller_is_invitee(
         AuthPrincipal::ApiKey(_) => {
             return Err((
                 StatusCode::FORBIDDEN,
-                "API-key callers cannot accept email-only invites (no email claim)"
-                    .into(),
+                "API-key callers cannot accept email-only invites (no email claim)".into(),
             ))
         }
     };
@@ -797,10 +821,7 @@ async fn accept_invite_core(
         .bind(row.id)
         .execute(pool)
         .await;
-        return Err((
-            StatusCode::CONFLICT,
-            "Invite has expired".into(),
-        ));
+        return Err((StatusCode::CONFLICT, "Invite has expired".into()));
     }
 
     require_caller_is_invitee(&row, principal)?;
@@ -901,23 +922,19 @@ pub async fn get_invite_by_token_handler(
 ) -> Result<Json<JsonValue>, (StatusCode, String)> {
     let row = load_invite_by_token(&state.db, &token).await?;
     if row.status != "pending" || row.expired {
-        return Err((
-            StatusCode::NOT_FOUND,
-            "Invite is no longer valid".into(),
-        ));
+        return Err((StatusCode::NOT_FOUND, "Invite is no longer valid".into()));
     }
 
     // Resolve inviter display_name when we can — falls back to the
     // raw inviter_id. The landing page renders "{display_name}
     // invited you to {target_type}".
-    let inviter_display: Option<String> = sqlx::query_scalar(
-        "SELECT display_name FROM users WHERE user_id = $1 LIMIT 1",
-    )
-    .bind(&row.inviter_id)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
+    let inviter_display: Option<String> =
+        sqlx::query_scalar("SELECT display_name FROM users WHERE user_id = $1 LIMIT 1")
+            .bind(&row.inviter_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
 
     Ok(Json(json!({
         "id":             row.id,
@@ -953,4 +970,208 @@ pub async fn accept_invite_by_token_handler(
     let row = load_invite_by_token(&state.db, &token).await?;
     let body = accept_invite_core(&state.db, row, &principal).await?;
     Ok(Json(body))
+}
+
+// ─── Target-scoped invite listings ─────────────────────────────────────
+//
+// The console needs "invites I sent for this forecast/portfolio/team" so
+// the operator can see pending outbound invitations with their status.
+// Without this the invite flow is fire-and-forget — the toast disappears
+// and the invite is invisible until the recipient accepts (materialising
+// as a share/member) or declines (silently).
+//
+// Each endpoint enforces the same admin gate as the corresponding
+// POST /invites route: whoever can invite can also see the pending list.
+
+fn map_target_invite_row(
+    r: (
+        Uuid,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        Option<String>,
+        String,
+        chrono::DateTime<chrono::Utc>,
+        chrono::DateTime<chrono::Utc>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ),
+) -> JsonValue {
+    // Prefer display_name, then email, then the raw user_id.
+    let invitee_display_name = r.10.clone().or_else(|| r.4.clone()).or_else(|| r.3.clone());
+    let inviter_display_name =
+        r.11.clone()
+            .or_else(|| r.12.clone())
+            .or_else(|| Some(r.5.clone()));
+    json!({
+        "id":                     r.0,
+        "status":                 r.1,
+        "permission":             r.2,
+        "invitee_user_id":        r.3,
+        "invitee_email":          r.4,
+        "inviter_id":             r.5,
+        "message":                r.6,
+        "target_type":            r.7,
+        "expires_at":             r.8.to_rfc3339(),
+        "created_at":             r.9.to_rfc3339(),
+        "invitee_display_name":   invitee_display_name,
+        "inviter_display_name":   inviter_display_name,
+    })
+}
+
+async fn list_target_invites(
+    pool: &PgPool,
+    target_type: &str,
+    target_id: &str,
+) -> Result<Vec<JsonValue>, (StatusCode, String)> {
+    // LEFT JOIN users twice (invitee + inviter) to enrich the UI.
+    // We do a text-based join because forecast_invites.*_id columns are
+    // TEXT and users.user_id may be TEXT (Zitadel/API-key) or a UUID
+    // rendered as text (email/OIDC). Casting both sides to text keeps
+    // this compatible across auth providers.
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+            Option<String>,
+            String,
+            chrono::DateTime<chrono::Utc>,
+            chrono::DateTime<chrono::Utc>,
+            Option<String>, // invitee.display_name
+            Option<String>, // inviter.display_name
+            Option<String>, // inviter.email
+        ),
+    >(
+        "SELECT fi.id, fi.status, fi.permission,
+                fi.invitee_user_id, fi.invitee_email,
+                fi.inviter_id, fi.message, fi.target_type,
+                fi.expires_at, fi.created_at,
+                iu.display_name AS invitee_display_name,
+                nu.display_name AS inviter_display_name,
+                nu.email AS inviter_email
+         FROM forecast_invites fi
+         LEFT JOIN users iu ON iu.user_id::text = fi.invitee_user_id
+         LEFT JOIN users nu ON nu.user_id::text = fi.inviter_id
+         WHERE fi.target_type = $1 AND fi.target_id = $2
+         ORDER BY
+           CASE fi.status WHEN 'pending' THEN 0 ELSE 1 END,
+           fi.created_at DESC",
+    )
+    .bind(target_type)
+    .bind(target_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(rows.into_iter().map(map_target_invite_row).collect())
+}
+
+/// GET /api/forecasts/:id/invites — pending + terminal invites for a forecast.
+pub async fn list_forecast_invites_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(forecast_id): Path<String>,
+) -> Result<Json<JsonValue>, (StatusCode, String)> {
+    require_admin_of_forecast(&state.db, &forecast_id, &principal).await?;
+    let invites = list_target_invites(&state.db, "forecast", &forecast_id).await?;
+    Ok(Json(json!({ "invites": invites, "count": invites.len() })))
+}
+
+/// GET /api/portfolios/:id/invites — pending + terminal invites for a portfolio.
+pub async fn list_portfolio_invites_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(portfolio_id): Path<String>,
+) -> Result<Json<JsonValue>, (StatusCode, String)> {
+    require_admin_of_portfolio(&state.db, &portfolio_id, &principal).await?;
+    let invites = list_target_invites(&state.db, "portfolio", &portfolio_id).await?;
+    Ok(Json(json!({ "invites": invites, "count": invites.len() })))
+}
+
+/// GET /api/teams/:id/invites — pending + terminal invites for a team.
+pub async fn list_team_invites_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(team_id): Path<Uuid>,
+) -> Result<Json<JsonValue>, (StatusCode, String)> {
+    require_team_invite_authority(&state.db, team_id, &principal).await?;
+    let invites = list_target_invites(&state.db, "team", &team_id.to_string()).await?;
+    Ok(Json(json!({ "invites": invites, "count": invites.len() })))
+}
+
+/// GET /api/me/invites/sent — invites the caller has sent (all statuses).
+///
+/// Useful for the console operator to inspect their own outbound invite
+/// history across every target without having to open each one.
+pub async fn list_sent_invites_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<JsonValue>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+            Option<String>,
+            String,
+            String,
+            chrono::DateTime<chrono::Utc>,
+            chrono::DateTime<chrono::Utc>,
+            Option<String>,
+        ),
+    >(
+        "SELECT fi.id, fi.status, fi.permission,
+                fi.invitee_user_id, fi.invitee_email,
+                fi.inviter_id, fi.message,
+                fi.target_type, fi.target_id,
+                fi.expires_at, fi.created_at,
+                iu.display_name AS invitee_display_name
+         FROM forecast_invites fi
+         LEFT JOIN users iu ON iu.user_id::text = fi.invitee_user_id
+         WHERE fi.inviter_id = $1
+         ORDER BY
+           CASE fi.status WHEN 'pending' THEN 0 ELSE 1 END,
+           fi.created_at DESC
+         LIMIT 200",
+    )
+    .bind(&user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let invites: Vec<JsonValue> = rows
+        .into_iter()
+        .map(|r| {
+            let display_name = r.11.clone().or_else(|| r.4.clone()).or_else(|| r.3.clone());
+            json!({
+                "id":                   r.0,
+                "status":               r.1,
+                "permission":           r.2,
+                "invitee_user_id":      r.3,
+                "invitee_email":        r.4,
+                "inviter_id":           r.5,
+                "message":              r.6,
+                "target_type":          r.7,
+                "target_id":            r.8,
+                "expires_at":           r.9.to_rfc3339(),
+                "created_at":           r.10.to_rfc3339(),
+                "invitee_display_name": display_name,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "invites": invites, "count": invites.len() })))
 }

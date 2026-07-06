@@ -42,6 +42,88 @@ use uuid::Uuid;
 
 use crate::AppState;
 
+/// Enrich a raw share list with display names so the console can render
+/// "Alice (view)" instead of "9c3a…-view". Best-effort: any row that
+/// can't be resolved falls through with the raw target/granted_by
+/// string, and DB failure downgrades to the un-enriched list rather than
+/// erroring out the whole request (a name lookup is UX-nice, not
+/// safety-critical).
+async fn enrich_shares(pool: &PgPool, shares: Vec<fermi_auth::ObjectShare>) -> Vec<JsonValue> {
+    // Collect user_id targets (share_type="user") + all granted_by ids;
+    // team share_targets are UUIDs but we can resolve their names too.
+    let mut user_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut team_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for s in &shares {
+        user_ids.insert(s.granted_by.clone());
+        match s.share_type {
+            ShareType::User => {
+                user_ids.insert(s.share_target.clone());
+            }
+            ShareType::Team => {
+                team_ids.insert(s.share_target.clone());
+            }
+        }
+    }
+
+    let mut user_names: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    if !user_ids.is_empty() {
+        let ids: Vec<String> = user_ids.into_iter().collect();
+        if let Ok(rows) = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+            "SELECT user_id::text, display_name, email FROM users WHERE user_id::text = ANY($1)",
+        )
+        .bind(&ids)
+        .fetch_all(pool)
+        .await
+        {
+            for (uid, name, email) in rows {
+                if let Some(n) = name.or(email) {
+                    user_names.insert(uid, n);
+                }
+            }
+        }
+    }
+
+    let mut team_names: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    if !team_ids.is_empty() {
+        let ids: Vec<String> = team_ids.into_iter().collect();
+        if let Ok(rows) = sqlx::query_as::<_, (String, String)>(
+            "SELECT id::text, name FROM teams WHERE id::text = ANY($1)",
+        )
+        .bind(&ids)
+        .fetch_all(pool)
+        .await
+        {
+            for (tid, name) in rows {
+                team_names.insert(tid, name);
+            }
+        }
+    }
+
+    shares
+        .into_iter()
+        .map(|s| {
+            let target_name = match s.share_type {
+                ShareType::User => user_names.get(&s.share_target).cloned(),
+                ShareType::Team => team_names.get(&s.share_target).cloned(),
+            };
+            let granted_by_name = user_names.get(&s.granted_by).cloned();
+            json!({
+                "id": s.id,
+                "object_type": s.object_type.as_str(),
+                "object_id": s.object_id,
+                "share_type": s.share_type.as_str(),
+                "share_target": s.share_target,
+                "share_target_display_name": target_name,
+                "permission": s.permission.as_str(),
+                "granted_by": s.granted_by,
+                "granted_by_display_name": granted_by_name,
+            })
+        })
+        .collect()
+}
+
 // ─── Request shape ─────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -78,11 +160,13 @@ pub async fn list_forecast_shares_handler(
     let shares = teams::list_object_shares(pool, ObjectType::Forecast, &forecast_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let count = shares.len();
+    let enriched = enrich_shares(pool, shares).await;
 
     Ok(Json(json!({
         "forecast_id": forecast_id,
-        "shares": shares,
-        "count": shares.len(),
+        "shares": enriched,
+        "count": count,
     })))
 }
 
@@ -163,11 +247,13 @@ pub async fn list_portfolio_shares_handler(
     let shares = teams::list_object_shares(pool, ObjectType::Portfolio, &portfolio_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let count = shares.len();
+    let enriched = enrich_shares(pool, shares).await;
 
     Ok(Json(json!({
         "portfolio_id": portfolio_id,
-        "shares": shares,
-        "count": shares.len(),
+        "shares": enriched,
+        "count": count,
     })))
 }
 
@@ -282,9 +368,16 @@ async fn require_view_access_to_forecast(
 ) -> Result<(), (StatusCode, String)> {
     let (owner_id, visibility, _team_id) = forecast_acl_row(pool, forecast_id).await?;
     let vis = Visibility::from_legacy(&visibility);
-    let granted = can_view(pool, principal, ObjectType::Forecast, forecast_id, &owner_id, vis)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let granted = can_view(
+        pool,
+        principal,
+        ObjectType::Forecast,
+        forecast_id,
+        &owner_id,
+        vis,
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     if granted {
         Ok(())
     } else {
@@ -299,9 +392,16 @@ async fn require_view_access_to_portfolio(
 ) -> Result<(), (StatusCode, String)> {
     let (owner_id, visibility, _team_id) = portfolio_acl_row(pool, portfolio_id).await?;
     let vis = Visibility::from_legacy(&visibility);
-    let granted = can_view(pool, principal, ObjectType::Portfolio, portfolio_id, &owner_id, vis)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let granted = can_view(
+        pool,
+        principal,
+        ObjectType::Portfolio,
+        portfolio_id,
+        &owner_id,
+        vis,
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     if granted {
         Ok(())
     } else {
@@ -318,9 +418,16 @@ async fn require_admin_access_to_forecast(
 ) -> Result<(), (StatusCode, String)> {
     let (owner_id, visibility, _t) = forecast_acl_row(pool, forecast_id).await?;
     let vis = Visibility::from_legacy(&visibility);
-    let level = can_access(pool, principal, ObjectType::Forecast, forecast_id, &owner_id, vis)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let level = can_access(
+        pool,
+        principal,
+        ObjectType::Forecast,
+        forecast_id,
+        &owner_id,
+        vis,
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     if level.has_admin() {
         Ok(())
     } else {
@@ -335,9 +442,16 @@ async fn require_admin_access_to_portfolio(
 ) -> Result<(), (StatusCode, String)> {
     let (owner_id, visibility, _t) = portfolio_acl_row(pool, portfolio_id).await?;
     let vis = Visibility::from_legacy(&visibility);
-    let level = can_access(pool, principal, ObjectType::Portfolio, portfolio_id, &owner_id, vis)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let level = can_access(
+        pool,
+        principal,
+        ObjectType::Portfolio,
+        portfolio_id,
+        &owner_id,
+        vis,
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     if level.has_admin() {
         Ok(())
     } else {
@@ -370,6 +484,9 @@ async fn verify_share_matches_target(
     if exists {
         Ok(())
     } else {
-        Err((StatusCode::NOT_FOUND, "Share not found for this target".into()))
+        Err((
+            StatusCode::NOT_FOUND,
+            "Share not found for this target".into(),
+        ))
     }
 }

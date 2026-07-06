@@ -59,26 +59,27 @@ pub async fn create_team_handler(
     // Resolved separately from fermi-auth create_team so fermi-auth stays clean.
     if body.mission.is_some() || body.coordination_strategist_id.is_some() {
         // Resolve strategist agent_id string → UUID if provided
-        let strategist_uuid: Option<uuid::Uuid> = if let Some(ref sid) = body.coordination_strategist_id {
-            if sid.is_empty() {
-                None
-            } else {
-                // Try as UUID first, then as agent_name
-                if let Ok(uuid) = sid.parse::<uuid::Uuid>() {
-                    Some(uuid)
+        let strategist_uuid: Option<uuid::Uuid> =
+            if let Some(ref sid) = body.coordination_strategist_id {
+                if sid.is_empty() {
+                    None
                 } else {
-                    sqlx::query("SELECT agent_id FROM agents WHERE agent_name = $1 LIMIT 1")
-                        .bind(sid)
-                        .fetch_optional(&state.db)
-                        .await
-                        .ok()
-                        .flatten()
-                        .and_then(|r| r.try_get::<uuid::Uuid, _>("agent_id").ok())
+                    // Try as UUID first, then as agent_name
+                    if let Ok(uuid) = sid.parse::<uuid::Uuid>() {
+                        Some(uuid)
+                    } else {
+                        sqlx::query("SELECT agent_id FROM agents WHERE agent_name = $1 LIMIT 1")
+                            .bind(sid)
+                            .fetch_optional(&state.db)
+                            .await
+                            .ok()
+                            .flatten()
+                            .and_then(|r| r.try_get::<uuid::Uuid, _>("agent_id").ok())
+                    }
                 }
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
 
         let _ = sqlx::query(
             "UPDATE teams SET
@@ -116,16 +117,19 @@ pub async fn create_team_handler(
 
     // Return enriched response including composition fields
     let is_composition = body.mission.is_some() || body.coordination_strategist_id.is_some();
-    Ok((StatusCode::CREATED, Json(json!({
-        "id": team.id,
-        "name": team.name,
-        "slug": team.slug,
-        "description": team.description,
-        "owner_id": team.owner_id,
-        "mission": body.mission,
-        "coordination_strategist_id": body.coordination_strategist_id,
-        "is_composition": is_composition,
-    }))))
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "id": team.id,
+            "name": team.name,
+            "slug": team.slug,
+            "description": team.description,
+            "owner_id": team.owner_id,
+            "mission": body.mission,
+            "coordination_strategist_id": body.coordination_strategist_id,
+            "is_composition": is_composition,
+        })),
+    ))
 }
 
 pub async fn list_teams_handler(
@@ -161,9 +165,48 @@ pub async fn get_team_handler(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Enrich members with display_name so the console renders
+    // "Alice (owner)" instead of a raw UUID. Best-effort — missing rows
+    // fall back to member_id-as-name in the client.
+    let user_member_ids: Vec<String> = members
+        .iter()
+        .filter(|m| matches!(m.member_type, fermi_auth::MemberType::User))
+        .map(|m| m.member_id.clone())
+        .collect();
+    let mut names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    if !user_member_ids.is_empty() {
+        if let Ok(rows) = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+            "SELECT user_id::text, display_name, email FROM users WHERE user_id::text = ANY($1)",
+        )
+        .bind(&user_member_ids)
+        .fetch_all(&state.db)
+        .await
+        {
+            for (uid, name, email) in rows {
+                if let Some(n) = name.or(email) {
+                    names.insert(uid, n);
+                }
+            }
+        }
+    }
+    let enriched_members: Vec<Value> = members
+        .into_iter()
+        .map(|m| {
+            let display = names.get(&m.member_id).cloned();
+            json!({
+                "team_id":              m.team_id,
+                "member_type":          m.member_type.as_str(),
+                "member_id":            m.member_id,
+                "role":                 m.role.as_str(),
+                "joined_at":            m.joined_at,
+                "member_display_name":  display,
+            })
+        })
+        .collect();
+
     Ok(Json(json!({
         "team": team,
-        "members": members,
+        "members": enriched_members,
     })))
 }
 
