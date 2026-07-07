@@ -1586,6 +1586,11 @@ impl FermiConsole {
                 } else {
                     "🧑"
                 };
+                let primary_label = s
+                    .share_target_display_name
+                    .clone()
+                    .unwrap_or_else(|| short_user_label(&s.share_target));
+                let show_subtitle = s.share_target_display_name.is_some();
                 div()
                     .flex()
                     .items_center()
@@ -1599,9 +1604,23 @@ impl FermiConsole {
                         div()
                             .flex_grow()
                             .overflow_hidden()
-                            .text_size(px(11.0))
-                            .text_color(theme::fg())
-                            .child(s.share_target.clone()),
+                            .flex()
+                            .flex_col()
+                            .gap(px(1.0))
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(theme::fg())
+                                    .child(primary_label),
+                            )
+                            .when(show_subtitle, |el| {
+                                el.child(
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(theme::fg_faint())
+                                        .child(short_user_label(&s.share_target)),
+                                )
+                            }),
                     )
                     .child(
                         div()
@@ -7260,7 +7279,14 @@ impl FermiConsole {
                                                 div()
                                                     .text_size(px(10.0))
                                                     .text_color(theme::fg_faint())
-                                                    .child(format!("from {}", inv.inviter_id)),
+                                                    .child(format!(
+                                                        "from {}",
+                                                        inv.inviter_display_name
+                                                            .clone()
+                                                            .unwrap_or_else(|| short_user_label(
+                                                                &inv.inviter_id
+                                                            ))
+                                                    )),
                                             ),
                                     )
                                     .when(inv.message.is_some(), |el| {

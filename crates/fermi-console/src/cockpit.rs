@@ -38,7 +38,7 @@ use fermi::ast::{
 
 use crate::api::client::{
     AgentExecutionResult, ApiClient, CreateForecastRequest, ForecastSchedule, Invite,
-    InviteRequest, ShareEntry, ShareRequest, UpsertScheduleRequest,
+    InviteRequest, ShareEntry, ShareRequest, Team, UpsertScheduleRequest,
 };
 use crate::text_input::TextInput;
 use crate::theme;
@@ -293,6 +293,16 @@ pub struct CockpitState {
     pub forecast_invites_loading: bool,
     /// Invite IDs with a revoke in flight (disables the button).
     pub forecast_invite_revoke_in_flight: HashSet<String>,
+    /// Collaboration teams the operator belongs to — candidate share
+    /// targets for the Access tab's "Share with a team" section.
+    /// Filtered client-side to the fermi_forecast vertical and further
+    /// to exclude auto-created workspace-prior teams. Loaded lazily on
+    /// first Access-tab open per cockpit lifetime.
+    pub share_teams: Vec<Team>,
+    pub share_teams_loading: bool,
+    /// Team IDs currently being shared with (button disabled until
+    /// the API call returns) so double-clicks don't create dupes.
+    pub share_team_in_flight: HashSet<String>,
     /// Share targets collected in the commit sheet (target, permission),
     /// applied right after the forecast row is created/updated on publish.
     pub pending_publish_shares: Vec<(String, String)>,
@@ -630,6 +640,9 @@ impl CockpitState {
             forecast_invites: Vec::new(),
             forecast_invites_loading: false,
             forecast_invite_revoke_in_flight: HashSet::new(),
+            share_teams: Vec::new(),
+            share_teams_loading: false,
+            share_team_in_flight: HashSet::new(),
             pending_publish_shares: Vec::new(),
             registry,
             cached_fpl: String::new(),
@@ -6825,6 +6838,9 @@ impl CockpitState {
         .detach();
 
         self.load_forecast_invites(fid_clone, cx);
+        // Populate the "Share with a team" section's dropdown.
+        // Cheap noop when teams are already loaded.
+        self.load_share_teams(cx);
     }
 
     /// Fetch pending/terminal invites for this forecast into
@@ -6847,6 +6863,83 @@ impl CockpitState {
                     Err(e) => {
                         log::warn!("Failed to fetch forecast invites: {}", e);
                         // Non-fatal — keep existing list.
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Fetch the operator's collaboration teams so the Access tab can
+    /// offer them as share targets. We filter locally against the same
+    /// workspace-prior heuristic the Teams panel uses — sharing a
+    /// forecast with a Team-Prior workspace team makes no sense.
+    pub fn load_share_teams(&mut self, cx: &mut Context<Self>) {
+        if self.share_teams_loading || !self.share_teams.is_empty() {
+            return;
+        }
+        self.share_teams_loading = true;
+        cx.notify();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.list_my_teams().await;
+            this.update(cx, |state, cx| {
+                state.share_teams_loading = false;
+                match result {
+                    Ok(resp) => {
+                        state.share_teams = resp
+                            .teams
+                            .into_iter()
+                            .filter(is_forecast_collaboration_team)
+                            .collect();
+                    }
+                    Err(e) => {
+                        log::warn!("[access] load_share_teams failed: {}", e);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Share this forecast with a team at the currently-selected
+    /// permission. Idempotent server-side (ON CONFLICT DO UPDATE), so
+    /// re-clicking a team upgrades/downgrades its role.
+    pub fn share_with_team(&mut self, team_id: String, cx: &mut Context<Self>) {
+        let Some(fid) = self.forecast_id.clone() else {
+            self.share_error = Some("Publish the forecast first (Ctrl+P).".into());
+            cx.notify();
+            return;
+        };
+        if !self.share_team_in_flight.insert(team_id.clone()) {
+            return;
+        }
+        self.share_error = None;
+        cx.notify();
+        let api = self.api.clone();
+        let permission = self.share_permission.clone();
+        cx.spawn(async move |this, cx| {
+            let body = ShareRequest {
+                share_type: "team".into(),
+                share_target: team_id.clone(),
+                permission: Some(permission),
+            };
+            let result = api.add_forecast_share(&fid, &body).await;
+            this.update(cx, |state, cx| {
+                state.share_team_in_flight.remove(&team_id);
+                match result {
+                    Ok(_) => {
+                        // Refresh shares so the new team-share row
+                        // appears immediately with the enriched
+                        // display name.
+                        state.load_shares(cx);
+                    }
+                    Err(e) => {
+                        state.share_error = Some(e.to_string());
                     }
                 }
                 cx.notify();
@@ -12887,6 +12980,14 @@ fn render_access_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> im
                         .child("✕"),
                 )
         }))
+        // ── Share with a team ───────────────────────────────────
+        //
+        // Complements the per-user "Add by email" row above: click a
+        // team pill and the forecast is shared with the entire team
+        // via `object_shares` (share_type='team'). Uses the same
+        // permission chip as the user share row — whichever role you've
+        // cycled to is what the team gets on click.
+        .child(render_team_share_section(state, cx))
         // ── Sent invites (pending + recent terminal) ──────────────────
         //
         // Distinct from shares: an invite is an INTENT to grant access,
@@ -12896,6 +12997,95 @@ fn render_access_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> im
         // accept and the row to move from `forecast_invites` into
         // `shares`.
         .child(render_forecast_invites_section(state, cx))
+}
+
+fn render_team_share_section(
+    state: &CockpitState,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    // Skip already-shared teams so the pill list is only for teams the
+    // forecast isn't already shared with. Re-clicking a shared team is
+    // still safe (server upsert) but the UI reads cleaner this way.
+    let already_shared_team_ids: std::collections::HashSet<String> = state
+        .shares
+        .iter()
+        .filter(|s| s.share_type == "team")
+        .map(|s| s.share_target.clone())
+        .collect();
+
+    let mut container = div().flex().flex_col().gap(px(6.0)).mt(px(8.0)).child(
+        div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(theme::FG_DIM))
+                    .child(format!("Share with a team ({})", state.share_teams.len())),
+            )
+            .when(state.share_teams_loading, |el| {
+                el.child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG_FAINT))
+                        .child("loading…"),
+                )
+            }),
+    );
+
+    if state.share_teams.is_empty() && !state.share_teams_loading {
+        container = container.child(
+            div()
+                .text_size(px(10.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .child(
+                "No collaboration teams yet. Create one in the Teams panel to share with a group.",
+            ),
+        );
+        return container;
+    }
+
+    // Team pills — wrap horizontally so many teams fit without
+    // scrolling. Each pill is clickable; grays out while a share
+    // request is in flight; disabled visual state when already shared.
+    let pills = state.share_teams.iter().map(|t| {
+        let tid = t.id.clone();
+        let already_shared = already_shared_team_ids.contains(&t.id);
+        let in_flight = state.share_team_in_flight.contains(&t.id);
+        let interactive = !already_shared && !in_flight;
+        let (label, color) = if already_shared {
+            (format!("✓ {}", t.name), rgb(theme::GREEN))
+        } else if in_flight {
+            (format!("… {}", t.name), rgb(theme::FG_FAINT))
+        } else {
+            (t.name.clone(), rgb(theme::CYAN))
+        };
+        let pill = div()
+            .id(ElementId::Name(format!("team-share-{}", tid).into()))
+            .px(px(10.0))
+            .py(px(4.0))
+            .rounded(px(12.0))
+            .bg(rgb(theme::BG_ELEVATED))
+            .text_size(px(11.0))
+            .text_color(color)
+            .child(label);
+        if interactive {
+            pill.cursor_pointer()
+                .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                .on_click(cx.listener({
+                    let tid = tid.clone();
+                    move |this, _, _w, cx| {
+                        this.share_with_team(tid.clone(), cx);
+                    }
+                }))
+        } else {
+            pill
+        }
+    });
+
+    container.child(div().flex().flex_wrap().gap(px(6.0)).children(pills))
 }
 
 fn render_forecast_invites_section(
@@ -17406,6 +17596,46 @@ fn score_evidence_quality(ev: &EvidenceStmt) -> (f64, &'static str, u32) {
     };
 
     (score, label, color)
+}
+
+/// Filter for team dropdowns in the forecast Access tab: only true
+/// collaboration teams should appear as share targets, not the ABW
+/// workspace wrappers auto-created for every Team-Prior /
+/// Tournament-Path forecast (spawn_forecast_workspace creates one per
+/// workspace so shares can bind to it — 62+ entries for the WC event).
+///
+/// Detection is the same shape as main.rs::is_workspace_prior_team —
+/// duplicated intentionally so cockpit.rs doesn't need to reach into
+/// binary-crate helpers. Kept in sync with that function.
+fn is_forecast_collaboration_team(t: &Team) -> bool {
+    // Only the fermi vertical — skip rabble/kask/etc.
+    let fermi_vertical = match t.origin.as_deref() {
+        Some(o) => o == "fermi_forecast",
+        None => true, // legacy rows without an origin — assume fermi
+    };
+    if !fermi_vertical {
+        return false;
+    }
+    // Filter out workspace-prior wrappers by name / slug / description.
+    if t.name.starts_with("Team Prior — ")
+        || t.name.starts_with("Team Prior - ")
+        || t.name.starts_with("Tournament Path — ")
+        || t.name.starts_with("Tournament Path - ")
+    {
+        return false;
+    }
+    let slug = t.slug.to_ascii_lowercase();
+    if let Some(tail) = slug.strip_prefix("fermi-forecast-") {
+        if tail.len() >= 6 && tail.chars().all(|c| c.is_ascii_hexdigit()) {
+            return false;
+        }
+    }
+    let desc = t.description.as_deref().unwrap_or("").to_ascii_lowercase();
+    if desc.contains("tournament win probability prior") || desc.contains("auto-created workspace")
+    {
+        return false;
+    }
+    true
 }
 
 fn evidence_matches_agent(evidence: &EvidenceStmt, agent_name: &str) -> bool {
