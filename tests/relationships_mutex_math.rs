@@ -6,155 +6,183 @@
 //! current probabilities of the survivors, what new probabilities
 //! should each survivor have?
 //!
-//! Properties we want:
-//!   1. Mass conservation: sum of new-probabilities equals
-//!      sum-of-old-probabilities (within ε for floating point) when
-//!      starting from a valid mutex (sum ≈ 1.0).
-//!   2. Proportional redistribution: stronger survivors absorb more of
-//!      the eliminated mass. Specifically, the increase Δ_i for
-//!      survivor i is `trigger_prev * (p_i / Σ p_j)`.
-//!   3. Resolve YES: every sibling drops to ~0, trigger goes to 1.
-//!   4. Resolve NO with single-survivor pool: that survivor gets ALL
-//!      the eliminated mass.
-//!   5. Degenerate (sum-to-zero survivor pool): no movement, returns
-//!      empty deltas + a note.
+//! Properties we want (Spec 25 §3.1, updated 2026-07):
+//!
+//!   1. **Renormalisation**: after a resolve, live members sum to
+//!      `1 − FLOOR·n_no − CEIL·n_yes` regardless of what they summed
+//!      to going in. This is the core fix for the "159%" WC mutex
+//!      bug — independent standalone sims don't sum to 1, and the
+//!      cascade math must renormalise them.
+//!   2. **Proportional preservation of ranking**: stronger survivors
+//!      stay stronger; every survivor is scaled by the same factor.
+//!   3. **Resolve YES**: every survivor collapses to FLOOR, trigger
+//!      pins to CEIL.
+//!   4. **Degenerate (survivors sum to ~0)**: no movement + explanatory
+//!      note.
 
-/// Simulates the same redistribution math the server-side
-/// `propagate_mutex` function applies, in pure-Rust form so we can
-/// assert against expected values without database setup.
-///
-/// Returns `(deltas, note)` where deltas is `Vec<(id, prev, new)>` for
-/// each forecast that moved.
+const FLOOR: f64 = 0.001;
+const CEIL: f64 = 0.999;
+
+/// Pure-Rust mirror of the server-side `propagate_mutex` renormalise
+/// path for `("resolved", Some(false))`. Given the trigger, survivors,
+/// and the counts of already-resolved siblings, returns
+/// `(deltas, note)`.
 fn redistribute_on_resolve_no(
     trigger_id: &str,
     trigger_prev: f64,
     survivors: &[(&str, f64)],
+    n_resolved_no_prev: usize,
+    n_resolved_yes_prev: usize,
 ) -> (Vec<(String, f64, f64)>, Option<String>) {
+    // Trigger joins the resolved-NO ranks → the +1.
+    let target_live_sum =
+        (1.0 - FLOOR * (n_resolved_no_prev as f64 + 1.0) - CEIL * n_resolved_yes_prev as f64)
+            .max(0.0);
     let survivor_total: f64 = survivors.iter().map(|(_, p)| *p).sum();
-    if survivor_total < 1e-9 {
-        return (Vec::new(), Some("survivor pool sums to zero".into()));
-    }
+
     let mut out: Vec<(String, f64, f64)> = Vec::new();
+    if survivor_total < 1e-9 {
+        return (out, Some("survivor pool sums to zero".into()));
+    }
+    let scale = target_live_sum / survivor_total;
     for (id, prev) in survivors {
-        let share = prev / survivor_total;
-        let absorbed = trigger_prev * share;
-        let new_p = (prev + absorbed).clamp(0.001, 0.999);
+        let new_p = (prev * scale).clamp(FLOOR, CEIL);
         if (new_p - prev).abs() > 1e-5 {
             out.push(((*id).to_string(), *prev, new_p));
         }
     }
-    if trigger_prev > 0.001 {
-        out.push((trigger_id.to_string(), trigger_prev, 0.001));
+    if (trigger_prev - FLOOR).abs() > 1e-5 {
+        out.push((trigger_id.to_string(), trigger_prev, FLOOR));
     }
     (out, None)
 }
 
 #[test]
-fn mass_conservation_resolve_no() {
-    // 4-team mutex summing to 1.0. Eliminate the 0.20 team — its mass
-    // should redistribute proportionally to the other three.
-    let trigger_id = "team_d";
+fn renormalises_to_one_when_starting_at_one() {
+    // Classical 4-team mutex already summing to 1.0. Eliminating the
+    // 0.20 team should leave the survivors summing to ≈ 1 − FLOOR·1
+    // = 0.999, with the trigger pinned to FLOOR (total ≈ 1.000).
+    let survivors = vec![("a", 0.40), ("b", 0.25), ("c", 0.15)];
+    let (deltas, note) = redistribute_on_resolve_no("d", 0.20, &survivors, 0, 0);
+    assert!(note.is_none());
+
+    let survivor_sum_after: f64 = deltas
+        .iter()
+        .filter(|(id, _, _)| id != "d")
+        .map(|(_, _, new_p)| new_p)
+        .sum();
+    assert!(
+        (survivor_sum_after - (1.0 - FLOOR)).abs() < 1e-3,
+        "survivors should renormalise to ≈ 0.999, got {}",
+        survivor_sum_after
+    );
+
+    // Ranking preserved.
+    let get = |id: &str| deltas.iter().find(|(d, _, _)| d == id).unwrap().2;
+    assert!(get("a") > get("b"));
+    assert!(get("b") > get("c"));
+}
+
+#[test]
+fn recovers_from_inflated_starting_sum_wc_case() {
+    // Regression for the "159%" WC bug: independent per-country sims
+    // whose standalones sum to 1.59 must renormalise to ≈ 1.0 after
+    // an elimination — NOT preserve the 1.59.
     let survivors = vec![
-        ("team_a", 0.40),
-        ("team_b", 0.25),
-        ("team_c", 0.15),
+        ("england", 0.27),
+        ("colombia", 0.12),
+        ("argentina", 0.21),
+        ("norway", 0.13),
+        ("france", 0.29),
+        ("spain", 0.30),
+        ("belgium", 0.12),
+        ("morocco", 0.04),
+        ("switzerland", 0.10),
     ];
-    let (deltas, note) = redistribute_on_resolve_no(trigger_id, 0.20, &survivors);
-    assert!(note.is_none(), "expected no note, got: {:?}", note);
+    // Jamaica @ 0.01 gets eliminated; 20 countries already resolved-NO.
+    let (deltas, note) = redistribute_on_resolve_no("jamaica", 0.01, &survivors, 20, 0);
+    assert!(note.is_none());
 
-    // Mass before = 1.00. Mass after: trigger drops to 0.001, survivors
-    // sum to 0.80 + 0.20 = 1.00. So total = 1.001 (the floor). Close
-    // enough to mass conservation given the floor clamp.
-    let total_after: f64 = deltas.iter().map(|(_, _, new_p)| new_p).sum();
+    let survivor_sum_after: f64 = deltas
+        .iter()
+        .filter(|(id, _, _)| id != "jamaica")
+        .map(|(_, _, new_p)| new_p)
+        .sum();
+    // 20 already-resolved-NO plus the trigger = 21 members at FLOOR.
+    let expected_live_sum = 1.0 - FLOOR * 21.0;
     assert!(
-        (total_after - 1.001).abs() < 0.001,
-        "mass conservation broken: total after = {}",
-        total_after
+        (survivor_sum_after - expected_live_sum).abs() < 1e-3,
+        "survivors should renormalise from 1.58 → {:.4}, got {:.4}",
+        expected_live_sum,
+        survivor_sum_after
     );
 
-    // team_a gets the largest absorption (it has 50% of the survivor
-    // pool, so it absorbs 50% of the 0.20 = 0.10 → goes from 0.40 to 0.50).
-    let team_a = deltas.iter().find(|(id, _, _)| id == "team_a").unwrap();
+    // Total across the mutex group ≈ 1.0.
+    let total = survivor_sum_after + FLOOR * 21.0;
     assert!(
-        (team_a.2 - 0.50).abs() < 0.001,
-        "team_a expected to absorb 0.10 (40/80 of 0.20), got new={:.4}",
-        team_a.2
-    );
-
-    // team_c gets the smallest absorption (15/80 of 0.20 = 0.0375 →
-    // 0.15 + 0.0375 = 0.1875).
-    let team_c = deltas.iter().find(|(id, _, _)| id == "team_c").unwrap();
-    assert!(
-        (team_c.2 - 0.1875).abs() < 0.001,
-        "team_c expected new=0.1875, got {:.4}",
-        team_c.2
+        (total - 1.0).abs() < 1e-3,
+        "whole mutex group must sum to ≈ 1.0, got {}",
+        total
     );
 }
 
 #[test]
-fn single_survivor_absorbs_all() {
-    let (deltas, _) = redistribute_on_resolve_no(
-        "trigger",
-        0.30,
-        &[("only_survivor", 0.70)],
+fn recovers_from_deflated_starting_sum() {
+    // Symmetric case: standalones sum to 0.40 (each sim wildly
+    // under-estimates). Renormalisation must scale them UP.
+    let survivors = vec![("a", 0.10), ("b", 0.15), ("c", 0.15)];
+    let (deltas, _) = redistribute_on_resolve_no("t", 0.05, &survivors, 0, 0);
+    let survivor_sum_after: f64 = deltas
+        .iter()
+        .filter(|(id, _, _)| id != "t")
+        .map(|(_, _, new_p)| new_p)
+        .sum();
+    assert!(
+        (survivor_sum_after - (1.0 - FLOOR)).abs() < 1e-3,
+        "survivors should scale UP to ≈ 0.999, got {}",
+        survivor_sum_after
     );
+}
+
+#[test]
+fn ranking_preserved_under_renormalisation() {
+    // Every survivor is multiplied by the same scale factor, so
+    // relative ratios are preserved bit-for-bit.
+    let survivors = vec![("strong", 0.30), ("medium", 0.20), ("weak", 0.10)];
+    let (deltas, _) = redistribute_on_resolve_no("t", 0.40, &survivors, 0, 0);
+    let get = |id: &str| deltas.iter().find(|(d, _, _)| d == id).unwrap().2;
+    let s = get("strong");
+    let m = get("medium");
+    let w = get("weak");
+    // Old ratios: 3:2:1 → new ratios must be identical.
+    assert!((s / m - 1.5).abs() < 1e-6, "strong/medium ratio drifted");
+    assert!((m / w - 2.0).abs() < 1e-6, "medium/weak ratio drifted");
+}
+
+#[test]
+fn single_survivor_absorbs_all_but_clamps_at_ceil() {
+    let (deltas, _) = redistribute_on_resolve_no("trigger", 0.30, &[("only_survivor", 0.70)], 0, 0);
     let s = deltas
         .iter()
         .find(|(id, _, _)| id == "only_survivor")
         .unwrap();
-    // The single survivor's share is 1.0; absorbs the entire 0.30 →
-    // goes from 0.70 to 1.0, but clamped to 0.999.
+    // Would renormalise to 0.999 exactly; clamp is a no-op here.
     assert!(
-        (s.2 - 0.999).abs() < 0.0001,
-        "single survivor should absorb all and clamp to 0.999, got {}",
+        (s.2 - CEIL).abs() < 1e-4,
+        "single survivor should scale to CEIL, got {}",
         s.2
     );
 }
 
 #[test]
 fn degenerate_zero_survivor_pool_returns_note() {
-    let (deltas, note) = redistribute_on_resolve_no(
-        "trigger",
-        0.30,
-        &[("dead1", 0.0), ("dead2", 0.0)],
+    let (deltas, note) =
+        redistribute_on_resolve_no("trigger", 0.30, &[("dead1", 0.0), ("dead2", 0.0)], 0, 0);
+    // Trigger still needs to be pinned to FLOOR even when the survivor
+    // pool is empty.
+    assert!(
+        deltas.iter().all(|(id, _, _)| id == "trigger"),
+        "no survivor deltas when pool sums to zero"
     );
-    assert!(deltas.is_empty(), "no movement when survivor pool is zero");
     assert!(note.is_some(), "expected explanatory note");
-}
-
-#[test]
-fn proportional_redistribution_preserves_relative_ranking() {
-    // Stronger survivors stay stronger after the cascade.
-    let survivors = vec![
-        ("strong", 0.30),
-        ("medium", 0.20),
-        ("weak", 0.10),
-    ];
-    let (deltas, _) = redistribute_on_resolve_no("trigger", 0.40, &survivors);
-    let new = |id: &str| -> f64 {
-        deltas.iter().find(|(d, _, _)| d == id).unwrap().2
-    };
-    assert!(new("strong") > new("medium"));
-    assert!(new("medium") > new("weak"));
-
-    // The relative ratio strong:medium:weak (3:2:1) should be preserved
-    // (each absorbs proportionally to its current p).
-    let s = new("strong");
-    let m = new("medium");
-    let w = new("weak");
-    let ratio_sm = s / m;
-    let ratio_mw = m / w;
-    // Old ratios: 0.30/0.20 = 1.5, 0.20/0.10 = 2.0
-    // New ratios: each grew by the same proportional factor (1 + 0.40/0.60)
-    // so ratios stay 1.5 and 2.0.
-    assert!(
-        (ratio_sm - 1.5).abs() < 0.01,
-        "strong/medium ratio should stay 1.5, got {}",
-        ratio_sm
-    );
-    assert!(
-        (ratio_mw - 2.0).abs() < 0.01,
-        "medium/weak ratio should stay 2.0, got {}",
-        ratio_mw
-    );
 }

@@ -3,15 +3,24 @@
 //! Spec 25 §3.1, extended for the "smart sims" contract: a forecast's
 //! displayed `predicted_probability` is a DERIVED value —
 //!
-//!     predicted_probability = recompose(sim_probability, eliminated mass)
+//!     predicted_probability = recompose(sim_probability, group state)
 //!
 //! where `sim_probability` is the forecast's own standalone Monte-Carlo
-//! mean. Recompose redistributes the freed mass of resolved-NO siblings
-//! across the surviving members, proportional to their standalone
-//! strength. Because it always reads `sim_probability` (the raw mean) and
-//! never the already-displayed value, it is idempotent: re-running a sim
-//! recomputes the standalone AND re-applies the eliminations every time,
-//! instead of resetting the displayed value back to the standalone.
+//! mean. A mutex group is mutually exclusive AND exhaustive, so the
+//! displayed values must obey
+//!
+//!     Σ displayed_i  ≈  1.0
+//!
+//! Because each member's `sim_probability` is an INDEPENDENT estimate
+//! (each answers "Will X win?" in isolation), the raw values don't sum
+//! to 1 in general. Recompose therefore RENORMALISES the live members
+//! so that they, together with resolved siblings pinned at FLOOR/CEIL,
+//! partition 1.0 while preserving relative standalone strength.
+//!
+//! Recompose is idempotent: it always reads `sim_probability` (the raw
+//! mean) and never the already-displayed value, so re-running a sim
+//! recomputes the standalone AND re-applies the mutex constraint every
+//! time, instead of resetting the displayed value back to the standalone.
 //!
 //! This is the holistic counterpart to the per-trigger `propagate_mutex`:
 //! same end-state for "all eliminations applied", but computed in one shot
@@ -112,19 +121,21 @@ pub async fn recompose_mutex_group(
         .filter(|m| m.outcome.is_none())
         .map(|m| m.raw)
         .sum();
-    let eliminated_mass: f64 = members
-        .iter()
-        .filter(|m| m.outcome == Some(false))
-        .map(|m| m.raw)
-        .sum();
+    let n_no = members.iter().filter(|m| m.outcome == Some(false)).count() as f64;
+    let n_yes = members.iter().filter(|m| m.outcome == Some(true)).count() as f64;
 
-    // factor scales survivors so they absorb the eliminated mass while
-    // preserving relative ranking. If a member resolved YES, the mutex is
-    // decided: every survivor collapses to the floor.
-    let factor = if survivor_raw_sum > 1e-9 {
-        (survivor_raw_sum + eliminated_mass) / survivor_raw_sum
+    // The live members must absorb exactly the probability mass that
+    // isn't already pinned to a resolved sibling's FLOOR/CEIL, so that
+    //   Σ displayed  =  target_live_sum + FLOOR·n_no + CEIL·n_yes  ≈  1.0.
+    // The scale factor renormalises the raw standalone strengths onto
+    // that budget while preserving their relative ranking. If a member
+    // resolved YES the mutex is decided — every survivor collapses to
+    // the floor and the factor is unused.
+    let target_live_sum = (1.0 - FLOOR * n_no - CEIL * n_yes).max(0.0);
+    let factor = if survivor_raw_sum > 1e-9 && !any_winner {
+        target_live_sum / survivor_raw_sum
     } else {
-        1.0
+        0.0
     };
 
     let mut displayed: HashMap<String, f64> = HashMap::new();

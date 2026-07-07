@@ -9,6 +9,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sqlx::{PgPool, Row};
 
+/// Displayed-probability floor for a mutex/at_most_n member. We never
+/// pin a probability to exactly 0 or 1 — that would poison downstream
+/// Brier scoring and log-loss updates. Kept in sync with
+/// `recompose::{FLOOR, CEIL}`.
+const FLOOR: f64 = 0.001;
+const CEIL: f64 = 0.999;
+
 #[derive(Debug, Deserialize)]
 pub struct PropagateRequest {
     pub trigger_forecast_id: String,
@@ -43,20 +50,13 @@ pub async fn dispatch_propagation(
         "mutually_exclusive" | "mutex" => {
             propagate_mutex(forecast_ids, parameters, req, pool, dry_run).await
         }
-        "at_most_n" => {
-            propagate_at_most_n(forecast_ids, parameters, req, pool, dry_run).await
-        }
-        "implies" => {
-            propagate_implies(forecast_ids, parameters, req, pool, dry_run).await
-        }
+        "at_most_n" => propagate_at_most_n(forecast_ids, parameters, req, pool, dry_run).await,
+        "implies" => propagate_implies(forecast_ids, parameters, req, pool, dry_run).await,
         "logical_implies" | "conjunction" | "conditional" | "exhaustive_cover" => Err((
             StatusCode::NOT_IMPLEMENTED,
             format!("Legacy kind '{}' — use the new group model instead", kind),
         )),
-        other => Err((
-            StatusCode::BAD_REQUEST,
-            format!("Unknown kind: {}", other),
-        )),
+        other => Err((StatusCode::BAD_REQUEST, format!("Unknown kind: {}", other))),
     }
 }
 
@@ -93,7 +93,10 @@ pub async fn get_group_member_ids(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    Ok(rows.iter().filter_map(|r| r.try_get::<String, _>("id").ok()).collect())
+    Ok(rows
+        .iter()
+        .filter_map(|r| r.try_get::<String, _>("id").ok())
+        .collect())
 }
 
 /// Members that have already resolved (actual_outcome IS NOT NULL).
@@ -146,14 +149,8 @@ async fn read_current_probs(
     Ok(current)
 }
 
-fn compute_and_build_result(
-    updates: Vec<(String, f64, f64)>,
-    note: Option<String>,
-    dry_run: bool,
-    pool: &PgPool,
-    reason: String,
-) -> PropagateResult {
-    let deltas: Vec<DeltaEntry> = updates
+fn build_deltas(updates: &[(String, f64, f64)]) -> Vec<DeltaEntry> {
+    updates
         .iter()
         .map(|(fid, prev, new_p)| DeltaEntry {
             forecast_id: fid.clone(),
@@ -161,15 +158,30 @@ fn compute_and_build_result(
             new_probability: *new_p,
             delta_pp: (new_p - prev) * 100.0,
         })
-        .collect();
+        .collect()
+}
 
-    let written = if dry_run { updates.len() } else { 0 };
-
-    PropagateResult {
-        n_updated: written,
+/// Shared tail every `propagate_*` handler runs: turn `updates` into
+/// serialisable `DeltaEntry`s, then either write them (live) or just
+/// count them (dry-run).
+async fn finalize(
+    updates: Vec<(String, f64, f64)>,
+    note: Option<String>,
+    reason: &str,
+    dry_run: bool,
+    pool: &PgPool,
+) -> Result<PropagateResult, (StatusCode, String)> {
+    let deltas = build_deltas(&updates);
+    let n_updated = if dry_run {
+        updates.len()
+    } else {
+        write_deltas(&updates, reason, None, pool).await?
+    };
+    Ok(PropagateResult {
+        n_updated,
         deltas,
         note,
-    }
+    })
 }
 
 pub async fn write_deltas(
@@ -184,7 +196,7 @@ pub async fn write_deltas(
         let prev_f32 = *prev as f32;
         let full_reason = match cascade_id {
             Some(cid) => format!("{} (cascade {})", reason, cid),
-            None => reason.clone().to_string(),
+            None => reason.to_string(),
         };
 
         sqlx::query(
@@ -230,55 +242,78 @@ async fn propagate_mutex(
 
     // A member is a redistribution target only if it is neither the
     // trigger nor an already-resolved (factual) sibling.
-    let is_survivor = |id: &String| -> bool {
-        *id != req.trigger_forecast_id && !resolved.contains(id)
-    };
+    let is_survivor =
+        |id: &String| -> bool { *id != req.trigger_forecast_id && !resolved.contains(id) };
+
+    // Count already-resolved siblings (excluding the trigger) so we can
+    // account for the FLOOR/CEIL probability mass they hold.
+    let n_resolved_no_prev = forecast_ids
+        .iter()
+        .filter(|id| resolved.contains(*id) && **id != req.trigger_forecast_id)
+        .filter(|id| current.get(*id).copied().unwrap_or(0.0) < 0.5)
+        .count() as f64;
+    let n_resolved_yes_prev = forecast_ids
+        .iter()
+        .filter(|id| resolved.contains(*id) && **id != req.trigger_forecast_id)
+        .filter(|id| current.get(*id).copied().unwrap_or(0.0) >= 0.5)
+        .count() as f64;
 
     let mut updates: Vec<(String, f64, f64)> = Vec::new();
     let mut note: Option<String> = None;
 
+    // `renormalise_survivors` is the shared workhorse for both
+    // `resolved-NO` and `updated`: given a target sum for the live
+    // members and their current probabilities, scale them so they hit
+    // that target while preserving relative ranking.
+    let renormalise_survivors = |updates: &mut Vec<(String, f64, f64)>,
+                                 target_sum: f64,
+                                 note: &mut Option<String>| {
+        let survivors: Vec<&String> = forecast_ids.iter().filter(|id| is_survivor(id)).collect();
+        let survivor_total: f64 = survivors
+            .iter()
+            .map(|id| current.get(*id).copied().unwrap_or(0.0))
+            .sum();
+        if survivor_total < 1e-9 {
+            *note = Some(
+                "Survivor probabilities sum to ~0; cannot renormalise proportionally. \
+                     Sibling forecasts left untouched."
+                    .into(),
+            );
+            return;
+        }
+        let scale = target_sum / survivor_total;
+        for id in &survivors {
+            let prev = current.get(*id).copied().unwrap_or(0.0);
+            let new_p = (prev * scale).clamp(FLOOR, CEIL);
+            if (new_p - prev).abs() > 1e-5 {
+                updates.push(((*id).clone(), prev, new_p));
+            }
+        }
+    };
+
     match (req.trigger_kind.as_str(), req.outcome) {
         ("resolved", Some(false)) => {
-            let survivors: Vec<&String> = forecast_ids
-                .iter()
-                .filter(|id| is_survivor(id))
-                .collect();
-            let survivor_total: f64 = survivors
-                .iter()
-                .map(|id| current.get(*id).copied().unwrap_or(0.0))
-                .sum();
-
-            if survivor_total < 1e-9 {
-                note = Some(
-                    "Survivor probabilities sum to ~0; cannot redistribute proportionally. \
-                     Sibling forecasts left untouched."
-                        .into(),
-                );
-            } else {
-                for id in &survivors {
-                    let prev = current.get(*id).copied().unwrap_or(0.0);
-                    let share = prev / survivor_total;
-                    let absorbed = trigger_prev * share;
-                    let new_p = (prev + absorbed).clamp(0.001, 0.999);
-                    if (new_p - prev).abs() > 1e-5 {
-                        updates.push(((*id).clone(), prev, new_p));
-                    }
-                }
-            }
-            if trigger_prev > 0.001 {
-                updates.push((req.trigger_forecast_id.clone(), trigger_prev, 0.001));
+            // Trigger joins the resolved-NO ranks: the live members
+            // must now share (1 − FLOOR·(n_no+1) − CEIL·n_yes).
+            let target_live_sum =
+                (1.0 - FLOOR * (n_resolved_no_prev + 1.0) - CEIL * n_resolved_yes_prev).max(0.0);
+            renormalise_survivors(&mut updates, target_live_sum, &mut note);
+            if (trigger_prev - FLOOR).abs() > 1e-5 {
+                updates.push((req.trigger_forecast_id.clone(), trigger_prev, FLOOR));
             }
         }
 
         ("resolved", Some(true)) => {
+            // Winner declared: every survivor collapses to FLOOR,
+            // trigger pins to CEIL.
             for id in forecast_ids.iter().filter(|id| is_survivor(id)) {
                 let prev = current.get(id).copied().unwrap_or(0.0);
-                if prev > 0.001 {
-                    updates.push((id.clone(), prev, 0.001));
+                if (prev - FLOOR).abs() > 1e-5 {
+                    updates.push((id.clone(), prev, FLOOR));
                 }
             }
-            if trigger_prev < 0.999 {
-                updates.push((req.trigger_forecast_id.clone(), trigger_prev, 0.999));
+            if (trigger_prev - CEIL).abs() > 1e-5 {
+                updates.push((req.trigger_forecast_id.clone(), trigger_prev, CEIL));
             }
         }
 
@@ -290,42 +325,13 @@ async fn propagate_mutex(
         }
 
         ("updated", _) => {
-            // Σ over the live (non-resolved) members only — resolved
-            // siblings are factual and don't participate in the mutex.
-            let total: f64 = current
-                .iter()
-                .filter(|(id, _)| !resolved.contains(*id))
-                .map(|(_, p)| *p)
-                .sum();
-            let delta = total - 1.0;
-            if delta.abs() < 1e-6 {
-                note = Some("Members already sum to 1.0; no redistribution needed.".into());
-            } else {
-                let siblings: Vec<&String> = forecast_ids
-                    .iter()
-                    .filter(|id| is_survivor(id))
-                    .collect();
-                let sibling_total: f64 = siblings
-                    .iter()
-                    .map(|id| current.get(*id).copied().unwrap_or(0.0))
-                    .sum();
-                if sibling_total < 1e-9 {
-                    note = Some(
-                        "Sibling probabilities sum to ~0; cannot redistribute. \
-                         Sibling forecasts left untouched."
-                            .into(),
-                    );
-                } else {
-                    for id in &siblings {
-                        let prev = current.get(*id).copied().unwrap_or(0.0);
-                        let share = prev / sibling_total;
-                        let new_p = (prev - delta * share).clamp(0.001, 0.999);
-                        if (new_p - prev).abs() > 1e-5 {
-                            updates.push(((*id).clone(), prev, new_p));
-                        }
-                    }
-                }
-            }
+            // The trigger's own probability just changed (e.g. from a
+            // re-sim). Renormalise the OTHER live members so that
+            //   trigger_new + Σ siblings = 1 − FLOOR·n_no − CEIL·n_yes.
+            let target_live_sum =
+                (1.0 - FLOOR * n_resolved_no_prev - CEIL * n_resolved_yes_prev).max(0.0);
+            let sibling_target = (target_live_sum - trigger_prev).max(0.0);
+            renormalise_survivors(&mut updates, sibling_target, &mut note);
         }
 
         (other, _) => {
@@ -343,17 +349,7 @@ async fn propagate_mutex(
         "cascade from {} ({})",
         req.trigger_forecast_id, req.trigger_kind
     );
-
-    let mut result = compute_and_build_result(updates, note, dry_run, pool, reason.clone());
-
-    if !dry_run {
-        let written = write_deltas(&result.deltas.iter().map(|d| (d.forecast_id.clone(), d.previous_probability, d.new_probability)).collect::<Vec<_>>(), &reason, None, pool).await?;
-        result.n_updated = written;
-    } else {
-        result.n_updated = result.deltas.len();
-    }
-
-    Ok(result)
+    finalize(updates, note, &reason, dry_run, pool).await
 }
 
 async fn propagate_at_most_n(
@@ -363,28 +359,22 @@ async fn propagate_at_most_n(
     pool: &PgPool,
     dry_run: bool,
 ) -> Result<PropagateResult, (StatusCode, String)> {
-    let n: f64 = parameters
-        .get("n")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(1.0);
+    let n: f64 = parameters.get("n").and_then(|v| v.as_f64()).unwrap_or(1.0);
 
     let current = read_current_probs(forecast_ids, pool).await?;
     let resolved = read_resolved_ids(forecast_ids, pool).await?;
     let trigger_prev = *current.get(&req.trigger_forecast_id).unwrap_or(&0.0);
 
-    let is_survivor = |id: &String| -> bool {
-        *id != req.trigger_forecast_id && !resolved.contains(id)
-    };
+    let is_survivor =
+        |id: &String| -> bool { *id != req.trigger_forecast_id && !resolved.contains(id) };
 
     let mut updates: Vec<(String, f64, f64)> = Vec::new();
     let mut note: Option<String> = None;
 
     match (req.trigger_kind.as_str(), req.outcome) {
         ("resolved", Some(false)) => {
-            let survivors: Vec<&String> = forecast_ids
-                .iter()
-                .filter(|id| is_survivor(id))
-                .collect();
+            let survivors: Vec<&String> =
+                forecast_ids.iter().filter(|id| is_survivor(id)).collect();
             let survivor_sum: f64 = survivors
                 .iter()
                 .map(|id| current.get(*id).copied().unwrap_or(0.0))
@@ -397,31 +387,27 @@ async fn propagate_at_most_n(
             } else {
                 let mass_to_redistribute = trigger_prev.min(available);
                 if survivor_sum < 1e-9 {
-                    note = Some(
-                        "Survivor probabilities sum to ~0; cannot redistribute.".into(),
-                    );
+                    note = Some("Survivor probabilities sum to ~0; cannot redistribute.".into());
                 } else {
                     for id in &survivors {
                         let prev = current.get(*id).copied().unwrap_or(0.0);
                         let share = prev / survivor_sum;
                         let absorbed = mass_to_redistribute * share;
-                        let new_p = (prev + absorbed).clamp(0.001, 0.999);
+                        let new_p = (prev + absorbed).clamp(FLOOR, CEIL);
                         if (new_p - prev).abs() > 1e-5 {
                             updates.push(((*id).clone(), prev, new_p));
                         }
                     }
                 }
             }
-            if trigger_prev > 0.001 {
-                updates.push((req.trigger_forecast_id.clone(), trigger_prev, 0.001));
+            if trigger_prev > FLOOR {
+                updates.push((req.trigger_forecast_id.clone(), trigger_prev, FLOOR));
             }
         }
 
         ("resolved", Some(true)) => {
-            let survivors: Vec<&String> = forecast_ids
-                .iter()
-                .filter(|id| is_survivor(id))
-                .collect();
+            let survivors: Vec<&String> =
+                forecast_ids.iter().filter(|id| is_survivor(id)).collect();
             let survivor_sum: f64 = survivors
                 .iter()
                 .map(|id| current.get(*id).copied().unwrap_or(0.0))
@@ -432,14 +418,14 @@ async fn propagate_at_most_n(
                 let scale = new_capacity / survivor_sum;
                 for id in &survivors {
                     let prev = current.get(*id).copied().unwrap_or(0.0);
-                    let new_p = (prev * scale).clamp(0.001, 0.999);
+                    let new_p = (prev * scale).clamp(FLOOR, CEIL);
                     if (new_p - prev).abs() > 1e-5 {
                         updates.push(((*id).clone(), prev, new_p));
                     }
                 }
             }
-            if trigger_prev < 0.999 {
-                updates.push((req.trigger_forecast_id.clone(), trigger_prev, 0.999));
+            if trigger_prev < CEIL {
+                updates.push((req.trigger_forecast_id.clone(), trigger_prev, CEIL));
             }
         }
 
@@ -462,10 +448,8 @@ async fn propagate_at_most_n(
                     total, n
                 ));
             } else {
-                let siblings: Vec<&String> = forecast_ids
-                    .iter()
-                    .filter(|id| is_survivor(id))
-                    .collect();
+                let siblings: Vec<&String> =
+                    forecast_ids.iter().filter(|id| is_survivor(id)).collect();
                 let sibling_sum: f64 = siblings
                     .iter()
                     .map(|id| current.get(*id).copied().unwrap_or(0.0))
@@ -481,7 +465,7 @@ async fn propagate_at_most_n(
                     let scale = (sibling_sum - excess) / sibling_sum;
                     for id in &siblings {
                         let prev = current.get(*id).copied().unwrap_or(0.0);
-                        let new_p = (prev * scale).clamp(0.001, 0.999);
+                        let new_p = (prev * scale).clamp(FLOOR, CEIL);
                         if (new_p - prev).abs() > 1e-5 {
                             updates.push(((*id).clone(), prev, new_p));
                         }
@@ -502,17 +486,7 @@ async fn propagate_at_most_n(
         "cascade from {} ({}) [at_most_n={}]",
         req.trigger_forecast_id, req.trigger_kind, n
     );
-
-    let mut result = compute_and_build_result(updates, note, dry_run, pool, reason.clone());
-
-    if !dry_run {
-        let written = write_deltas(&result.deltas.iter().map(|d| (d.forecast_id.clone(), d.previous_probability, d.new_probability)).collect::<Vec<_>>(), &reason, None, pool).await?;
-        result.n_updated = written;
-    } else {
-        result.n_updated = result.deltas.len();
-    }
-
-    Ok(result)
+    finalize(updates, note, &reason, dry_run, pool).await
 }
 
 async fn propagate_implies(
@@ -553,22 +527,22 @@ async fn propagate_implies(
     match (req.trigger_kind.as_str(), req.outcome) {
         ("resolved", Some(true)) => {
             if is_antecedent_trigger {
-                if p_con < 0.999 {
-                    updates.push((consequent.clone(), p_con, 0.999));
+                if p_con < CEIL {
+                    updates.push((consequent.clone(), p_con, CEIL));
                 }
-                if p_ant < 0.999 {
-                    updates.push((antecedent.clone(), p_ant, 0.999));
+                if p_ant < CEIL {
+                    updates.push((antecedent.clone(), p_ant, CEIL));
                 }
             }
         }
 
         ("resolved", Some(false)) => {
             if is_consequent_trigger {
-                if p_ant > 0.001 {
-                    updates.push((antecedent.clone(), p_ant, 0.001));
+                if p_ant > FLOOR {
+                    updates.push((antecedent.clone(), p_ant, FLOOR));
                 }
-                if p_con > 0.001 {
-                    updates.push((consequent.clone(), p_con, 0.001));
+                if p_con > FLOOR {
+                    updates.push((consequent.clone(), p_con, FLOOR));
                 }
             }
         }
@@ -602,15 +576,5 @@ async fn propagate_implies(
         "cascade from {} ({}) [implies: {} => {}]",
         req.trigger_forecast_id, req.trigger_kind, antecedent, consequent
     );
-
-    let mut result = compute_and_build_result(updates, note, dry_run, pool, reason.clone());
-
-    if !dry_run {
-        let written = write_deltas(&result.deltas.iter().map(|d| (d.forecast_id.clone(), d.previous_probability, d.new_probability)).collect::<Vec<_>>(), &reason, None, pool).await?;
-        result.n_updated = written;
-    } else {
-        result.n_updated = result.deltas.len();
-    }
-
-    Ok(result)
+    finalize(updates, note, &reason, dry_run, pool).await
 }
