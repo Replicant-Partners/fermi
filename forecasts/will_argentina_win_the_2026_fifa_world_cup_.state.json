@@ -1,25 +1,18 @@
 {
   "forecast_id": "9f1adf4c-ad59-4c6a-bb80-06d78c430eae",
   "current_version": 1,
-  "predicted_probability": 0.08408773507841569,
-  "inside_view_explanation": "Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.2%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "predicted_probability": 0.1791144162416458,
+  "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-03 12:28",
-      "probability": 0.08408773507841569,
-      "change_summary": "Initial: 8.4% base=2%, 6 drivers, 6 evidence"
+      "timestamp": "2026-07-07 19:45",
+      "probability": 0.1791144162416458,
+      "change_summary": "Initial: 17.9% base=2%, 6 drivers, 6 evidence"
     }
   ],
-  "sim_results": {
-    "mean": 0.08408773507841569,
-    "median": 0.08294660928706368,
-    "p5": 0.06104038587823751,
-    "p95": 0.11172843371014939,
-    "std_dev": 0.015396519585351046,
-    "iterations": 10000
-  },
+  "sim_results": null,
   "base_rate": {
     "reference_class": "FIFA World Cup winners 1930–2022",
     "historical_frequency": 0.0208,
@@ -180,13 +173,22 @@
     "event_id": "30615",
     "market_id": "558938",
     "question": "Will Argentina win the 2026 FIFA World Cup?",
-    "market_price": 0.1155,
-    "volume_24h": 6057139.718464001,
-    "liquidity": null,
+    "market_price": 0.1655,
+    "volume_24h": 11903002.496228017,
+    "liquidity": 8990856.00475,
     "confidence": "Very High",
-    "price_change_1w": null,
+    "price_change_1w": -0.028,
     "url": "https://polymarket.com/event/world-cup-winner",
-    "price_history": []
+    "price_history": [
+      {
+        "t": 1783453527,
+        "p": 0.1655
+      },
+      {
+        "t": 1783453527,
+        "p": 0.1655
+      }
+    ]
   },
   "workspace_id": "c7f6cd62-a3a3-4efb-ad35-8e126ce2f2a4"
 }
