@@ -110,7 +110,10 @@ pub async fn publish_checks_handler(
     let db_agent = resolve_agent(&state, &agent_id).await?;
     let user_id = principal.user_id();
 
-    if db_agent.owner_id.as_deref() != Some(&user_id) {
+    // Owner OR admin can inspect publish readiness. Admin is a superpower,
+    // not a gate on the owner's path — users still publish their own
+    // agents without any admin involvement.
+    if db_agent.owner_id.as_deref() != Some(&user_id) && !principal.can_admin() {
         return Err((
             StatusCode::FORBIDDEN,
             "Not the owner of this agent".to_string(),
@@ -133,22 +136,39 @@ pub async fn publish_agent_handler(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db_agent = resolve_agent(&state, &agent_id).await?;
     let user_id = principal.user_id();
+    let is_owner = db_agent.owner_id.as_deref() == Some(&user_id);
 
-    if db_agent.owner_id.as_deref() != Some(&user_id) {
+    if !is_owner && !principal.can_admin() {
         return Err((
             StatusCode::FORBIDDEN,
             "Not the owner of this agent".to_string(),
         ));
     }
 
+    // When admin publishes on behalf of a third-party owner, charge the
+    // *owner's* wallet (their agent, their fee). Preserves the economic
+    // model — admin isn't subsidising nor gate-keeping.
+    let fee_payer_id = db_agent.owner_id.as_deref().unwrap_or(&user_id).to_string();
+
     let (transition, checks) =
-        publish_pipeline::publish_agent(&state.db, &db_agent, &user_id, &state.gas_fees)
+        publish_pipeline::publish_agent(&state.db, &db_agent, &fee_payer_id, &state.gas_fees)
             .await
             .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+
+    if !is_owner {
+        tracing::info!(
+            agent_id = %db_agent.agent_id,
+            agent_name = %db_agent.agent_name,
+            owner = %fee_payer_id,
+            admin = %user_id,
+            "Agent published by admin on behalf of owner"
+        );
+    }
 
     Ok(Json(json!({
         "transition": { "from": transition.from, "to": transition.to },
         "checks": checks,
+        "published_by_admin": !is_owner,
     })))
 }
 
@@ -159,8 +179,9 @@ pub async fn archive_agent_handler(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db_agent = resolve_agent(&state, &agent_id).await?;
     let user_id = principal.user_id();
+    let is_owner = db_agent.owner_id.as_deref() == Some(&user_id);
 
-    if db_agent.owner_id.as_deref() != Some(&user_id) {
+    if !is_owner && !principal.can_admin() {
         return Err((
             StatusCode::FORBIDDEN,
             "Not the owner of this agent".to_string(),
@@ -171,8 +192,18 @@ pub async fn archive_agent_handler(
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
+    if !is_owner {
+        tracing::info!(
+            agent_id = %db_agent.agent_id,
+            agent_name = %db_agent.agent_name,
+            admin = %user_id,
+            "Agent archived by admin"
+        );
+    }
+
     Ok(Json(json!({
         "transition": { "from": transition.from, "to": transition.to },
+        "archived_by_admin": !is_owner,
     })))
 }
 
@@ -183,8 +214,9 @@ pub async fn restore_agent_handler(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db_agent = resolve_agent(&state, &agent_id).await?;
     let user_id = principal.user_id();
+    let is_owner = db_agent.owner_id.as_deref() == Some(&user_id);
 
-    if db_agent.owner_id.as_deref() != Some(&user_id) {
+    if !is_owner && !principal.can_admin() {
         return Err((
             StatusCode::FORBIDDEN,
             "Not the owner of this agent".to_string(),
@@ -197,5 +229,6 @@ pub async fn restore_agent_handler(
 
     Ok(Json(json!({
         "transition": { "from": transition.from, "to": transition.to },
+        "restored_by_admin": !is_owner,
     })))
 }

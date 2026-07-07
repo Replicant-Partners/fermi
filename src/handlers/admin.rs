@@ -433,14 +433,17 @@ pub async fn admin_grant_workspace_credits_handler(
     let reason = body.reason.unwrap_or_else(|| "Admin grant".to_string());
 
     // Validate workspace exists and get its name for the response
-    let ws_row = sqlx::query(
-        "SELECT name, workspace_budget FROM teams WHERE id = $1::uuid",
-    )
-    .bind(&workspace_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Workspace {} not found", workspace_id)))?;
+    let ws_row = sqlx::query("SELECT name, workspace_budget FROM teams WHERE id = $1::uuid")
+        .bind(&workspace_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("Workspace {} not found", workspace_id),
+            )
+        })?;
 
     let ws_name: String = ws_row.try_get("name").unwrap_or_default();
 
@@ -1019,10 +1022,13 @@ pub async fn admin_agent_ownership_audit_handler(
 
     // Tier counts within each bucket — fast spot-check for over-corrections.
     let count_by_tier = |bucket: &[Value]| -> Value {
-        let mut counts: std::collections::BTreeMap<String, i32> =
-            std::collections::BTreeMap::new();
+        let mut counts: std::collections::BTreeMap<String, i32> = std::collections::BTreeMap::new();
         for row in bucket {
-            let tier = row.get("tier").and_then(|v| v.as_str()).unwrap_or("?").to_string();
+            let tier = row
+                .get("tier")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?")
+                .to_string();
             *counts.entry(tier).or_insert(0) += 1;
         }
         json!(counts)
@@ -1099,12 +1105,14 @@ pub async fn admin_agent_ownership_reassign_handler(
 
     let mut results: Vec<Value> = Vec::new();
     for name in &req.agent_names {
-        let rows = sqlx::query("UPDATE agents SET user_id = $2 WHERE agent_name = $1 RETURNING agent_name")
-            .bind(name)
-            .bind(&req.new_owner_user_id)
-            .fetch_all(&state.db)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let rows = sqlx::query(
+            "UPDATE agents SET user_id = $2 WHERE agent_name = $1 RETURNING agent_name",
+        )
+        .bind(name)
+        .bind(&req.new_owner_user_id)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         results.push(json!({
             "agent_name": name,
             "status": if rows.is_empty() { "not_found" } else { "updated" },
@@ -1184,22 +1192,29 @@ pub async fn admin_wipe_fermi_forecasts_handler(
     // doesn't leave us with the IDs but no way to know what to clean up
     // on disk.
 
-    let target_workspaces: Vec<(uuid::Uuid, String)> = sqlx::query(
-        "SELECT id, slug FROM teams WHERE origin = 'fermi_forecast'",
-    )
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("enumerate workspaces: {}", e)))?
-    .into_iter()
-    .map(|row| {
-        let id: uuid::Uuid = row.get("id");
-        let slug: String = row.get("slug");
-        (id, slug)
-    })
-    .collect();
+    let target_workspaces: Vec<(uuid::Uuid, String)> =
+        sqlx::query("SELECT id, slug FROM teams WHERE origin = 'fermi_forecast'")
+            .fetch_all(&state.db)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("enumerate workspaces: {}", e),
+                )
+            })?
+            .into_iter()
+            .map(|row| {
+                let id: uuid::Uuid = row.get("id");
+                let slug: String = row.get("slug");
+                (id, slug)
+            })
+            .collect();
 
     let workspace_ids: Vec<uuid::Uuid> = target_workspaces.iter().map(|(id, _)| *id).collect();
-    let slugs: Vec<String> = target_workspaces.iter().map(|(_, slug)| slug.clone()).collect();
+    let slugs: Vec<String> = target_workspaces
+        .iter()
+        .map(|(_, slug)| slug.clone())
+        .collect();
 
     let target_forecast_ids: Vec<String> = if workspace_ids.is_empty() {
         Vec::new()
@@ -1208,7 +1223,12 @@ pub async fn admin_wipe_fermi_forecasts_handler(
             .bind(&workspace_ids)
             .fetch_all(&state.db)
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("enumerate forecasts: {}", e)))?
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("enumerate forecasts: {}", e),
+                )
+            })?
             .into_iter()
             .map(|row| row.get::<String, _>("id"))
             .collect()
@@ -1221,8 +1241,14 @@ pub async fn admin_wipe_fermi_forecasts_handler(
     //
     // Cheap. Always runs (dry-run mode short-circuits before the
     // delete pass; non-dry-run uses these counts for the response).
-    let counts = count_targets(&state.db, &workspace_ids, &target_forecast_ids).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("count phase: {}", e)))?;
+    let counts = count_targets(&state.db, &workspace_ids, &target_forecast_ids)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("count phase: {}", e),
+            )
+        })?;
 
     if req.dry_run {
         return Ok(Json(json!({
@@ -1235,8 +1261,12 @@ pub async fn admin_wipe_fermi_forecasts_handler(
     }
 
     // ── 3. Cascade delete inside a transaction ─────────────────────
-    let mut tx = state.db.begin().await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("begin tx: {}", e)))?;
+    let mut tx = state.db.begin().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("begin tx: {}", e),
+        )
+    })?;
 
     macro_rules! delete_by_ws {
         ($sql:expr, $label:literal) => {
@@ -1244,8 +1274,12 @@ pub async fn admin_wipe_fermi_forecasts_handler(
                 .bind(&workspace_ids)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR,
-                              format!("delete {}: {}", $label, e)))?
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("delete {}: {}", $label, e),
+                    )
+                })?
         };
     }
 
@@ -1255,8 +1289,12 @@ pub async fn admin_wipe_fermi_forecasts_handler(
                 .bind(&target_forecast_ids)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR,
-                              format!("delete {}: {}", $label, e)))?
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("delete {}: {}", $label, e),
+                    )
+                })?
         };
     }
 
@@ -1336,14 +1374,15 @@ pub async fn admin_wipe_fermi_forecasts_handler(
             "DELETE FROM team_members WHERE team_id = ANY($1)",
             "team_members"
         );
-        delete_by_ws!(
-            "DELETE FROM teams WHERE id = ANY($1)",
-            "teams"
-        );
+        delete_by_ws!("DELETE FROM teams WHERE id = ANY($1)", "teams");
     }
 
-    tx.commit().await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("commit tx: {}", e)))?;
+    tx.commit().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("commit tx: {}", e),
+        )
+    })?;
 
     // ── 4. Repo cleanup (after DB commit) ─────────────────────────
     //
@@ -1393,11 +1432,7 @@ async fn count_targets(
         let row = sqlx::query(sql).bind(ids).fetch_one(db).await?;
         Ok(row.try_get::<i64, _>("c").unwrap_or(0))
     }
-    async fn count_fc(
-        db: &sqlx::PgPool,
-        sql: &str,
-        ids: &[String],
-    ) -> Result<i64, sqlx::Error> {
+    async fn count_fc(db: &sqlx::PgPool, sql: &str, ids: &[String]) -> Result<i64, sqlx::Error> {
         if ids.is_empty() {
             return Ok(0);
         }
@@ -1405,47 +1440,234 @@ async fn count_targets(
         Ok(row.try_get::<i64, _>("c").unwrap_or(0))
     }
 
-    counts.insert("bayesops_pending_fits".into(), json!(
-        count_ws(db, "SELECT COUNT(*) AS c FROM bayesops_pending_fits WHERE workspace_id = ANY($1)", workspace_ids).await?
-    ));
+    counts.insert(
+        "bayesops_pending_fits".into(),
+        json!(
+            count_ws(
+                db,
+                "SELECT COUNT(*) AS c FROM bayesops_pending_fits WHERE workspace_id = ANY($1)",
+                workspace_ids
+            )
+            .await?
+        ),
+    );
     counts.insert("bayesops_posterior_snapshots".into(), json!(
         count_ws(db, "SELECT COUNT(*) AS c FROM bayesops_posterior_snapshots WHERE workspace_id = ANY($1)", workspace_ids).await?
     ));
-    counts.insert("workspace_messages".into(), json!(
-        count_ws(db, "SELECT COUNT(*) AS c FROM workspace_messages WHERE workspace_id = ANY($1)", workspace_ids).await?
-    ));
-    counts.insert("workspace_outputs".into(), json!(
-        count_ws(db, "SELECT COUNT(*) AS c FROM workspace_outputs WHERE workspace_id = ANY($1)", workspace_ids).await?
-    ));
-    counts.insert("workspace_agents".into(), json!(
-        count_ws(db, "SELECT COUNT(*) AS c FROM workspace_agents WHERE workspace_id = ANY($1)", workspace_ids).await?
-    ));
+    counts.insert(
+        "workspace_messages".into(),
+        json!(
+            count_ws(
+                db,
+                "SELECT COUNT(*) AS c FROM workspace_messages WHERE workspace_id = ANY($1)",
+                workspace_ids
+            )
+            .await?
+        ),
+    );
+    counts.insert(
+        "workspace_outputs".into(),
+        json!(
+            count_ws(
+                db,
+                "SELECT COUNT(*) AS c FROM workspace_outputs WHERE workspace_id = ANY($1)",
+                workspace_ids
+            )
+            .await?
+        ),
+    );
+    counts.insert(
+        "workspace_agents".into(),
+        json!(
+            count_ws(
+                db,
+                "SELECT COUNT(*) AS c FROM workspace_agents WHERE workspace_id = ANY($1)",
+                workspace_ids
+            )
+            .await?
+        ),
+    );
     counts.insert("workspace_dependencies".into(), json!(
         count_ws(db, "SELECT COUNT(*) AS c FROM workspace_dependencies WHERE upstream_id = ANY($1) OR downstream_id = ANY($1)", workspace_ids).await?
     ));
-    counts.insert("forecast_spacetime".into(), json!(
-        count_fc(db, "SELECT COUNT(*) AS c FROM forecast_spacetime WHERE forecast_id = ANY($1)", forecast_ids).await?
-    ));
-    counts.insert("forecast_commitments".into(), json!(
-        count_fc(db, "SELECT COUNT(*) AS c FROM forecast_commitments WHERE forecast_id = ANY($1)", forecast_ids).await?
-    ));
-    counts.insert("fermi_forecast_updates".into(), json!(
-        count_fc(db, "SELECT COUNT(*) AS c FROM fermi_forecast_updates WHERE forecast_id = ANY($1)", forecast_ids).await?
-    ));
-    counts.insert("fermi_market_observations".into(), json!(
-        count_fc(db, "SELECT COUNT(*) AS c FROM fermi_market_observations WHERE forecast_id = ANY($1)", forecast_ids).await?
-    ));
-    counts.insert("fermi_portfolio_forecasts".into(), json!(
-        count_fc(db, "SELECT COUNT(*) AS c FROM fermi_portfolio_forecasts WHERE forecast_id = ANY($1)", forecast_ids).await?
-    ));
-    counts.insert("fermi_forecast_schedules".into(), json!(
-        count_fc(db, "SELECT COUNT(*) AS c FROM fermi_forecast_schedules WHERE forecast_id = ANY($1)", forecast_ids).await?
-    ));
+    counts.insert(
+        "forecast_spacetime".into(),
+        json!(
+            count_fc(
+                db,
+                "SELECT COUNT(*) AS c FROM forecast_spacetime WHERE forecast_id = ANY($1)",
+                forecast_ids
+            )
+            .await?
+        ),
+    );
+    counts.insert(
+        "forecast_commitments".into(),
+        json!(
+            count_fc(
+                db,
+                "SELECT COUNT(*) AS c FROM forecast_commitments WHERE forecast_id = ANY($1)",
+                forecast_ids
+            )
+            .await?
+        ),
+    );
+    counts.insert(
+        "fermi_forecast_updates".into(),
+        json!(
+            count_fc(
+                db,
+                "SELECT COUNT(*) AS c FROM fermi_forecast_updates WHERE forecast_id = ANY($1)",
+                forecast_ids
+            )
+            .await?
+        ),
+    );
+    counts.insert(
+        "fermi_market_observations".into(),
+        json!(
+            count_fc(
+                db,
+                "SELECT COUNT(*) AS c FROM fermi_market_observations WHERE forecast_id = ANY($1)",
+                forecast_ids
+            )
+            .await?
+        ),
+    );
+    counts.insert(
+        "fermi_portfolio_forecasts".into(),
+        json!(
+            count_fc(
+                db,
+                "SELECT COUNT(*) AS c FROM fermi_portfolio_forecasts WHERE forecast_id = ANY($1)",
+                forecast_ids
+            )
+            .await?
+        ),
+    );
+    counts.insert(
+        "fermi_forecast_schedules".into(),
+        json!(
+            count_fc(
+                db,
+                "SELECT COUNT(*) AS c FROM fermi_forecast_schedules WHERE forecast_id = ANY($1)",
+                forecast_ids
+            )
+            .await?
+        ),
+    );
     counts.insert("fermi_forecasts".into(), json!(forecast_ids.len()));
-    counts.insert("team_members".into(), json!(
-        count_ws(db, "SELECT COUNT(*) AS c FROM team_members WHERE team_id = ANY($1)", workspace_ids).await?
-    ));
+    counts.insert(
+        "team_members".into(),
+        json!(
+            count_ws(
+                db,
+                "SELECT COUNT(*) AS c FROM team_members WHERE team_id = ANY($1)",
+                workspace_ids
+            )
+            .await?
+        ),
+    );
     counts.insert("teams".into(), json!(workspace_ids.len()));
 
     Ok(Value::Object(counts))
+}
+
+// ─── Recompose all mutex groups ────────────────────────────────────
+//
+// One-shot maintenance endpoint: re-runs `recompose_mutex_group` over
+// every non-archived mutex group. Idempotent — the recompose reads
+// `sim_probability` (raw standalones) each time and re-derives
+// `predicted_probability` from scratch, so calling this repeatedly
+// converges to the same state.
+//
+// The trigger case: after fixing a renormalisation bug in
+// `recompose.rs`, existing displayed values in the DB stay wrong until
+// something touches the group. This endpoint forces the sync without
+// waiting for a sim run or a resolve.
+
+#[derive(Debug, Deserialize, Default)]
+pub struct RecomposeMutexGroupsQuery {
+    /// If set, restrict the run to a single group_id (e.g.
+    /// `wc_2026_winner`) instead of iterating every mutex group.
+    pub group_id: Option<String>,
+}
+
+pub async fn admin_recompose_mutex_groups_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Query(q): Query<RecomposeMutexGroupsQuery>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin(&principal)?;
+
+    // Enumerate target groups. When `group_id` is given we still round-
+    // trip through the DB so a bad id returns an empty result rather
+    // than a fabricated "success".
+    let group_ids: Vec<String> = if let Some(gid) = &q.group_id {
+        sqlx::query(
+            "SELECT group_id FROM public.forecast_relationship_groups
+              WHERE kind = 'mutex' AND archived_at IS NULL AND group_id = $1",
+        )
+        .bind(gid)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .into_iter()
+        .filter_map(|r| r.try_get::<String, _>("group_id").ok())
+        .collect()
+    } else {
+        sqlx::query(
+            "SELECT group_id FROM public.forecast_relationship_groups
+              WHERE kind = 'mutex' AND archived_at IS NULL
+              ORDER BY group_id",
+        )
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .into_iter()
+        .filter_map(|r| r.try_get::<String, _>("group_id").ok())
+        .collect()
+    };
+
+    // Run recompose per group. Best-effort: a single group's failure
+    // shouldn't block the others — we surface per-group errors in the
+    // response instead.
+    let mut per_group: Vec<Value> = Vec::with_capacity(group_ids.len());
+    let mut total_members: usize = 0;
+    let mut groups_ok: usize = 0;
+    let mut groups_err: usize = 0;
+
+    for gid in &group_ids {
+        match crate::handlers::relationships::recompose::recompose_mutex_group(gid, &state.db).await
+        {
+            Ok(map) => {
+                let sum: f64 = map.values().sum();
+                groups_ok += 1;
+                total_members += map.len();
+                per_group.push(json!({
+                    "group_id": gid,
+                    "members": map.len(),
+                    "displayed_sum": sum,
+                    "status": "ok",
+                }));
+            }
+            Err((code, msg)) => {
+                groups_err += 1;
+                per_group.push(json!({
+                    "group_id": gid,
+                    "status": "error",
+                    "http_status": code.as_u16(),
+                    "error": msg,
+                }));
+            }
+        }
+    }
+
+    Ok(Json(json!({
+        "groups_processed": group_ids.len(),
+        "groups_ok": groups_ok,
+        "groups_err": groups_err,
+        "members_touched": total_members,
+        "per_group": per_group,
+    })))
 }

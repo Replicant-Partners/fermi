@@ -2765,6 +2765,15 @@ async fn main() {
             "/api/admin/wipe-fermi-forecasts",
             post(handlers::admin::admin_wipe_fermi_forecasts_handler),
         )
+        // One-shot admin recompose over mutex groups. Use to snap
+        // displayed probabilities to the current recompose math after
+        // a bug fix (or any group-wide drift) without waiting for a
+        // per-forecast sim/resolve to trigger the normal recompose
+        // path. Optional `?group_id=<id>` scopes to a single group.
+        .route(
+            "/api/admin/recompose-mutex-groups",
+            post(handlers::admin::admin_recompose_mutex_groups_handler),
+        )
         .route(
             "/api/admin/waitlist",
             get(handlers::admin::admin_list_waitlist_handler)

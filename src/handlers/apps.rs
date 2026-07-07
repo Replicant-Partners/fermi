@@ -101,10 +101,7 @@ pub struct BatchSpawnRequest {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /// Fetch an App row by slug. Returns (row as Value) or 404.
-async fn get_app_row(
-    db: &sqlx::PgPool,
-    slug: &str,
-) -> Result<Value, (StatusCode, String)> {
+async fn get_app_row(db: &sqlx::PgPool, slug: &str) -> Result<Value, (StatusCode, String)> {
     let row = sqlx::query(
         r#"SELECT id, slug, name, tagline, owner_user_id, owner_team_id,
                   homepage_url, icon_url, composition_slug, schema_slug,
@@ -155,72 +152,113 @@ pub async fn list_apps_handler(
     principal: Option<AuthPrincipal>,
     Query(q): Query<ListAppsQuery>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    let is_admin = principal.as_ref().map(|p| p.can_admin()).unwrap_or(false);
     let caller_id = principal.as_ref().map(|p| p.user_id());
     let include_archived = q.include_archived.unwrap_or(false);
 
-    // Build the WHERE clauses dynamically.
-    // - Unauthenticated: public only.
-    // - Authenticated: public + own private/unlisted.
-    let rows = if let Some(ref uid) = caller_id {
-        let visibility_filter = match q.visibility.as_deref() {
-            Some(v) => format!(" AND visibility = '{}'", v.replace('\'', "''")),
-            None => String::new(),
-        };
-        let owner_filter = match q.owner.as_deref() {
-            Some(o) => format!(" AND owner_user_id = '{}'", o.replace('\'', "''")),
-            None => String::new(),
-        };
-        let prefix_filter = match q.slug_prefix.as_deref() {
-            Some(p) => format!(" AND slug LIKE '{}%'", p.replace('\'', "''").replace('%', "\\%")),
-            None => String::new(),
-        };
-        let archived_filter = if include_archived {
-            String::new()
-        } else {
-            " AND archived_at IS NULL".to_string()
-        };
-        // Admins see all apps regardless of visibility or owner
-        let is_admin = principal.as_ref().map(|p| p.can_admin()).unwrap_or(false);
-        let owner_clause = if is_admin {
-            "1=1".to_string()
-        } else {
-            format!("(visibility = 'public' OR owner_user_id = $1)")
-        };
-        let sql = format!(
-            r#"SELECT id, slug, name, tagline, owner_user_id, owner_team_id,
-                      homepage_url, icon_url, composition_slug, schema_slug,
-                      schema_json, workspace_template, revenue_share,
-                      pricing_policy, visibility, published_at, archived_at,
-                      description, metadata, created_at, updated_at
-               FROM apps
-               WHERE {}
-               {}{}{}{} ORDER BY created_at DESC LIMIT 200"#,
-            owner_clause, visibility_filter, owner_filter, prefix_filter, archived_filter
-        );
-        sqlx::query(&sql)
-            .bind(uid)
-            .fetch_all(&state.db)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    // Base owner/visibility clause.
+    //   • Unauthenticated       → public only.
+    //   • Authenticated non-admin → public + rows they own.
+    //   • Admin                  → no owner/visibility gate (so third-party
+    //                              apps stuck in `private`/`unlisted` are
+    //                              still visible for moderation/support).
+    let owner_clause: String = if is_admin {
+        "1=1".to_string()
+    } else if caller_id.is_some() {
+        "(visibility = 'public' OR owner_user_id = $1)".to_string()
     } else {
-        // Unauthenticated: public only.
-        let archived_filter = if include_archived { "" } else { " AND archived_at IS NULL" };
-        let sql = format!(
-            r#"SELECT id, slug, name, tagline, owner_user_id, owner_team_id,
-                      homepage_url, icon_url, composition_slug, schema_slug,
-                      schema_json, workspace_template, revenue_share,
-                      pricing_policy, visibility, published_at, archived_at,
-                      description, metadata, created_at, updated_at
-               FROM apps WHERE visibility = 'public'{} ORDER BY created_at DESC LIMIT 200"#,
-            archived_filter
-        );
-        sqlx::query(&sql)
-            .fetch_all(&state.db)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        "visibility = 'public'".to_string()
     };
 
+    let visibility_filter = match q.visibility.as_deref() {
+        Some(v) => format!(" AND visibility = '{}'", v.replace('\'', "''")),
+        None => String::new(),
+    };
+    let owner_filter = match q.owner.as_deref() {
+        Some(o) => format!(" AND owner_user_id = '{}'", o.replace('\'', "''")),
+        None => String::new(),
+    };
+    let prefix_filter = match q.slug_prefix.as_deref() {
+        Some(p) => format!(
+            " AND slug LIKE '{}%'",
+            p.replace('\'', "''").replace('%', "\\%")
+        ),
+        None => String::new(),
+    };
+    let archived_filter = if include_archived {
+        ""
+    } else {
+        " AND archived_at IS NULL"
+    };
+
+    let sql = format!(
+        r#"SELECT id, slug, name, tagline, owner_user_id, owner_team_id,
+                  homepage_url, icon_url, composition_slug, schema_slug,
+                  schema_json, workspace_template, revenue_share,
+                  pricing_policy, visibility, published_at, archived_at,
+                  description, metadata, created_at, updated_at
+           FROM apps
+           WHERE {}{}{}{}{}
+           ORDER BY created_at DESC LIMIT 200"#,
+        owner_clause, visibility_filter, owner_filter, prefix_filter, archived_filter
+    );
+
+    // Only bind $1 when the query actually references it.
+    let mut query = sqlx::query(&sql);
+    if !is_admin {
+        if let Some(ref uid) = caller_id {
+            query = query.bind(uid);
+        }
+    }
+    let rows = query
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Enrich rows with owner display names so the /apps catalogue and
+    // admin surface can render "by <name>" without a second round-trip.
     let apps: Vec<Value> = rows.iter().map(row_to_app_json).collect();
+    let owner_ids: Vec<String> = apps
+        .iter()
+        .filter_map(|a| a["owner_user_id"].as_str().map(String::from))
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let owner_names: std::collections::HashMap<String, String> = if owner_ids.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        sqlx::query(
+            "SELECT user_id, COALESCE(display_name, email, user_id) as name \
+             FROM users WHERE user_id = ANY($1)",
+        )
+        .bind(&owner_ids)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+        .iter()
+        .map(|r| {
+            (
+                r.try_get::<String, _>("user_id").unwrap_or_default(),
+                r.try_get::<String, _>("name").unwrap_or_default(),
+            )
+        })
+        .collect()
+    };
+
+    let apps: Vec<Value> = apps
+        .into_iter()
+        .map(|mut a| {
+            if let Some(oid) = a["owner_user_id"].as_str() {
+                if let Some(name) = owner_names.get(oid) {
+                    a.as_object_mut()
+                        .unwrap()
+                        .insert("owner_display_name".into(), Value::String(name.clone()));
+                }
+            }
+            a
+        })
+        .collect();
+
     Ok(Json(json!({ "apps": apps, "total": apps.len() })))
 }
 
@@ -237,7 +275,11 @@ pub async fn create_app_handler(
     // (HTTP, CLI, xamanEK app_design session, fork-from-workspace) agree.
     if let Err(msg) = validate_slug(&body.slug) {
         // Reserved slugs are a conflict; everything else is a bad request.
-        let status = if is_reserved(&body.slug) { StatusCode::CONFLICT } else { StatusCode::BAD_REQUEST };
+        let status = if is_reserved(&body.slug) {
+            StatusCode::CONFLICT
+        } else {
+            StatusCode::BAD_REQUEST
+        };
         return Err((status, msg));
     }
 
@@ -276,13 +318,18 @@ pub async fn create_app_handler(
     .map_err(|e| {
         let msg = e.to_string();
         if msg.contains("unique") || msg.contains("duplicate") {
-            (StatusCode::CONFLICT, format!("App slug '{}' is already in use", body.slug))
+            (
+                StatusCode::CONFLICT,
+                format!("App slug '{}' is already in use", body.slug),
+            )
         } else {
             (StatusCode::INTERNAL_SERVER_ERROR, msg)
         }
     })?;
 
-    let id: Uuid = row.try_get("id").map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let id: Uuid = row
+        .try_get("id")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let app = get_app_row(&state.db, &body.slug).await?;
     tracing::info!(app_id = %id, slug = %body.slug, owner = %owner_id, "App registered");
     Ok((StatusCode::CREATED, Json(app)))
@@ -299,9 +346,9 @@ pub async fn get_app_handler(
 
     let visibility = app["visibility"].as_str().unwrap_or("private");
     if visibility == "private" {
-        let caller_id = principal.map(|p| p.user_id());
+        let is_admin = principal.as_ref().map(|p| p.can_admin()).unwrap_or(false);
+        let caller_id = principal.as_ref().map(|p| p.user_id());
         let owner_id = app["owner_user_id"].as_str().unwrap_or("");
-        let is_admin = false; // TODO: wire through can_admin() when principal is available
         if caller_id.as_deref() != Some(owner_id) && !is_admin {
             return Err((StatusCode::NOT_FOUND, format!("App '{}' not found", slug)));
         }
@@ -322,7 +369,10 @@ pub async fn update_app_handler(
     // The handler is called as update_app_handler_inner after body parsing.
     // See route registration — we use a wrapper approach.
     let _ = principal; // consumed below in the inner handler
-    Err((StatusCode::INTERNAL_SERVER_ERROR, "use update_app_handler_inner".into()))
+    Err((
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "use update_app_handler_inner".into(),
+    ))
 }
 
 pub async fn update_app_handler_full(
@@ -335,14 +385,20 @@ pub async fn update_app_handler_full(
     let app = get_app_row(&state.db, &slug).await?;
     let owner_id = app["owner_user_id"].as_str().unwrap_or("");
     if caller_id != owner_id && !principal.can_admin() {
-        return Err((StatusCode::FORBIDDEN, "Only the App owner can update it".into()));
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Only the App owner can update it".into(),
+        ));
     }
 
     // Build a SET clause from whichever fields are present.
     // We use direct SQL so we can patch any subset cleanly.
     if let Some(ref v) = body.visibility {
         if !["private", "unlisted", "public"].contains(&v.as_str()) {
-            return Err((StatusCode::BAD_REQUEST, "visibility must be 'private', 'unlisted', or 'public'".into()));
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "visibility must be 'private', 'unlisted', or 'public'".into(),
+            ));
         }
     }
 
@@ -398,53 +454,73 @@ pub async fn spawn_workspace_handler(
     if visibility == "private" {
         let owner_id = app["owner_user_id"].as_str().unwrap_or("");
         if caller_id != owner_id && !principal.can_admin() {
-            return Err((StatusCode::FORBIDDEN, "This App is private; only the owner can spawn workspaces from it".into()));
+            return Err((
+                StatusCode::FORBIDDEN,
+                "This App is private; only the owner can spawn workspaces from it".into(),
+            ));
         }
     }
     // Archived apps cannot spawn new workspaces.
     if app["archived_at"].is_string() {
-        return Err((StatusCode::GONE, "This App has been archived and no longer accepts new workspaces".into()));
+        return Err((
+            StatusCode::GONE,
+            "This App has been archived and no longer accepts new workspaces".into(),
+        ));
     }
 
     // 3. Parse workspace template.
     let template = &app["workspace_template"];
-    let initial_budget: i32 = template.get("initial_budget")
-        .and_then(|v| v.as_i64()).unwrap_or(100) as i32;
+    let initial_budget: i32 = template
+        .get("initial_budget")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(100) as i32;
     let extra_budget: i32 = req.extra_budget.unwrap_or(0).max(0);
     let total_budget = initial_budget + extra_budget;
 
     let auto_hire: Vec<String> = req.auto_hire_override.unwrap_or_else(|| {
-        template.get("auto_hire")
+        template
+            .get("auto_hire")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default()
     });
 
-    let initial_files: Vec<(String, String)> = template.get("initial_files")
+    let initial_files: Vec<(String, String)> = template
+        .get("initial_files")
         .and_then(|v| v.as_array())
         .map(|arr| {
-            arr.iter().filter_map(|f| {
-                let path = f.get("path")?.as_str()?.to_string();
-                let content = f.get("content")?.as_str()?.to_string();
-                Some((path, content))
-            }).collect()
+            arr.iter()
+                .filter_map(|f| {
+                    let path = f.get("path")?.as_str()?.to_string();
+                    let content = f.get("content")?.as_str()?.to_string();
+                    Some((path, content))
+                })
+                .collect()
         })
         .unwrap_or_default();
 
     // 4. Generate workspace name and slug.
-    let ws_name = req.name
+    let ws_name = req
+        .name
         .filter(|n| !n.trim().is_empty())
         .unwrap_or_else(|| {
-            let pattern = template.get("default_name_pattern")
+            let pattern = template
+                .get("default_name_pattern")
                 .and_then(|v| v.as_str())
                 .unwrap_or("{app} workspace");
-            pattern.replace("{app}", app["name"].as_str().unwrap_or(&slug))
-                   .replace("{user}", &caller_id)
-                   .replace("{date}", &chrono::Utc::now().format("%Y-%m-%d").to_string())
+            pattern
+                .replace("{app}", app["name"].as_str().unwrap_or(&slug))
+                .replace("{user}", &caller_id)
+                .replace("{date}", &chrono::Utc::now().format("%Y-%m-%d").to_string())
         });
 
     let ws_slug = {
-        let base = slug.chars()
+        let base = slug
+            .chars()
             .map(|c| if c.is_alphanumeric() { c } else { '-' })
             .collect::<String>();
         let suffix = &Uuid::new_v4().to_string()[..8];
@@ -458,7 +534,7 @@ pub async fn spawn_workspace_handler(
         &ws_slug,
         req.description.as_deref(),
         &caller_id,
-        &slug,   // <-- origin = app slug
+        &slug, // <-- origin = app slug
     )
     .await
     .map_err(|e| {
@@ -476,7 +552,13 @@ pub async fn spawn_workspace_handler(
     // 6. Seed workspace budget.
     if total_budget > 0 {
         if let Ok(ws_wallet) = get_or_create_wallet(&state.db, "workspace", &ws_id_str).await {
-            let _ = credit_deposit(&state.db, ws_wallet.wallet_id, total_budget, "App workspace initial budget").await;
+            let _ = credit_deposit(
+                &state.db,
+                ws_wallet.wallet_id,
+                total_budget,
+                "App workspace initial budget",
+            )
+            .await;
             let _ = sqlx::query("UPDATE teams SET workspace_budget = $1 WHERE id = $2")
                 .bind(total_budget)
                 .bind(ws_id)
@@ -490,28 +572,38 @@ pub async fn spawn_workspace_handler(
     let mut files_written = 0usize;
     for (path, content) in &initial_files {
         let commit_msg = format!("App provisioning: {}", path);
-        match state.workspace_git.commit_file(&slug_for_git, path, content, &commit_msg) {
+        match state
+            .workspace_git
+            .commit_file(&slug_for_git, path, content, &commit_msg)
+        {
             Ok(_) => files_written += 1,
-            Err(e) => tracing::warn!(ws_id = %ws_id, path = %path, error = %e, "Failed to write initial file during App spawn"),
+            Err(e) => {
+                tracing::warn!(ws_id = %ws_id, path = %path, error = %e, "Failed to write initial file during App spawn")
+            }
         }
     }
     if files_written > 0 {
-        let _ = sqlx::query(
-            "UPDATE teams SET git_commit_count = $1 WHERE id = $2"
-        )
-        .bind(files_written as i32)
-        .bind(ws_id)
-        .execute(&state.db)
-        .await;
+        let _ = sqlx::query("UPDATE teams SET git_commit_count = $1 WHERE id = $2")
+            .bind(files_written as i32)
+            .bind(ws_id)
+            .execute(&state.db)
+            .await;
     }
 
     // 7b. Write params.json if params were provided.
     if let Some(ref params) = req.params {
         let params_content = serde_json::to_string_pretty(params).unwrap_or_default();
         let commit_msg = "App provisioning: params.json";
-        match state.workspace_git.commit_file(&slug_for_git, ".app/params.json", &params_content, commit_msg) {
+        match state.workspace_git.commit_file(
+            &slug_for_git,
+            ".app/params.json",
+            &params_content,
+            commit_msg,
+        ) {
             Ok(_) => files_written += 1,
-            Err(e) => tracing::warn!(ws_id = %ws_id, error = %e, "Failed to write params.json during App spawn"),
+            Err(e) => {
+                tracing::warn!(ws_id = %ws_id, error = %e, "Failed to write params.json during App spawn")
+            }
         }
         // Also store params as a workspace output for cross-workspace reads
         let _ = sqlx::query(
@@ -540,7 +632,9 @@ pub async fn spawn_workspace_handler(
                 .bind(ws_id)
                 .execute(&state.db)
                 .await;
-                if res.is_ok() { deps_wired += 1; }
+                if res.is_ok() {
+                    deps_wired += 1;
+                }
             }
         }
     }
@@ -562,14 +656,16 @@ pub async fn spawn_workspace_handler(
                 let res = sqlx::query(
                     "INSERT INTO workspace_agents (workspace_id, agent_id, added_by, relationship)
                      VALUES ($1, $2, $3, 'system')
-                     ON CONFLICT (workspace_id, agent_id) DO NOTHING"
+                     ON CONFLICT (workspace_id, agent_id) DO NOTHING",
                 )
                 .bind(ws_id)
                 .bind(agent_id)
                 .bind(&caller_id)
                 .execute(&state.db)
                 .await;
-                if res.is_ok() { agents_hired += 1; }
+                if res.is_ok() {
+                    agents_hired += 1;
+                }
             }
         } else {
             tracing::warn!(ws_id = %ws_id, agent = %agent_name, "Agent not found during App spawn auto-hire");
@@ -577,19 +673,22 @@ pub async fn spawn_workspace_handler(
     }
 
     // 9. Return the provisioned workspace + provenance block.
-    Ok((StatusCode::CREATED, Json(json!({
-        "workspace_id": ws_id,
-        "workspace_slug": ws_slug,
-        "name": ws_name,
-        "origin": slug,
-        "budget": total_budget,
-        "provisioned": {
-            "files_written": files_written,
-            "agents_hired": agents_hired,
-            "dependencies_wired": deps_wired,
-            "has_params": req.params.is_some(),
-        }
-    }))))
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "workspace_id": ws_id,
+            "workspace_slug": ws_slug,
+            "name": ws_name,
+            "origin": slug,
+            "budget": total_budget,
+            "provisioned": {
+                "files_written": files_written,
+                "agents_hired": agents_hired,
+                "dependencies_wired": deps_wired,
+                "has_params": req.params.is_some(),
+            }
+        })),
+    ))
 }
 
 // ─── GET /api/apps/:slug/workspaces ──────────────────────────────────────────
@@ -640,7 +739,9 @@ pub async fn list_app_workspaces_handler(
         "forecast_id": r.try_get::<Option<String>, _>("forecast_id").ok().flatten(),
     })).collect();
 
-    Ok(Json(json!({ "workspaces": workspaces, "total": workspaces.len() })))
+    Ok(Json(
+        json!({ "workspaces": workspaces, "total": workspaces.len() }),
+    ))
 }
 
 // ─── POST /api/apps/:slug/publish ────────────────────────────────────────────
@@ -654,7 +755,10 @@ pub async fn publish_app_handler(
     let app = get_app_row(&state.db, &slug).await?;
     let owner_id = app["owner_user_id"].as_str().unwrap_or("");
     if caller_id != owner_id && !principal.can_admin() {
-        return Err((StatusCode::FORBIDDEN, "Only the App owner can publish it".into()));
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Only the App owner can publish it".into(),
+        ));
     }
 
     sqlx::query(
@@ -679,16 +783,17 @@ pub async fn archive_app_handler(
     let app = get_app_row(&state.db, &slug).await?;
     let owner_id = app["owner_user_id"].as_str().unwrap_or("");
     if caller_id != owner_id && !principal.can_admin() {
-        return Err((StatusCode::FORBIDDEN, "Only the App owner can archive it".into()));
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Only the App owner can archive it".into(),
+        ));
     }
 
-    sqlx::query(
-        "UPDATE apps SET archived_at = COALESCE(archived_at, NOW()) WHERE slug = $1"
-    )
-    .bind(&slug)
-    .execute(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    sqlx::query("UPDATE apps SET archived_at = COALESCE(archived_at, NOW()) WHERE slug = $1")
+        .bind(&slug)
+        .execute(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     get_app_row(&state.db, &slug).await.map(Json)
 }
@@ -730,7 +835,7 @@ pub async fn sync_auto_hire_handler(
                 SELECT 1 FROM teams t
                 JOIN team_members m ON m.team_id = t.id
                 WHERE t.origin = $1 AND m.member_id = $2
-             )"
+             )",
         )
         .bind(&slug)
         .bind(&caller_id)
@@ -745,7 +850,8 @@ pub async fn sync_auto_hire_handler(
         return Err((
             StatusCode::FORBIDDEN,
             "Sync auto-hire requires App owner, platform admin, \
-             or membership in at least one workspace of this App".into(),
+             or membership in at least one workspace of this App"
+                .into(),
         ));
     }
 
@@ -773,7 +879,7 @@ pub async fn sync_auto_hire_handler(
     // Names not in the registry are reported but don't fail the batch.
     let agent_rows = sqlx::query(
         "SELECT agent_name, agent_id FROM agents
-         WHERE agent_name = ANY($1) AND status IN ('active','published','draft')"
+         WHERE agent_name = ANY($1) AND status IN ('active','published','draft')",
     )
     .bind(&auto_hire)
     .fetch_all(&state.db)
@@ -798,13 +904,11 @@ pub async fn sync_auto_hire_handler(
         .collect();
 
     // List every workspace of this App in one query.
-    let workspace_ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM teams WHERE origin = $1"
-    )
-    .bind(&slug)
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let workspace_ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM teams WHERE origin = $1")
+        .bind(&slug)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let workspaces_visited = workspace_ids.len();
 
@@ -821,56 +925,62 @@ pub async fn sync_auto_hire_handler(
     //
     // RETURNING workspace_id lets us count per-workspace hires_added so
     // the response detail isn't lost in the bulk shape.
-    let (hires_added, per_workspace): (i64, Vec<Value>) = if !workspace_ids.is_empty() && !agent_ids.is_empty() {
-        // Build the cross-product of (workspace_id, agent_id) pairs.
-        let mut ws_col: Vec<Uuid> = Vec::with_capacity(workspace_ids.len() * agent_ids.len());
-        let mut ag_col: Vec<Uuid> = Vec::with_capacity(workspace_ids.len() * agent_ids.len());
-        for ws in &workspace_ids {
-            for ag in &agent_ids {
-                ws_col.push(*ws);
-                ag_col.push(*ag);
+    let (hires_added, per_workspace): (i64, Vec<Value>) =
+        if !workspace_ids.is_empty() && !agent_ids.is_empty() {
+            // Build the cross-product of (workspace_id, agent_id) pairs.
+            let mut ws_col: Vec<Uuid> = Vec::with_capacity(workspace_ids.len() * agent_ids.len());
+            let mut ag_col: Vec<Uuid> = Vec::with_capacity(workspace_ids.len() * agent_ids.len());
+            for ws in &workspace_ids {
+                for ag in &agent_ids {
+                    ws_col.push(*ws);
+                    ag_col.push(*ag);
+                }
             }
-        }
 
-        let inserted_rows = sqlx::query(
-            "INSERT INTO workspace_agents (workspace_id, agent_id, added_by, relationship)
+            let inserted_rows = sqlx::query(
+                "INSERT INTO workspace_agents (workspace_id, agent_id, added_by, relationship)
              SELECT ws, ag, $3, 'system'
              FROM unnest($1::uuid[], $2::uuid[]) AS pairs(ws, ag)
              ON CONFLICT (workspace_id, agent_id) DO NOTHING
-             RETURNING workspace_id"
-        )
-        .bind(&ws_col)
-        .bind(&ag_col)
-        .bind(&caller_id)
-        .fetch_all(&state.db)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("bulk hire insert failed: {}", e)))?;
+             RETURNING workspace_id",
+            )
+            .bind(&ws_col)
+            .bind(&ag_col)
+            .bind(&caller_id)
+            .fetch_all(&state.db)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("bulk hire insert failed: {}", e),
+                )
+            })?;
 
-        // Aggregate per-workspace.
-        let mut counts: std::collections::HashMap<Uuid, i64> = std::collections::HashMap::new();
-        for r in &inserted_rows {
-            if let Ok(ws) = r.try_get::<Uuid, _>("workspace_id") {
-                *counts.entry(ws).or_insert(0) += 1;
+            // Aggregate per-workspace.
+            let mut counts: std::collections::HashMap<Uuid, i64> = std::collections::HashMap::new();
+            for r in &inserted_rows {
+                if let Ok(ws) = r.try_get::<Uuid, _>("workspace_id") {
+                    *counts.entry(ws).or_insert(0) += 1;
+                }
             }
-        }
-        let total = inserted_rows.len() as i64;
-        let details: Vec<Value> = counts
-            .iter()
-            .map(|(ws, n)| json!({ "workspace_id": ws, "hires_added": n }))
-            .collect();
+            let total = inserted_rows.len() as i64;
+            let details: Vec<Value> = counts
+                .iter()
+                .map(|(ws, n)| json!({ "workspace_id": ws, "hires_added": n }))
+                .collect();
 
-        tracing::info!(
-            app_slug = %slug,
-            workspaces = workspaces_visited,
-            agents = agent_ids.len(),
-            hires_added = total,
-            "sync_auto_hire: bulk insert complete"
-        );
+            tracing::info!(
+                app_slug = %slug,
+                workspaces = workspaces_visited,
+                agents = agent_ids.len(),
+                hires_added = total,
+                "sync_auto_hire: bulk insert complete"
+            );
 
-        (total, details)
-    } else {
-        (0, Vec::new())
-    };
+            (total, details)
+        } else {
+            (0, Vec::new())
+        };
 
     Ok(Json(json!({
         "ok": true,
@@ -906,7 +1016,10 @@ pub async fn get_app_schema_handler(
         let owner_id = app["owner_user_id"].as_str().unwrap_or("");
         let is_admin = principal.as_ref().map(|p| p.can_admin()).unwrap_or(false);
         if caller_id.as_deref() != Some(owner_id) && !is_admin {
-            return Err((StatusCode::FORBIDDEN, "Not authorised to view this App's schema".into()));
+            return Err((
+                StatusCode::FORBIDDEN,
+                "Not authorised to view this App's schema".into(),
+            ));
         }
     }
 
@@ -952,8 +1065,16 @@ pub async fn apps_health_handler(
     principal: AuthPrincipal,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let caller_id = principal.user_id();
+    // Admins see every app (public/unlisted/private) so their dashboard
+    // Apps block reflects the full platform, including third-party
+    // developers' in-progress work.
+    let visibility_clause = if principal.can_admin() {
+        "TRUE"
+    } else {
+        "(a.visibility = 'public' OR a.owner_user_id = $1)"
+    };
 
-    let rows = sqlx::query(
+    let sql = format!(
         r#"
         SELECT
             a.slug,
@@ -964,6 +1085,7 @@ pub async fn apps_health_handler(
             a.icon_url,
             a.composition_slug,
             a.visibility,
+            a.owner_user_id,
             a.created_at,
             COALESCE(c.my_count, 0)::int        AS my_workspace_count,
             c.last_my_spawn_at
@@ -979,15 +1101,18 @@ pub async fn apps_health_handler(
             GROUP BY t.origin
         ) c ON c.origin = a.slug
         WHERE a.archived_at IS NULL
-          AND (a.visibility = 'public' OR a.owner_user_id = $1)
+          AND {visibility_clause}
         ORDER BY my_workspace_count DESC, a.created_at DESC
         LIMIT 100
         "#,
-    )
-    .bind(&caller_id)
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        visibility_clause = visibility_clause,
+    );
+
+    let rows = sqlx::query(&sql)
+        .bind(&caller_id)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let apps: Vec<Value> = rows
         .iter()
@@ -1001,6 +1126,7 @@ pub async fn apps_health_handler(
                 "icon_url":           r.try_get::<Option<String>, _>("icon_url").ok().flatten(),
                 "composition_slug":   r.try_get::<Option<String>, _>("composition_slug").ok().flatten(),
                 "visibility":         r.try_get::<String, _>("visibility").unwrap_or_else(|_| "public".into()),
+                "owner_user_id":      r.try_get::<String, _>("owner_user_id").unwrap_or_default(),
                 "my_workspace_count": r.try_get::<i32, _>("my_workspace_count").unwrap_or(0),
                 "last_my_spawn_at":   r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("last_my_spawn_at")
                                        .ok().flatten().map(|t| t.to_rfc3339()),
@@ -1031,7 +1157,10 @@ pub async fn batch_spawn_workspaces_handler(
         return Err((StatusCode::BAD_REQUEST, "instances array is empty".into()));
     }
     if req.instances.len() > 200 {
-        return Err((StatusCode::BAD_REQUEST, "Maximum 200 instances per batch".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Maximum 200 instances per batch".into(),
+        ));
     }
 
     let caller_id = principal.user_id();
@@ -1051,23 +1180,34 @@ pub async fn batch_spawn_workspaces_handler(
 
     // Parse template once
     let template = &app["workspace_template"];
-    let base_budget: i32 = template.get("initial_budget")
-        .and_then(|v| v.as_i64()).unwrap_or(100) as i32;
-    let default_auto_hire: Vec<String> = template.get("auto_hire")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-        .unwrap_or_default();
-    let initial_files: Vec<(String, String)> = template.get("initial_files")
+    let base_budget: i32 = template
+        .get("initial_budget")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(100) as i32;
+    let default_auto_hire: Vec<String> = template
+        .get("auto_hire")
         .and_then(|v| v.as_array())
         .map(|arr| {
-            arr.iter().filter_map(|f| {
-                let path = f.get("path")?.as_str()?.to_string();
-                let content = f.get("content")?.as_str()?.to_string();
-                Some((path, content))
-            }).collect()
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
         })
         .unwrap_or_default();
-    let name_pattern = template.get("default_name_pattern")
+    let initial_files: Vec<(String, String)> = template
+        .get("initial_files")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|f| {
+                    let path = f.get("path")?.as_str()?.to_string();
+                    let content = f.get("content")?.as_str()?.to_string();
+                    Some((path, content))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let name_pattern = template
+        .get("default_name_pattern")
         .and_then(|v| v.as_str())
         .unwrap_or("{app} workspace");
 
@@ -1076,7 +1216,9 @@ pub async fn batch_spawn_workspaces_handler(
 
     for (idx, instance) in req.instances.iter().enumerate() {
         // Generate workspace name
-        let ws_name = instance.name.as_deref()
+        let ws_name = instance
+            .name
+            .as_deref()
             .filter(|n| !n.trim().is_empty())
             .map(|n| n.to_string())
             .unwrap_or_else(|| {
@@ -1087,7 +1229,8 @@ pub async fn batch_spawn_workspaces_handler(
             });
 
         let ws_slug = {
-            let base = slug.chars()
+            let base = slug
+                .chars()
                 .map(|c| if c.is_alphanumeric() { c } else { '-' })
                 .collect::<String>();
             let suffix = &Uuid::new_v4().to_string()[..8];
@@ -1096,9 +1239,15 @@ pub async fn batch_spawn_workspaces_handler(
 
         // Create the workspace (team)
         let team = match fermi_auth::teams::create_team(
-            &state.db, &ws_name, &ws_slug,
-            instance.description.as_deref(), &caller_id, &slug,
-        ).await {
+            &state.db,
+            &ws_name,
+            &ws_slug,
+            instance.description.as_deref(),
+            &caller_id,
+            &slug,
+        )
+        .await
+        {
             Ok(t) => t,
             Err(e) => {
                 errors.push(json!({
@@ -1115,17 +1264,37 @@ pub async fn batch_spawn_workspaces_handler(
 
         // Budget
         if total_budget > 0 {
-            if let Ok(ws_wallet) = get_or_create_wallet(&state.db, "workspace", &ws_id.to_string()).await {
-                let _ = credit_deposit(&state.db, ws_wallet.wallet_id, total_budget, "Batch spawn budget").await;
+            if let Ok(ws_wallet) =
+                get_or_create_wallet(&state.db, "workspace", &ws_id.to_string()).await
+            {
+                let _ = credit_deposit(
+                    &state.db,
+                    ws_wallet.wallet_id,
+                    total_budget,
+                    "Batch spawn budget",
+                )
+                .await;
                 let _ = sqlx::query("UPDATE teams SET workspace_budget = $1 WHERE id = $2")
-                    .bind(total_budget).bind(ws_id).execute(&state.db).await;
+                    .bind(total_budget)
+                    .bind(ws_id)
+                    .execute(&state.db)
+                    .await;
             }
         }
 
         // Initial files
         let mut files_written = 0usize;
         for (path, content) in &initial_files {
-            if state.workspace_git.commit_file(&ws_slug, path, content, &format!("Batch provisioning: {}", path)).is_ok() {
+            if state
+                .workspace_git
+                .commit_file(
+                    &ws_slug,
+                    path,
+                    content,
+                    &format!("Batch provisioning: {}", path),
+                )
+                .is_ok()
+            {
                 files_written += 1;
             }
         }
@@ -1133,7 +1302,16 @@ pub async fn batch_spawn_workspaces_handler(
         // Params
         if let Some(ref params) = instance.params {
             let params_content = serde_json::to_string_pretty(params).unwrap_or_default();
-            if state.workspace_git.commit_file(&ws_slug, ".app/params.json", &params_content, "Batch provisioning: params.json").is_ok() {
+            if state
+                .workspace_git
+                .commit_file(
+                    &ws_slug,
+                    ".app/params.json",
+                    &params_content,
+                    "Batch provisioning: params.json",
+                )
+                .is_ok()
+            {
                 files_written += 1;
             }
             let _ = sqlx::query(
@@ -1159,7 +1337,10 @@ pub async fn batch_spawn_workspaces_handler(
         }
 
         // Auto-hire agents
-        let auto_hire = instance.auto_hire_override.as_ref().unwrap_or(&default_auto_hire);
+        let auto_hire = instance
+            .auto_hire_override
+            .as_ref()
+            .unwrap_or(&default_auto_hire);
         let mut agents_hired = 0usize;
         for agent_name in auto_hire {
             if let Ok(Some(row)) = sqlx::query(
@@ -1190,11 +1371,14 @@ pub async fn batch_spawn_workspaces_handler(
         }));
     }
 
-    Ok((StatusCode::CREATED, Json(json!({
-        "app": slug,
-        "spawned": results.len(),
-        "errors": errors.len(),
-        "workspaces": results,
-        "failed": errors,
-    }))))
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "app": slug,
+            "spawned": results.len(),
+            "errors": errors.len(),
+            "workspaces": results,
+            "failed": errors,
+        })),
+    ))
 }

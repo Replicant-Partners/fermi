@@ -16,9 +16,138 @@ use uuid::Uuid;
 use agent_bestiary_memory::{Agent, AgentUpdate, Episode};
 
 use crate::{
-    resolve_agent, resolve_agent_card, AppState, GeminiContent,
-    GeminiGenerationConfig, GeminiPart, GeminiRequest, GeminiResponse,
+    resolve_agent, resolve_agent_card, AppState, GeminiContent, GeminiGenerationConfig, GeminiPart,
+    GeminiRequest, GeminiResponse,
 };
+
+// ─── Shared visibility helpers ────────────────────────────────────
+
+/// Returns true if the caller is allowed to see this agent's detail.
+/// Owner sees any status; admin sees everything; everyone else only
+/// sees published + public agents.
+fn agent_visible_to_caller(agent: &Agent, caller_id: Option<&str>, is_admin: bool) -> bool {
+    if is_admin {
+        return true;
+    }
+    if let Some(uid) = caller_id {
+        if agent.owner_id.as_deref() == Some(uid) {
+            return true;
+        }
+    }
+    agent.status == "published" && agent.visibility == "public"
+}
+
+/// Build the rich agent JSON object served by both list_agents and
+/// get_agent_handler. Kept in one place so the client contract is
+/// identical whether the caller lists the catalogue or fetches a
+/// single agent by name.
+fn build_agent_json(
+    state: &AppState,
+    agent: &Agent,
+    owner_display: Option<String>,
+    workspace_count: i64,
+) -> Value {
+    let card = state.registry.get(&agent.agent_name).ok();
+    let card_json = card.as_ref().and_then(|_c| {
+        let path = format!("agents/curated/{}/agent_card.json", agent.agent_name);
+        std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+    });
+
+    let mut agent_val = json!({
+        "agent_id": agent.agent_name,
+        "uuid": agent.agent_id,
+        "display_alias": agent.display_alias.as_deref().unwrap_or(""),
+        "agent_type": agent.agent_type,
+        "version": agent.version,
+        "tier": agent.tier,
+        "description": agent.description.as_deref().unwrap_or(""),
+        "author": agent.author,
+        "model": agent.model,
+        "llm_provider": agent.llm_provider,
+        "model_ladder": agent.model_ladder,
+        "min_tier": agent.min_tier,
+        "capability_gates": agent.capability_gates,
+        "tags": agent.tags,
+        "sample_queries": agent.sample_queries,
+        "visibility": agent.visibility,
+        "owner_id": agent.owner_id.as_deref().unwrap_or(""),
+        "owner_display_name": owner_display,
+        "system_prompt": agent.system_prompt.as_deref().unwrap_or(""),
+        "status": agent.status,
+        "fork_pricing": agent.fork_pricing,
+        "forked_from": agent.forked_from,
+        "fork_count": agent.fork_count,
+        "accepts": agent.accepts,
+        "produces": agent.produces,
+        "workflow_template": agent.workflow_template,
+        "prompt_template": agent.prompt_template,
+        "requires_secrets": agent.requires_secrets,
+        "model_params": agent.model_params,
+        "capabilities": {
+            "executor": agent.executor_type,
+            "model": agent.model,
+            "temperature": agent.temperature,
+            "mcp_tools": card.as_ref().map(|c| c.capabilities.mcp_tools.iter().map(|t| json!({"name": t.name, "description": t.description})).collect::<Vec<_>>()).unwrap_or_default(),
+            "skills": card.as_ref().map(|c| c.capabilities.skills.clone()).unwrap_or_default(),
+        },
+        "ontology_stats": {
+            "last_updated": agent.last_consolidated_at,
+            "current_commit": agent.current_ontology_commit,
+        },
+        "execution_stats": {
+            "total_executions": agent.total_executions,
+            "successful_executions": agent.successful_executions,
+            "failed_executions": agent.failed_executions,
+            "total_cost_usd": agent.total_cost_usd,
+            "avg_execution_time_ms": agent.avg_execution_time_ms,
+        },
+        "dreaming": {
+            "budget_credits": agent.dreaming_budget_credits,
+            "credits_used": agent.dreaming_credits_used,
+            "credits_remaining": agent.dreaming_budget_credits - agent.dreaming_credits_used,
+        },
+        "workspace_count": workspace_count,
+        "embedding": {
+            "provider": agent.embedding_provider,
+            "model": agent.embedding_model,
+            "dimension": agent.embedding_dimension,
+        },
+        "source": "database",
+    });
+
+    // Overlay rich fields from filesystem card (if any)
+    if let Some(cj) = &card_json {
+        if let Some(obj) = agent_val.as_object_mut() {
+            if let Some(meta) = cj.get("metadata") {
+                obj.insert("metadata".to_string(), meta.clone());
+            }
+            if let Some(perf) = cj.get("performance") {
+                obj.insert("performance".to_string(), perf.clone());
+            }
+            if let Some(usage) = cj.get("usage") {
+                obj.insert("usage".to_string(), usage.clone());
+            }
+            if let Some(wallet) = cj.get("wallet") {
+                obj.insert("wallet".to_string(), wallet.clone());
+            }
+            if let Some(onto) = cj.get("ontology_stats") {
+                let mut merged = obj.get("ontology_stats").cloned().unwrap_or(json!({}));
+                if let (Some(m), Some(o)) = (merged.as_object_mut(), onto.as_object()) {
+                    for (k, v) in o {
+                        if m.get(k).map(|existing| existing.is_null()).unwrap_or(true) {
+                            m.insert(k.clone(), v.clone());
+                        }
+                    }
+                }
+                obj.insert("ontology_stats".to_string(), merged);
+            }
+        }
+    }
+
+    agent_val
+}
 
 #[derive(Debug, Deserialize)]
 pub struct ListAgentsParams {
@@ -35,6 +164,14 @@ pub async fn list_agents(
     caller: Option<Extension<AuthPrincipal>>,
     Query(params): Query<ListAgentsParams>,
 ) -> Json<Value> {
+    // Admins see everything (including drafts/private) so third-party
+    // agents made by external users are discoverable in the catalogue for
+    // moderation and support. Owners still see their own; everyone else
+    // sees only published + public rows.
+    let is_admin = caller
+        .as_ref()
+        .map(|Extension(p)| p.can_admin())
+        .unwrap_or(false);
     let caller_id = caller.map(|Extension(p)| p.user_id());
 
     // Batch-load workspace membership counts for all agents
@@ -52,16 +189,7 @@ pub async fn list_agents(
         let real_agents: Vec<_> = db_agents
             .into_iter()
             .filter(|a| !a.agent_name.starts_with("test_agent_"))
-            .filter(|a| {
-                // Owner always sees their own agents (any status)
-                if let Some(ref uid) = caller_id {
-                    if a.owner_id.as_deref() == Some(uid.as_str()) {
-                        return true;
-                    }
-                }
-                // Everyone else: only published + public
-                a.status == "published" && a.visibility == "public"
-            })
+            .filter(|a| agent_visible_to_caller(a, caller_id.as_deref(), is_admin))
             .collect();
 
         // Apply search filter
@@ -154,119 +282,13 @@ pub async fn list_agents(
             let agents: Vec<Value> = page_agents
                 .iter()
                 .map(|a| {
-                    // Merge filesystem card data if available
-                    let card = state.registry.get(&a.agent_name).ok();
-                    let card_json = card.as_ref().and_then(|_c| {
-                        let path = format!("agents/curated/{}/agent_card.json", a.agent_name);
-                        std::fs::read_to_string(&path).ok()
-                            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-                    });
-
-                    let owner_display = a.owner_id.as_deref()
+                    let owner_display = a
+                        .owner_id
+                        .as_deref()
                         .and_then(|oid| owner_names.get(oid))
                         .cloned();
-
-                    let mut agent_val = json!({
-                        "agent_id": a.agent_name,
-                        "uuid": a.agent_id,
-                        "display_alias": a.display_alias.as_deref().unwrap_or(""),
-                        "agent_type": a.agent_type,
-                        "version": a.version,
-                        "tier": a.tier,
-                        "description": a.description.as_deref().unwrap_or(""),
-                        "author": a.author,
-                        "model": a.model,
-                        "llm_provider": a.llm_provider,
-                        "model_ladder": a.model_ladder,
-                        "min_tier": a.min_tier,
-                        "capability_gates": a.capability_gates,
-                        "tags": a.tags,
-                        "sample_queries": a.sample_queries,
-                        "visibility": a.visibility,
-                        "owner_id": a.owner_id.as_deref().unwrap_or(""),
-                        "owner_display_name": owner_display,
-                        "system_prompt": a.system_prompt.as_deref().unwrap_or(""),
-                        "status": a.status,
-                        "fork_pricing": a.fork_pricing,
-                        "forked_from": a.forked_from,
-                        "fork_count": a.fork_count,
-                        "accepts": a.accepts,
-                        "produces": a.produces,
-                        "workflow_template": a.workflow_template,
-                        "prompt_template": a.prompt_template,
-                        "requires_secrets": a.requires_secrets,
-                        "model_params": a.model_params,
-                        "capabilities": {
-                            "executor": a.executor_type,
-                            "model": a.model,
-                            "temperature": a.temperature,
-                            "mcp_tools": card.as_ref().map(|c| c.capabilities.mcp_tools.iter().map(|t| json!({"name": t.name, "description": t.description})).collect::<Vec<_>>()).unwrap_or_default(),
-                            "skills": card.as_ref().map(|c| c.capabilities.skills.clone()).unwrap_or_default(),
-                        },
-                        "ontology_stats": {
-                            "last_updated": a.last_consolidated_at,
-                            "current_commit": a.current_ontology_commit,
-                        },
-                        "execution_stats": {
-                            "total_executions": a.total_executions,
-                            "successful_executions": a.successful_executions,
-                            "failed_executions": a.failed_executions,
-                            "total_cost_usd": a.total_cost_usd,
-                            "avg_execution_time_ms": a.avg_execution_time_ms,
-                        },
-                        "dreaming": {
-                            "budget_credits": a.dreaming_budget_credits,
-                            "credits_used": a.dreaming_credits_used,
-                            "credits_remaining": a.dreaming_budget_credits - a.dreaming_credits_used,
-                        },
-                        "workspace_count": workspace_counts.get(&a.agent_id).copied().unwrap_or(0),
-                        // Spec 22 — surface the agent's embedding intent on
-                        // the card so participants can see what produces
-                        // their vectors. Aggregate provenance stats live at
-                        // GET /api/agents/:id/embeddings/stats.
-                        "embedding": {
-                            "provider": a.embedding_provider,
-                            "model": a.embedding_model,
-                            "dimension": a.embedding_dimension,
-                        },
-                        "source": "database",
-                    });
-
-                    // Overlay rich fields from filesystem card
-                    if let Some(cj) = &card_json {
-                        if let Some(obj) = agent_val.as_object_mut() {
-                            // Metadata (tags, created date)
-                            if let Some(meta) = cj.get("metadata") {
-                                obj.insert("metadata".to_string(), meta.clone());
-                            }
-                            // Performance stats
-                            if let Some(perf) = cj.get("performance") {
-                                obj.insert("performance".to_string(), perf.clone());
-                            }
-                            // Usage stats
-                            if let Some(usage) = cj.get("usage") {
-                                obj.insert("usage".to_string(), usage.clone());
-                            }
-                            // Wallet
-                            if let Some(wallet) = cj.get("wallet") {
-                                obj.insert("wallet".to_string(), wallet.clone());
-                            }
-                            // Ontology stats from card (entities/relationships counts)
-                            if let Some(onto) = cj.get("ontology_stats") {
-                                let mut merged = obj.get("ontology_stats").cloned().unwrap_or(json!({}));
-                                if let (Some(m), Some(o)) = (merged.as_object_mut(), onto.as_object()) {
-                                    for (k, v) in o {
-                                        if m.get(k).map(|existing| existing.is_null()).unwrap_or(true) {
-                                            m.insert(k.clone(), v.clone());
-                                        }
-                                    }
-                                }
-                                obj.insert("ontology_stats".to_string(), merged);
-                            }
-                        }
-                    }
-
-                    agent_val
+                    let ws_count = workspace_counts.get(&a.agent_id).copied().unwrap_or(0);
+                    build_agent_json(&state, a, owner_display, ws_count)
                 })
                 .collect();
             return Json(json!({
@@ -299,6 +321,66 @@ pub async fn list_agents(
     }
     let fs_total = agents.len();
     Json(json!({ "agents": agents, "total": fs_total, "page": 1, "limit": fs_total, "pages": 1 }))
+}
+
+/// GET /api/agents/:agent_id — single agent detail lookup.
+///
+/// Previously the agent detail page pulled the full list and filtered
+/// client-side, which meant agents beyond the first 200 rows — or agents
+/// whose visibility was `private`/`draft` (third-party author's own work,
+/// admin moderating) — rendered as "Specimen not found". This endpoint
+/// resolves by name and applies the same visibility rules as the list
+/// handler, so owners and admins can always deep-link to their agents.
+pub async fn get_agent_handler(
+    State(state): State<AppState>,
+    caller: Option<Extension<AuthPrincipal>>,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let is_admin = caller
+        .as_ref()
+        .map(|Extension(p)| p.can_admin())
+        .unwrap_or(false);
+    let caller_id = caller.map(|Extension(p)| p.user_id());
+
+    let agent = resolve_agent(&state, &agent_id).await?;
+
+    if !agent_visible_to_caller(&agent, caller_id.as_deref(), is_admin) {
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("Agent '{}' not found", agent_id),
+        ));
+    }
+
+    // Workspace count for this agent — keeps parity with list_agents.
+    let workspace_count: i64 =
+        sqlx::query("SELECT COUNT(*) as cnt FROM workspace_agents WHERE agent_id = $1")
+            .bind(agent.agent_id)
+            .fetch_one(&state.db)
+            .await
+            .map(|r| r.try_get::<i64, _>("cnt").unwrap_or(0))
+            .unwrap_or(0);
+
+    // Owner display name (best-effort).
+    let owner_display = if let Some(ref oid) = agent.owner_id {
+        sqlx::query(
+            "SELECT COALESCE(display_name, email, user_id) as name FROM users WHERE user_id = $1",
+        )
+        .bind(oid)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|r| r.try_get::<String, _>("name").ok())
+    } else {
+        None
+    };
+
+    Ok(Json(build_agent_json(
+        &state,
+        &agent,
+        owner_display,
+        workspace_count,
+    )))
 }
 
 /// Public endpoint: serves cached avatar only (no generation)
@@ -623,8 +705,8 @@ pub async fn create_agent_handler(
         persona_version: 1,
         fermi_contract: None,
         model_params: serde_json::Value::Object(serde_json::Map::new()),
-                valence: None,
-            output_contract: None,
+        valence: None,
+        output_contract: None,
     };
 
     // If education budget requested, debit from user's wallet
@@ -925,10 +1007,7 @@ pub async fn import_agent_handler(
             .and_then(|c| c.get("model_params"))
             .cloned()
             .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
-        valence: card
-            .get("metadata")
-            .and_then(|m| m.get("valence"))
-            .cloned(),
+        valence: card.get("metadata").and_then(|m| m.get("valence")).cloned(),
         output_contract: card
             .get("capabilities")
             .and_then(|c| c.get("output_contract"))
@@ -1252,13 +1331,12 @@ pub async fn embeddings_stats_handler(
     };
 
     // Provenance event-log stats — append-only history.
-    let provenance_total: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM embedding_provenance WHERE agent_id = $1",
-    )
-    .bind(agent_id)
-    .fetch_one(pool)
-    .await
-    .unwrap_or(0);
+    let provenance_total: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM embedding_provenance WHERE agent_id = $1")
+            .bind(agent_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
 
     Ok(Json(json!({
         "agent_id": agent_id,
@@ -1335,7 +1413,10 @@ pub async fn embeddings_export_consent_handler(
         use rand::RngCore;
         let mut bytes = [0u8; 16];
         rand::thread_rng().fill_bytes(&mut bytes);
-        bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>()
+        bytes
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>()
     };
     let expires_at = chrono::Utc::now() + chrono::Duration::minutes(5);
 
@@ -1501,15 +1582,15 @@ pub async fn embeddings_export_handler(
 
     for row in &rows {
         let episode_id: Uuid = row.try_get("episode_id").unwrap_or_else(|_| Uuid::nil());
-        let timestamp_ref: chrono::DateTime<chrono::Utc> =
-            row.try_get("timestamp_ref").unwrap_or_else(|_| chrono::Utc::now());
+        let timestamp_ref: chrono::DateTime<chrono::Utc> = row
+            .try_get("timestamp_ref")
+            .unwrap_or_else(|_| chrono::Utc::now());
         let query: String = row.try_get("query").unwrap_or_default();
         let context: Value = row.try_get("context").unwrap_or(Value::Null);
         let source_text: Option<String> = row.try_get("source_text").ok();
         let source_ref: Option<Value> = row.try_get("source_ref").ok();
         let embedding_model_id: Option<String> = row.try_get("embedding_model_id").ok();
-        let embedding_model_version: Option<String> =
-            row.try_get("embedding_model_version").ok();
+        let embedding_model_version: Option<String> = row.try_get("embedding_model_version").ok();
         let embedding_dim: Option<i32> = row.try_get("embedding_dim").ok();
         let provenance_trusted: bool = row.try_get("provenance_trusted").unwrap_or(false);
 
@@ -1572,11 +1653,7 @@ pub async fn embeddings_export_handler(
     .bind("export_event")
     .bind(agent.embedding_dimension)
     .bind(true)
-    .bind(format!(
-        "export:{}:{}",
-        format,
-        rows.len()
-    ))
+    .bind(format!("export:{}:{}", format, rows.len()))
     .execute(pool)
     .await;
 
@@ -1703,8 +1780,7 @@ pub async fn list_my_agents_handler(
                 .get(&a.agent_id)
                 .cloned()
                 .unwrap_or_default();
-            let total_count = abw_names.len() as i32
-                + other_counts.values().sum::<i32>();
+            let total_count = abw_names.len() as i32 + other_counts.values().sum::<i32>();
             json!({
                 "agent_id": a.agent_id,
                 "agent_name": a.agent_name,
@@ -1759,24 +1835,27 @@ pub async fn list_my_providers_handler(
     let mut providers: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     // 1. Primary provider from owned agents + model_ladder rungs
-    let agent_rows = sqlx::query(
-        "SELECT llm_provider, model_ladder FROM agents WHERE user_id = $1"
-    )
-    .bind(&user_id)
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let agent_rows =
+        sqlx::query("SELECT llm_provider, model_ladder FROM agents WHERE user_id = $1")
+            .bind(&user_id)
+            .fetch_all(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     for row in &agent_rows {
         if let Ok(p) = row.try_get::<String, _>("llm_provider") {
-            if !p.is_empty() { providers.insert(p); }
+            if !p.is_empty() {
+                providers.insert(p);
+            }
         }
         // Extract providers from model_ladder JSONB array
         if let Ok(ladder) = row.try_get::<serde_json::Value, _>("model_ladder") {
             if let Some(arr) = ladder.as_array() {
                 for rung in arr {
                     if let Some(p) = rung.get("provider").and_then(|v| v.as_str()) {
-                        if !p.is_empty() { providers.insert(p.to_string()); }
+                        if !p.is_empty() {
+                            providers.insert(p.to_string());
+                        }
                     }
                 }
             }
@@ -1791,7 +1870,7 @@ pub async fn list_my_providers_handler(
            JOIN agents a ON a.agent_id = ate.agent_id
            WHERE a.user_id = $1
              AND ate.provider_used IS NOT NULL
-             AND ate.created_at >= NOW() - INTERVAL '90 days'"#
+             AND ate.created_at >= NOW() - INTERVAL '90 days'"#,
     )
     .bind(&user_id)
     .fetch_all(&state.db)
@@ -1800,14 +1879,16 @@ pub async fn list_my_providers_handler(
 
     for row in &timeline_rows {
         if let Ok(p) = row.try_get::<String, _>("provider_used") {
-            if !p.is_empty() { providers.insert(p); }
+            if !p.is_empty() {
+                providers.insert(p);
+            }
         }
     }
 
     // 3. Also include curated agents' providers — they are part of the
     //    user's observable fleet even if not owned.
     let curated_rows = sqlx::query(
-        "SELECT DISTINCT llm_provider FROM agents WHERE user_id IS NULL AND tier = 'curated'"
+        "SELECT DISTINCT llm_provider FROM agents WHERE user_id IS NULL AND tier = 'curated'",
     )
     .fetch_all(&state.db)
     .await
@@ -1815,7 +1896,9 @@ pub async fn list_my_providers_handler(
 
     for row in &curated_rows {
         if let Ok(p) = row.try_get::<String, _>("llm_provider") {
-            if !p.is_empty() { providers.insert(p); }
+            if !p.is_empty() {
+                providers.insert(p);
+            }
         }
     }
 
@@ -2001,22 +2084,21 @@ async fn broadcast_agent_card_updated(
     changelog_summary: Option<&str>,
     changed_by: &str,
 ) {
-    let workspaces = match sqlx::query(
-        "SELECT DISTINCT workspace_id FROM workspace_agents WHERE agent_id = $1",
-    )
-    .bind(agent_uuid)
-    .fetch_all(&state.db)
-    .await
-    {
-        Ok(rows) => rows,
-        Err(e) => {
-            eprintln!(
-                "agent_card.updated: failed to look up hired workspaces for {}: {}",
-                agent_name, e
-            );
-            return;
-        }
-    };
+    let workspaces =
+        match sqlx::query("SELECT DISTINCT workspace_id FROM workspace_agents WHERE agent_id = $1")
+            .bind(agent_uuid)
+            .fetch_all(&state.db)
+            .await
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                eprintln!(
+                    "agent_card.updated: failed to look up hired workspaces for {}: {}",
+                    agent_name, e
+                );
+                return;
+            }
+        };
 
     if workspaces.is_empty() {
         return;
@@ -2380,14 +2462,20 @@ pub async fn get_agent_calibration_handler(
         let recent: f64 = signal_rows[..10]
             .iter()
             .filter_map(|r| r.try_get::<f64, _>("score").ok())
-            .sum::<f64>() / 10.0;
+            .sum::<f64>()
+            / 10.0;
         let older: f64 = signal_rows[10..20]
             .iter()
             .filter_map(|r| r.try_get::<f64, _>("score").ok())
-            .sum::<f64>() / 10.0;
-        if recent > older + 0.05 { "improving" }
-        else if recent < older - 0.05 { "degrading" }
-        else { "stable" }
+            .sum::<f64>()
+            / 10.0;
+        if recent > older + 0.05 {
+            "improving"
+        } else if recent < older - 0.05 {
+            "degrading"
+        } else {
+            "stable"
+        }
     } else {
         "insufficient_data"
     };
@@ -2443,8 +2531,13 @@ pub async fn get_agent_calibration_handler(
 
         // Map forecast tags to domain using agent's own tags as the classifier
         let agent_tags = &db_agent.tags;
-        let matched_domain = tags.iter()
-            .find(|t| agent_tags.iter().any(|at| at.contains(t.as_str()) || t.contains(at.as_str())))
+        let matched_domain = tags
+            .iter()
+            .find(|t| {
+                agent_tags
+                    .iter()
+                    .any(|at| at.contains(t.as_str()) || t.contains(at.as_str()))
+            })
             .map(|t| t.clone())
             .unwrap_or_else(|| "general".to_string());
 
@@ -2456,10 +2549,13 @@ pub async fn get_agent_calibration_handler(
     let domain_calibration: serde_json::Value = domain_scores
         .iter()
         .map(|(domain, (sum, count))| {
-            (domain.clone(), json!({
-                "calibration_mean": sum / *count as f64,
-                "n": count,
-            }))
+            (
+                domain.clone(),
+                json!({
+                    "calibration_mean": sum / *count as f64,
+                    "n": count,
+                }),
+            )
         })
         .collect::<serde_json::Map<_, _>>()
         .into();
@@ -2515,10 +2611,13 @@ pub async fn get_agent_calibration_handler(
     let model_accuracy_json: serde_json::Value = model_accuracy
         .iter()
         .map(|(model, (sum, count))| {
-            (model.clone(), json!({
-                "accuracy_mean": sum / *count as f64,
-                "n": count,
-            }))
+            (
+                model.clone(),
+                json!({
+                    "accuracy_mean": sum / *count as f64,
+                    "n": count,
+                }),
+            )
         })
         .collect::<serde_json::Map<_, _>>()
         .into();
@@ -2551,9 +2650,8 @@ pub async fn get_agent_calibration_handler(
     let window_days = q.window_days.unwrap_or(90).max(1);
 
     let partitions_block: Option<Value> = if partition_by == "version" {
-        let cutoff_ms = (chrono::Utc::now()
-            - chrono::Duration::days(window_days))
-        .timestamp_millis();
+        let cutoff_ms =
+            (chrono::Utc::now() - chrono::Duration::days(window_days)).timestamp_millis();
 
         let part_rows = sqlx::query(
             "SELECT o.produced_by_version_number AS version_number,
@@ -2579,7 +2677,12 @@ pub async fn get_agent_calibration_handler(
         .bind(q.workspace_id)
         .fetch_all(&state.db)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Query failed: {}", e)))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Query failed: {}", e),
+            )
+        })?;
 
         let partitions: Vec<Value> = part_rows
             .iter()
@@ -2709,7 +2812,10 @@ pub async fn loop_health_handler(
         })
     }).collect();
 
-    let loop1_attention = loop1.iter().filter(|r| r["needs_attention"].as_bool().unwrap_or(false)).count();
+    let loop1_attention = loop1
+        .iter()
+        .filter(|r| r["needs_attention"].as_bool().unwrap_or(false))
+        .count();
 
     // ── Loop 2: HITL correction ──────────────────────────────────────────────
     let hitl_rows = sqlx::query(
@@ -2728,20 +2834,24 @@ pub async fn loop_health_handler(
     .await
     .unwrap_or_default();
 
-    let loop2: Vec<Value> = hitl_rows.iter().map(|r| {
-        let created: chrono::DateTime<chrono::Utc> =
-            r.try_get("created_at").unwrap_or_else(|_| chrono::Utc::now());
-        let days_old = (chrono::Utc::now() - created).num_days();
-        json!({
-            "event_id": r.try_get::<uuid::Uuid,_>("event_id").ok(),
-            "agent_id": r.try_get::<uuid::Uuid,_>("agent_id").ok(),
-            "agent_name": r.try_get::<String,_>("agent_name").unwrap_or_default(),
-            "display_alias": r.try_get::<Option<String>,_>("display_alias").unwrap_or(None),
-            "kind": r.try_get::<String,_>("kind").unwrap_or_default(),
-            "severity": r.try_get::<String,_>("severity").unwrap_or_default(),
-            "days_old": days_old,
+    let loop2: Vec<Value> = hitl_rows
+        .iter()
+        .map(|r| {
+            let created: chrono::DateTime<chrono::Utc> = r
+                .try_get("created_at")
+                .unwrap_or_else(|_| chrono::Utc::now());
+            let days_old = (chrono::Utc::now() - created).num_days();
+            json!({
+                "event_id": r.try_get::<uuid::Uuid,_>("event_id").ok(),
+                "agent_id": r.try_get::<uuid::Uuid,_>("agent_id").ok(),
+                "agent_name": r.try_get::<String,_>("agent_name").unwrap_or_default(),
+                "display_alias": r.try_get::<Option<String>,_>("display_alias").unwrap_or(None),
+                "kind": r.try_get::<String,_>("kind").unwrap_or_default(),
+                "severity": r.try_get::<String,_>("severity").unwrap_or_default(),
+                "days_old": days_old,
+            })
         })
-    }).collect();
+        .collect();
 
     // ── Loop 3: workspace coherence ──────────────────────────────────────────
     let coherence_rows = sqlx::query(
@@ -2766,25 +2876,31 @@ pub async fn loop_health_handler(
     .await
     .unwrap_or_default();
 
-    let loop3: Vec<Value> = coherence_rows.iter().map(|r| {
-        let last_eval: Option<chrono::DateTime<chrono::Utc>> =
-            r.try_get("last_coherence_at").unwrap_or(None);
-        let hours_since = last_eval
-            .map(|t| (chrono::Utc::now() - t).num_hours())
-            .unwrap_or(9999);
-        let score: Option<f64> = r.try_get("latest_score").unwrap_or(None);
-        json!({
-            "workspace_id": r.try_get::<uuid::Uuid,_>("id").ok(),
-            "name": r.try_get::<String,_>("name").unwrap_or_default(),
-            "origin": r.try_get::<String,_>("origin").unwrap_or_default(),
-            "mission": r.try_get::<Option<String>,_>("mission").unwrap_or(None),
-            "latest_coherence_score": score,
-            "hours_since_coherence": hours_since,
-            "needs_attention": hours_since > 48 || score.map(|s| s < 0.4).unwrap_or(false),
+    let loop3: Vec<Value> = coherence_rows
+        .iter()
+        .map(|r| {
+            let last_eval: Option<chrono::DateTime<chrono::Utc>> =
+                r.try_get("last_coherence_at").unwrap_or(None);
+            let hours_since = last_eval
+                .map(|t| (chrono::Utc::now() - t).num_hours())
+                .unwrap_or(9999);
+            let score: Option<f64> = r.try_get("latest_score").unwrap_or(None);
+            json!({
+                "workspace_id": r.try_get::<uuid::Uuid,_>("id").ok(),
+                "name": r.try_get::<String,_>("name").unwrap_or_default(),
+                "origin": r.try_get::<String,_>("origin").unwrap_or_default(),
+                "mission": r.try_get::<Option<String>,_>("mission").unwrap_or(None),
+                "latest_coherence_score": score,
+                "hours_since_coherence": hours_since,
+                "needs_attention": hours_since > 48 || score.map(|s| s < 0.4).unwrap_or(false),
+            })
         })
-    }).collect();
+        .collect();
 
-    let loop3_attention = loop3.iter().filter(|r| r["needs_attention"].as_bool().unwrap_or(false)).count();
+    let loop3_attention = loop3
+        .iter()
+        .filter(|r| r["needs_attention"].as_bool().unwrap_or(false))
+        .count();
 
     // ── Loop 4: composition evolution proposals ──────────────────────────────
     let proposals_rows = sqlx::query(
@@ -2806,19 +2922,23 @@ pub async fn loop_health_handler(
     .await
     .unwrap_or_default();
 
-    let loop4: Vec<Value> = proposals_rows.iter().map(|r| {
-        let created: chrono::DateTime<chrono::Utc> =
-            r.try_get("created_at").unwrap_or_else(|_| chrono::Utc::now());
-        json!({
-            "version_id": r.try_get::<uuid::Uuid,_>("composition_version_id").ok(),
-            "workspace_id": r.try_get::<uuid::Uuid,_>("workspace_id").ok(),
-            "workspace_name": r.try_get::<String,_>("workspace_name").unwrap_or_default(),
-            "version_number": r.try_get::<i32,_>("version_number").unwrap_or(0),
-            "diff_summary": r.try_get::<Option<String>,_>("diff_summary").unwrap_or(None),
-            "proposed_by": r.try_get::<Option<String>,_>("proposed_by").unwrap_or(None),
-            "days_pending": (chrono::Utc::now() - created).num_days(),
+    let loop4: Vec<Value> = proposals_rows
+        .iter()
+        .map(|r| {
+            let created: chrono::DateTime<chrono::Utc> = r
+                .try_get("created_at")
+                .unwrap_or_else(|_| chrono::Utc::now());
+            json!({
+                "version_id": r.try_get::<uuid::Uuid,_>("composition_version_id").ok(),
+                "workspace_id": r.try_get::<uuid::Uuid,_>("workspace_id").ok(),
+                "workspace_name": r.try_get::<String,_>("workspace_name").unwrap_or_default(),
+                "version_number": r.try_get::<i32,_>("version_number").unwrap_or(0),
+                "diff_summary": r.try_get::<Option<String>,_>("diff_summary").unwrap_or(None),
+                "proposed_by": r.try_get::<Option<String>,_>("proposed_by").unwrap_or(None),
+                "days_pending": (chrono::Utc::now() - created).num_days(),
+            })
         })
-    }).collect();
+        .collect();
 
     // ── Loop 5: calibration ──────────────────────────────────────────────────
     let cal_rows = sqlx::query(
@@ -2855,8 +2975,14 @@ pub async fn loop_health_handler(
         })
     }).collect();
 
-    let loop5_cold = loop5.iter().filter(|r| r["status"].as_str() == Some("cold")).count();
-    let loop5_warm = loop5.iter().filter(|r| r["status"].as_str() == Some("warm")).count();
+    let loop5_cold = loop5
+        .iter()
+        .filter(|r| r["status"].as_str() == Some("cold"))
+        .count();
+    let loop5_warm = loop5
+        .iter()
+        .filter(|r| r["status"].as_str() == Some("warm"))
+        .count();
 
     Ok(Json(json!({
         "loop1": {
@@ -2933,7 +3059,6 @@ fn calibration_partition_json(
         "brier_mean": Value::Null,
     })
 }
-
 
 // ─── Tests ─────────────────────────────────────────────────────────
 

@@ -333,8 +333,14 @@
       </div>
 
       <!-- Quick actions -->
-      <div style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-green" onclick="openGrantWsModal('')" style="font-size:0.8em">
+      <div
+        style="margin-bottom: 14px; display: flex; gap: 8px; flex-wrap: wrap"
+      >
+        <button
+          class="btn btn-green"
+          onclick="openGrantWsModal('')"
+          style="font-size: 0.8em"
+        >
           ⚡ Grant Credits to Workspace
         </button>
       </div>
@@ -343,6 +349,7 @@
       <div class="tabs">
         <button class="tab active" data-tab="users">Users</button>
         <button class="tab" data-tab="agents">Agents</button>
+        <button class="tab" data-tab="apps">Apps</button>
         <button class="tab" data-tab="ownership">Ownership</button>
         <button class="tab" data-tab="waitlist">Waitlist</button>
         <button class="tab" data-tab="ledger">Credit Ledger</button>
@@ -397,6 +404,36 @@
           <tbody id="agents-tbody"></tbody>
         </table>
         <div class="pagination" id="agents-pagination"></div>
+      </div>
+
+      <!-- Apps Tab -->
+      <div class="tab-content" id="tab-apps">
+        <div class="search-bar">
+          <input
+            type="text"
+            id="app-search"
+            placeholder="Search apps by slug, name, or owner..."
+          />
+        </div>
+        <p style="color: var(--fg3); font-size: 0.85rem; margin-bottom: 12px">
+          All apps across the platform, including private and unlisted apps made
+          by third-party developers. Use “Publish” to promote a third-party app
+          to public visibility on the owner’s behalf.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>App</th>
+              <th>Owner</th>
+              <th>Visibility</th>
+              <th>Agents</th>
+              <th>Workspaces</th>
+              <th>Created</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="apps-tbody"></tbody>
+        </table>
       </div>
 
       <!-- Waitlist Tab -->
@@ -553,9 +590,9 @@
       <!-- Ownership Tab -->
       <div class="tab-content" id="tab-ownership">
         <div style="margin-bottom: 14px; color: var(--fg3); font-size: 0.85rem">
-          Agent ownership audit. Use after a migration to verify curated
-          agents are correctly assigned to you (the admin) and to spot
-          any community agents that got mis-owned.
+          Agent ownership audit. Use after a migration to verify curated agents
+          are correctly assigned to you (the admin) and to spot any community
+          agents that got mis-owned.
           <button
             class="btn"
             onclick="loadOwnershipAudit()"
@@ -600,9 +637,18 @@
         <h3>Grant Credits to User</h3>
         <p id="grant-target" style="color: var(--fg3); font-size: 0.85rem"></p>
         <label>Credits</label>
-        <input type="number" id="grant-amount" value="100" min="1" max="10000" />
+        <input
+          type="number"
+          id="grant-amount"
+          value="100"
+          min="1"
+          max="10000"
+        />
         <label>Reason</label>
-        <textarea id="grant-reason" placeholder="e.g., Beta tester reward"></textarea>
+        <textarea
+          id="grant-reason"
+          placeholder="e.g., Beta tester reward"
+        ></textarea>
         <div class="modal-actions">
           <button class="btn" onclick="closeGrantModal()">Cancel</button>
           <button class="btn btn-green" onclick="submitGrant()">Grant</button>
@@ -614,18 +660,38 @@
     <div class="modal-overlay" id="grant-ws-modal">
       <div class="modal">
         <h3>Grant Credits to Workspace</h3>
-        <p style="color:var(--fg3);font-size:0.82rem;margin-bottom:8px">Credits go directly to the workspace wallet — not deducted from any user. Use to unblock 402s.</p>
+        <p style="color: var(--fg3); font-size: 0.82rem; margin-bottom: 8px">
+          Credits go directly to the workspace wallet — not deducted from any
+          user. Use to unblock 402s.
+        </p>
         <label>Workspace ID or Name</label>
-        <input type="text" id="grant-ws-id" placeholder="UUID or paste workspace URL" style="font-family:monospace;font-size:0.82em" />
+        <input
+          type="text"
+          id="grant-ws-id"
+          placeholder="UUID or paste workspace URL"
+          style="font-family: monospace; font-size: 0.82em"
+        />
         <label>Credits</label>
-        <input type="number" id="grant-ws-amount" value="200" min="1" max="10000" />
+        <input
+          type="number"
+          id="grant-ws-amount"
+          value="200"
+          min="1"
+          max="10000"
+        />
         <label>Reason</label>
-        <textarea id="grant-ws-reason" placeholder="e.g., Unblock efrain app workspace"></textarea>
+        <textarea
+          id="grant-ws-reason"
+          placeholder="e.g., Unblock efrain app workspace"
+        ></textarea>
         <div class="modal-actions">
           <button class="btn" onclick="closeGrantWsModal()">Cancel</button>
           <button class="btn btn-green" onclick="submitWsGrant()">Grant</button>
         </div>
-        <p id="grant-ws-status" style="font-size:0.8rem;margin-top:8px;display:none"></p>
+        <p
+          id="grant-ws-status"
+          style="font-size: 0.8rem; margin-top: 8px; display: none"
+        ></p>
       </div>
     </div>
 
@@ -753,6 +819,23 @@
                   ? "badge-gray"
                   : "badge-yellow";
             const tr = document.createElement("tr");
+            // Lifecycle affordance depends on current status.
+            // Admin uses the same /publish, /archive, /restore endpoints
+            // the owner uses — no separate admin-only route — with an
+            // admin bypass on the ownership check. The owner's wallet
+            // is charged for the publish fee (see lifecycle.rs).
+            let lifecycleBtn = "";
+            if (a.status === "draft") {
+              lifecycleBtn = `<button class="btn btn-sm btn-green" onclick="adminPublishAgent('${a.id}')" title="Publish this third-party agent on the owner's behalf. Owner's wallet is charged the publish fee.">Publish</button>`;
+            } else if (a.status === "published") {
+              lifecycleBtn = `<button class="btn btn-sm" onclick="adminArchiveAgent('${a.id}')" title="Take this agent off the catalogue">Archive</button>`;
+            } else if (a.status === "archived") {
+              lifecycleBtn = `<button class="btn btn-sm" onclick="adminRestoreAgent('${a.id}')" title="Move back to draft">Restore</button>`;
+            }
+            const hideBtn =
+              a.visibility !== "hidden"
+                ? `<button class="btn btn-sm btn-red" onclick="flagAgent('${a.id}')" title="Hide from the public catalogue (does not change lifecycle status)">Hide</button>`
+                : `<button class="btn btn-sm" onclick="unflagAgent('${a.id}')">Unhide</button>`;
             tr.innerHTML = `
               <td><a href="/agent/${a.id}" style="color:var(--aqua);text-decoration:none;">${escHtml(a.display_alias || a.agent_name || "-")}</a></td>
               <td style="font-size:0.8rem;">${a.owner_id ? `<a href="/user/${encodeURIComponent(a.owner_id)}" style="color:var(--fg2);text-decoration:none">${escHtml(a.owner_display_name || a.owner_id.slice(0, 12) + "…")}</a>` : '<span style="color:var(--fg3)">-</span>'}</td>
@@ -760,12 +843,9 @@
               <td><span class="badge ${visBadge}">${escHtml(a.visibility || "public")}</span></td>
               <td><span class="badge ${statusBadge}">${escHtml(a.status || "-")}</span></td>
               <td>${a.execution_count ?? 0}</td>
-              <td>
-                ${
-                  a.visibility !== "hidden"
-                    ? `<button class="btn btn-sm btn-red" onclick="flagAgent('${a.id}')">Hide</button>`
-                    : `<button class="btn btn-sm" onclick="unflagAgent('${a.id}')">Unhide</button>`
-                }
+              <td style="display:flex;gap:6px;flex-wrap:wrap">
+                ${lifecycleBtn}
+                ${hideBtn}
               </td>`;
             tbody.appendChild(tr);
           });
@@ -819,18 +899,28 @@
       async function submitWsGrant() {
         let wsId = document.getElementById("grant-ws-id").value.trim();
         // Accept full workspace URLs — extract UUID
-        const uuidMatch = wsId.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+        const uuidMatch = wsId.match(
+          /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i,
+        );
         if (uuidMatch) wsId = uuidMatch[0];
-        if (!wsId) { alert("Enter a workspace ID or URL."); return; }
-        const credits = parseInt(document.getElementById("grant-ws-amount").value) || 200;
-        const reason = document.getElementById("grant-ws-reason").value || "Admin top-up";
+        if (!wsId) {
+          alert("Enter a workspace ID or URL.");
+          return;
+        }
+        const credits =
+          parseInt(document.getElementById("grant-ws-amount").value) || 200;
+        const reason =
+          document.getElementById("grant-ws-reason").value || "Admin top-up";
         const statusEl = document.getElementById("grant-ws-status");
         try {
-          const res = await fetch(`/api/admin/workspaces/${encodeURIComponent(wsId)}/grant`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ credits, reason }),
-          });
+          const res = await fetch(
+            `/api/admin/workspaces/${encodeURIComponent(wsId)}/grant`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ credits, reason }),
+            },
+          );
           const data = await res.json();
           statusEl.style.display = "block";
           if (res.ok) {
@@ -909,6 +999,167 @@
         loadAgents(document.getElementById("agent-search").value);
       }
 
+      // Admin lifecycle actions on third-party agents. These hit the
+      // same endpoints the owner uses; the server allows admin bypass
+      // on the ownership check and charges the *owner's* wallet for the
+      // publish fee (so admin isn't subsidising external developers).
+      async function adminPublishAgent(agentId) {
+        if (
+          !confirm(
+            `Publish agent "${agentId}" on the owner's behalf?\n\nThe owner's wallet will be charged the publish fee. This will move it draft → published and make it public in the catalogue.`,
+          )
+        )
+          return;
+        try {
+          const checksRes = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/publish-checks`,
+          );
+          if (checksRes.ok) {
+            const checks = await checksRes.json();
+            if (!checks.can_publish) {
+              const failing = (checks.checks || [])
+                .filter((c) => !c.passed && c.severity === "Error")
+                .map((c) => c.message)
+                .join("; ");
+              alert(
+                `Cannot publish: ${failing || "failing checks"}.\n\nAsk the owner to fix these before publishing.`,
+              );
+              return;
+            }
+          }
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/publish`,
+            { method: "POST" },
+          );
+          if (res.ok) {
+            const data = await res.json();
+            showToast(
+              `Published "${agentId}"${data.published_by_admin ? " (as admin)" : ""}`,
+            );
+            loadAgents(document.getElementById("agent-search").value);
+          } else {
+            alert(`Publish failed: ${res.status} ${await res.text()}`);
+          }
+        } catch (e) {
+          alert(`Network error: ${e.message}`);
+        }
+      }
+
+      async function adminArchiveAgent(agentId) {
+        if (
+          !confirm(
+            `Archive agent "${agentId}"?\n\nThis removes it from the catalogue and sets visibility to private. The owner can restore it later.`,
+          )
+        )
+          return;
+        const res = await fetch(
+          `/api/agents/${encodeURIComponent(agentId)}/archive`,
+          { method: "POST" },
+        );
+        if (res.ok) {
+          showToast(`Archived "${agentId}"`);
+          loadAgents(document.getElementById("agent-search").value);
+        } else {
+          alert(`Archive failed: ${res.status} ${await res.text()}`);
+        }
+      }
+
+      async function adminRestoreAgent(agentId) {
+        if (!confirm(`Restore "${agentId}" to draft?`)) return;
+        const res = await fetch(
+          `/api/agents/${encodeURIComponent(agentId)}/restore`,
+          { method: "POST" },
+        );
+        if (res.ok) {
+          showToast(`Restored "${agentId}" to draft`);
+          loadAgents(document.getElementById("agent-search").value);
+        } else {
+          alert(`Restore failed: ${res.status} ${await res.text()}`);
+        }
+      }
+
+      // --- Apps (third-party app moderation) ---
+      let appsLoaded = false;
+      let appSearchTimeout = null;
+      async function loadApps(search = "") {
+        try {
+          const params = new URLSearchParams();
+          if (search) params.set("search", search);
+          const res = await fetch("/api/admin/apps?" + params);
+          if (!res.ok) {
+            document.getElementById("apps-tbody").innerHTML =
+              `<tr><td colspan="7" style="color:var(--red);text-align:center;padding:24px">Failed to load apps (${res.status})</td></tr>`;
+            return;
+          }
+          const data = await res.json();
+          const tbody = document.getElementById("apps-tbody");
+          tbody.innerHTML = "";
+          if (!data.apps || data.apps.length === 0) {
+            tbody.innerHTML =
+              '<tr><td colspan="7" style="color:var(--fg3);text-align:center;padding:24px">No apps found.</td></tr>';
+            return;
+          }
+          data.apps.forEach((a) => {
+            const visBadge =
+              a.visibility === "public"
+                ? '<span style="color:var(--green)">public</span>'
+                : a.visibility === "unlisted"
+                  ? '<span style="color:var(--yellow)">unlisted</span>'
+                  : '<span style="color:var(--fg3)">private</span>';
+            const archivedNote = a.archived_at
+              ? ' <span style="color:var(--red);font-size:0.75rem">(archived)</span>'
+              : "";
+            const created = a.created_at
+              ? new Date(a.created_at).toLocaleDateString()
+              : "";
+            const ownerLabel = a.owner_display_name
+              ? `${esc(a.owner_display_name)}<br><span style="color:var(--fg3);font-size:0.75rem">${esc(a.owner_user_id)}</span>`
+              : esc(a.owner_user_id);
+            const publishBtn =
+              a.visibility !== "public"
+                ? `<button class="btn btn-green" onclick="setAppVisibility('${esc(a.slug)}','public')">Publish</button>`
+                : `<button class="btn" onclick="setAppVisibility('${esc(a.slug)}','unlisted')">Unlist</button>`;
+            const row = document.createElement("tr");
+            row.innerHTML = `
+              <td>
+                <a href="/apps/${esc(a.slug)}" style="color:var(--yellow)">${esc(a.name || a.slug)}</a>${archivedNote}
+                <div style="color:var(--fg3);font-size:0.75rem">${esc(a.slug)}</div>
+              </td>
+              <td>${ownerLabel}</td>
+              <td>${visBadge}</td>
+              <td>${a.agent_count || 0}</td>
+              <td>${a.workspace_count || 0}</td>
+              <td style="color:var(--fg3);font-size:0.8rem">${created}</td>
+              <td style="display:flex;gap:6px">
+                ${publishBtn}
+                <a class="btn" href="/apps/${esc(a.slug)}">View</a>
+              </td>`;
+            tbody.appendChild(row);
+          });
+        } catch (e) {
+          document.getElementById("apps-tbody").innerHTML =
+            `<tr><td colspan="7" style="color:var(--red);text-align:center;padding:24px">${esc(e.message)}</td></tr>`;
+        }
+      }
+
+      async function setAppVisibility(slug, visibility) {
+        const verb = visibility === "public" ? "publish" : "unlist";
+        if (!confirm(`Set "${slug}" to ${visibility}?`)) return;
+        const res = await fetch(
+          `/api/admin/apps/${encodeURIComponent(slug)}/visibility`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ visibility }),
+          },
+        );
+        if (res.ok) {
+          loadApps(document.getElementById("app-search").value);
+        } else {
+          alert(`Failed to ${verb}: ${res.status} ${await res.text()}`);
+        }
+      }
+
       // --- Tabs ---
       let ownershipLoaded = false;
       document.querySelectorAll(".tab").forEach((tab) => {
@@ -925,6 +1176,19 @@
             .classList.add("active");
           if (tab.dataset.tab === "ownership" && !ownershipLoaded) {
             loadOwnershipAudit();
+          }
+          if (tab.dataset.tab === "apps" && !appsLoaded) {
+            loadApps();
+            appsLoaded = true;
+            document
+              .getElementById("app-search")
+              .addEventListener("input", (e) => {
+                clearTimeout(appSearchTimeout);
+                appSearchTimeout = setTimeout(
+                  () => loadApps(e.target.value),
+                  300,
+                );
+              });
           }
         });
       });
@@ -1037,24 +1301,17 @@
       };
 
       window.reassignToMe = async function (agentName, callerUserId) {
-        if (
-          !confirm(
-            `Reassign "${agentName}" to you (${callerUserId})?`,
-          )
-        )
+        if (!confirm(`Reassign "${agentName}" to you (${callerUserId})?`))
           return;
         try {
-          const res = await fetch(
-            "/api/admin/agent-ownership-reassign",
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                agent_names: [agentName],
-                new_owner_user_id: callerUserId,
-              }),
-            },
-          );
+          const res = await fetch("/api/admin/agent-ownership-reassign", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              agent_names: [agentName],
+              new_owner_user_id: callerUserId,
+            }),
+          });
           if (!res.ok) {
             alert("Reassign failed: " + (await res.text()));
             return;

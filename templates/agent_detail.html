@@ -831,10 +831,25 @@
         _agentId = agentId;
 
         try {
-          const response = await fetch("/api/agents?limit=200");
-          const data = await response.json();
-
-          const agent = data.agents.find((a) => a.agent_id === agentId);
+          // Primary path: direct single-agent fetch. This works even for
+          // agents the caller cannot see in the paginated catalogue (drafts,
+          // private, or beyond the first 200 rows) as long as they are the
+          // owner, an admin, or the agent is published+public.
+          let agent = null;
+          const direct = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}`,
+          );
+          if (direct.ok) {
+            agent = await direct.json();
+          } else if (direct.status !== 404) {
+            // Fall back to the list endpoint on non-404 errors (network,
+            // 401 before session hydration, etc.).
+            const response = await fetch("/api/agents?limit=200");
+            if (response.ok) {
+              const data = await response.json();
+              agent = (data.agents || []).find((a) => a.agent_id === agentId);
+            }
+          }
 
           if (!agent) {
             document.getElementById("agent-content").innerHTML = `
@@ -862,7 +877,8 @@
           const mcpTools = agent.capabilities?.mcp_tools || [];
           const model = agent.model || agent.capabilities?.model || "N/A";
           const executor = agent.capabilities?.executor || "N/A";
-          const provider = agent.llm_provider || agent.capabilities?.provider || "anthropic";
+          const provider =
+            agent.llm_provider || agent.capabilities?.provider || "anthropic";
           const tags = agent.tags || agent.metadata?.tags || [];
 
           const totalExec =
@@ -1767,7 +1783,11 @@
                 } else {
                   const ratio = (ep.trust_ratio || 0) * 100;
                   const color =
-                    ratio >= 95 ? "var(--green)" : ratio >= 50 ? "var(--yellow)" : "var(--red)";
+                    ratio >= 95
+                      ? "var(--green)"
+                      : ratio >= 50
+                        ? "var(--yellow)"
+                        : "var(--red)";
                   healthEl.innerHTML =
                     `<span style="color:${color};font-weight:600">` +
                     `${ratio.toFixed(0)}%</span> ` +
@@ -2059,18 +2079,29 @@
           if (!content || content.querySelector(".loading-spinner")) return;
           clearInterval(checkOwnership);
 
-          // Re-fetch agent to check owner_id
-          fetch("/api/agents?limit=200")
-            .then((r) => r.json())
-            .then((data) => {
-              const agent = data.agents.find((a) => a.agent_id === agentId);
+          // Re-fetch agent to check owner_id. Use the direct endpoint
+          // so ownership resolves even for private/draft agents outside
+          // the paginated catalogue (previously only agents in the top
+          // 200 published rows would surface the Manage tab).
+          fetch(`/api/agents/${encodeURIComponent(agentId)}`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((agent) => {
               if (!agent) return;
 
-              // Check if we need owner_id — it comes from the API
               const userId = currentUser.user_id;
               const isOwner = agent.owner_id === userId;
+              const isAdmin = currentUser.role === "admin";
               if (isOwner) {
                 renderOwnerPanel(agentId, agent);
+              } else if (isAdmin) {
+                // Admin viewing someone else's agent — render a scoped
+                // action bar with the same lifecycle affordances the
+                // owner has, plus a "charges owner" disclaimer for
+                // publish. Same endpoints, admin bypass on the server.
+                renderAdminAgentPanel(agentId, agent);
+                if (agent.status === "published") {
+                  renderForkButton(agentId);
+                }
               } else {
                 // Show fork button for non-owners on published agents
                 if (agent.status === "published") {
@@ -2098,6 +2129,109 @@
           forkDiv,
           tabBar.nextSibling?.nextSibling,
         );
+      }
+
+      // Admin action bar for third-party agents. Uses the same
+      // /publish, /archive, /restore endpoints the owner uses — the
+      // server allows admin bypass on the ownership check and charges
+      // the *owner's* wallet for the publish fee.
+      function renderAdminAgentPanel(agentId, agent) {
+        const tabBar = document.querySelector(".agent-tabs");
+        if (!tabBar) return;
+        const status = agent.status || "draft";
+        const ownerLabel =
+          agent.owner_display_name || agent.owner_id || "unknown";
+
+        let lifecycleBtns = "";
+        if (status === "draft") {
+          lifecycleBtns = `<button class="owner-btn" style="border-color:var(--green);color:var(--green)" onclick="adminPublishAgentDetail('${agentId}')" title="Publish on the owner's behalf. Owner's wallet is charged the publish fee.">Publish (as admin)</button>`;
+        } else if (status === "published") {
+          lifecycleBtns = `<button class="owner-btn" style="border-color:var(--orange);color:var(--orange)" onclick="adminArchiveAgentDetail('${agentId}')">Archive (as admin)</button>`;
+        } else if (status === "archived") {
+          lifecycleBtns = `<button class="owner-btn" style="border-color:var(--aqua);color:var(--aqua)" onclick="adminRestoreAgentDetail('${agentId}')">Restore to Draft (as admin)</button>`;
+        }
+
+        const bar = document.createElement("div");
+        bar.style.cssText =
+          "margin-bottom:16px;padding:10px 12px;border:1px dashed var(--yellow);border-radius:6px;background:rgba(255,193,7,0.04);display:flex;align-items:center;gap:12px;flex-wrap:wrap";
+        bar.innerHTML = `
+          <div style="flex:1;min-width:200px;font-size:0.85rem;color:var(--fg2)">
+            <span style="color:var(--yellow);font-weight:600">Admin view</span>
+            — owned by <span style="color:var(--fg1)">${escAttr(ownerLabel)}</span>.
+            Lifecycle actions here run under an admin bypass; the owner's
+            wallet is charged for publish fees.
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            ${lifecycleBtns}
+          </div>`;
+        tabBar.parentNode.insertBefore(bar, tabBar.nextSibling?.nextSibling);
+      }
+
+      function escAttr(s) {
+        return String(s == null ? "" : s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      async function adminPublishAgentDetail(agentId) {
+        if (
+          !confirm(
+            `Publish "${agentId}" on the owner's behalf?\n\nThe owner's wallet will be charged the publish fee. This transitions draft → published and makes it public.`,
+          )
+        )
+          return;
+        try {
+          const checksRes = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/publish-checks`,
+          );
+          if (checksRes.ok) {
+            const checks = await checksRes.json();
+            if (!checks.can_publish) {
+              const failing = (checks.checks || [])
+                .filter((c) => !c.passed && c.severity === "Error")
+                .map((c) => c.message)
+                .join("; ");
+              alert(
+                `Cannot publish: ${failing || "failing checks"}.\n\nAsk the owner to fix these first.`,
+              );
+              return;
+            }
+          }
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/publish`,
+            { method: "POST" },
+          );
+          if (res.ok) {
+            alert("Agent published (as admin). Reloading…");
+            location.reload();
+          } else {
+            alert(`Publish failed: ${res.status} ${await res.text()}`);
+          }
+        } catch (e) {
+          alert(`Network error: ${e.message}`);
+        }
+      }
+
+      async function adminArchiveAgentDetail(agentId) {
+        if (!confirm(`Archive "${agentId}"?`)) return;
+        const res = await fetch(
+          `/api/agents/${encodeURIComponent(agentId)}/archive`,
+          { method: "POST" },
+        );
+        if (res.ok) location.reload();
+        else alert(`Archive failed: ${res.status} ${await res.text()}`);
+      }
+
+      async function adminRestoreAgentDetail(agentId) {
+        if (!confirm(`Restore "${agentId}" to draft?`)) return;
+        const res = await fetch(
+          `/api/agents/${encodeURIComponent(agentId)}/restore`,
+          { method: "POST" },
+        );
+        if (res.ok) location.reload();
+        else alert(`Restore failed: ${res.status} ${await res.text()}`);
       }
 
       function renderOwnerPanel(agentId, agent) {
@@ -2184,18 +2318,20 @@
                 <div id="eval-runs-list" style="font-size:0.85em;color:var(--fg3)">Loading...</div>
               </div>
             </div>`;
-            // Wire the Observatory link to the agent UUID — needed because
-            // the link is rendered before the agent payload arrives.
-            queueMicrotask(() => {
-              const link = document.getElementById("eval-observatory-link");
-              if (link && agent && agent.agent_id) {
-                link.href = `/observatory?agent=${encodeURIComponent(agent.agent_id)}`;
-              }
-            });
+          // Wire the Observatory link to the agent UUID — needed because
+          // the link is rendered before the agent payload arrives.
+          queueMicrotask(() => {
+            const link = document.getElementById("eval-observatory-link");
+            if (link && agent && agent.agent_id) {
+              link.href = `/observatory?agent=${encodeURIComponent(agent.agent_id)}`;
+            }
+          });
         }
 
         // --- Populate Intelligence tab ---
-        const intelligencePanel = document.getElementById("intelligence-tab-panel");
+        const intelligencePanel = document.getElementById(
+          "intelligence-tab-panel",
+        );
         if (intelligencePanel) {
           intelligencePanel.innerHTML = `
             <div class="sections" id="intelligence-sections">
@@ -2378,11 +2514,16 @@
           const trustEl = document.getElementById("intel-port-trust");
           const modelEl = document.getElementById("intel-port-model");
           if (totalEl) totalEl.textContent = (ep.total || 0).toLocaleString();
-          if (withVecEl) withVecEl.textContent = `${ep.with_vector || 0} with vectors`;
+          if (withVecEl)
+            withVecEl.textContent = `${ep.with_vector || 0} with vectors`;
           if (trustEl) {
             const r = (ep.trust_ratio || 0) * 100;
             const color =
-              r >= 95 ? "var(--green)" : r >= 50 ? "var(--yellow)" : "var(--red)";
+              r >= 95
+                ? "var(--green)"
+                : r >= 50
+                  ? "var(--yellow)"
+                  : "var(--red)";
             trustEl.innerHTML = `<span style="color:${color}">${r.toFixed(0)}%</span>`;
           }
           if (modelEl) {
@@ -2461,14 +2602,14 @@
                    <div class="field-item">
                      <label style="display:block;font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Primary Affect</label>
                      <input type="text" id="valence-affect"
-                       value="${((agent.valence||{}).primary_affect)||''}"
+                       value="${(agent.valence || {}).primary_affect || ""}"
                        placeholder="analytical, vigilant, guidance, curious…"
                        style="width:100%;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:7px 10px;font-family:inherit;font-size:0.9em" />
                    </div>
                    <div class="field-item">
                      <label style="display:block;font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Personality Traits <span style="color:var(--gray)">(comma-separated)</span></label>
                      <input type="text" id="valence-traits"
-                       value="${((agent.valence||{}).personality_traits||[]).join(', ')}"
+                       value="${((agent.valence || {}).personality_traits || []).join(", ")}"
                        placeholder="precise, evidence-driven, diplomatic…"
                        style="width:100%;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:7px 10px;font-family:inherit;font-size:0.9em" />
                    </div>
@@ -2477,20 +2618,20 @@
                  <div class="field-grid" style="grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
                    <div class="field-item">
                      <label style="display:block;font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">
-                       Arousal &nbsp;<span id="valence-arousal-val" style="color:var(--yellow);font-weight:600">${((agent.valence||{}).arousal ?? 0.5).toFixed(2)}</span>
+                       Arousal &nbsp;<span id="valence-arousal-val" style="color:var(--yellow);font-weight:600">${((agent.valence || {}).arousal ?? 0.5).toFixed(2)}</span>
                      </label>
                      <input type="range" id="valence-arousal" min="0" max="1" step="0.05"
-                       value="${((agent.valence||{}).arousal ?? 0.5)}"
+                       value="${(agent.valence || {}).arousal ?? 0.5}"
                        oninput="document.getElementById('valence-arousal-val').textContent=parseFloat(this.value).toFixed(2)"
                        style="width:100%;accent-color:var(--yellow)" />
                      <div style="display:flex;justify-content:space-between;font-size:0.7em;color:var(--gray);margin-top:2px"><span>calm</span><span>urgent</span></div>
                    </div>
                    <div class="field-item">
                      <label style="display:block;font-size:0.75em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">
-                       Valence &nbsp;<span id="valence-score-val" style="color:var(--aqua);font-weight:600">${((agent.valence||{}).valence ?? 0.6).toFixed(2)}</span>
+                       Valence &nbsp;<span id="valence-score-val" style="color:var(--aqua);font-weight:600">${((agent.valence || {}).valence ?? 0.6).toFixed(2)}</span>
                      </label>
                      <input type="range" id="valence-score" min="0" max="1" step="0.05"
-                       value="${((agent.valence||{}).valence ?? 0.6)}"
+                       value="${(agent.valence || {}).valence ?? 0.6}"
                        oninput="document.getElementById('valence-score-val').textContent=parseFloat(this.value).toFixed(2)"
                        style="width:100%;accent-color:var(--aqua)" />
                      <div style="display:flex;justify-content:space-between;font-size:0.7em;color:var(--gray);margin-top:2px"><span>critical</span><span>constructive</span></div>
@@ -2681,7 +2822,9 @@
                   : "";
                 // Phase 2 — registry aggregate + conflict flags
                 let signalHtml = "";
-                const conflicts = Array.isArray(r.conflict_flags) ? r.conflict_flags : [];
+                const conflicts = Array.isArray(r.conflict_flags)
+                  ? r.conflict_flags
+                  : [];
                 if (r.aggregated_signal && r.aggregated_signal.per_dimension) {
                   const dims = r.aggregated_signal.per_dimension
                     .slice(0, 4)
@@ -2865,8 +3008,7 @@
         }
         el.style.display = "block";
         if (el.dataset.loaded === "1") return;
-        el.innerHTML =
-          '<span style="color:var(--fg4)">Loading signals…</span>';
+        el.innerHTML = '<span style="color:var(--fg4)">Loading signals…</span>';
         try {
           const res = await fetch(
             `/api/agents/${encodeURIComponent(agentId)}/eval/runs/${encodeURIComponent(runId)}/signals`,
@@ -3079,27 +3221,28 @@
             return;
           }
           // Handle both sync (legacy) and async (202 + job_id) responses
-          if (data.status === 'accepted' && data.job_id) {
+          if (data.status === "accepted" && data.job_id) {
             resultEl.innerHTML = `<span style="color:var(--aqua)">Consolidation running… polling for result.</span>`;
             // Poll for job completion
             const jobUrl = `/api/agents/${encodeURIComponent(agentId)}/consolidation/jobs/${data.job_id}`;
             for (let i = 0; i < 30; i++) {
-              await new Promise(r => setTimeout(r, 2000));
+              await new Promise((r) => setTimeout(r, 2000));
               try {
                 const jobRes = await fetch(jobUrl);
                 const job = await jobRes.json();
-                if (job.status === 'completed' || job.status === 'failed') {
+                if (job.status === "completed" || job.status === "failed") {
                   const r = job;
-                  resultEl.innerHTML = job.status === 'failed'
-                    ? `<span style="color:var(--red)">Consolidation failed: ${job.error || 'unknown error'}</span>`
-                    : `<span style="color:var(--green)">
+                  resultEl.innerHTML =
+                    job.status === "failed"
+                      ? `<span style="color:var(--red)">Consolidation failed: ${job.error || "unknown error"}</span>`
+                      : `<span style="color:var(--green)">
                         ${r.episodes_processed || 0} episodes · ${r.clusters_identified || 0} clusters ·
                         ${r.rules_extracted || 0} rules · ${r.entities_created || 0} entities.
-                        Credits remaining: ${r.dreaming_credits_remaining ?? '—'}
+                        Credits remaining: ${r.dreaming_credits_remaining ?? "—"}
                        </span>`;
                   break;
                 }
-              } catch(_) {}
+              } catch (_) {}
             }
           } else {
             // Legacy sync response
@@ -3128,7 +3271,11 @@
           "claude-opus-4-6",
           "claude-3-haiku-20240307",
         ],
-        mistral: ["mistral-large-latest", "mistral-medium-latest", "open-mistral-nemo"],
+        mistral: [
+          "mistral-large-latest",
+          "mistral-medium-latest",
+          "open-mistral-nemo",
+        ],
         openrouter: [
           "openrouter/free",
           "anthropic/claude-3-opus",
@@ -3160,14 +3307,18 @@
         if (!agent) return;
 
         // Seed state from agent data
-        _intelLadder = JSON.parse(JSON.stringify(
-          Array.isArray(agent.model_ladder) ? agent.model_ladder : []
-        ));
-        _intelGates = JSON.parse(JSON.stringify(
-          agent.capability_gates && typeof agent.capability_gates === "object"
-            ? agent.capability_gates
-            : {}
-        ));
+        _intelLadder = JSON.parse(
+          JSON.stringify(
+            Array.isArray(agent.model_ladder) ? agent.model_ladder : [],
+          ),
+        );
+        _intelGates = JSON.parse(
+          JSON.stringify(
+            agent.capability_gates && typeof agent.capability_gates === "object"
+              ? agent.capability_gates
+              : {},
+          ),
+        );
 
         // Populate default model fields
         const provSel = document.getElementById("intel-provider");
@@ -3184,14 +3335,18 @@
       }
 
       function intelProviderChanged() {
-        const provider = document.getElementById("intel-provider")?.value || "anthropic";
+        const provider =
+          document.getElementById("intel-provider")?.value || "anthropic";
         const models = PROVIDER_MODELS[provider] || [];
         const wrap = document.getElementById("intel-model-suggestions");
         if (!wrap) return;
-        wrap.innerHTML = models.map(m =>
-          `<button onclick="document.getElementById('intel-model').value='${m}'"
-            style="background:var(--bg1);border:1px solid var(--bg3);color:var(--fg2);padding:3px 8px;font-family:inherit;font-size:0.8em;cursor:pointer;border-radius:3px">${m}</button>`
-        ).join("");
+        wrap.innerHTML = models
+          .map(
+            (m) =>
+              `<button onclick="document.getElementById('intel-model').value='${m}'"
+            style="background:var(--bg1);border:1px solid var(--bg3);color:var(--fg2);padding:3px 8px;font-family:inherit;font-size:0.8em;cursor:pointer;border-radius:3px">${m}</button>`,
+          )
+          .join("");
         renderSamplingParams();
       }
 
@@ -3199,8 +3354,10 @@
       function renderSamplingParams() {
         const wrap = document.getElementById("sampling-params-wrap");
         if (!wrap) return;
-        const provider = document.getElementById("intel-provider")?.value || "anthropic";
-        const mp = (_agentData && _agentData.model_params) ? _agentData.model_params : {};
+        const provider =
+          document.getElementById("intel-provider")?.value || "anthropic";
+        const mp =
+          _agentData && _agentData.model_params ? _agentData.model_params : {};
 
         const inp = (id, label, value, placeholder, tip) => `
           <div>
@@ -3220,13 +3377,30 @@
 
         if (provider === "anthropic") {
           const extThinking = !!mp.extended_thinking;
-          html += inp("sp-temperature", "Temperature", mp.temperature ?? "", "0.0 – 1.0", extThinking ? "(forced 1.0)" : "");
-          html += inp("sp-max-tokens", "Max Tokens", mp.max_tokens ?? "", "default");
+          html += inp(
+            "sp-temperature",
+            "Temperature",
+            mp.temperature ?? "",
+            "0.0 – 1.0",
+            extThinking ? "(forced 1.0)" : "",
+          );
+          html += inp(
+            "sp-max-tokens",
+            "Max Tokens",
+            mp.max_tokens ?? "",
+            "default",
+          );
           html += `<div></div>`;
           html += `</div>`;
-          html += `<div style="margin-bottom:8px">` +
-            chk("sp-extended-thinking", "Extended Thinking (claude-3-7+)", extThinking,
-              "toggleExtendedThinking()", "Forces temperature=1.0, requires budget_tokens") +
+          html +=
+            `<div style="margin-bottom:8px">` +
+            chk(
+              "sp-extended-thinking",
+              "Extended Thinking (claude-3-7+)",
+              extThinking,
+              "toggleExtendedThinking()",
+              "Forces temperature=1.0, requires budget_tokens",
+            ) +
             `</div>`;
           const budgetVis = extThinking ? "" : "display:none";
           html += `<div id="sp-thinking-budget-wrap" style="${budgetVis};margin-bottom:8px">
@@ -3240,19 +3414,49 @@
           html += `<div></div></div>`;
         } else {
           // All OpenAI-compatible providers share this base set
-          html += inp("sp-temperature", "Temperature", mp.temperature ?? "", "0.0 – 2.0");
-          html += inp("sp-max-tokens", "Max Tokens", mp.max_tokens ?? "", "default");
+          html += inp(
+            "sp-temperature",
+            "Temperature",
+            mp.temperature ?? "",
+            "0.0 – 2.0",
+          );
+          html += inp(
+            "sp-max-tokens",
+            "Max Tokens",
+            mp.max_tokens ?? "",
+            "default",
+          );
           html += inp("sp-top-p", "Top P", mp.top_p ?? "", "optional");
-          html += inp("sp-frequency-penalty", "Frequency Penalty", mp.frequency_penalty ?? "", "0.0 – 2.0");
-          html += inp("sp-presence-penalty", "Presence Penalty", mp.presence_penalty ?? "", "0.0 – 2.0");
+          html += inp(
+            "sp-frequency-penalty",
+            "Frequency Penalty",
+            mp.frequency_penalty ?? "",
+            "0.0 – 2.0",
+          );
+          html += inp(
+            "sp-presence-penalty",
+            "Presence Penalty",
+            mp.presence_penalty ?? "",
+            "0.0 – 2.0",
+          );
           if (provider === "mistral") {
-            html += inp("sp-repetition-penalty", "Repetition Penalty", mp.repetition_penalty ?? "", "Mistral-specific");
+            html += inp(
+              "sp-repetition-penalty",
+              "Repetition Penalty",
+              mp.repetition_penalty ?? "",
+              "Mistral-specific",
+            );
           } else {
             html += `<div></div>`;
           }
           html += `</div>`;
           html += `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px">`;
-          html += inp("sp-random-seed", "Seed", mp.random_seed ?? "", "optional, for reproducibility");
+          html += inp(
+            "sp-random-seed",
+            "Seed",
+            mp.random_seed ?? "",
+            "optional, for reproducibility",
+          );
           html += `<div></div><div></div>`;
           html += `</div>`;
         }
@@ -3261,7 +3465,9 @@
       }
 
       function toggleExtendedThinking() {
-        const checked = document.getElementById("sp-extended-thinking")?.checked;
+        const checked = document.getElementById(
+          "sp-extended-thinking",
+        )?.checked;
         const budgetWrap = document.getElementById("sp-thinking-budget-wrap");
         const tempIn = document.getElementById("sp-temperature");
         if (budgetWrap) budgetWrap.style.display = checked ? "" : "none";
@@ -3269,11 +3475,12 @@
       }
 
       function collectSamplingParams() {
-        const provider = document.getElementById("intel-provider")?.value || "anthropic";
+        const provider =
+          document.getElementById("intel-provider")?.value || "anthropic";
         const mp = {};
-        const v = id => (document.getElementById(id)?.value || "").trim();
-        const nf = s => s !== "" ? parseFloat(s) : undefined;
-        const ni = s => s !== "" ? parseInt(s, 10) : undefined;
+        const v = (id) => (document.getElementById(id)?.value || "").trim();
+        const nf = (s) => (s !== "" ? parseFloat(s) : undefined);
+        const ni = (s) => (s !== "" ? parseInt(s, 10) : undefined);
 
         const temp = nf(v("sp-temperature"));
         if (temp !== undefined) mp.temperature = temp;
@@ -3285,7 +3492,8 @@
         if (provider === "anthropic") {
           const topK = ni(v("sp-top-k"));
           if (topK !== undefined) mp.top_k = topK;
-          const extThinking = !!document.getElementById("sp-extended-thinking")?.checked;
+          const extThinking = !!document.getElementById("sp-extended-thinking")
+            ?.checked;
           if (extThinking) {
             mp.extended_thinking = true;
             mp.temperature = 1.0;
@@ -3307,27 +3515,31 @@
       }
 
       function tierColor(tier) {
-        return tier === "premium" ? "var(--yellow)" : tier === "standard" ? "var(--aqua)" : "var(--fg3)";
+        return tier === "premium"
+          ? "var(--yellow)"
+          : tier === "standard"
+            ? "var(--aqua)"
+            : "var(--fg3)";
       }
 
       function tierSelect(name, val) {
         return `<select name="${name}" style="background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:4px 6px;font-family:inherit;font-size:0.85em;width:100%">
-          <option value="free" ${val==="free"?"selected":""}>free</option>
-          <option value="standard" ${val==="standard"?"selected":""}>standard</option>
-          <option value="premium" ${val==="premium"?"selected":""}>premium</option>
+          <option value="free" ${val === "free" ? "selected" : ""}>free</option>
+          <option value="standard" ${val === "standard" ? "selected" : ""}>standard</option>
+          <option value="premium" ${val === "premium" ? "selected" : ""}>premium</option>
         </select>`;
       }
 
       function providerSelect(name, val) {
         return `<select name="${name}" style="background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:4px 6px;font-family:inherit;font-size:0.85em;width:100%">
-          <option value="anthropic" ${val==="anthropic"?"selected":""}>anthropic</option>
-          <option value="mistral" ${val==="mistral"?"selected":""}>mistral</option>
-          <option value="openrouter" ${val==="openrouter"?"selected":""}>openrouter</option>
-          <option value="qwen" ${val==="qwen"?"selected":""}>qwen</option>
-          <option value="glm" ${val==="glm"?"selected":""}>glm</option>
-          <option value="deepseek" ${val==="deepseek"?"selected":""}>deepseek</option>
-          <option value="kimi" ${val==="kimi"?"selected":""}>kimi</option>
-          <option value="ollama" ${val==="ollama"?"selected":""}>ollama (local)</option>
+          <option value="anthropic" ${val === "anthropic" ? "selected" : ""}>anthropic</option>
+          <option value="mistral" ${val === "mistral" ? "selected" : ""}>mistral</option>
+          <option value="openrouter" ${val === "openrouter" ? "selected" : ""}>openrouter</option>
+          <option value="qwen" ${val === "qwen" ? "selected" : ""}>qwen</option>
+          <option value="glm" ${val === "glm" ? "selected" : ""}>glm</option>
+          <option value="deepseek" ${val === "deepseek" ? "selected" : ""}>deepseek</option>
+          <option value="kimi" ${val === "kimi" ? "selected" : ""}>kimi</option>
+          <option value="ollama" ${val === "ollama" ? "selected" : ""}>ollama (local)</option>
         </select>`;
       }
 
@@ -3341,10 +3553,12 @@
           return;
         }
         if (empty) empty.style.display = "none";
-        tbody.innerHTML = _intelLadder.map((rung, i) => `
+        tbody.innerHTML = _intelLadder
+          .map(
+            (rung, i) => `
           <tr style="border-bottom:1px solid var(--bg2)">
-            <td style="padding:5px 8px">${tierSelect("rung-tier-"+i, rung.tier)}</td>
-            <td style="padding:5px 8px">${providerSelect("rung-prov-"+i, rung.provider)}</td>
+            <td style="padding:5px 8px">${tierSelect("rung-tier-" + i, rung.tier)}</td>
+            <td style="padding:5px 8px">${providerSelect("rung-prov-" + i, rung.provider)}</td>
             <td style="padding:5px 8px">
               <input type="text" name="rung-model-${i}" value="${rung.model || ""}"
                 placeholder="model id"
@@ -3363,11 +3577,19 @@
               <button onclick="removeLadderRung(${i})"
                 style="background:none;border:none;color:var(--red);cursor:pointer;font-size:1.1em;line-height:1">×</button>
             </td>
-          </tr>`).join("");
+          </tr>`,
+          )
+          .join("");
       }
 
       function addLadderRung() {
-        _intelLadder.push({ tier: "free", provider: "anthropic", model: "", eval_score: null, benchmarked_at: null });
+        _intelLadder.push({
+          tier: "free",
+          provider: "anthropic",
+          model: "",
+          eval_score: null,
+          benchmarked_at: null,
+        });
         renderLadderTable();
       }
 
@@ -3379,14 +3601,20 @@
 
       function collectLadderFromDOM() {
         return _intelLadder.map((_, i) => ({
-          tier: document.querySelector(`[name="rung-tier-${i}"]`)?.value || "free",
-          provider: document.querySelector(`[name="rung-prov-${i}"]`)?.value || "anthropic",
-          model: (document.querySelector(`[name="rung-model-${i}"]`)?.value || "").trim(),
+          tier:
+            document.querySelector(`[name="rung-tier-${i}"]`)?.value || "free",
+          provider:
+            document.querySelector(`[name="rung-prov-${i}"]`)?.value ||
+            "anthropic",
+          model: (
+            document.querySelector(`[name="rung-model-${i}"]`)?.value || ""
+          ).trim(),
           eval_score: (() => {
             const v = document.querySelector(`[name="rung-eval-${i}"]`)?.value;
             return v !== "" && v != null ? parseFloat(v) : null;
           })(),
-          benchmarked_at: document.querySelector(`[name="rung-date-${i}"]`)?.value || null,
+          benchmarked_at:
+            document.querySelector(`[name="rung-date-${i}"]`)?.value || null,
         }));
       }
 
@@ -3401,18 +3629,22 @@
           return;
         }
         if (empty) empty.style.display = "none";
-        tbody.innerHTML = entries.map(([cap, tier]) => `
+        tbody.innerHTML = entries
+          .map(
+            ([cap, tier]) => `
           <tr style="border-bottom:1px solid var(--bg2)" data-gate="${cap}">
             <td style="padding:5px 8px">
               <input type="text" name="gate-cap-${cap}" value="${cap}"
                 style="width:100%;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:4px 6px;font-family:inherit;font-size:0.85em;box-sizing:border-box" />
             </td>
-            <td style="padding:5px 8px">${tierSelect("gate-tier-"+cap, tier)}</td>
+            <td style="padding:5px 8px">${tierSelect("gate-tier-" + cap, tier)}</td>
             <td style="padding:5px 8px;text-align:center">
               <button onclick="removeGateRow('${cap}')"
                 style="background:none;border:none;color:var(--red);cursor:pointer;font-size:1.1em;line-height:1">×</button>
             </td>
-          </tr>`).join("");
+          </tr>`,
+          )
+          .join("");
       }
 
       function addGateRow() {
@@ -3430,7 +3662,7 @@
       function collectGatesFromDOM() {
         const rows = document.querySelectorAll("#gates-tbody tr[data-gate]");
         const result = {};
-        rows.forEach(row => {
+        rows.forEach((row) => {
           const origKey = row.getAttribute("data-gate");
           const nameInput = row.querySelector(`[name="gate-cap-${origKey}"]`);
           const tierSel = row.querySelector(`[name="gate-tier-${origKey}"]`);
@@ -3448,36 +3680,67 @@
         const gates = collectGatesFromDOM();
         const msgs = [];
 
-        const tiers = new Set(ladder.map(r => r.tier));
+        const tiers = new Set(ladder.map((r) => r.tier));
 
         if (ladder.length === 0) {
-          msgs.push({ ok: null, text: "No ladder rungs — creatures use the default model at all tiers." });
+          msgs.push({
+            ok: null,
+            text: "No ladder rungs — creatures use the default model at all tiers.",
+          });
         } else {
           if (!tiers.has("free")) {
-            msgs.push({ ok: false, text: "No free tier rung — free-tier creatures will use the default model." });
+            msgs.push({
+              ok: false,
+              text: "No free tier rung — free-tier creatures will use the default model.",
+            });
           }
-          ladder.forEach(r => {
-            if (!r.model) msgs.push({ ok: false, text: `${r.tier} rung (${r.provider}) has no model set.` });
-            else if (r.eval_score == null) msgs.push({ ok: null, text: `${r.tier} / ${r.provider} / ${r.model} — no eval score recorded.` });
-            else msgs.push({ ok: true, text: `${r.tier} / ${r.provider} / ${r.model} — eval ${r.eval_score.toFixed(2)}` + (r.benchmarked_at ? ` (${r.benchmarked_at})` : "") });
+          ladder.forEach((r) => {
+            if (!r.model)
+              msgs.push({
+                ok: false,
+                text: `${r.tier} rung (${r.provider}) has no model set.`,
+              });
+            else if (r.eval_score == null)
+              msgs.push({
+                ok: null,
+                text: `${r.tier} / ${r.provider} / ${r.model} — no eval score recorded.`,
+              });
+            else
+              msgs.push({
+                ok: true,
+                text:
+                  `${r.tier} / ${r.provider} / ${r.model} — eval ${r.eval_score.toFixed(2)}` +
+                  (r.benchmarked_at ? ` (${r.benchmarked_at})` : ""),
+              });
           });
         }
 
         Object.entries(gates).forEach(([cap, tier]) => {
           if (!tiers.has(tier) && ladder.length > 0) {
-            msgs.push({ ok: false, text: `Gate "${cap}" requires "${tier}" but no ${tier} rung exists in the ladder.` });
+            msgs.push({
+              ok: false,
+              text: `Gate "${cap}" requires "${tier}" but no ${tier} rung exists in the ladder.`,
+            });
           }
         });
 
         if (msgs.length === 0) {
-          out.innerHTML = '<span style="color:var(--green)">✓ Configuration looks good.</span>';
+          out.innerHTML =
+            '<span style="color:var(--green)">✓ Configuration looks good.</span>';
           return;
         }
-        out.innerHTML = msgs.map(m => {
-          const icon = m.ok === true ? "✓" : m.ok === false ? "⚠" : "·";
-          const color = m.ok === true ? "var(--green)" : m.ok === false ? "var(--yellow)" : "var(--fg3)";
-          return `<div style="color:${color};margin-bottom:4px">${icon} ${m.text}</div>`;
-        }).join("");
+        out.innerHTML = msgs
+          .map((m) => {
+            const icon = m.ok === true ? "✓" : m.ok === false ? "⚠" : "·";
+            const color =
+              m.ok === true
+                ? "var(--green)"
+                : m.ok === false
+                  ? "var(--yellow)"
+                  : "var(--fg3)";
+            return `<div style="color:${color};margin-bottom:4px">${icon} ${m.text}</div>`;
+          })
+          .join("");
       }
 
       async function saveIntelligenceConfig(agentId) {
@@ -3486,7 +3749,9 @@
         statusEl.style.color = "var(--fg3)";
 
         const provider = document.getElementById("intel-provider")?.value;
-        const model = (document.getElementById("intel-model")?.value || "").trim();
+        const model = (
+          document.getElementById("intel-model")?.value || ""
+        ).trim();
         const minTier = document.getElementById("intel-min-tier")?.value;
         const ladder = collectLadderFromDOM();
         const gates = collectGatesFromDOM();
@@ -3497,7 +3762,7 @@
         renderValidation();
 
         // Validate: no rung with empty model
-        const invalid = ladder.find(r => !r.model);
+        const invalid = ladder.find((r) => !r.model);
         if (invalid) {
           statusEl.textContent = "Fix: every rung needs a model ID.";
           statusEl.style.color = "var(--red)";
@@ -3507,18 +3772,21 @@
         try {
           const modelParams = collectSamplingParams();
 
-          const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              llm_provider: provider,
-              model,
-              min_tier: minTier,
-              model_ladder: ladder,
-              capability_gates: gates,
-              model_params: modelParams,
-            }),
-          });
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}`,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                llm_provider: provider,
+                model,
+                min_tier: minTier,
+                model_ladder: ladder,
+                capability_gates: gates,
+                model_params: modelParams,
+              }),
+            },
+          );
           if (res.ok) {
             statusEl.textContent = "Saved.";
             statusEl.style.color = "var(--green)";
@@ -3531,7 +3799,9 @@
               _agentData.capability_gates = gates;
               _agentData.model_params = modelParams;
             }
-            setTimeout(() => { statusEl.textContent = ""; }, 3000);
+            setTimeout(() => {
+              statusEl.textContent = "";
+            }, 3000);
           } else {
             const msg = await res.text();
             statusEl.textContent = "Error: " + msg;
@@ -3558,7 +3828,7 @@
         try {
           const r = await fetch(
             `/api/agents/${agentId}/embeddings/export?format=${encodeURIComponent(format)}`,
-            { credentials: "include" }
+            { credentials: "include" },
           );
           if (!r.ok) {
             const body = await r.text();
@@ -3569,10 +3839,13 @@
             return;
           }
           const text = await r.text();
-          downloadAsFile(text, `abw_export_${agentId}_${format}.jsonl`,
-                         "application/x-ndjson");
+          downloadAsFile(
+            text,
+            `abw_export_${agentId}_${format}.jsonl`,
+            "application/x-ndjson",
+          );
           if (statusEl) {
-            const lines = text.split("\n").filter(l => l.trim()).length;
+            const lines = text.split("\n").filter((l) => l.trim()).length;
             statusEl.textContent =
               `Exported ${lines - 1} episodes (1 header line). ` +
               `Audit row appended to embedding_provenance.`;
@@ -3593,11 +3866,11 @@
         // export as a consented, scoped, logged action.
         const confirmed = window.confirm(
           "Exporting raw embedding vectors:\n\n" +
-          "• Vectors are INVERTIBLE — anyone holding the exported file can " +
-          "recover substantial source content via embedding-inversion attacks.\n\n" +
-          "• Treat the file as if it were the source corpus itself.\n\n" +
-          "• A consent record is logged to embedding_provenance.\n\n" +
-          "Continue?"
+            "• Vectors are INVERTIBLE — anyone holding the exported file can " +
+            "recover substantial source content via embedding-inversion attacks.\n\n" +
+            "• Treat the file as if it were the source corpus itself.\n\n" +
+            "• A consent record is logged to embedding_provenance.\n\n" +
+            "Continue?",
         );
         if (!confirmed) {
           if (statusEl) statusEl.textContent = "Export cancelled.";
@@ -3621,7 +3894,7 @@
                 acknowledged_invertibility:
                   "i_understand_embeddings_are_invertible",
               }),
-            }
+            },
           );
           if (!cr.ok) {
             const body = await cr.text();
@@ -3651,7 +3924,7 @@
             {
               credentials: "include",
               headers: { "X-Export-Consent": token },
-            }
+            },
           );
           if (!r.ok) {
             const body = await r.text();
@@ -3662,10 +3935,13 @@
             return;
           }
           const text = await r.text();
-          downloadAsFile(text, `abw_export_${agentId}_full.jsonl`,
-                         "application/x-ndjson");
+          downloadAsFile(
+            text,
+            `abw_export_${agentId}_full.jsonl`,
+            "application/x-ndjson",
+          );
           if (statusEl) {
-            const lines = text.split("\n").filter(l => l.trim()).length;
+            const lines = text.split("\n").filter((l) => l.trim()).length;
             statusEl.textContent =
               `Exported ${lines - 1} episodes WITH raw vectors. ` +
               `Audit row appended to embedding_provenance. ` +
@@ -3695,11 +3971,18 @@
       async function saveAgentValence(agentId) {
         const affect = document.getElementById("valence-affect").value.trim();
         const traitsRaw = document.getElementById("valence-traits").value;
-        const arousal = parseFloat(document.getElementById("valence-arousal").value);
-        const valenceScore = parseFloat(document.getElementById("valence-score").value);
+        const arousal = parseFloat(
+          document.getElementById("valence-arousal").value,
+        );
+        const valenceScore = parseFloat(
+          document.getElementById("valence-score").value,
+        );
         const statusEl = document.getElementById("valence-status");
 
-        const traits = traitsRaw.split(",").map(t => t.trim()).filter(Boolean);
+        const traits = traitsRaw
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean);
 
         if (!affect) {
           statusEl.textContent = "Primary affect is required.";
@@ -3707,19 +3990,29 @@
           return;
         }
 
-        const valence = { primary_affect: affect, arousal, valence: valenceScore, personality_traits: traits };
+        const valence = {
+          primary_affect: affect,
+          arousal,
+          valence: valenceScore,
+          personality_traits: traits,
+        };
 
         try {
-          const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ valence }),
-          });
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}`,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ valence }),
+            },
+          );
           if (res.ok) {
             statusEl.textContent = "Saved.";
             statusEl.style.color = "var(--green)";
             if (_agentData) _agentData.valence = valence;
-            setTimeout(() => { statusEl.textContent = ""; }, 3000);
+            setTimeout(() => {
+              statusEl.textContent = "";
+            }, 3000);
           } else {
             statusEl.textContent = "Error: " + (await res.text());
             statusEl.style.color = "var(--red)";
@@ -3740,7 +4033,12 @@
           .map((t) => t.trim())
           .filter(Boolean);
 
-        const body = { description: desc, system_prompt: prompt, tags, visibility };
+        const body = {
+          description: desc,
+          system_prompt: prompt,
+          tags,
+          visibility,
+        };
 
         try {
           const res = await fetch(
@@ -4070,8 +4368,6 @@
         div.textContent = str;
         return div.innerHTML;
       }
-
-
 
       async function loadAgentWallet(agentId) {
         const el = document.getElementById("agent-wallet-content");
