@@ -1,31 +1,18 @@
 {
   "forecast_id": "b9577598-d340-4627-a0fc-2cb2f2e2d1d7",
-  "current_version": 2,
-  "predicted_probability": 0.04712572680289144,
-  "inside_view_explanation": "Inside view: model evaluates to 4.7% (p5=3.3%, p95=6.5%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "current_version": 1,
+  "predicted_probability": 0.07228541374206543,
+  "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-06-25 17:53",
-      "probability": 0.05229822173714638,
-      "change_summary": "Initial: 5.2% base=2%, 6 drivers, 0 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-06-25 17:53",
-      "probability": 0.04712572680289144,
-      "change_summary": "4.7% (-1pp), 6 drivers"
+      "timestamp": "2026-07-07 23:55",
+      "probability": 0.07228541374206543,
+      "change_summary": "Initial: 7.2% base=2%, 6 drivers, 4 evidence"
     }
   ],
-  "sim_results": {
-    "mean": 0.04712572680289144,
-    "median": 0.046176972530829086,
-    "p5": 0.03277050443211884,
-    "p95": 0.06450095951283376,
-    "std_dev": 0.00967914518436589,
-    "iterations": 10000
-  },
+  "sim_results": null,
   "base_rate": {
     "reference_class": "FIFA World Cup winners 1930–2022",
     "historical_frequency": 0.0208,
@@ -33,7 +20,94 @@
     "source": "FIFA tournament archive — 22 prior World Cups",
     "reasoning": "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via the six factor-derived drivers."
   },
-  "evidence": [],
+  "evidence": [
+    {
+      "id": "football_institution_agent_0",
+      "source": "Agent: football_institution_agent",
+      "summary": "Based on the search results, I have enough data to compile Belgium's institutional capacity profile. Let me synthesize the findings:\n\n---\n\n## BELGIUM — FACTOR X2 (INSTITUTIONAL CAPACITY)\n\n**[PENETRATION]** FIFA-registered players (2023): Over 500,000 registered members across RBFA's two regional federations (source: Grokipedia citing RBFA 2023 data). Population: 11.74 million (2024). **Penetration rate: ~4,260 per 100k inhabitants** — well above the European median (~2,800/100k) and comparable to the Netherlands, France tier.\n\n**[LEAGUE REVENUE]** Belgian Pro League total revenue: **€381.5 million** (2021/22 season, Deloitte Pro League Report 2023). Log₁₀(381,500,000) ≈ **8.58**. Top clubs: Club Brugge and Anderlecht each generated ~€68M in operating revenue (2023/24), with Anderlecht reaching €105.7M including player sales. This places Belgium's top flight in the mid-tier European category — ahead of Portugal's smaller clubs, behind the Eredivisie aggregate, and far below the Big 5 leagues.\n\n**[CONFEDERATION]** UEFA member; **confederation coefficient: 1.00** (highest globally). Belgium benefits from the strongest club-competition ecosystem (Champions League, Europa League, Conference League) and the deepest talent pool across 55 member nations. Belgian clubs regularly compete in European group stages, though rarely advance deep (Club Brugge occasional Round of 16).\n\n**[INSTITUTIONAL SIGNAL]** Belgium's **Golden Generation infrastructure legacy** (2010–2022) remains intact: the RBFA technical centre in Tubize, youth academy investment at Anderlecht/Genk/Brugge, and a robust domestic pyramid with 4,000+ affiliated clubs. However, the league's financial scale limits retention of top talent — most elite players migrate to Big 5 leagues by age 21–23. The RBFA's HatTrick-funded grassroots programs (e.g., Nobody Offside for disability inclusion) signal sustained institutional commitment beyond the senior national team.\n\n**[MULTIPLIER]** Suggested p50: **1.15** (p5: 1.00, p95: 1.35) — Belgium's player penetration and UEFA membership elevate X2 above the field median, but the modest domestic league revenue (relative to economic scale) and post-Golden Generation transition constrain the upper bound; institutional capacity is strong but not exceptional for a wealthy UEFA nation.",
+      "relevance": 0.5,
+      "date": "2026-06-25",
+      "key_findings": [
+        "[PENETRATION]** FIFA-registered players (2023): Over 500,000 registered members across RBFA's two regional federations (source: Grokipedia citing RBFA 2023 data). Population: 11.74 million (2024). **Penetration rate: ~4,260 per 100k inhabitants** — well above the European median (~2,800/100k) and comparable to the Netherlands, France tier.",
+        "[LEAGUE REVENUE]** Belgian Pro League total revenue: **€381.5 million** (2021/22 season, Deloitte Pro League Report 2023). Log₁₀(381,500,000) ≈ **8.58**. Top clubs: Club Brugge and Anderlecht each generated ~€68M in operating revenue (2023/24), with Anderlecht reaching €105.7M including player sales. This places Belgium's top flight in the mid-tier European category — ahead of Portugal's smaller clubs, behind the Eredivisie aggregate, and far below the Big 5 leagues.",
+        "[CONFEDERATION]** UEFA member; **confederation coefficient: 1.00** (highest globally). Belgium benefits from the strongest club-competition ecosystem (Champions League, Europa League, Conference League) and the deepest talent pool across 55 member nations. Belgian clubs regularly compete in European group stages, though rarely advance deep (Club Brugge occasional Round of 16).",
+        "[INSTITUTIONAL SIGNAL]** Belgium's **Golden Generation infrastructure legacy** (2010–2022) remains intact: the RBFA technical centre in Tubize, youth academy investment at Anderlecht/Genk/Brugge, and a robust domestic pyramid with 4,000+ affiliated clubs. However, the league's financial scale limits retention of top talent — most elite players migrate to Big 5 leagues by age 21–23. The RBFA's HatTrick-funded grassroots programs (e.g., Nobody Offside for disability inclusion) signal sustained institutional commitment beyond the senior national team.",
+        "[MULTIPLIER]** Suggested p50: **1.15** (p5: 1.00, p95: 1.35) — Belgium's player penetration and UEFA membership elevate X2 above the field median, but the modest domestic league revenue (relative to economic scale) and post-Golden Generation transition constrain the upper bound; institutional capacity is strong but not exceptional for a wealthy UEFA nation."
+      ]
+    },
+    {
+      "id": "fixture_context_agent_0",
+      "source": "Agent: fixture_context_agent",
+      "summary": "# BELGIUM — FIXTURE CONTEXT ANALYSIS (2026 FIFA World Cup Group G)\n\n## FIXTURE SCHEDULE & VENUES\n\nBelgium's Group G fixtures at the 2026 World Cup:\n\n1. **June 15, 2026**: Belgium 1-1 Egypt — **Lumen Field, Seattle, WA**\n2. **June 21, 2026**: Belgium 0-0 Iran — **SoFi Stadium, Los Angeles, CA** \n3. **June 27, 2026**: New Zealand vs Belgium — **BC Place, Vancouver, BC**\n\nAll venues are on the North American West Coast (Pacific time zone), creating a compact travel footprint.\n\n---\n\n## FACTOR X6 FINDINGS\n\n### [HOST]\nBelgium is **NOT a host nation** (host_status = 0). The 2026 World Cup is co-hosted by USA/Canada/Mexico. Belgium plays as a visiting European team with no home advantage. However, Group G venues are all West Coast locations (Seattle, LA, Vancouver) — a relatively compact geographic cluster reducing intra-group travel burden compared to teams crossing multiple time zones or playing in Mexico City.\n\n### [CLIMATE]\n**Belgium home climate baseline**: Brussels averages 17-24°C in summer with 72-77% relative humidity (temperate maritime climate).\n\n**Venue climates (mid-June)**:\n- **Seattle (Lumen Field)**: 70-77°F (21-25°C), low humidity (~50-60%), dry Pacific Northwest summer\n- **Los Angeles (SoFi Stadium)**: 79°F highs, 61°F lows (26°C/16°C), Mediterranean dry heat, elevation 52m (172 ft)\n- **Vancouver (BC Place)**: 66-72°F (19-22°C), moderate humidity, coastal temperate\n\n**Climate delta assessment**: Belgium's squad (predominantly based in Western Europe leagues) faces **minimal climate disadvantage**. Seattle and Vancouver conditions closely match European summer norms. Los Angeles is warmer but not extreme (no Gulf-state heat stress). Estimated climate_delta ≈ **0.10** (slight warming in LA, negligible elsewhere). This is a **neutral-to-favorable** climate draw for Belgium.\n\n### [REST DAYS]\nBelgium's rest pattern:\n- **Match 1 → Match 2**: June 15 → June 21 = **6 rest days**\n- **Match 2 → Match 3**: June 21 → June 27 = **6 rest days**\n\nFIFA medical research shows optimal recovery occurs at 3-5 rest days; beyond 5 days offers no additional performance gain. Belgium's 6-day intervals are **optimal** — no fixture congestion penalty, full physiological recovery between matches. Normalised rest_days score ≈ **1.0** (maximum).\n\n### [ALTITUDE]\n**Venue elevations**:\n- Lumen Field (Seattle): ~50m above sea level\n- SoFi Stadium (Los Angeles): 52m (172 ft)\n- BC Place (Vancouver): ~10m (coastal)\n\nAll three venues are **sea-level stadiums**. Belgium's training bases (Belgium, England, France, Germany, Italy leagues) are predominantly <200m elevation. Altitude_delta ≈ **0.0** — no altitude stress. This contrasts sharply with teams playing in Mexico City (2240m), where visiting low-altitude teams lose 5-8% xG creation in the opening 30 minutes.\n\n### [OPPONENT TRAVEL BURDEN]\n**Egypt**: Travels only **238 miles total** in the group stage (shortest travel of any team in WC 2026). Base camp in Spokane, WA (45-minute flight to Seattle). Egypt has a **significant logistical advantage** over Belgium.\n\n**Iran**: Playing all matches on West Coast (Seattle, LA, Vancouver). Moderate travel burden, similar to Belgium.\n\n**New Zealand**: Long-haul from Oceania but benefits from West Coast cluster. Similar travel burden to Belgium once in North America.\n\n**Belgium's relative position**: Belgium faces the **most logistically efficient opponent (Egypt)** in Match 1, reducing any travel-burden advantage Belgium might claim. Iran and New Zealand are neutral comparisons.\n\n---\n\n## [MULTIPLIER] \n\n**Suggested p50: 0.95 (p5: 0.85, p95: 1.10)**\n\n**Rationale**: Belgium faces **no host advantage** (most significant X6 driver), plays in **climate-neutral conditions** (West Coast temperate matches European norms), enjoys **optimal rest intervals** (6 days between matches), and competes at **sea-level venues** (no altitude penalty). However, Belgium's **opponent Egypt holds a travel-efficiency edge** (238-mile total travel vs Belgium's transatlantic journey + West Coast circuit), and Belgium lacks any exogenous tailwind. The 0.95 multiplier reflects a **marginally unfavorable** exogenous context — not penalizing, but offering no systematic advantage. The wide confidence interval (0.85-1.10) reflects uncertainty in how transatlantic travel fatigue compounds over three matches and whether Belgium's European-based squad adapts quickly to Pacific time zones.",
+      "relevance": 0.5,
+      "date": "2026-06-25",
+      "key_findings": [
+        "1. **June 15, 2026**: Belgium 1-1 Egypt — **Lumen Field, Seattle, WA**",
+        "2. **June 21, 2026**: Belgium 0-0 Iran — **SoFi Stadium, Los Angeles, CA**",
+        "3. **June 27, 2026**: New Zealand vs Belgium — **BC Place, Vancouver, BC**",
+        "Belgium home climate baseline**: Brussels averages 17-24°C in summer with 72-77% relative humidity (temperate maritime climate).",
+        "Venue climates (mid-June)**:",
+        "**Seattle (Lumen Field)**: 70-77°F (21-25°C), low humidity (~50-60%), dry Pacific Northwest summer",
+        "**Los Angeles (SoFi Stadium)**: 79°F highs, 61°F lows (26°C/16°C), Mediterranean dry heat, elevation 52m (172 ft)",
+        "**Vancouver (BC Place)**: 66-72°F (19-22°C), moderate humidity, coastal temperate",
+        "Climate delta assessment**: Belgium's squad (predominantly based in Western Europe leagues) faces **minimal climate disadvantage**. Seattle and Vancouver conditions closely match European summer norms. Los Angeles is warmer but not extreme (no Gulf-state heat stress). Estimated climate_delta ≈ **0.10** (slight warming in LA, negligible elsewhere). This is a **neutral-to-favorable** climate draw for Belgium.",
+        "**Match 1 → Match 2**: June 15 → June 21 = **6 rest days**",
+        "**Match 2 → Match 3**: June 21 → June 27 = **6 rest days**",
+        "Venue elevations**:",
+        "Lumen Field (Seattle): ~50m above sea level",
+        "SoFi Stadium (Los Angeles): 52m (172 ft)",
+        "BC Place (Vancouver): ~10m (coastal)"
+      ]
+    },
+    {
+      "id": "macro_data_agent_0",
+      "source": "Agent: macro_data_agent",
+      "summary": "# BELGIUM (BEL) — X1 SOCIOECONOMIC CAPITAL INDICATORS\n\n## CORE INDICATORS (2024–2025 LATEST AVAILABLE)\n\n**[INDICATOR]** GDP per capita (2024, IMF/World Bank estimates): $61,000 nominal USD; log10 ≈ 4.785\n- Source: Statista/IMF projections for 2024; CEIC reports real GDP per capita €44,407 (2024)\n- Nominal conversion at ~$1.37/EUR yields ~$60,800–$61,000 range\n\n**[INDICATOR]** Population (2025, Statbel official): 11.826 million; log10 ≈ 1.073\n- Source: Belgian Federal Statistics Office (Statbel) — 11,825,551 legal inhabitants as of 1 January 2025\n- Growth rate: +0.52% YoY (+61,901 persons)\n\n**[INDICATOR]** HDI (2023, UNDP Human Development Report 2024): 0.942–0.951 (very high human development); logit ≈ 2.81–2.95\n- Source: Multiple references cite Belgium national HDI 0.951 (2023 UNDP data); provincial data shows Antwerp at 0.961\n- Using conservative 0.942 estimate: logit = log(0.942 / 0.058) ≈ 2.79\n- Using 0.951 estimate: logit = log(0.951 / 0.049) ≈ 2.95\n\n**[DATA AGE]** All indicators current to 2024–2025 reporting cycles; HDI reflects 2023 UNDP release (most recent internationally comparable)\n\n---\n\n## BASELINE COMPARISON\n\n**[BASELINE]** World Cup 2026 field median benchmarks (32-team tournament):\n- GDP per capita log ≈ 4.05 (median ~$11,200)\n- Population log ≈ 1.60 (median ~40M)\n- HDI logit ≈ 1.50 (median ~0.818)\n\n**[TRANSFORM]** Belgium composite X1 factor calculation:\n- Weighted input: (0.4 × 4.785) + (0.3 × 1.073) + (0.3 × 2.87) = 1.914 + 0.322 + 0.861 = 3.097\n- Standardized: (3.097 − 2.6) / 0.7 ≈ **+0.71 σ** above WC field median\n- Belgium ranks in top decile for GDP/capita (9th-highest globally), bottom quartile for population (small advanced economy), top 5% for HDI\n\n---\n\n## MULTIPLIER OUTPUT\n\n**[MULTIPLIER]** Suggested p50: **1.18** (p5: 1.05, p95: 1.35) — Belgium's GDP per capita ($61k, 5.4× field median) and HDI (0.942–0.951, top-15 globally) place it in the elite socioeconomic tier; small population (11.8M, 29th-percentile) moderates but does not offset the capital-richness premium for tournament performance models",
+      "relevance": 0.5,
+      "date": "2026-06-25",
+      "key_findings": [
+        "[INDICATOR]** GDP per capita (2024, IMF/World Bank estimates): $61,000 nominal USD; log10 ≈ 4.785",
+        "Source: Statista/IMF projections for 2024; CEIC reports real GDP per capita €44,407 (2024)",
+        "Nominal conversion at ~$1.37/EUR yields ~$60,800–$61,000 range",
+        "[INDICATOR]** Population (2025, Statbel official): 11.826 million; log10 ≈ 1.073",
+        "Source: Belgian Federal Statistics Office (Statbel) — 11,825,551 legal inhabitants as of 1 January 2025",
+        "Growth rate: +0.52% YoY (+61,901 persons)",
+        "[INDICATOR]** HDI (2023, UNDP Human Development Report 2024): 0.942–0.951 (very high human development); logit ≈ 2.81–2.95",
+        "Source: Multiple references cite Belgium national HDI 0.951 (2023 UNDP data); provincial data shows Antwerp at 0.961",
+        "Using conservative 0.942 estimate: logit = log(0.942 / 0.058) ≈ 2.79",
+        "Using 0.951 estimate: logit = log(0.951 / 0.049) ≈ 2.95",
+        "[DATA AGE]** All indicators current to 2024–2025 reporting cycles; HDI reflects 2023 UNDP release (most recent internationally comparable)",
+        "[BASELINE]** World Cup 2026 field median benchmarks (32-team tournament):",
+        "GDP per capita log ≈ 4.05 (median ~$11,200)",
+        "Population log ≈ 1.60 (median ~40M)",
+        "HDI logit ≈ 1.50 (median ~0.818)"
+      ]
+    },
+    {
+      "id": "football_analyst_0",
+      "source": "Agent: football_analyst",
+      "summary": "# BELGIUM NATIONAL TEAM — COMPREHENSIVE ANALYSIS (June 2026)\n\n## ELO RATING & GLOBAL STANDING\n\n[BASE RATE] Belgium FIFA ranking: 10th in the world (June 2026). Historical Elo typically ranges 1850-1900 for top-10 European nations at major tournaments.\n\n[ELO] Belgium estimated Elo: ~1870-1880 based on FIFA rank #10 and recent performance trajectory. This places them approximately 1.0-1.2 standard deviations above the World Cup field mean (assuming tournament mean ~1700, sd 300). Elo trend over last 12 months: relatively flat to slight decline (-20 to -30 points) as the \"Golden Generation\" ages out.\n\n## RECENT FORM (LAST 5 MATCHES)\n\n[MATCH STATS] Belgium's last 5 results:\n1. **Belgium 1-1 Egypt** (WC2026, June 15) — Conceded early, equalized via OG, failed to break down organized defense\n2. **Belgium 0-0 Iran** (WC2026, June 21) — Reduced to 10 men in 2nd half, Iranian GK Beiranvand made 7 saves, goalless stalemate\n3. **Belgium 5-0 Tunisia** (Friendly, June 6) — Dominant pre-tournament warm-up, Trossard + Doku combination lethal\n4. **Belgium vs Croatia** (Friendly, June 2) — Result unclear from search, but part of pre-WC preparation\n5. **Pre-tournament unbeaten run: 13 matches (9W-4D-0L)** heading into World Cup\n\n**Current World Cup form: 0W-2D-0L (2 points from 6 possible in Group G)**\n\n[FORM ANALYSIS] Belgium entered the tournament on a 13-match unbeaten streak but have struggled to convert dominance into goals at the World Cup. The 5-0 Tunisia friendly showed attacking fluidity, but competitive matches reveal defensive fragility (early concession vs Egypt) and lack of cutting edge against organized blocks (0-0 vs Iran despite numerical advantage for 45+ minutes).\n\n## KEY PLAYER AVAILABILITY & INJURY CONCERNS\n\n[INJURY IMPACT] **Romelu Lukaku** — Belgium's all-time leading scorer is NOT match-fit:\n- Limited to **7 substitute appearances** for Napoli across entire 2025/26 season\n- Logged ~60 minutes of competitive football all season, scoring once\n- Recovering from hamstring injury for 2+ months before World Cup\n- Coach Rudi Garcia confirmed Lukaku \"not a starter\" at WC2026\n- **Estimated impact: -0.4 to -0.5 xG per 90 minutes** when Lukaku unavailable/unfit vs prime form\n\n[SQUAD DEPTH] **Kevin De Bruyne** (age 35) — Still captain and creative fulcrum, but aging:\n- Remains Belgium's primary chance creator\n- No world-class backup for his playmaking role\n- Over-reliance on De Bruyne to unlock organized defenses\n\n**Thibaut Courtois** — Goalkeeper situation resolved (he's in squad after previous absences), but defensive line lacks experience following Vertonghen/Alderweireld retirements.\n\n**Available key players:**\n- Jeremy Doku (Man City) — €75M market value, most expensive Belgian player\n- Amadou Onana (Aston Villa) — €45M, midfield destroyer\n- Leandro Trossard (Arsenal) — Intelligent movement, scored vs Tunisia\n- Youri Tielemans (Aston Villa) — Captain, double-pivot with Onana\n\n## MARKET VALUE DISTRIBUTION\n\n[X4 SIGNAL] **Total squad market value: €547.5 million** (Transfermarkt, June 2026)\n- Ranks **10th among 48 World Cup squads**\n- Group G total: €745.58M, heavily dependent on Belgium's value\n\n**Market value concentration:**\n- **Top player (Doku): €75M = 13.7% of squad value**\n- **Top 5 players estimated: ~€250M = 45.6% of squad value** (Doku €75M, Onana €45M, Tielemans €40M+, Trossard €35M+, De Bruyne €30M+ at age 35)\n- **Big-5 league representation: ~85-89%** (Premier League heavy: Man City, Arsenal, Aston Villa core)\n\n**Squad age profile:** Average age ~28.5 years — at peak-of-curve but with several 33+ veterans (De Bruyne 35, Witsel 37, Lukaku 33, Courtois 34). This is the \"Golden Generation's\" final tournament.\n\n## TACTICAL PROFILE & EFFICIENCY METRICS\n\n[X5 SIGNAL] **Tactical characteristics:**\n- **Set-piece efficiency:** Moderate — not a primary strength\n- **Pressing intensity:** Variable — capable of high press with Doku/Trossard pace, but often sit deeper with aging midfield\n- **Shot conversion:** Struggling at WC2026 — created chances vs Iran (forcing 7 saves) but 0 goals from open play in 2 matches\n- **Defensive duels:** Vulnerable to early concessions (Egypt goal at 19') and counter-attacks\n- **Possession-based:** Prefer to control tempo through De Bruyne, but lack Plan B when opponents sit deep\n\n**World Cup 2026 attacking output:**\n- 1 goal in 180 minutes (own goal vs Egypt)\n- 0 goals from open play\n- xG estimated ~1.8-2.0 across 2 matches (underperforming expected output)\n\n## FACTOR MODEL INTEGRATION (X3/X4/X5)\n\n[X3 SIGNAL] **Dynamic Performance Signal:**\n- Elo ~1875: (1875-1700)/300 = 0.58 std above WC mean\n- Elo trend: -25 over last 12 months (slight decline)\n- Goal difference (pre-WC friendlies): +5 in last 2 (5-0 Tunisia, unclear Croatia result)\n- xG delta (WC2026): Estimated -0.5 to -0.8 per game (underperforming xG)\n- **X3 composite: Slightly above tournament median, but negative momentum at WC**\n\n[X4 SIGNAL] **Squad Quality Index:**\n- Market value: €547.5M (10th/48 teams)\n- Market value concentration: 45.6% in top-5 players (moderate concentration risk)\n- Big-5 league %: 85-89% (strong)\n- Squad depth: Thin at striker (Lukaku unfit, limited alternatives)\n- Avg age: 28.5 (peak, but aging core)\n- **X4 composite: Above-average squad quality, but depth concerns at key positions**\n\n[X5 SIGNAL] **Tactical Efficiency:**\n- Shot conversion (WC2026): Poor — 0 open-play goals in 2 matches\n- Defensive organization: Vulnerable to early goals and set pieces\n- Pressing intensity: Moderate — not consistently high-press\n- Set-piece efficiency: Average\n- **X5 composite: Below expectations at tournament — tactical execution lagging squad quality**\n\n## KEY FINDINGS SUMMARY\n\n[BASE RATE] Belgium historical WC performance: 3rd place 2018, QF 2022. Top-10 European nations at WC win ~55-60% of group-stage matches.\n\n[MATCH STATS] Current WC2026 form: 0W-2D-0L, 1 goal scored (OG), 1 conceded. Pre-tournament: 13-match unbeaten run (9W-4D), including 5-0 Tunisia.\n\n[ELO] Estimated Elo ~1875 (FIFA rank #10), placing Belgium 0.6 std above WC field mean. Elo trend: -25 over last 12 months (declining).\n\n[INJURY IMPACT] Lukaku unfit — only 7 sub appearances all season, not starting at WC. Estimated -0.4 to -0.5 xG/90 impact. De Bruyne (35) over-relied upon with no elite backup.\n\n[SQUAD QUALITY] Market value €547.5M (10th/48), 46% concentrated in top-5 players. Big-5 league representation 85-89%. Avg age 28.5 — \"Golden Generation\" final tournament.\n\n[TACTICAL EFFICIENCY] WC2026 underperformance: 0 open-play goals in 180 minutes despite chances created. Vulnerable to organized defenses and early concessions. xG underperformance estimated -0.5 to -0.8/game.\n\n[MULTIPLIER] Suggested p50: 0.85 (p5: 0.65, p95: 1.10) — Lukaku absence, WC goal-scoring struggles, and aging core offset Elo/squad-quality advantages; Belgium underperforming tournament expectations by ~15%.\n\n---\n\n**Relevance Score: 0.95** — Comprehensive live data on Elo proxy (FIFA rank), recent form, injuries, market value, and WC2026 performance.\n\n**Confidence: 0.80** — High confidence in market value, injury status, and WC results; moderate confidence in Elo estimate (no direct ClubElo access, using FIFA rank proxy).",
+      "relevance": 0.5,
+      "date": "2026-06-25",
+      "key_findings": [
+        "1. **Belgium 1-1 Egypt** (WC2026, June 15) — Conceded early, equalized via OG, failed to break down organized defense",
+        "2. **Belgium 0-0 Iran** (WC2026, June 21) — Reduced to 10 men in 2nd half, Iranian GK Beiranvand made 7 saves, goalless stalemate",
+        "3. **Belgium 5-0 Tunisia** (Friendly, June 6) — Dominant pre-tournament warm-up, Trossard + Doku combination lethal",
+        "4. **Belgium vs Croatia** (Friendly, June 2) — Result unclear from search, but part of pre-WC preparation",
+        "5. **Pre-tournament unbeaten run: 13 matches (9W-4D-0L)** heading into World Cup",
+        "Current World Cup form: 0W-2D-0L (2 points from 6 possible in Group G)**",
+        "Limited to **7 substitute appearances** for Napoli across entire 2025/26 season",
+        "Logged ~60 minutes of competitive football all season, scoring once",
+        "Recovering from hamstring injury for 2+ months before World Cup",
+        "Coach Rudi Garcia confirmed Lukaku \"not a starter\" at WC2026",
+        "**Estimated impact: -0.4 to -0.5 xG per 90 minutes** when Lukaku unavailable/unfit vs prime form",
+        "Remains Belgium's primary chance creator",
+        "No world-class backup for his playmaking role",
+        "Over-reliance on De Bruyne to unlock organized defenses",
+        "Thibaut Courtois** — Goalkeeper situation resolved (he's in squad after previous absences), but defensive line lacks experience following Vertonghen/Alderweireld retirements."
+      ]
+    }
+  ],
   "agents": [
     {
       "name": "macro_data_agent",
@@ -79,13 +153,22 @@
     "event_id": "30615",
     "market_id": "558946",
     "question": "Will Belgium win the 2026 FIFA World Cup?",
-    "market_price": 0.0165,
-    "volume_24h": 790777.8555760002,
-    "liquidity": null,
-    "confidence": "High",
-    "price_change_1w": null,
+    "market_price": 0.0245,
+    "volume_24h": 8262529.443084988,
+    "liquidity": 3668048.68293,
+    "confidence": "Very High",
+    "price_change_1w": 0.013,
     "url": "https://polymarket.com/event/world-cup-winner",
-    "price_history": []
+    "price_history": [
+      {
+        "t": 1783468495,
+        "p": 0.0245
+      },
+      {
+        "t": 1783468502,
+        "p": 0.0245
+      }
+    ]
   },
   "workspace_id": "581f2237-9555-4498-867c-91b97e04c250"
 }
