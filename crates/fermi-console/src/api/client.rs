@@ -1769,6 +1769,15 @@ impl ApiClient {
             .await
     }
 
+    /// Delete a team. Only the team OWNER can delete (server enforces
+    /// via `WHERE owner_id = $1`). Cascades to team_members via FK.
+    /// Object shares that target this team are not automatically
+    /// revoked — they become orphan rows the visibility model
+    /// gracefully ignores (no team_members row → no access).
+    pub async fn delete_team(&self, team_id: &str) -> Result<(), ApiError> {
+        self.delete(&format!("/api/teams/{}", team_id)).await
+    }
+
     /// Change a member's role (owner/admin only).
     pub async fn update_team_member_role(
         &self,

@@ -496,6 +496,13 @@ struct FermiConsole {
     team_invites_loading: bool,
     /// Invite IDs with a revoke in flight; disables the button.
     team_invite_revoke_in_flight: std::collections::HashSet<String>,
+    /// Team ID pending a delete-confirmation click. Two-step confirm
+    /// to protect against fat-fingering — first click sets this to
+    /// Some(team_id) and the button flips to a red "Really delete?"
+    /// state; second click fires the DELETE. Cleared on team switch
+    /// so a stale confirmation can't leak to a different team.
+    team_delete_confirm_id: Option<String>,
+    team_delete_loading: bool,
     /// "Create team" modal state.
     team_create_showing: bool,
     team_create_name_input: Entity<TextInput>,
@@ -673,6 +680,8 @@ impl FermiConsole {
             team_invites: Vec::new(),
             team_invites_loading: false,
             team_invite_revoke_in_flight: std::collections::HashSet::new(),
+            team_delete_confirm_id: None,
+            team_delete_loading: false,
             team_create_showing: false,
             team_create_name_input,
             team_create_slug_input,
@@ -1140,6 +1149,10 @@ impl FermiConsole {
         self.team_invites.clear();
         self.team_invite_showing = false;
         self.team_action_error = None;
+        // Drop any pending delete-confirmation from the previous team
+        // so a stale confirm can't accidentally delete the newly
+        // selected team on the next click.
+        self.team_delete_confirm_id = None;
         self.fetch_team_detail(&team_id, cx);
         cx.notify();
     }
@@ -1275,6 +1288,87 @@ impl FermiConsole {
                         this.fetch_team_detail(&team_id, cx);
                     }
                     Err(e) => this.team_action_error = Some(e.to_string()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Two-step team deletion. First call arms the confirmation
+    /// (button flips to red "Really delete?"); second call actually
+    /// fires the DELETE. This is a destructive irreversible action —
+    /// once the team is gone all object_shares/invites that target it
+    /// become orphan rows (correctly denied by the visibility model,
+    /// but not automatically revoked), so a single misclick shouldn't
+    /// wipe out group access.
+    ///
+    /// Only the team OWNER can delete — the server enforces via
+    /// `WHERE id = $1 AND owner_id = $2`. Non-owners get 403 which
+    /// we surface via team_action_error.
+    fn delete_selected_team(&mut self, cx: &mut Context<Self>) {
+        let Some(team_id) = self.selected_team_id.clone() else {
+            return;
+        };
+        // Two-step: arm on first click, fire on second.
+        if self.team_delete_confirm_id.as_deref() != Some(team_id.as_str()) {
+            self.team_delete_confirm_id = Some(team_id);
+            self.team_action_error = None;
+            cx.notify();
+            // Auto-cancel the arm after 5 s so a stale red button
+            // can't sit there indefinitely and get clicked absent-
+            // mindedly later.
+            cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(5))
+                    .await;
+                this.update(cx, |this, cx| {
+                    if !this.team_delete_loading {
+                        this.team_delete_confirm_id = None;
+                        cx.notify();
+                    }
+                })
+                .ok();
+            })
+            .detach();
+            return;
+        }
+        // Second click: fire.
+        self.team_delete_loading = true;
+        self.team_action_error = None;
+        cx.notify();
+        let api = self.api.clone();
+        let team_name = self
+            .selected_team_detail
+            .as_ref()
+            .map(|d| d.team.name.clone())
+            .unwrap_or_else(|| "team".to_string());
+        cx.spawn(async move |this, cx| {
+            let result = api.delete_team(&team_id).await;
+            this.update(cx, |this, cx| {
+                this.team_delete_loading = false;
+                this.team_delete_confirm_id = None;
+                match result {
+                    Ok(()) => {
+                        this.show_toast(
+                            format!("Deleted team “{}”", team_name),
+                            "✓",
+                            theme::GREEN,
+                            cx,
+                        );
+                        // Drop the selection, clear detail state,
+                        // then refetch the team list. fetch_teams
+                        // will auto-select the next available team
+                        // (or leave selection empty on last delete).
+                        this.selected_team_id = None;
+                        this.selected_team_detail = None;
+                        this.team_invites.clear();
+                        this.fetch_teams(cx);
+                    }
+                    Err(e) => {
+                        this.team_action_error = Some(e.to_string());
+                    }
                 }
                 cx.notify();
             })
@@ -6953,6 +7047,94 @@ impl FermiConsole {
             )
             // ── Pending / recent invites ───────────────────────────
             .child(self.render_team_invites_section(cx))
+            // ── Danger zone ─────────────────────────────────
+            //
+            // Delete-team is destructive + irreversible; server-side
+            // only the OWNER can call it. Rendered at the very bottom
+            // of the detail pane (not the header) with a two-step
+            // confirmation flow so a stray click can't nuke a team.
+            .child(self.render_team_danger_zone(cx))
+    }
+
+    /// Danger zone at the bottom of the team detail pane: a two-step
+    /// delete button. First click arms it (red "Really delete?"),
+    /// second click fires the DELETE. The arm auto-cancels after 5 s.
+    fn render_team_danger_zone(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(tid) = self.selected_team_id.clone() else {
+            return div().into_any_element();
+        };
+        let armed = self.team_delete_confirm_id.as_deref() == Some(tid.as_str());
+        let loading = self.team_delete_loading;
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .mt(px(20.0))
+            .pt(px(14.0))
+            .border_t_1()
+            .border_color(theme::fg_faint())
+            .child(
+                div()
+                    .text_size(px(10.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme::red())
+                    .child("Danger zone"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .child(
+                        div()
+                            .id("team-delete")
+                            .px(px(12.0))
+                            .py(px(5.0))
+                            .rounded(px(4.0))
+                            .text_size(px(11.0))
+                            .border_1()
+                            .cursor_pointer()
+                            .when(!armed && !loading, |el| {
+                                el.border_color(theme::red())
+                                    .text_color(theme::red())
+                                    .bg(theme::bg())
+                                    .hover(|s| s.bg(theme::bg_hover()))
+                            })
+                            .when(armed && !loading, |el| {
+                                el.border_color(theme::red())
+                                    .bg(theme::red())
+                                    .text_color(rgb(theme::BG))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .hover(|s| s.opacity(0.85))
+                            })
+                            .when(loading, |el| {
+                                el.border_color(theme::fg_faint())
+                                    .text_color(theme::fg_faint())
+                            })
+                            .on_click(cx.listener(|this, _, _w, cx| {
+                                this.delete_selected_team(cx);
+                            }))
+                            .child(if loading {
+                                "Deleting…".to_string()
+                            } else if armed {
+                                "Really delete? Click again".to_string()
+                            } else {
+                                "Delete team".to_string()
+                            }),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_faint())
+                            .child(if armed {
+                                "This is irreversible — members lose access, shares become orphaned."
+                            } else {
+                                "Only the team owner can delete."
+                            }),
+                    ),
+            )
+            .into_any_element()
     }
 
     /// Pending / recent invite list for the selected team. Rendered
