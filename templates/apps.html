@@ -7,78 +7,204 @@
     <link rel="stylesheet" href="/static/css/variables.css" />
     <link rel="stylesheet" href="/static/css/common.css" />
     <style>
-      body { padding: 20px; line-height: 1.5; }
-      .container { max-width: 1100px; margin: 0 auto; }
+      body {
+        padding: 20px;
+        line-height: 1.5;
+      }
+      .container {
+        max-width: 1100px;
+        margin: 0 auto;
+      }
       .page-header {
-        display: flex; align-items: center; justify-content: space-between;
-        margin-bottom: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--bg2);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 20px;
+        padding-bottom: 14px;
+        border-bottom: 1px solid var(--bg2);
       }
-      .page-title { font-size: 1.2em; font-weight: 400; color: var(--fg0); text-transform: uppercase; letter-spacing: 0.04em; }
+      .page-title {
+        font-size: 1.2em;
+        font-weight: 400;
+        color: var(--fg0);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
       .new-btn {
-        padding: 7px 16px; background: var(--yellow); color: var(--bg0);
-        border: none; border-radius: 3px; cursor: pointer; font-family: inherit;
-        font-size: 0.82em; font-weight: 600; text-decoration: none; letter-spacing: 0.02em;
+        padding: 7px 16px;
+        background: var(--yellow);
+        color: var(--bg0);
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 0.82em;
+        font-weight: 600;
+        text-decoration: none;
+        letter-spacing: 0.02em;
       }
-      .new-btn:hover { opacity: 0.85; }
-      .filter-bar { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+      .new-btn:hover {
+        opacity: 0.85;
+      }
+      .filter-bar {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+        flex-wrap: wrap;
+      }
       .filter-chip {
-        padding: 4px 12px; background: var(--bg1); border: 1px solid var(--bg2);
-        border-radius: 20px; font-size: 0.78em; color: var(--fg3); cursor: pointer;
+        padding: 4px 12px;
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        border-radius: 20px;
+        font-size: 0.78em;
+        color: var(--fg3);
+        cursor: pointer;
         transition: all 0.15s;
       }
-      .filter-chip.active { border-color: var(--yellow); color: var(--yellow); background: var(--bg0); }
-      .filter-chip:hover { border-color: var(--fg3); color: var(--fg2); }
+      .filter-chip.active {
+        border-color: var(--yellow);
+        color: var(--yellow);
+        background: var(--bg0);
+      }
+      .filter-chip:hover {
+        border-color: var(--fg3);
+        color: var(--fg2);
+      }
       .app-grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
         gap: 14px;
       }
       .app-card {
-        display: flex; flex-direction: column;
-        background: var(--bg1); border: 1px solid var(--bg2); border-radius: 4px;
-        padding: 16px; text-decoration: none; color: inherit;
+        display: flex;
+        flex-direction: column;
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        border-radius: 4px;
+        padding: 16px;
+        text-decoration: none;
+        color: inherit;
         transition: border-color 0.15s;
         position: relative;
       }
-      .app-card:hover { border-color: var(--yellow); }
+      .app-card:hover {
+        border-color: var(--yellow);
+      }
       .app-card-archive {
-        position: absolute; top: 8px; right: 10px;
-        background: none; border: none; color: var(--fg3);
-        font-size: 0.85em; cursor: pointer; opacity: 0;
-        padding: 2px 5px; border-radius: 2px; transition: opacity 0.15s, color 0.15s;
+        position: absolute;
+        top: 8px;
+        right: 10px;
+        background: none;
+        border: none;
+        color: var(--fg3);
+        font-size: 0.85em;
+        cursor: pointer;
+        opacity: 0;
+        padding: 2px 5px;
+        border-radius: 2px;
+        transition:
+          opacity 0.15s,
+          color 0.15s;
       }
-      .app-card:hover .app-card-archive { opacity: 1; }
-      .app-card-archive:hover { color: var(--red); background: var(--bg2); }
-      .card-top { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+      .app-card:hover .app-card-archive {
+        opacity: 1;
+      }
+      .app-card-archive:hover {
+        color: var(--red);
+        background: var(--bg2);
+      }
+      .card-top {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
       .card-icon {
-        width: 40px; height: 40px; border-radius: 6px; background: var(--bg2);
-        display: flex; align-items: center; justify-content: center;
-        font-size: 1.2em; flex-shrink: 0; overflow: hidden;
+        width: 40px;
+        height: 40px;
+        border-radius: 6px;
+        background: var(--bg2);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.2em;
+        flex-shrink: 0;
+        overflow: hidden;
       }
-      .card-icon img { width: 100%; height: 100%; object-fit: cover; border-radius: 6px; }
-      .card-name { font-size: 0.95em; color: var(--fg0); font-weight: 500; }
-      .card-owner { font-size: 0.72em; color: var(--fg3); margin-top: 1px; }
-      .card-tagline { font-size: 0.82em; color: var(--fg3); margin-bottom: 10px; flex: 1; line-height: 1.4; }
-      .card-footer { display: flex; justify-content: space-between; align-items: center; }
+      .card-icon img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        border-radius: 6px;
+      }
+      .card-name {
+        font-size: 0.95em;
+        color: var(--fg0);
+        font-weight: 500;
+      }
+      .card-owner {
+        font-size: 0.72em;
+        color: var(--fg3);
+        margin-top: 1px;
+      }
+      .card-tagline {
+        font-size: 0.82em;
+        color: var(--fg3);
+        margin-bottom: 10px;
+        flex: 1;
+        line-height: 1.4;
+      }
+      .card-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
       .card-badge {
-        font-size: 0.68em; padding: 2px 7px; border-radius: 2px;
-        border: 1px solid var(--bg3); color: var(--fg3); text-transform: uppercase; letter-spacing: 0.04em;
+        font-size: 0.68em;
+        padding: 2px 7px;
+        border-radius: 2px;
+        border: 1px solid var(--bg3);
+        color: var(--fg3);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
       }
-      .card-badge.public { border-color: var(--green); color: var(--green); }
-      .card-badge.mine { border-color: var(--aqua); color: var(--aqua); }
-      .card-agents { font-size: 0.72em; color: var(--fg3); }
-      .empty-state { color: var(--fg3); font-size: 0.88em; padding: 40px 0; text-align: center; }
+      .card-badge.public {
+        border-color: var(--green);
+        color: var(--green);
+      }
+      .card-badge.mine {
+        border-color: var(--aqua);
+        color: var(--aqua);
+      }
+      .card-agents {
+        font-size: 0.72em;
+        color: var(--fg3);
+      }
+      .empty-state {
+        color: var(--fg3);
+        font-size: 0.88em;
+        padding: 40px 0;
+        text-align: center;
+      }
       .section-heading {
-        font-size: 0.72em; text-transform: uppercase; letter-spacing: 0.08em;
-        color: var(--fg3); margin-bottom: 12px; margin-top: 24px;
-        padding-bottom: 6px; border-bottom: 1px solid var(--bg2);
+        font-size: 0.72em;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--fg3);
+        margin-bottom: 12px;
+        margin-top: 24px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid var(--bg2);
       }
     </style>
   </head>
   <body>
     <div class="container">
       <script src="/static/js/widgets/nav.js"></script>
-      <script>Nav.init({ title: "Apps", current: "apps" });</script>
+      <script>
+        Nav.init({ title: "Apps", current: "apps" });
+      </script>
 
       <div class="page-header">
         <div class="page-title">Apps</div>
@@ -86,17 +212,43 @@
       </div>
 
       <div class="filter-bar">
-        <div class="filter-chip active" data-filter="all" onclick="setFilter('all', this)">All</div>
-        <div class="filter-chip" data-filter="mine" onclick="setFilter('mine', this)">Mine</div>
-        <div class="filter-chip" data-filter="public" onclick="setFilter('public', this)">Public</div>
+        <div
+          class="filter-chip active"
+          data-filter="all"
+          onclick="setFilter('all', this)"
+        >
+          All
+        </div>
+        <div
+          class="filter-chip"
+          data-filter="mine"
+          onclick="setFilter('mine', this)"
+        >
+          Mine
+        </div>
+        <div
+          class="filter-chip"
+          data-filter="public"
+          onclick="setFilter('public', this)"
+        >
+          Public
+        </div>
       </div>
 
-      <div id="my-apps-heading" class="section-heading" style="display:none">My Apps</div>
+      <div id="my-apps-heading" class="section-heading" style="display: none">
+        My Apps
+      </div>
       <div id="app-grid" class="app-grid">
         <div class="empty-state">Loading…</div>
       </div>
-      <div id="public-apps-heading" class="section-heading" style="display:none">Public Apps</div>
-      <div id="public-grid" class="app-grid" style="display:none"></div>
+      <div
+        id="public-apps-heading"
+        class="section-heading"
+        style="display: none"
+      >
+        Public Apps
+      </div>
+      <div id="public-grid" class="app-grid" style="display: none"></div>
     </div>
 
     <script>
@@ -132,32 +284,53 @@
 
       function setFilter(f, el) {
         _filter = f;
-        document.querySelectorAll(".filter-chip").forEach(c => c.classList.remove("active"));
+        document
+          .querySelectorAll(".filter-chip")
+          .forEach((c) => c.classList.remove("active"));
         el.classList.add("active");
         render();
       }
 
       function render() {
-        const mine = _allApps.filter(a => a.owner_user_id === _myUserId);
-        const others = _allApps.filter(a => a.owner_user_id !== _myUserId && a.visibility === "public");
+        const mine = _allApps.filter((a) => a.owner_user_id === _myUserId);
+        // Admins see every third-party app in "others" — including
+        // private and unlisted — so the catalogue matches the admin
+        // panel's view. Regular users only see public apps from others.
+        const others = _allApps.filter(
+          (a) =>
+            a.owner_user_id !== _myUserId &&
+            (_isAdmin || a.visibility === "public"),
+        );
 
         let showMine, showOthers;
-        if (_filter === "mine") { showMine = mine; showOthers = []; }
-        else if (_filter === "public") { showMine = []; showOthers = _allApps.filter(a => a.visibility === "public"); }
-        else { showMine = mine; showOthers = others; }
+        if (_filter === "mine") {
+          showMine = mine;
+          showOthers = [];
+        } else if (_filter === "public") {
+          showMine = [];
+          // "Public" filter always means "visibility=public" regardless
+          // of admin — an admin toggling to Public wants public only.
+          showOthers = _allApps.filter((a) => a.visibility === "public");
+        } else {
+          showMine = mine;
+          showOthers = others;
+        }
 
         const myHeading = document.getElementById("my-apps-heading");
         const pubHeading = document.getElementById("public-apps-heading");
         const grid = document.getElementById("app-grid");
         const pubGrid = document.getElementById("public-grid");
 
-        const showSplit = _filter === "all" && showMine.length > 0 && showOthers.length > 0;
+        const showSplit =
+          _filter === "all" && showMine.length > 0 && showOthers.length > 0;
 
         if (showSplit) {
           myHeading.style.display = "block";
           pubHeading.style.display = "block";
           pubGrid.style.display = "grid";
-          grid.innerHTML = showMine.map(appCard).join("") || '<div class="empty-state">No apps yet.</div>';
+          grid.innerHTML =
+            showMine.map(appCard).join("") ||
+            '<div class="empty-state">No apps yet.</div>';
           pubGrid.innerHTML = showOthers.map(appCard).join("") || "";
         } else {
           myHeading.style.display = "none";
@@ -173,14 +346,15 @@
       function appCard(app) {
         const isOwn = app.owner_user_id === _myUserId;
         const icon = app.icon_url
-          ? `<img src="${esc(app.icon_url)}" alt="" onerror="this.parentElement.textContent='${esc((app.name||'A').charAt(0).toUpperCase())}'" />`
+          ? `<img src="${esc(app.icon_url)}" alt="" onerror="this.parentElement.textContent='${esc((app.name || "A").charAt(0).toUpperCase())}'" />`
           : esc((app.name || app.slug || "A").charAt(0).toUpperCase());
         const tmpl = app.workspace_template || {};
         const agentCount = (tmpl.auto_hire || []).length;
-        const archiveBtn = (isOwn || _isAdmin)
-          ? `<button class="app-card-archive" title="Archive app"
-              onclick="event.preventDefault();event.stopPropagation();archiveApp('${esc(app.slug)}','${esc(app.name||app.slug)}')">×</button>`
-          : "";
+        const archiveBtn =
+          isOwn || _isAdmin
+            ? `<button class="app-card-archive" title="Archive app"
+              onclick="event.preventDefault();event.stopPropagation();archiveApp('${esc(app.slug)}','${esc(app.name || app.slug)}')">×</button>`
+            : "";
         return `
           <a href="/apps/${esc(app.slug)}" class="app-card">
             ${archiveBtn}
@@ -200,14 +374,22 @@
       }
 
       async function archiveApp(slug, name) {
-        if (!confirm(`Archive app "${name}"?\n\nIt will be hidden from the catalogue. Existing workspaces are unaffected.`)) return;
+        if (
+          !confirm(
+            `Archive app "${name}"?\n\nIt will be hidden from the catalogue. Existing workspaces are unaffected.`,
+          )
+        )
+          return;
         try {
-          const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/archive`, { method: "POST" });
+          const res = await fetch(
+            `/api/apps/${encodeURIComponent(slug)}/archive`,
+            { method: "POST" },
+          );
           if (res.ok) {
-            _allApps = _allApps.filter(a => a.slug !== slug);
+            _allApps = _allApps.filter((a) => a.slug !== slug);
             render();
           } else {
-            alert("Archive failed: " + await res.text());
+            alert("Archive failed: " + (await res.text()));
           }
         } catch (e) {
           alert("Error: " + e.message);
@@ -215,7 +397,11 @@
       }
 
       function esc(s) {
-        return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+        return String(s ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
       }
 
       loadApps();

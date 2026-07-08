@@ -1390,6 +1390,16 @@ async fn main() {
         )
         .route("/mcp/agents/:agent_id", post(handlers::mcp::mcp_agent_rpc))
         .route("/api/agents", get(handlers::agents::list_agents))
+        // Single-agent fetch. Optional auth so anonymous visitors can
+        // read published+public agents, while owners and admins see
+        // their private/draft agents by direct URL. This is what makes
+        // /agent/<name> resolve for third-party agents that aren't yet
+        // published — previously the detail page relied on the paginated
+        // list which silently excluded them.
+        .route(
+            "/api/agents/:agent_id",
+            get(handlers::agents::get_agent_handler),
+        )
         .route(
             "/api/agents/curated",
             get(handlers::agents::list_curated_agents_handler),
@@ -2748,6 +2758,18 @@ async fn main() {
         .route(
             "/api/admin/agents/:agent_id/flag",
             put(handlers::admin::admin_flag_agent_handler),
+        )
+        // Admin view over third-party Apps — lists every app across every
+        // visibility level (private/unlisted/public) with owner display
+        // name + workspace count so external app authors like `efrain_ai`
+        // surface in the admin panel.
+        .route(
+            "/api/admin/apps",
+            get(handlers::admin::admin_list_apps_handler),
+        )
+        .route(
+            "/api/admin/apps/:slug/visibility",
+            put(handlers::admin::admin_set_app_visibility_handler),
         )
         .route(
             "/api/admin/agent-ownership-audit",

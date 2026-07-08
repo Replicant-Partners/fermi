@@ -592,6 +592,136 @@ pub async fn admin_flag_agent_handler(
     })))
 }
 
+// ─── Apps Management (admin view of all third-party apps) ─────────────────
+
+/// GET /api/admin/apps — all apps, all visibility levels, all owners,
+/// with owner display name joined and archived rows included by default
+/// (so the admin can review private/unlisted third-party apps that don't
+/// surface in the public `/api/apps` list).
+pub async fn admin_list_apps_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Query(params): Query<AdminSearchParams>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin(&principal)?;
+
+    let base_sql = r#"SELECT a.id, a.slug, a.name, a.tagline, a.owner_user_id,
+                             a.homepage_url, a.icon_url, a.composition_slug,
+                             a.schema_slug, a.workspace_template, a.visibility,
+                             a.published_at, a.archived_at, a.description,
+                             a.created_at, a.updated_at,
+                             COALESCE(u.display_name, u.email, a.owner_user_id) as owner_display_name,
+                             (SELECT COUNT(*) FROM teams t WHERE t.origin = a.slug) as workspace_count
+                        FROM apps a
+                        LEFT JOIN users u ON u.user_id = a.owner_user_id"#;
+
+    let rows = if let Some(ref search) = params.search {
+        let q = format!("%{}%", search);
+        sqlx::query(&format!(
+            "{} WHERE a.slug ILIKE $1 OR a.name ILIKE $1 OR a.owner_user_id ILIKE $1 \
+             ORDER BY a.created_at DESC LIMIT 500",
+            base_sql
+        ))
+        .bind(&q)
+        .fetch_all(&state.db)
+        .await
+    } else {
+        sqlx::query(&format!(
+            "{} ORDER BY a.created_at DESC LIMIT 500",
+            base_sql
+        ))
+        .fetch_all(&state.db)
+        .await
+    }
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let apps: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            let tmpl: Value = r
+                .try_get::<Value, _>("workspace_template")
+                .unwrap_or(json!({}));
+            let auto_hire_count = tmpl
+                .get("auto_hire")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            json!({
+                "id": r.try_get::<uuid::Uuid, _>("id").ok(),
+                "slug": r.try_get::<String, _>("slug").unwrap_or_default(),
+                "name": r.try_get::<String, _>("name").unwrap_or_default(),
+                "tagline": r.try_get::<Option<String>, _>("tagline").ok().flatten(),
+                "owner_user_id": r.try_get::<String, _>("owner_user_id").unwrap_or_default(),
+                "owner_display_name": r.try_get::<Option<String>, _>("owner_display_name").ok().flatten(),
+                "visibility": r.try_get::<String, _>("visibility").unwrap_or_else(|_| "private".into()),
+                "published_at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("published_at").ok().flatten().map(|t| t.to_rfc3339()),
+                "archived_at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("archived_at").ok().flatten().map(|t| t.to_rfc3339()),
+                "description": r.try_get::<Option<String>, _>("description").ok().flatten(),
+                "homepage_url": r.try_get::<Option<String>, _>("homepage_url").ok().flatten(),
+                "composition_slug": r.try_get::<Option<String>, _>("composition_slug").ok().flatten(),
+                "schema_slug": r.try_get::<Option<String>, _>("schema_slug").ok().flatten(),
+                "agent_count": auto_hire_count,
+                "workspace_count": r.try_get::<i64, _>("workspace_count").unwrap_or(0),
+                "created_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").ok().map(|t| t.to_rfc3339()),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "apps": apps,
+        "total": apps.len(),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AdminAppVisibilityRequest {
+    pub visibility: String, // "private" | "unlisted" | "public"
+}
+
+/// PUT /api/admin/apps/:slug/visibility — admin can bump a third-party
+/// app's visibility (e.g. mark it public on the owner's behalf during
+/// support, or hide a problematic app). Owner still owns the app.
+pub async fn admin_set_app_visibility_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(slug): Path<String>,
+    Json(body): Json<AdminAppVisibilityRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin(&principal)?;
+
+    if !matches!(body.visibility.as_str(), "private" | "unlisted" | "public") {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "visibility must be 'private', 'unlisted', or 'public'".into(),
+        ));
+    }
+
+    let updated = sqlx::query(
+        "UPDATE apps
+            SET visibility = $1,
+                published_at = CASE
+                    WHEN $1 = 'public' AND published_at IS NULL THEN NOW()
+                    ELSE published_at
+                END
+          WHERE slug = $2",
+    )
+    .bind(&body.visibility)
+    .bind(&slug)
+    .execute(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if updated.rows_affected() == 0 {
+        return Err((StatusCode::NOT_FOUND, format!("App '{}' not found", slug)));
+    }
+
+    Ok(Json(json!({
+        "status": "updated",
+        "slug": slug,
+        "visibility": body.visibility,
+    })))
+}
+
 // ─── Waitlist Management ────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
