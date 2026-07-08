@@ -913,10 +913,17 @@ pub async fn forecast_timeline_handler(
         Option<f32>,
         Option<String>,
     )> = sqlx::query(
-        "SELECT market_price, volume_total, observation_time, pm_event_id
+        // NOTE: the observations table columns this timestamp as
+        // `created_at` (see migration 099). An earlier version of this
+        // query referenced a non-existent `observation_time` column,
+        // which the `.unwrap_or_default()` on the query result quietly
+        // swallowed — so writes landed fine but the trajectory always
+        // read zero market observations. Kept the local variable name
+        // `ts` for clarity; the response still exposes it as `ts`.
+        "SELECT market_price, volume_total, created_at, pm_event_id
          FROM fermi_market_observations
          WHERE forecast_id = $1
-         ORDER BY observation_time ASC",
+         ORDER BY created_at ASC",
     )
     .bind(&forecast_id)
     .fetch_all(pool)
@@ -925,7 +932,7 @@ pub async fn forecast_timeline_handler(
     .into_iter()
     .filter_map(|row| {
         let ts = row
-            .try_get::<chrono::DateTime<chrono::Utc>, _>("observation_time")
+            .try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
             .ok()?;
         let price = row.try_get::<f32, _>("market_price").ok();
         let volume = row.try_get::<Option<f32>, _>("volume_total").ok().flatten();
