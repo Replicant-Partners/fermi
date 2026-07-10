@@ -1,37 +1,18 @@
 {
   "forecast_id": "1bc38d64-e05e-47ac-b26c-872cecee3821",
-  "current_version": 3,
-  "predicted_probability": 0.11438459478615332,
-  "inside_view_explanation": "Inside view: model evaluates to 11.4% (p5=8.4%, p95=15.0%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "current_version": 1,
+  "predicted_probability": 0.17585627734661102,
+  "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-06-25 02:48",
-      "probability": 0.11438459478615332,
-      "change_summary": "Initial: 11.4% base=2%, 6 drivers, 4 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-06-25 02:48",
-      "probability": 0.11438459478615332,
-      "change_summary": "11.4% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-06-25 02:49",
-      "probability": 0.11438459478615332,
-      "change_summary": "11.4% (→), 6 drivers, 4 evidence"
+      "timestamp": "2026-07-10 17:29",
+      "probability": 0.17585627734661102,
+      "change_summary": "Initial: 17.6% base=2%, 6 drivers, 4 evidence"
     }
   ],
-  "sim_results": {
-    "mean": 0.11438459478615332,
-    "median": 0.11254999737487587,
-    "p5": 0.08383106702886624,
-    "p95": 0.14970851636309906,
-    "std_dev": 0.019974661915847132,
-    "iterations": 10000
-  },
+  "sim_results": null,
   "base_rate": {
     "reference_class": "FIFA World Cup winners 1930–2022",
     "historical_frequency": 0.0208,
@@ -177,13 +158,18 @@
     "event_id": "30615",
     "market_id": "558936",
     "question": "Will France win the 2026 FIFA World Cup?",
-    "market_price": 0.1845,
-    "volume_24h": 2700069.494961026,
-    "liquidity": null,
+    "market_price": 0.3855,
+    "volume_24h": 4494215.926551038,
+    "liquidity": 6095025.94446,
     "confidence": "Very High",
-    "price_change_1w": null,
+    "price_change_1w": 0.052,
     "url": "https://polymarket.com/event/world-cup-winner",
-    "price_history": []
+    "price_history": [
+      {
+        "t": 1783704559,
+        "p": 0.3855
+      }
+    ]
   },
   "workspace_id": "6ad9e6f1-0019-4cdd-af6a-29351f23dabc"
 }
