@@ -1,6 +1,6 @@
 # Will Argentina win the 2026 FIFA World Cup?
 
-**Probability:** 8.4% · **Version:** v27 · **Updated:** 2026-07-07 23:54 UTC
+**Probability:** 14.3% · **Version:** v1 · **Updated:** 2026-07-10 17:33 UTC
 
 **Confidence:** Medium (50%) · **Drivers:** 6 · **Evidence:** 6 · **Agents:** 4
 
@@ -10,26 +10,14 @@
 
 | Metric | Value |
 |---|---|
-| Crowd price | **18.4%** |
-| Fermi estimate | **8.4%** |
-| Divergence | +10.0pp below crowd (Moderate divergence — potential edge) |
-| 24h volume | $13.1M |
+| Crowd price | **17.8%** |
+| Fermi estimate | **14.3%** |
+| Divergence | +3.5pp below crowd (Minor divergence) |
+| 24h volume | $1.8M |
 | Market confidence | Very High |
-| 1-week trend | ↓ -0.7pp |
+| 1-week trend | ↓ -1.5pp |
 
 [View on Polymarket](https://polymarket.com/event/world-cup-winner)
-
----
-
-## Inside View
-
-**Probability: 8.4%**
-
-Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.1%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.
-
-**Forecast Confidence:** Medium (50%)
-
-**Divergence from base rate:** 6pp above (8.4% vs 2.1%)
 
 ---
 
@@ -44,80 +32,11 @@ Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverge
 
 ---
 
-## Simulation Distribution
-
-**10000 iterations** · p5 = 6.1% · median = 8.3% · p95 = 11.1% · σ = 0.015
-
-```
-▁▁▂▃▄▆▇██▇▆▅▃▂▂▁▁▁▁▁
-```
-
-| Bin center | Count | % of sims |
-|---|---|---|
-| 4.2% | 2 | 0.0% |
-| 4.7% | 25 | 0.2% |
-| 5.3% | 129 | 1.3% |
-| 5.8% | 352 | 3.5% |
-| 6.3% | 634 | 6.3% |
-| 6.9% | 993 | 9.9% |
-| 7.4% | 1217 | 12.2% |
-| 8.0% | 1374 | 13.7% |
-| 8.5% | 1353 | 13.5% |
-| 9.0% | 1188 | 11.9% |
-| 9.6% | 937 | 9.4% |
-| 10.1% | 723 | 7.2% |
-| 10.7% | 475 | 4.8% |
-| 11.2% | 263 | 2.6% |
-| 11.7% | 170 | 1.7% |
-| 12.3% | 87 | 0.9% |
-| 12.8% | 40 | 0.4% |
-| 13.4% | 21 | 0.2% |
-| 13.9% | 12 | 0.1% |
-| 14.4% | 5 | 0.1% |
-
----
-
-## Forecast Index (version history)
-
-| v | timestamp | model | base | crowd | Δ(model−base) | Δ(model−crowd) | note |
-|---|---|---|---|---|---|---|---|
-| v1 | 2026-07-07 23:53 | 8.4% | 2.1% | 18.4% | +6.3pp | -10.0pp | Initial: 8.4% base=2%, 6 drivers, 6 evidence |
-| v2 | 2026-07-07 23:53 | 8.4% | 2.1% | 18.4% | +6.3pp | -10.0pp | 8.4% (→), 6 drivers, 6 evidence |
-| v3 | 2026-07-07 23:53 | 8.4% | 2.1% | 18.4% | +6.3pp | -10.0pp | 8.4% (→), 6 drivers, 6 evidence |
-| v4 | 2026-07-07 23:53 | 8.4% | 2.1% | 18.4% | +6.3pp | -10.0pp | 8.4% (→), 6 drivers, 6 evidence |
-| v5 | 2026-07-07 23:53 | 8.4% | 2.1% | 18.4% | +6.3pp | -10.0pp | 8.4% (→), 6 drivers, 6 evidence |
-| v6 | 2026-07-07 23:53 | 13.0% | 2.1% | 18.4% | +10.9pp | -5.5pp | 13.0% (+5pp), 6 drivers, 6 evidence |
-| v7 | 2026-07-07 23:53 | 13.0% | 2.1% | 18.4% | +10.9pp | -5.5pp | 13.0% (→), 6 drivers, 6 evidence |
-| v8 | 2026-07-07 23:53 | 13.0% | 2.1% | 18.4% | +10.9pp | -5.5pp | 13.0% (→), 6 drivers, 6 evidence |
-| v9 | 2026-07-07 23:53 | 13.0% | 2.1% | 18.4% | +10.9pp | -5.5pp | 13.0% (→), 6 drivers, 6 evidence |
-| v10 | 2026-07-07 23:53 | 13.0% | 2.1% | 18.4% | +10.9pp | -5.5pp | 13.0% (→), 6 drivers, 6 evidence |
-| v11 | 2026-07-07 23:53 | 13.0% | 2.1% | 18.4% | +10.9pp | -5.5pp | 13.0% (→), 6 drivers, 6 evidence |
-| v12 | 2026-07-07 23:53 | 13.0% | 2.1% | 18.4% | +10.9pp | -5.5pp | 13.0% (→), 6 drivers, 6 evidence |
-| v13 | 2026-07-07 23:53 | 13.0% | 2.1% | 18.4% | +10.9pp | -5.5pp | 13.0% (→), 6 drivers, 6 evidence |
-| v14 | 2026-07-07 23:53 | 13.0% | 2.1% | 18.4% | +10.9pp | -5.5pp | 13.0% (→), 6 drivers, 6 evidence |
-| v15 | 2026-07-07 23:53 | 13.0% | 2.1% | 18.4% | +10.9pp | -5.5pp | 13.0% (→), 6 drivers, 6 evidence |
-| v16 | 2026-07-07 23:54 | 13.0% | 2.1% | 18.4% | +10.9pp | -5.5pp | 13.0% (→), 6 drivers, 6 evidence |
-| v17 | 2026-07-07 23:54 | 13.0% | 2.1% | 18.4% | +10.9pp | -5.5pp | 13.0% (→), 6 drivers, 6 evidence |
-| v18 | 2026-07-07 23:54 | 13.0% | 2.1% | 18.4% | +10.9pp | -5.5pp | 13.0% (→), 6 drivers, 6 evidence |
-| v19 | 2026-07-07 23:54 | 13.0% | 2.1% | 18.4% | +10.9pp | -5.5pp | 13.0% (→), 6 drivers, 6 evidence |
-| v20 | 2026-07-07 23:54 | 13.0% | 2.1% | 18.4% | +10.9pp | -5.5pp | 13.0% (→), 6 drivers, 6 evidence |
-| v21 | 2026-07-07 23:54 | 13.0% | 2.1% | 18.4% | +10.9pp | -5.5pp | 13.0% (→), 6 drivers, 6 evidence |
-| v22 | 2026-07-07 23:54 | 13.0% | 2.1% | 18.4% | +10.9pp | -5.5pp | 13.0% (→), 6 drivers, 6 evidence |
-| v23 | 2026-07-07 23:54 | 13.0% | 2.1% | 18.4% | +10.9pp | -5.5pp | 13.0% (→), 6 drivers, 6 evidence |
-| v24 | 2026-07-07 23:54 | 8.4% | 2.1% | 18.4% | +6.4pp | -10.0pp | 8.4% (-5pp), 6 drivers, 6 evidence |
-| v25 | 2026-07-07 23:54 | 8.4% | 2.1% | 18.4% | +6.4pp | -10.0pp | 8.4% (→), 6 drivers, 6 evidence |
-| v26 | 2026-07-07 23:54 | 8.4% | 2.1% | 18.4% | +6.4pp | -10.0pp | 8.4% (→), 6 drivers, 6 evidence |
-| v27 | 2026-07-07 23:54 | 8.4% | 2.1% | 18.4% | +6.4pp | -10.0pp | 8.4% (→), 6 drivers, 6 evidence |
-
-**Model line:** ```▁▁▁▁▁██████████████████▁▁▁▁``` (range 8.4% – 13.0%)
-
----
-
 ## 1. socio_capital `continuous`
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Macro capacity for footballing investment: GDP, population, HDI.
 
@@ -254,7 +173,7 @@ For a **+0.39 SD composite**, I map to a **p50 multiplier of 1.08**:
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Federation strength, league development, player pipeline depth.
 
@@ -306,7 +225,7 @@ Excellent! Now I have key data points. Let me compile the institutional capacity
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Recent form and Elo trajectory — refits as match outcomes accumulate.
 
@@ -534,7 +453,7 @@ Argentina's factor profile across X3 (Dynamic Performance), X4 (Squad Quality), 
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Top-flight league penetration + market value concentration.
 
@@ -762,7 +681,7 @@ Argentina's factor profile across X3 (Dynamic Performance), X4 (Squad Quality), 
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Shot conversion, defensive duels, pressing intensity.
 
@@ -990,7 +909,7 @@ Argentina's factor profile across X3 (Dynamic Performance), X4 (Squad Quality), 
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Per-fixture context: venue, climate, rest, altitude.
 
@@ -1178,4 +1097,4 @@ model: socio_capital * institutional_capacity * dynamic_performance * squad_qual
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v27 · 2026-07-07 23:54 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v1 · 2026-07-10 17:33 UTC_

@@ -1,181 +1,18 @@
 {
   "forecast_id": "9f1adf4c-ad59-4c6a-bb80-06d78c430eae",
-  "current_version": 27,
-  "predicted_probability": 0.08434722468789796,
-  "inside_view_explanation": "Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.1%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "current_version": 1,
+  "predicted_probability": 0.1434910148382187,
+  "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-07 23:53",
-      "probability": 0.08423746484927046,
-      "change_summary": "Initial: 8.4% base=2%, 6 drivers, 6 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-07-07 23:53",
-      "probability": 0.08423746484927046,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-07-07 23:53",
-      "probability": 0.08423746484927046,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-07-07 23:53",
-      "probability": 0.08423746484927046,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 5,
-      "timestamp": "2026-07-07 23:53",
-      "probability": 0.08423746484927046,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 6,
-      "timestamp": "2026-07-07 23:53",
-      "probability": 0.1295684089132783,
-      "change_summary": "13.0% (+5pp), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 7,
-      "timestamp": "2026-07-07 23:53",
-      "probability": 0.1295684089132783,
-      "change_summary": "13.0% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 8,
-      "timestamp": "2026-07-07 23:53",
-      "probability": 0.1295684089132783,
-      "change_summary": "13.0% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 9,
-      "timestamp": "2026-07-07 23:53",
-      "probability": 0.1295684089132783,
-      "change_summary": "13.0% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 10,
-      "timestamp": "2026-07-07 23:53",
-      "probability": 0.1295684089132783,
-      "change_summary": "13.0% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 11,
-      "timestamp": "2026-07-07 23:53",
-      "probability": 0.1295684089132783,
-      "change_summary": "13.0% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 12,
-      "timestamp": "2026-07-07 23:53",
-      "probability": 0.1295684089132783,
-      "change_summary": "13.0% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 13,
-      "timestamp": "2026-07-07 23:53",
-      "probability": 0.1295684089132783,
-      "change_summary": "13.0% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 14,
-      "timestamp": "2026-07-07 23:53",
-      "probability": 0.1295684089132783,
-      "change_summary": "13.0% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 15,
-      "timestamp": "2026-07-07 23:53",
-      "probability": 0.1295684089132783,
-      "change_summary": "13.0% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 16,
-      "timestamp": "2026-07-07 23:54",
-      "probability": 0.1295684089132783,
-      "change_summary": "13.0% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 17,
-      "timestamp": "2026-07-07 23:54",
-      "probability": 0.1295684089132783,
-      "change_summary": "13.0% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 18,
-      "timestamp": "2026-07-07 23:54",
-      "probability": 0.1295684089132783,
-      "change_summary": "13.0% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 19,
-      "timestamp": "2026-07-07 23:54",
-      "probability": 0.1295684089132783,
-      "change_summary": "13.0% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 20,
-      "timestamp": "2026-07-07 23:54",
-      "probability": 0.1295684089132783,
-      "change_summary": "13.0% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 21,
-      "timestamp": "2026-07-07 23:54",
-      "probability": 0.1295684089132783,
-      "change_summary": "13.0% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 22,
-      "timestamp": "2026-07-07 23:54",
-      "probability": 0.1295684089132783,
-      "change_summary": "13.0% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 23,
-      "timestamp": "2026-07-07 23:54",
-      "probability": 0.1295684089132783,
-      "change_summary": "13.0% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 24,
-      "timestamp": "2026-07-07 23:54",
-      "probability": 0.08434722468789796,
-      "change_summary": "8.4% (-5pp), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 25,
-      "timestamp": "2026-07-07 23:54",
-      "probability": 0.08434722468789796,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 26,
-      "timestamp": "2026-07-07 23:54",
-      "probability": 0.08434722468789796,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 27,
-      "timestamp": "2026-07-07 23:54",
-      "probability": 0.08434722468789796,
-      "change_summary": "8.4% (→), 6 drivers, 6 evidence"
+      "timestamp": "2026-07-10 17:33",
+      "probability": 0.1434910148382187,
+      "change_summary": "Initial: 14.3% base=2%, 6 drivers, 6 evidence"
     }
   ],
-  "sim_results": {
-    "mean": 0.08434722468789796,
-    "median": 0.08340521337543848,
-    "p5": 0.060721087221093734,
-    "p95": 0.11094859277420313,
-    "std_dev": 0.015337399901514545,
-    "iterations": 10000
-  },
+  "sim_results": null,
   "base_rate": {
     "reference_class": "FIFA World Cup winners 1930–2022",
     "historical_frequency": 0.0208,
@@ -336,24 +173,16 @@
     "event_id": "30615",
     "market_id": "558938",
     "question": "Will Argentina win the 2026 FIFA World Cup?",
-    "market_price": 0.1845,
-    "volume_24h": 13098236.077976042,
-    "liquidity": 9795461.59466,
+    "market_price": 0.1785,
+    "volume_24h": 1796241.636881994,
+    "liquidity": 6170783.3146,
     "confidence": "Very High",
-    "price_change_1w": -0.007,
+    "price_change_1w": -0.015,
     "url": "https://polymarket.com/event/world-cup-winner",
     "price_history": [
       {
-        "t": 1783468417,
-        "p": 0.1845
-      },
-      {
-        "t": 1783468429,
-        "p": 0.1845
-      },
-      {
-        "t": 1783468431,
-        "p": 0.1845
+        "t": 1783704755,
+        "p": 0.1785
       }
     ]
   },
