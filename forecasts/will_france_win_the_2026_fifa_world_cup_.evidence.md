@@ -1,6 +1,6 @@
 # Will France win the 2026 FIFA World Cup?
 
-**Probability:** 17.6% · **Version:** v14 · **Updated:** 2026-07-10 17:29 UTC
+**Probability:** 11.5% · **Version:** v1 · **Updated:** 2026-07-12 11:57 UTC
 
 **Confidence:** Medium (50%) · **Drivers:** 6 · **Evidence:** 4 · **Agents:** 4
 
@@ -10,14 +10,26 @@
 
 | Metric | Value |
 |---|---|
-| Crowd price | **38.6%** |
-| Fermi estimate | **17.6%** |
-| Divergence | +21.0pp below crowd (Significant disagreement — verify assumptions) |
-| 24h volume | $4.5M |
+| Crowd price | **38.8%** |
+| Fermi estimate | **11.5%** |
+| Divergence | +27.3pp below crowd (Significant disagreement — verify assumptions) |
+| 24h volume | $2.9M |
 | Market confidence | Very High |
-| 1-week trend | ↑ +5.2pp |
+| 1-week trend | ↑ +3.2pp |
 
 [View on Polymarket](https://polymarket.com/event/world-cup-winner)
+
+---
+
+## Inside View
+
+**Probability: 11.5%**
+
+Inside view: model evaluates to 11.5% (p5=8.4%, p95=14.9%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.
+
+**Forecast Confidence:** Medium (50%)
+
+**Divergence from base rate:** 9pp above (11.5% vs 2.1%)
 
 ---
 
@@ -32,26 +44,36 @@ Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverge
 
 ---
 
-## Forecast Index (version history)
+## Simulation Distribution
 
-| v | timestamp | model | base | crowd | Δ(model−base) | Δ(model−crowd) | note |
-|---|---|---|---|---|---|---|---|
-| v1 | 2026-07-10 17:29 | 17.6% | 2.1% | 38.6% | +15.5pp | -21.0pp | Initial: 17.6% base=2%, 6 drivers, 4 evidence |
-| v2 | 2026-07-10 17:29 | 17.6% | 2.1% | 38.6% | +15.5pp | -21.0pp | 17.6% (→), 6 drivers, 4 evidence |
-| v3 | 2026-07-10 17:29 | 17.6% | 2.1% | 38.6% | +15.5pp | -21.0pp | 17.6% (→), 6 drivers, 4 evidence |
-| v4 | 2026-07-10 17:29 | 17.6% | 2.1% | 38.6% | +15.5pp | -21.0pp | 17.6% (→), 6 drivers, 4 evidence |
-| v5 | 2026-07-10 17:29 | 17.6% | 2.1% | 38.6% | +15.5pp | -21.0pp | 17.6% (→), 6 drivers, 4 evidence |
-| v6 | 2026-07-10 17:29 | 17.6% | 2.1% | 38.6% | +15.5pp | -21.0pp | 17.6% (→), 6 drivers, 4 evidence |
-| v7 | 2026-07-10 17:29 | 17.6% | 2.1% | 38.6% | +15.5pp | -21.0pp | 17.6% (→), 6 drivers, 4 evidence |
-| v8 | 2026-07-10 17:29 | 17.6% | 2.1% | 38.6% | +15.5pp | -21.0pp | 17.6% (→), 6 drivers, 4 evidence |
-| v9 | 2026-07-10 17:29 | 17.6% | 2.1% | 38.6% | +15.5pp | -21.0pp | 17.6% (→), 6 drivers, 4 evidence |
-| v10 | 2026-07-10 17:29 | 17.6% | 2.1% | 38.6% | +15.5pp | -21.0pp | 17.6% (→), 6 drivers, 4 evidence |
-| v11 | 2026-07-10 17:29 | 17.6% | 2.1% | 38.6% | +15.5pp | -21.0pp | 17.6% (→), 6 drivers, 4 evidence |
-| v12 | 2026-07-10 17:29 | 17.6% | 2.1% | 38.6% | +15.5pp | -21.0pp | 17.6% (→), 6 drivers, 4 evidence |
-| v13 | 2026-07-10 17:29 | 17.6% | 2.1% | 38.6% | +15.5pp | -21.0pp | 17.6% (→), 6 drivers, 4 evidence |
-| v14 | 2026-07-10 17:29 | 17.6% | 2.1% | 38.6% | +15.5pp | -21.0pp | 17.6% (→), 6 drivers, 4 evidence |
+**10000 iterations** · p5 = 8.4% · median = 11.3% · p95 = 14.9% · σ = 0.020
 
-**Model line:** ```▁▁▁▁▁▁▁▁▁▁▁▁▁▁``` (range 17.6% – 17.6%)
+```
+▁▂▃▅▇██▇▆▄▃▂▂▁▁▁▁▁▁▁
+```
+
+| Bin center | Count | % of sims |
+|---|---|---|
+| 6.6% | 25 | 0.2% |
+| 7.4% | 150 | 1.5% |
+| 8.2% | 420 | 4.2% |
+| 9.0% | 810 | 8.1% |
+| 9.8% | 1303 | 13.0% |
+| 10.6% | 1566 | 15.7% |
+| 11.3% | 1575 | 15.8% |
+| 12.1% | 1361 | 13.6% |
+| 12.9% | 1051 | 10.5% |
+| 13.7% | 737 | 7.4% |
+| 14.5% | 480 | 4.8% |
+| 15.3% | 262 | 2.6% |
+| 16.1% | 141 | 1.4% |
+| 16.9% | 73 | 0.7% |
+| 17.7% | 27 | 0.3% |
+| 18.5% | 13 | 0.1% |
+| 19.2% | 5 | 0.1% |
+| 20.0% | 0 | 0.0% |
+| 20.8% | 0 | 0.0% |
+| 21.6% | 1 | 0.0% |
 
 ---
 
@@ -59,7 +81,7 @@ Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverge
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.00 | 0.00 | 0.00 |  |
+| 0.80 | 1.00 | 1.20 |  |
 
 > Macro capacity for footballing investment: GDP, population, HDI.
 
@@ -179,7 +201,7 @@ This translates to:
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.00 | 0.00 | 0.00 |  |
+| 0.80 | 1.00 | 1.20 |  |
 
 > Federation strength, league development, player pipeline depth.
 
@@ -251,7 +273,7 @@ France's institutions **overperform its league economics** (X2 > X1 would predic
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.00 | 0.00 | 0.00 |  |
+| 0.80 | 1.00 | 1.20 |  |
 
 > Recent form and Elo trajectory — refits as match outcomes accumulate.
 
@@ -413,7 +435,7 @@ Based on my research, here is comprehensive evidence for France's **squad_qualit
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.00 | 0.00 | 0.00 |  |
+| 0.80 | 1.00 | 1.20 |  |
 
 > Top-flight league penetration + market value concentration.
 
@@ -575,7 +597,7 @@ Based on my research, here is comprehensive evidence for France's **squad_qualit
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.00 | 0.00 | 0.00 |  |
+| 0.80 | 1.00 | 1.20 |  |
 
 > Shot conversion, defensive duels, pressing intensity.
 
@@ -737,7 +759,7 @@ Based on my research, here is comprehensive evidence for France's **squad_qualit
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.00 | 0.00 | 0.00 |  |
+| 0.80 | 1.00 | 1.20 |  |
 
 > Per-fixture context: venue, climate, rest, altitude.
 
@@ -929,4 +951,4 @@ model: socio_capital * institutional_capacity * dynamic_performance * squad_qual
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v14 · 2026-07-10 17:29 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v1 · 2026-07-12 11:57 UTC_

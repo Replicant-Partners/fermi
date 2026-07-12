@@ -1,96 +1,25 @@
 {
   "forecast_id": "1bc38d64-e05e-47ac-b26c-872cecee3821",
-  "current_version": 14,
-  "predicted_probability": 0.17585627734661102,
-  "inside_view_explanation": "",
+  "current_version": 1,
+  "predicted_probability": 0.11459228262844016,
+  "inside_view_explanation": "Inside view: model evaluates to 11.5% (p5=8.4%, p95=14.9%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-10 17:29",
-      "probability": 0.17585627734661102,
-      "change_summary": "Initial: 17.6% base=2%, 6 drivers, 4 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-07-10 17:29",
-      "probability": 0.17585627734661102,
-      "change_summary": "17.6% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-07-10 17:29",
-      "probability": 0.17585627734661102,
-      "change_summary": "17.6% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-07-10 17:29",
-      "probability": 0.17585627734661102,
-      "change_summary": "17.6% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 5,
-      "timestamp": "2026-07-10 17:29",
-      "probability": 0.17585627734661102,
-      "change_summary": "17.6% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 6,
-      "timestamp": "2026-07-10 17:29",
-      "probability": 0.17585627734661102,
-      "change_summary": "17.6% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 7,
-      "timestamp": "2026-07-10 17:29",
-      "probability": 0.17585627734661102,
-      "change_summary": "17.6% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 8,
-      "timestamp": "2026-07-10 17:29",
-      "probability": 0.17585627734661102,
-      "change_summary": "17.6% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 9,
-      "timestamp": "2026-07-10 17:29",
-      "probability": 0.17585627734661102,
-      "change_summary": "17.6% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 10,
-      "timestamp": "2026-07-10 17:29",
-      "probability": 0.17585627734661102,
-      "change_summary": "17.6% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 11,
-      "timestamp": "2026-07-10 17:29",
-      "probability": 0.17585627734661102,
-      "change_summary": "17.6% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 12,
-      "timestamp": "2026-07-10 17:29",
-      "probability": 0.17585627734661102,
-      "change_summary": "17.6% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 13,
-      "timestamp": "2026-07-10 17:29",
-      "probability": 0.17585627734661102,
-      "change_summary": "17.6% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 14,
-      "timestamp": "2026-07-10 17:29",
-      "probability": 0.17585627734661102,
-      "change_summary": "17.6% (→), 6 drivers, 4 evidence"
+      "timestamp": "2026-07-12 11:57",
+      "probability": 0.11459228262844016,
+      "change_summary": "Initial: 11.5% base=2%, 6 drivers, 4 evidence"
     }
   ],
-  "sim_results": null,
+  "sim_results": {
+    "mean": 0.11459228262844016,
+    "median": 0.11293724801620618,
+    "p5": 0.08434217353098689,
+    "p95": 0.14946216252855152,
+    "std_dev": 0.019852689686862664,
+    "iterations": 10000
+  },
   "base_rate": {
     "reference_class": "FIFA World Cup winners 1930–2022",
     "historical_frequency": 0.0208,
@@ -236,16 +165,16 @@
     "event_id": "30615",
     "market_id": "558936",
     "question": "Will France win the 2026 FIFA World Cup?",
-    "market_price": 0.3855,
-    "volume_24h": 4494215.926551038,
-    "liquidity": 6095025.94446,
+    "market_price": 0.3875,
+    "volume_24h": 2941404.86283803,
+    "liquidity": 5168592.14994,
     "confidence": "Very High",
-    "price_change_1w": 0.052,
+    "price_change_1w": 0.032,
     "url": "https://polymarket.com/event/world-cup-winner",
     "price_history": [
       {
-        "t": 1783704559,
-        "p": 0.3855
+        "t": 1783857453,
+        "p": 0.3875
       }
     ]
   },
