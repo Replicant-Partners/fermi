@@ -32,7 +32,70 @@ use fermi::polymarket::{
     compute_divergence_pp, format_probability, format_volume, interpret_divergence,
     ConfidenceSignal, GammaClient,
 };
-use fermi_auth::AuthPrincipal;
+use fermi_auth::visibility::can_edit;
+use fermi_auth::{AuthPrincipal, ObjectType, Visibility};
+use sqlx::PgPool;
+
+/// Confirm that `principal` is allowed to write an observation linked to
+/// `forecast_id`. Returns the caller's ownership context (owner_id +
+/// visibility) on success so callers can re-use it without a second
+/// SELECT. Maps the ACL result to HTTP status codes:
+///
+///   404 — forecast doesn't exist.
+///   403 — forecast exists but caller lacks edit permission.
+///   500 — DB error.
+///
+/// A market observation is a write attributed to a specific forecast
+/// (it appears in that forecast's trajectory, feeds its divergence
+/// history, and shows up in its Brier-adjacent analytics). Historically
+/// this endpoint accepted any authenticated caller and any forecast_id,
+/// so anyone with an API key could spray observations onto anyone
+/// else's forecast timeline. `can_edit` mirrors the check used by
+/// `resolve_forecast_handler` — owner, admin, or share with edit
+/// permission.
+async fn require_forecast_edit(
+    pool: &PgPool,
+    principal: &AuthPrincipal,
+    forecast_id: &str,
+) -> Result<(String, Visibility), (StatusCode, String)> {
+    let acl_row = sqlx::query(
+        "SELECT owner_id::text AS owner_id, visibility
+           FROM fermi_forecasts WHERE id = $1",
+    )
+    .bind(forecast_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let row = acl_row.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("Forecast {} not found", forecast_id),
+        )
+    })?;
+    let owner_id: String = row.try_get("owner_id").unwrap_or_default();
+    let visibility_str: String = row.try_get("visibility").unwrap_or_default();
+    let visibility = Visibility::from_legacy(&visibility_str);
+
+    let granted = can_edit(
+        pool,
+        principal,
+        ObjectType::Forecast,
+        forecast_id,
+        &owner_id,
+        visibility,
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if !granted {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Edit access denied for this forecast".into(),
+        ));
+    }
+    Ok((owner_id, visibility))
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // Request / Response Types
@@ -345,22 +408,25 @@ pub async fn snapshot_handler(
             )
         })?;
 
-    // ── Get Fermi probability if forecast is linked ────────────
+    // ── ACL: caller must be able to edit the forecast they're
+    //    attributing this observation to. Missing forecast_id is
+    //    allowed (ambient search-style snapshot with no forecast link).
     let (fermi_prob, divergence) = if let Some(ref fc_id) = body.forecast_id {
-        let row = sqlx::query(
-            "SELECT predicted_probability FROM fermi_forecasts WHERE id = $1 AND owner_id = $2::uuid",
-        )
-        .bind(fc_id)
-        .bind(&user_id)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        require_forecast_edit(&state.db, &principal, fc_id).await?;
+
+        let row = sqlx::query("SELECT predicted_probability FROM fermi_forecasts WHERE id = $1")
+            .bind(fc_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
         if let Some(row) = row {
             let prob: f32 = row.get("predicted_probability");
             let div = compute_divergence_pp(prob as f64, market_match.market_price);
             (Some(prob as f64), Some(div))
         } else {
+            // Race: forecast was deleted between the ACL check and this
+            // SELECT. Treat as not-linked rather than 500'ing.
             (None, None)
         }
     } else {
@@ -457,15 +523,19 @@ pub async fn snapshot_handler(
             }
         });
 
+        // ACL already enforced above via require_forecast_edit(). Do
+        // NOT re-filter by owner_id here — a shared editor passed the
+        // ACL check, so their metadata write must land too. Filtering
+        // by owner_id here would silently swallow the update and leave
+        // metadata.polymarket stale for shared editors.
         let _ = sqlx::query(
             "UPDATE fermi_forecasts
              SET metadata = metadata || $1::jsonb,
                  updated_at = NOW()
-             WHERE id = $2 AND owner_id = $3::uuid",
+             WHERE id = $2",
         )
         .bind(&pm_metadata)
         .bind(fc_id)
-        .bind(&user_id)
         .execute(&state.db)
         .await;
     }
@@ -520,26 +590,22 @@ pub async fn link_handler(
 ) -> Result<Json<JsonValue>, (StatusCode, String)> {
     let user_id = principal.user_id();
 
-    // ── Verify forecast ownership ──────────────────────────────
+    // ── ACL: caller must be able to edit the target forecast ──────
+    //    (owner, admin, or share-with-edit — same rule
+    //    resolve_forecast_handler enforces). Linking writes to the
+    //    forecast's metadata + inserts an observation, so this is a
+    //    write operation, not a view.
+    require_forecast_edit(&state.db, &principal, &body.forecast_id).await?;
+
     let forecast = sqlx::query(
         "SELECT id, predicted_probability, question_text
          FROM fermi_forecasts
-         WHERE id = $1 AND owner_id = $2::uuid",
+         WHERE id = $1",
     )
     .bind(&body.forecast_id)
-    .bind(&user_id)
-    .fetch_optional(&state.db)
+    .fetch_one(&state.db)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            format!(
-                "Forecast {} not found or not owned by you",
-                body.forecast_id
-            ),
-        )
-    })?;
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let fermi_prob: f32 = forecast.get("predicted_probability");
 
@@ -576,15 +642,16 @@ pub async fn link_handler(
         }
     });
 
+    // ACL already enforced above via require_forecast_edit(); no need
+    // to re-filter by owner_id here — same reasoning as snapshot_handler.
     sqlx::query(
         "UPDATE fermi_forecasts
          SET metadata = metadata || $1::jsonb,
              updated_at = NOW()
-         WHERE id = $2 AND owner_id = $3::uuid",
+         WHERE id = $2",
     )
     .bind(&pm_metadata)
     .bind(&body.forecast_id)
-    .bind(&user_id)
     .execute(&state.db)
     .await
     .map_err(|e| {
