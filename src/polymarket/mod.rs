@@ -277,6 +277,26 @@ impl ConfidenceSignal {
             Self::Low => "Low",
         }
     }
+
+    /// Serialised form for the `confidence_signal` column of
+    /// `fermi_market_observations`. Must match the CHECK constraint
+    /// declared in migration 099 exactly:
+    ///   `IN ('very_high', 'high', 'medium', 'low')`.
+    ///
+    /// Historically call sites used `format!("{:?}", ...).to_lowercase()`,
+    /// which mapped `VeryHigh` to `"veryhigh"` and made every
+    /// high-confidence market INSERT fail the CHECK. The error was
+    /// then swallowed by `.map_err(...).ok()`, so writes silently
+    /// dropped while snapshot responses looked healthy — the
+    /// trajectory view read zero observations for weeks.
+    pub fn db_str(self) -> &'static str {
+        match self {
+            Self::VeryHigh => "very_high",
+            Self::High => "high",
+            Self::Medium => "medium",
+            Self::Low => "low",
+        }
+    }
 }
 
 impl std::fmt::Display for ConfidenceSignal {

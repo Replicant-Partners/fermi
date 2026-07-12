@@ -238,7 +238,7 @@ pub async fn search_handler(
             .bind(processed.closed)
             .bind(processed.resolved)
             .bind(&processed.outcome)
-            .bind(format!("{:?}", processed.confidence_signal).to_lowercase())
+            .bind(processed.confidence_signal.db_str())
             .bind(&user_id)
             .bind(&processed.tags)
             .bind(json!({"search_query": &query}))
@@ -423,14 +423,21 @@ pub async fn snapshot_handler(
     .bind(&market_match.outcome)
     .bind(fermi_prob.map(|v| v as f32))
     .bind(divergence.map(|v| v as f32))
-    .bind(format!("{:?}", market_match.confidence_signal).to_lowercase())
+    .bind(market_match.confidence_signal.db_str())
     .bind(obs_type)
     .bind(&user_id)
     .execute(&state.db)
     .await
     .map_err(|e| {
-        eprintln!("Warning: failed to record PM observation: {}", e);
-        // Don't fail the request — the snapshot data is still valuable
+        // Log at warn level so silent write failures show up in Vercel
+        // logs. We still return the snapshot data to the caller so the
+        // console UI stays responsive when the DB has a transient issue.
+        tracing::warn!(
+            forecast_id = ?body.forecast_id,
+            pm_market_id = %market_match.pm_market_id,
+            error = %e,
+            "failed to record PM observation"
+        );
     })
     .ok();
 
@@ -633,7 +640,7 @@ pub async fn link_handler(
     .bind(market_match.resolved)
     .bind(fermi_prob)
     .bind(divergence as f32)
-    .bind(format!("{:?}", market_match.confidence_signal).to_lowercase())
+    .bind(market_match.confidence_signal.db_str())
     .bind(&user_id)
     .execute(&state.db)
     .await
@@ -827,7 +834,7 @@ pub async fn import_handler(
     .bind(market_match.resolved)
     .bind(initial_prob as f32)
     .bind(0.0f32) // divergence is 0 at import (we used market price)
-    .bind(format!("{:?}", market_match.confidence_signal).to_lowercase())
+    .bind(market_match.confidence_signal.db_str())
     .bind(&user_id)
     .execute(&state.db)
     .await
@@ -1058,7 +1065,7 @@ pub async fn check_resolutions_handler(
         .bind(&market_match.outcome)
         .bind(fermi_prob)
         .bind(divergence as f32)
-        .bind(format!("{:?}", market_match.confidence_signal).to_lowercase())
+        .bind(market_match.confidence_signal.db_str())
         .bind(&user_id)
         .execute(&state.db)
         .await

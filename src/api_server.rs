@@ -1026,6 +1026,66 @@ async fn ensure_critical_schema(db: &PgPool) {
          "CREATE TRIGGER trg_forecast_spacetime \
               AFTER INSERT ON public.fermi_forecast_updates \
               FOR EACH ROW EXECUTE FUNCTION public.fn_forecast_spacetime_on_update()"),
+
+        // ── 094: resolve_forecast + compute_brier_score ────────────
+        //
+        // These plpgsql functions live in migration 094 alongside the
+        // fermi_forecasts table itself. On Vercel/serverless deploys the
+        // multi-statement raw_sql execution of that file has sometimes
+        // silently swallowed the function-creation half (PgBouncer
+        // transaction-mode eating multi-statement DDL), producing the
+        // user-facing error
+        //   function resolve_forecast(text, boolean, text, text) does not exist
+        // when an operator clicks Resolve on any forecast.
+        //
+        // Re-declare them here as single-statement CREATE OR REPLACE so
+        // each is its own sqlx::query() round-trip — immune to whatever
+        // ate them the first time. Idempotent and cheap.
+        ("fn.compute_brier_score",
+         "CREATE OR REPLACE FUNCTION public.compute_brier_score( \
+              predicted REAL, \
+              actual BOOLEAN \
+          ) RETURNS REAL AS $$ \
+          BEGIN \
+              RETURN (predicted - (CASE WHEN actual THEN 1.0 ELSE 0.0 END)) ^ 2; \
+          END; \
+          $$ LANGUAGE plpgsql IMMUTABLE"),
+        ("fn.resolve_forecast",
+         "CREATE OR REPLACE FUNCTION public.resolve_forecast( \
+              p_forecast_id TEXT, \
+              p_actual_outcome BOOLEAN, \
+              p_resolved_by TEXT, \
+              p_resolution_notes TEXT DEFAULT NULL \
+          ) RETURNS REAL AS $$ \
+          DECLARE \
+              v_predicted REAL; \
+              v_brier REAL; \
+              v_status TEXT; \
+          BEGIN \
+              SELECT predicted_probability, status \
+                INTO v_predicted, v_status \
+                FROM public.fermi_forecasts \
+               WHERE id = p_forecast_id \
+               FOR UPDATE; \
+              IF NOT FOUND THEN \
+                  RAISE EXCEPTION 'Forecast % not found', p_forecast_id; \
+              END IF; \
+              IF v_status != 'active' THEN \
+                  RAISE EXCEPTION 'Forecast % is not active (status: %)', p_forecast_id, v_status; \
+              END IF; \
+              v_brier := public.compute_brier_score(v_predicted, p_actual_outcome); \
+              UPDATE public.fermi_forecasts SET \
+                  actual_outcome = p_actual_outcome, \
+                  brier_score = v_brier, \
+                  status = 'resolved', \
+                  resolved_at = NOW(), \
+                  resolved_by = p_resolved_by, \
+                  resolution_notes = p_resolution_notes, \
+                  updated_at = NOW() \
+              WHERE id = p_forecast_id; \
+              RETURN v_brier; \
+          END; \
+          $$ LANGUAGE plpgsql"),
     ];
 
     println!(
