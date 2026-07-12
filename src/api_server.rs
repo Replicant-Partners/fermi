@@ -1086,6 +1086,82 @@ async fn ensure_critical_schema(db: &PgPool) {
               RETURN v_brier; \
           END; \
           $$ LANGUAGE plpgsql"),
+
+        // ── 099: fermi_market_observations + indexes ───────────
+        //
+        // Append-only Polymarket snapshot log. Every POST
+        // /api/polymarket/snapshot (including the console's 5-minute
+        // background poll and the operator's manual ↻ Refresh) writes
+        // one row here. When the table is missing, every write dies
+        // with `relation "fermi_market_observations" does not exist`,
+        // .map_err(...).ok() swallows it, and the trajectory view
+        // silently shows zero crowd ticks forever — that's how we
+        // ended up here in prod. Adding the CREATE TABLE + indexes to
+        // ensure_critical_schema makes the observations infrastructure
+        // self-heal on every deploy, matching the treatment we give
+        // fermi_forecasts / forecast_relationships / pending_cascades.
+        ("fermi_market_observations.table",
+         "CREATE TABLE IF NOT EXISTS public.fermi_market_observations ( \
+              id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text, \
+              forecast_id TEXT REFERENCES public.fermi_forecasts(id) ON DELETE SET NULL, \
+              pm_event_id TEXT NOT NULL, \
+              pm_market_id TEXT NOT NULL, \
+              pm_condition_id TEXT, \
+              pm_slug TEXT, \
+              pm_question TEXT NOT NULL, \
+              pm_event_title TEXT, \
+              market_price REAL NOT NULL CHECK (market_price >= 0 AND market_price <= 1), \
+              bid_price REAL CHECK (bid_price IS NULL OR (bid_price >= 0 AND bid_price <= 1)), \
+              ask_price REAL CHECK (ask_price IS NULL OR (ask_price >= 0 AND ask_price <= 1)), \
+              midpoint_price REAL CHECK (midpoint_price IS NULL OR (midpoint_price >= 0 AND midpoint_price <= 1)), \
+              spread REAL, \
+              volume_total REAL, \
+              volume_24h REAL, \
+              liquidity REAL, \
+              price_change_1h REAL, \
+              price_change_1d REAL, \
+              price_change_1w REAL, \
+              price_change_1m REAL, \
+              pm_end_date TIMESTAMPTZ, \
+              pm_active BOOLEAN NOT NULL DEFAULT true, \
+              pm_closed BOOLEAN NOT NULL DEFAULT false, \
+              pm_resolved BOOLEAN NOT NULL DEFAULT false, \
+              pm_outcome TEXT, \
+              fermi_probability REAL CHECK (fermi_probability IS NULL OR (fermi_probability >= 0 AND fermi_probability <= 1)), \
+              divergence_pp REAL, \
+              confidence_signal TEXT CHECK (confidence_signal IS NULL OR confidence_signal IN ('very_high', 'high', 'medium', 'low')), \
+              observer_id TEXT NOT NULL REFERENCES public.users(user_id), \
+              observation_type TEXT NOT NULL DEFAULT 'search' CHECK (observation_type IN ('search', 'import', 'manual_link', 'refresh', 'scheduled', 'agent_research', 'resolution_check')), \
+              tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[], \
+              metadata JSONB NOT NULL DEFAULT '{}'::jsonb, \
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW() \
+          )"),
+        ("fermi_market_observations.idx_forecast",
+         "CREATE INDEX IF NOT EXISTS idx_market_obs_forecast \
+              ON public.fermi_market_observations(forecast_id, created_at) \
+            WHERE forecast_id IS NOT NULL"),
+        ("fermi_market_observations.idx_pm_market",
+         "CREATE INDEX IF NOT EXISTS idx_market_obs_pm_market \
+              ON public.fermi_market_observations(pm_market_id, created_at)"),
+        ("fermi_market_observations.idx_pm_event",
+         "CREATE INDEX IF NOT EXISTS idx_market_obs_pm_event \
+              ON public.fermi_market_observations(pm_event_id)"),
+        ("fermi_market_observations.idx_observer",
+         "CREATE INDEX IF NOT EXISTS idx_market_obs_observer \
+              ON public.fermi_market_observations(observer_id, created_at)"),
+        ("fermi_market_observations.idx_type",
+         "CREATE INDEX IF NOT EXISTS idx_market_obs_type \
+              ON public.fermi_market_observations(observation_type)"),
+        ("fermi_market_observations.idx_unresolved",
+         "CREATE INDEX IF NOT EXISTS idx_market_obs_unresolved \
+              ON public.fermi_market_observations(pm_market_id, created_at) \
+            WHERE forecast_id IS NOT NULL \
+              AND pm_closed = false \
+              AND pm_resolved = false"),
+        ("fermi_market_observations.idx_resolved",
+         "CREATE INDEX IF NOT EXISTS idx_market_obs_resolved \
+              ON public.fermi_market_observations(forecast_id, created_at) \
+            WHERE pm_resolved = true"),
     ];
 
     println!(
