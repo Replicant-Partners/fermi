@@ -9021,12 +9021,21 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                         // request is in flight, "failed: <err>" when
                         // the last attempt errored, "updated 3 s ago"
                         // otherwise. Colour signals status at a glance.
+                        // Extract the last refresh error separately so the
+                        // inline chip can stay short while the full text
+                        // renders as its own wrapped row below — crucial
+                        // for Postgres errors (constraint names, column
+                        // types) that are useless when truncated.
+                        let last_error: Option<String> =
+                            state.pm_last_refresh_error.clone();
                         let (status_text, status_color) = if state.pm_refresh_in_flight {
                             ("refreshing…".to_string(), rgb(theme::CYAN))
-                        } else if let Some(err) = state.pm_last_refresh_error.as_ref() {
-                            // Truncate long errors so the chip doesn't blow up.
-                            let short = if err.len() > 40 {
-                                format!("failed: {}…", &err[..40])
+                        } else if let Some(err) = last_error.as_ref() {
+                            // Chip stays short; the full error goes on
+                            // its own wrapped line just below the row.
+                            let short = if err.chars().count() > 60 {
+                                let head: String = err.chars().take(60).collect();
+                                format!("failed: {}…", head)
                             } else {
                                 format!("failed: {}", err)
                             };
@@ -9054,11 +9063,17 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                         };
                         let refresh_disabled = state.pm_refresh_in_flight;
 
+                        // Outer column so we can stack the schedule row +
+                        // (optionally) a wrapped full-error row.
                         div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(3.0))
+                            .mt(px(4.0))
+                            .child(div()
                             .flex()
                             .items_center()
                             .gap(px(4.0))
-                            .mt(px(4.0))
                             .child(
                                 div()
                                     .text_size(px(8.0))
@@ -9144,7 +9159,25 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                                         }
                                     }))
                                     .child(label)
-                            }))
+                            })))
+                            // Full-error row: only shown when the last
+                            // refresh failed. Renders the complete error
+                            // text (unbounded) so operators can read a
+                            // Postgres constraint name / driver message
+                            // without opening a terminal.
+                            .when(last_error.is_some(), |el| {
+                                let full = last_error.unwrap_or_default();
+                                el.child(
+                                    div()
+                                        .px(px(6.0))
+                                        .py(px(2.0))
+                                        .rounded(px(2.0))
+                                        .bg(rgb(theme::BG))
+                                        .text_size(px(8.0))
+                                        .text_color(rgb(theme::RED))
+                                        .child(full),
+                                )
+                            })
                     }),
             )
         })
