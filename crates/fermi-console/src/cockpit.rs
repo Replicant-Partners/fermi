@@ -902,6 +902,21 @@ impl CockpitState {
                 state.pm_refresh_in_flight = false;
                 match result {
                     Ok(Ok(resp)) => {
+                        // Surface an observation write failure. The API
+                        // returns 200 + observation_persisted=false when
+                        // the Gamma fetch succeeded but the DB INSERT
+                        // dropped (e.g. FK violation, CHECK constraint).
+                        // Without this the operator sees a healthy
+                        // "updated 3s ago" chip while the trajectory
+                        // chart stays at zero observations forever.
+                        let observation_persisted = resp
+                            .get("observation_persisted")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(true);
+                        let observation_error = resp
+                            .get("observation_error")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
                         let price =
                             resp.get("market_price")
                                 .and_then(|v| v.as_f64())
@@ -941,11 +956,26 @@ impl CockpitState {
                                 state.pm_price_history.remove(0);
                             }
                             state.pm_last_refresh_at = Some(now);
-                            state.pm_last_refresh_error = None;
+                            // If Gamma returned data but the DB write
+                            // failed, keep the UI showing the fresh
+                            // crowd price BUT flag the persistence
+                            // failure so the trajectory-view mystery
+                            // ("why is my chart empty?") is one hop away.
+                            if !observation_persisted {
+                                let msg = format!(
+                                    "snapshot fetched but observation not persisted: {}",
+                                    observation_error.as_deref().unwrap_or("unknown error")
+                                );
+                                log::warn!("[pm-refresh] {}", msg);
+                                state.pm_last_refresh_error = Some(msg);
+                            } else {
+                                state.pm_last_refresh_error = None;
+                            }
                             log::info!(
-                                "[pm-refresh] Snapshot: {:.2}% (was {:.2}%)",
+                                "[pm-refresh] Snapshot: {:.2}% (was {:.2}%) persisted={}",
                                 p * 100.0,
-                                prev.map(|q| q * 100.0).unwrap_or(0.0)
+                                prev.map(|q| q * 100.0).unwrap_or(0.0),
+                                observation_persisted
                             );
                         } else {
                             let msg = "snapshot response missing market_price".to_string();

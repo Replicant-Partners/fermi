@@ -441,7 +441,19 @@ pub async fn snapshot_handler(
         "search"
     };
 
-    let _ = sqlx::query(
+    // Sanitise the incoming forecast_id: the console's cockpit sends
+    // `self.forecast_id.clone().unwrap_or_default()` on every poll, so
+    // uncommitted forecasts arrive as `Some("")`. That would fail the
+    // observations table's FK to fermi_forecasts.id and drop the whole
+    // write. Normalise to None so those snapshots persist as orphaned
+    // ambient observations instead of being silently discarded.
+    let effective_forecast_id: Option<String> = body
+        .forecast_id
+        .as_ref()
+        .filter(|s| !s.trim().is_empty())
+        .cloned();
+
+    let insert_result = sqlx::query(
         "INSERT INTO fermi_market_observations (
             id, forecast_id,
             pm_event_id, pm_market_id, pm_condition_id, pm_slug,
@@ -463,7 +475,7 @@ pub async fn snapshot_handler(
         )",
     )
     .bind(&obs_id)
-    .bind(&body.forecast_id)
+    .bind(&effective_forecast_id)
     .bind(&market_match.pm_event_id)
     .bind(&market_match.pm_market_id)
     .bind(&market_match.condition_id)
@@ -493,19 +505,26 @@ pub async fn snapshot_handler(
     .bind(obs_type)
     .bind(&user_id)
     .execute(&state.db)
-    .await
-    .map_err(|e| {
-        // Log at warn level so silent write failures show up in Vercel
-        // logs. We still return the snapshot data to the caller so the
-        // console UI stays responsive when the DB has a transient issue.
-        tracing::warn!(
-            forecast_id = ?body.forecast_id,
-            pm_market_id = %market_match.pm_market_id,
-            error = %e,
-            "failed to record PM observation"
-        );
-    })
-    .ok();
+    .await;
+
+    // Capture the outcome so we can (a) log it, and (b) surface it in
+    // the response body. Historically this INSERT was fire-and-forget:
+    // every failure was swallowed by `.map_err(...).ok()`, so bugs like
+    // the confidence_signal CHECK-constraint violation cost us weeks of
+    // "the trajectory shows 0 observations". Now the caller can see the
+    // error immediately.
+    let (observation_persisted, observation_error) = match insert_result {
+        Ok(_) => (true, None),
+        Err(e) => {
+            tracing::warn!(
+                forecast_id = ?effective_forecast_id,
+                pm_market_id = %market_match.pm_market_id,
+                error = %e,
+                "failed to record PM observation"
+            );
+            (false, Some(e.to_string()))
+        }
+    };
 
     // ── Update forecast metadata with latest PM price ──────────
     if let Some(ref fc_id) = body.forecast_id {
@@ -570,7 +589,12 @@ pub async fn snapshot_handler(
         "fermi_probability": fermi_prob,
         "divergence_pp": divergence,
         "divergence_interpretation": divergence_interpretation,
-        "forecast_id": body.forecast_id,
+        "forecast_id": effective_forecast_id,
+        // Explicit success/failure signal for the observation write.
+        // The console displays this so an operator immediately sees
+        // when a snapshot fetched cleanly but the DB write dropped.
+        "observation_persisted": observation_persisted,
+        "observation_error": observation_error,
         "credits_charged": 1
     })))
 }
