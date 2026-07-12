@@ -2129,9 +2129,24 @@ impl FermiConsole {
                     this.active_forecasts = resp.forecasts;
                 }
                 if let Ok(resp) = resolved_res {
-                    // Build activity feed from resolved forecasts
-                    this.recent_activity = resp
-                        .forecasts
+                    // Build activity feed from resolved forecasts.
+                    //
+                    // `resolved_q` sorts by brier_score ASC (best first) so the
+                    // Portfolio's Resolved column can lead with the operator's
+                    // wins. For the Dashboard's "Recent Activity" panel we want
+                    // the opposite — chronological, most recent first — or the
+                    // feed shows stale entries whenever the best-Brier hits are
+                    // old bulk resolutions (e.g. WC group-stage eliminations).
+                    // Re-sort a local view by resolved_at DESC instead of
+                    // issuing a second round-trip.
+                    let mut recent = resp.forecasts.clone();
+                    recent.sort_by(|a, b| {
+                        b.resolved_at
+                            .as_deref()
+                            .unwrap_or("")
+                            .cmp(a.resolved_at.as_deref().unwrap_or(""))
+                    });
+                    this.recent_activity = recent
                         .iter()
                         .take(8)
                         .map(|f| {
@@ -2166,6 +2181,8 @@ impl FermiConsole {
                             }
                         })
                         .collect();
+                    // `resolved_forecasts` keeps the server-side brier-ASC order
+                    // that the Portfolio's Resolved section renders directly.
                     this.resolved_forecasts = resp.forecasts;
                 }
                 if let Ok(resp) = draft_res {
