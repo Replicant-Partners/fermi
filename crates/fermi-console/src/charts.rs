@@ -24,6 +24,16 @@ const CYAN_BAR: RGBColor = RGBColor(35, 100, 120);
 // with the CYAN_BAR underlay of the model worm so the two trails read
 // as peers rather than "real data + faint hint".
 const PURPLE_BAR: RGBColor = RGBColor(80, 60, 140);
+// Divergence fill — muted grey-cyan mixing the two worm colors, sits
+// between the model and crowd trails to make the *gap* itself palpable
+// instead of leaving the eye to compare two thin lines. Deliberately
+// desaturated so the worms themselves stay the visually dominant
+// features.
+const DIVERGENCE_FILL: RGBColor = RGBColor(58, 72, 92);
+// Resolved-forecast marker — the same green used for resolved chips in
+// the console, so a resolved forecast reads consistently between the
+// portfolio list and the trajectory chart.
+const RESOLVED: RGBColor = RGBColor(186, 230, 126);
 
 // ═══════════════════════════════════════════════════════════════════
 // Public data types
@@ -61,6 +71,7 @@ pub struct TrajectoryEvent {
     pub kind: TrajectoryEventKind,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum TrajectoryEventKind {
     /// A rate revision (Apply, schedule rerun, etc.) — cyan dot, larger.
     RateRevision,
@@ -369,6 +380,14 @@ pub fn render_trajectory_worm(
     events: &[TrajectoryEvent],
     base_rate_pct: Option<f64>,
     crowd_price_pct: Option<f64>,
+    // Anchor timestamp for calendar-formatted x-axis labels. When Some,
+    // the axis shows "Jun 17 / Jul 12" instead of the raw "+Nd" offsets
+    // — much easier to correlate with real-world events when the forecast
+    // spans days or weeks.
+    earliest: Option<chrono::DateTime<chrono::Utc>>,
+    // Seconds-since-earliest of the resolution event, if the forecast
+    // has been resolved. Draws a vertical marker + label.
+    resolved_at_secs: Option<f64>,
     width: u32,
     height: u32,
 ) -> Vec<u8> {
@@ -465,20 +484,124 @@ pub fn render_trajectory_worm(
                 .disable_mesh()
                 .y_label_formatter(&|v| format!("{:.0}%", v))
                 .x_label_formatter(&|v| {
-                    let secs = *v - x_min;
-                    if span < 60.0 {
-                        format!("{:.0}s", secs)
-                    } else if span < 60.0 * 60.0 {
-                        format!("+{:.0}m", secs / 60.0)
-                    } else if span < 24.0 * 60.0 * 60.0 {
-                        format!("+{:.1}h", secs / 3600.0)
-                    } else if span < 7.0 * 24.0 * 60.0 * 60.0 {
-                        format!("+{:.1}d", secs / 86400.0)
+                    // Prefer calendar-formatted labels when we have an
+                    // anchor timestamp and the span is wider than an
+                    // hour — much easier to correlate with real-world
+                    // events ("the Portugal loss on Jul 4") than raw
+                    // "+27d" offsets. Falls back to relative time for
+                    // short spans / when the anchor isn't provided.
+                    let secs = *v;
+                    let use_calendar = earliest.is_some() && span >= 60.0 * 60.0;
+                    if use_calendar {
+                        let ts = earliest.unwrap()
+                            + chrono::Duration::milliseconds((secs * 1000.0) as i64);
+                        if span >= 30.0 * 24.0 * 60.0 * 60.0 {
+                            // Multi-month span: month-day works, year
+                            // still implicit.
+                            ts.format("%b %-d").to_string()
+                        } else if span >= 24.0 * 60.0 * 60.0 {
+                            // Multi-day span: month-day is best;
+                            // shorter forecasts don't need year.
+                            ts.format("%b %-d").to_string()
+                        } else {
+                            // Hours-only span: show hour + minute.
+                            ts.format("%H:%M").to_string()
+                        }
                     } else {
-                        format!("+{:.0}d", secs / 86400.0)
+                        let rel = secs - x_min;
+                        if span < 60.0 {
+                            format!("{:.0}s", rel)
+                        } else if span < 60.0 * 60.0 {
+                            format!("+{:.0}m", rel / 60.0)
+                        } else if span < 24.0 * 60.0 * 60.0 {
+                            format!("+{:.1}h", rel / 3600.0)
+                        } else {
+                            format!("+{:.1}d", rel / 86400.0)
+                        }
                     }
                 })
                 .draw();
+
+            // ── Divergence fill — the story-telling layer ───────────────
+            //
+            // Fill the polygon bounded by the model curve and the crowd
+            // curve. Makes the *gap* palpable at a glance instead of
+            // leaving the eye to measure it between two thin lines. Only
+            // fires when both worms have >=2 points; otherwise there's
+            // no meaningful gap to shade.
+            //
+            // Timestamps in the two series don't line up (model updates
+            // on Apply / re-sim, crowd updates on PM poll), so build a
+            // union time grid and interpolate both curves onto it.
+            if series.len() >= 2 && crowd_series.len() >= 2 {
+                let mut grid: Vec<f64> = series
+                    .iter()
+                    .map(|p| p.t_seconds)
+                    .chain(crowd_series.iter().map(|p| p.t_seconds))
+                    .collect();
+                grid.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                grid.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+
+                let interp = |s: &[TrajectoryPoint], t: f64| -> Option<f64> {
+                    if s.is_empty() {
+                        return None;
+                    }
+                    let first = s.first().unwrap();
+                    let last = s.last().unwrap();
+                    if t <= first.t_seconds {
+                        return Some(first.rate_pct);
+                    }
+                    if t >= last.t_seconds {
+                        return Some(last.rate_pct);
+                    }
+                    for w in s.windows(2) {
+                        if t >= w[0].t_seconds && t <= w[1].t_seconds {
+                            let dt = w[1].t_seconds - w[0].t_seconds;
+                            if dt.abs() < 1e-9 {
+                                return Some(w[0].rate_pct);
+                            }
+                            let frac = (t - w[0].t_seconds) / dt;
+                            return Some(w[0].rate_pct + frac * (w[1].rate_pct - w[0].rate_pct));
+                        }
+                    }
+                    None
+                };
+
+                // Only include grid points where BOTH curves have
+                // coverage — avoids the fill hanging out into empty
+                // regions where one series hasn't started yet.
+                let model_min = series.first().unwrap().t_seconds;
+                let model_max = series.last().unwrap().t_seconds;
+                let crowd_min = crowd_series.first().unwrap().t_seconds;
+                let crowd_max = crowd_series.last().unwrap().t_seconds;
+                let overlap_min = model_min.max(crowd_min);
+                let overlap_max = model_max.min(crowd_max);
+
+                let mut top: Vec<(f64, f64)> = Vec::new();
+                let mut bot: Vec<(f64, f64)> = Vec::new();
+                for &t in &grid {
+                    if t < overlap_min || t > overlap_max {
+                        continue;
+                    }
+                    if let (Some(m), Some(c)) = (interp(series, t), interp(crowd_series, t)) {
+                        top.push((t, m));
+                        bot.push((t, c));
+                    }
+                }
+                if top.len() >= 2 {
+                    // Build the closing polygon: forward along the model
+                    // curve, backward along the crowd curve. plotters
+                    // handles self-intersecting shapes reasonably for
+                    // the alternating-crossings case that happens when
+                    // model and crowd trade places.
+                    let mut poly: Vec<(f64, f64)> = top.clone();
+                    poly.extend(bot.iter().rev());
+                    let _ = chart.draw_series(std::iter::once(Polygon::new(
+                        poly,
+                        ShapeStyle::from(DIVERGENCE_FILL).filled(),
+                    )));
+                }
+            }
 
             // Reference: base-rate horizontal — dashed gold line. Drawn
             // before the worm so the worm sits visually on top.
@@ -546,6 +669,22 @@ pub fn render_trajectory_worm(
                 ));
             }
 
+            // ── Resolution marker ─────────────────────────────────────
+            //
+            // If the forecast has been resolved, drop a vertical green
+            // line at the resolution timestamp with a small 'resolved'
+            // label. Drawn after the worms so it visually caps the
+            // trajectory — the operator sees at a glance "the story
+            // stopped here".
+            if let Some(t_res) = resolved_at_secs {
+                if t_res >= x_min && t_res <= x_max {
+                    let _ = chart.draw_series(LineSeries::new(
+                        vec![(t_res, y_min), (t_res, y_max)],
+                        ShapeStyle::from(RESOLVED).stroke_width(1),
+                    ));
+                }
+            }
+
             // Event markers — bigger, with a darker outline ring so they
             // pop on the dark background. Render in priority order:
             // agent_run dots first (smallest, most numerous), then market
@@ -563,8 +702,8 @@ pub fn render_trajectory_worm(
 
             for ev in sorted {
                 let (color, size) = match ev.kind {
-                    TrajectoryEventKind::RateRevision => (CYAN, 6),
-                    TrajectoryEventKind::BayesOpsFit => (GOLD, 6),
+                    TrajectoryEventKind::RateRevision => (CYAN, 7),
+                    TrajectoryEventKind::BayesOpsFit => (GOLD, 7),
                     TrajectoryEventKind::AgentRun => (LABEL, 3),
                     TrajectoryEventKind::MarketObservation => (PURPLE, 5),
                 };
@@ -683,32 +822,76 @@ pub fn render_trajectory_worm(
     buf
 }
 
-/// Compute the pixel coordinates of each event for an interactive
-/// overlay. Returns one (x, y, width, height) box per event in the
-/// SAME ORDER as the input events slice, so the caller can correlate
-/// hover regions with the source event objects.
-///
-/// Used by the cockpit's trajectory tab to place invisible hover divs
-/// over the rendered chart bitmap.
-pub fn trajectory_event_pixel_positions(
-    events: &[TrajectoryEvent],
+/// Plot-area bounds — exposed so callers can compute time-anchored
+/// hover positions ("mouse is at pixel x=234 → that's timestamp T").
+/// Duplicating this info in the public API is preferable to making
+/// every hover consumer re-derive the plot-area constants that the
+/// renderer uses internally.
+pub struct TrajectoryPlotBounds {
+    /// Plot area pixel rect: (left, top, right, bottom). Anything
+    /// outside this rect is chrome / labels / rug and should NOT be
+    /// treated as chart-relative.
+    pub plot_left: i32,
+    pub plot_top: i32,
+    pub plot_right: i32,
+    pub plot_bot: i32,
+    /// X data range in seconds-since-earliest.
+    pub x_min: f64,
+    pub x_max: f64,
+    /// Y data range in percent.
+    pub y_min: f64,
+    pub y_max: f64,
+}
+
+impl TrajectoryPlotBounds {
+    /// Map a pixel-x (in canvas-local coords, 0 = left edge of the
+    /// bitmap) to the corresponding t_seconds value. Returns None when
+    /// the pixel is outside the plot area.
+    pub fn pixel_to_t_seconds(&self, x_pix: f32) -> Option<f64> {
+        let x = x_pix as i32;
+        if x < self.plot_left || x > self.plot_right {
+            return None;
+        }
+        let w = (self.plot_right - self.plot_left).max(1) as f64;
+        let frac = ((x - self.plot_left) as f64) / w;
+        Some(self.x_min + frac * (self.x_max - self.x_min))
+    }
+
+    /// Map a t_seconds value to canvas-local pixel-x. Returns None if
+    /// t is outside the data range — caller can clamp or skip.
+    pub fn t_to_pixel_x(&self, t: f64) -> Option<i32> {
+        if t < self.x_min || t > self.x_max {
+            return None;
+        }
+        let w = (self.plot_right - self.plot_left).max(1) as f64;
+        let span = (self.x_max - self.x_min).max(1e-9);
+        Some(self.plot_left + ((t - self.x_min) / span * w) as i32)
+    }
+
+    /// Map a rate percent (0..100) to canvas-local pixel-y.
+    pub fn rate_to_pixel_y(&self, rate_pct: f64) -> i32 {
+        let h = (self.plot_bot - self.plot_top).max(1) as f64;
+        let span = (self.y_max - self.y_min).max(1e-9);
+        let frac = ((rate_pct - self.y_min) / span).clamp(0.0, 1.0);
+        self.plot_bot - (frac * h) as i32
+    }
+}
+
+/// Compute the plot-area bounds for a given trajectory dataset. Same
+/// range-derivation logic as `render_trajectory_worm` uses internally,
+/// exposed so hover callers can share a coordinate space.
+pub fn trajectory_plot_bounds(
     series: &[TrajectoryPoint],
     crowd_series: &[TrajectoryPoint],
+    events: &[TrajectoryEvent],
     base_rate_pct: Option<f64>,
     crowd_price_pct: Option<f64>,
     width: u32,
     height: u32,
-) -> Vec<(i32, i32)> {
-    if events.is_empty() {
-        return Vec::new();
-    }
-
+) -> TrajectoryPlotBounds {
     const RUG_HEIGHT: u32 = 14;
     let chart_height = height.saturating_sub(RUG_HEIGHT).max(40);
 
-    // Rebuild the same y/x ranges as render_trajectory_worm — this is
-    // duplicated logic but keeping it here avoids a multi-return-tuple
-    // inside the renderer that would clutter that function further.
     let mut all_y: Vec<f64> = series.iter().map(|p| p.rate_pct).collect();
     all_y.extend(crowd_series.iter().map(|p| p.rate_pct));
     all_y.extend(events.iter().map(|e| e.rate_pct));
@@ -738,30 +921,89 @@ pub fn trajectory_event_pixel_positions(
         x_max_raw
     };
 
-    // Mirror the chart's plot-area pixel inset. These constants come
-    // from the chart.margin_* + label-area calls above.
-    let plot_left = 46i32;
-    let plot_right = (width as i32) - 60;
-    let plot_top = 10i32;
-    let plot_bot = chart_height as i32 - 28;
-    let plot_w = (plot_right - plot_left).max(1);
-    let plot_h = (plot_bot - plot_top).max(1);
+    TrajectoryPlotBounds {
+        plot_left: 46,
+        plot_right: (width as i32) - 60,
+        plot_top: 10,
+        plot_bot: chart_height as i32 - 28,
+        x_min,
+        x_max,
+        y_min,
+        y_max,
+    }
+}
 
+/// Linear interpolation on a trajectory series. Returns None only when
+/// the series is empty; clamps to the endpoint values outside the
+/// series' domain (so hover past the last known point returns the last
+/// known value — sensible for "what's my model saying right now").
+pub fn interpolate_trajectory_rate(series: &[TrajectoryPoint], t: f64) -> Option<f64> {
+    if series.is_empty() {
+        return None;
+    }
+    let first = series.first().unwrap();
+    let last = series.last().unwrap();
+    if t <= first.t_seconds {
+        return Some(first.rate_pct);
+    }
+    if t >= last.t_seconds {
+        return Some(last.rate_pct);
+    }
+    for w in series.windows(2) {
+        if t >= w[0].t_seconds && t <= w[1].t_seconds {
+            let dt = w[1].t_seconds - w[0].t_seconds;
+            if dt.abs() < 1e-9 {
+                return Some(w[0].rate_pct);
+            }
+            let frac = (t - w[0].t_seconds) / dt;
+            return Some(w[0].rate_pct + frac * (w[1].rate_pct - w[0].rate_pct));
+        }
+    }
+    None
+}
+
+/// Compute the pixel coordinates of each event for an interactive
+/// overlay. Returns one (x, y, width, height) box per event in the
+/// SAME ORDER as the input events slice, so the caller can correlate
+/// hover regions with the source event objects.
+///
+/// Used by the cockpit's trajectory tab to place invisible hover divs
+/// over the rendered chart bitmap.
+pub fn trajectory_event_pixel_positions(
+    events: &[TrajectoryEvent],
+    series: &[TrajectoryPoint],
+    crowd_series: &[TrajectoryPoint],
+    base_rate_pct: Option<f64>,
+    crowd_price_pct: Option<f64>,
+    width: u32,
+    height: u32,
+) -> Vec<(i32, i32)> {
+    if events.is_empty() {
+        return Vec::new();
+    }
+    let b = trajectory_plot_bounds(
+        series,
+        crowd_series,
+        events,
+        base_rate_pct,
+        crowd_price_pct,
+        width,
+        height,
+    );
     events
         .iter()
         .map(|ev| {
-            let fx = if x_max > x_min {
-                ((ev.t_seconds - x_min) / (x_max - x_min)).clamp(0.0, 1.0)
-            } else {
-                0.5
-            };
-            let fy = if y_max > y_min {
-                ((ev.rate_pct - y_min) / (y_max - y_min)).clamp(0.0, 1.0)
-            } else {
-                0.5
-            };
-            let x_pix = plot_left + (fx * plot_w as f64) as i32;
-            let y_pix = plot_bot - (fy * plot_h as f64) as i32;
+            let x_pix = b.t_to_pixel_x(ev.t_seconds).unwrap_or({
+                // Clamp instead of dropping so downstream hover overlays
+                // always render one hit-box per event, even if an event
+                // is exactly at the boundary.
+                if ev.t_seconds < b.x_min {
+                    b.plot_left
+                } else {
+                    b.plot_right
+                }
+            });
+            let y_pix = b.rate_to_pixel_y(ev.rate_pct);
             (x_pix, y_pix)
         })
         .collect()

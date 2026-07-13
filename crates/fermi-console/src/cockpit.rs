@@ -396,6 +396,13 @@ pub struct CockpitState {
     /// between the worm chart and the bullet list. Reset on forecast
     /// switch.
     pub hovered_trajectory_event: Option<usize>,
+    /// Canvas-local pixel x of the mouse when it's over the trajectory
+    /// chart. Powers the vertical time-guide + rich hover tooltip
+    /// that shows model / crowd / divergence at that moment. None when
+    /// the pointer isn't on the chart. Kept as f32 to preserve the
+    /// sub-pixel accuracy GPUI hands us, so the guide line doesn't
+    /// stutter as the mouse moves.
+    pub hovered_trajectory_x: Option<f32>,
     /// Polling interval for PM price updates. None = no polling.
     pub pm_poll_interval: Option<std::time::Duration>,
 
@@ -670,6 +677,7 @@ impl CockpitState {
             hovered_histogram_bin: None,
             hovered_index_version: None,
             hovered_trajectory_event: None,
+            hovered_trajectory_x: None,
         };
 
         // Start SSE polling timer — periodically triggers re-renders
@@ -14026,6 +14034,14 @@ fn render_trajectory_body(
         }
     }
 
+    // Resolution timestamp — rendered as a green vertical guide on the
+    // chart so a resolved forecast visually caps the trajectory.
+    let resolved_at_secs: Option<f64> = span
+        .get("forecast_resolved_at")
+        .and_then(|v| v.as_str())
+        .and_then(parse_ts)
+        .and_then(|t| earliest.map(|e| (t - e).num_milliseconds() as f64 / 1000.0));
+
     let chart_w: u32 = 800;
     let chart_h: u32 = 240;
     let worm_buf = crate::charts::render_trajectory_worm(
@@ -14034,10 +14050,25 @@ fn render_trajectory_body(
         &worm_events,
         base_rate_pct,
         crowd_price_pct,
+        earliest,
+        resolved_at_secs,
         chart_w,
         chart_h,
     );
     let worm_img = crate::charts::rgb_to_render_image(&worm_buf, chart_w, chart_h);
+
+    // Plot bounds — shared between the event pixel-position math and the
+    // new time-anchored hover overlay. Both need the same coord space
+    // as the rendered bitmap, so they read from the same helper.
+    let plot_bounds = crate::charts::trajectory_plot_bounds(
+        &worm_points,
+        &crowd_points,
+        &worm_events,
+        base_rate_pct,
+        crowd_price_pct,
+        chart_w,
+        chart_h,
+    );
 
     // Compute pixel positions of every event so we can put hover divs
     // over them. Same coordinate-space math the chart used internally.
@@ -14051,20 +14082,86 @@ fn render_trajectory_body(
         chart_h,
     );
 
+    // Live divergence, computed once for the header. Colour + arrow
+    // encode the direction and magnitude so the operator's eye lands
+    // on it before the chart itself.
+    let live_divergence_pp: Option<f64> = match (last_rate, crowd_price_pct) {
+        (Some(l), Some(c)) => Some(l * 100.0 - c),
+        _ => None,
+    };
+
+    // Trend arrow for the model's net movement.
+    let model_trend = match net_change_pp {
+        Some(d) if d > 0.5 => ("▲", theme::GREEN),
+        Some(d) if d < -0.5 => ("▼", theme::ORANGE),
+        Some(_) => ("●", theme::FG_DIM),
+        None => ("●", theme::FG_DIM),
+    };
+
     let header = div()
         .flex()
         .flex_col()
-        .gap(px(4.0))
+        .gap(px(6.0))
         .px(px(16.0))
         .py(px(12.0))
         .border_b_1()
         .border_color(rgb(theme::FG_FAINT))
         .child(
+            // Top row: title + big divergence chip pulled to the right.
+            // Divergence is THE headline number — how far off am I from
+            // the crowd? Make it read first.
             div()
-                .text_size(px(14.0))
-                .font_weight(FontWeight::BOLD)
-                .text_color(rgb(theme::FG))
-                .child("Trajectory"),
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_size(px(14.0))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(rgb(theme::FG))
+                        .child("Trajectory"),
+                )
+                .when(live_divergence_pp.is_some(), move |el| {
+                    let d = live_divergence_pp.unwrap();
+                    let (arrow, color) = if d.abs() < 3.0 {
+                        ("●", theme::GREEN)
+                    } else if d < 0.0 {
+                        ("▼", theme::PURPLE)
+                    } else {
+                        ("▲", theme::CYAN)
+                    };
+                    let label = if d.abs() < 3.0 {
+                        "tracking crowd"
+                    } else if d < 0.0 {
+                        "below crowd"
+                    } else {
+                        "above crowd"
+                    };
+                    el.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .px(px(10.0))
+                            .py(px(4.0))
+                            .rounded(px(4.0))
+                            .bg(theme::bg_elevated())
+                            .border_1()
+                            .border_color(rgb(color))
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(color))
+                                    .child(format!("{}  {:+.1}pp", arrow, d)),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(rgb(theme::FG_DIM))
+                                    .child(label),
+                            ),
+                    )
+                }),
         )
         .child(
             div()
@@ -14072,12 +14169,17 @@ fn render_trajectory_body(
                 .gap(px(16.0))
                 .text_size(px(11.0))
                 .text_color(rgb(theme::FG_DIM))
-                .child(format!("{} events", event_count))
-                .child(format!("{} rate revisions", rate_count))
-                .child(format!("{} market observations", market_count))
+                // Model trend chip — arrow + net-change color for at-a-glance
+                // direction reading.
                 .child(match (first_rate, last_rate, net_change_pp) {
                     (Some(f), Some(l), Some(d)) => {
-                        format!("model {:.1}% → {:.1}% ({:+.1}pp)", f * 100.0, l * 100.0, d)
+                        format!(
+                            "{} model {:.1}% → {:.1}% ({:+.1}pp)",
+                            model_trend.0,
+                            f * 100.0,
+                            l * 100.0,
+                            d,
+                        )
                     }
                     _ => "no rate revisions yet".into(),
                 })
@@ -14091,33 +14193,47 @@ fn render_trajectory_body(
                     let last = crowd_points.last().map(|p| p.rate_pct);
                     move |el| match (first, last) {
                         (Some(f), Some(l)) => {
-                            el.child(format!("crowd {:.1}% → {:.1}% ({:+.1}pp)", f, l, l - f))
+                            let arrow = if l - f > 0.5 {
+                                "▲"
+                            } else if l - f < -0.5 {
+                                "▼"
+                            } else {
+                                "●"
+                            };
+                            el.child(format!(
+                                "{} crowd {:.1}% → {:.1}% ({:+.1}pp)",
+                                arrow,
+                                f,
+                                l,
+                                l - f
+                            ))
                         }
                         _ => el,
                     }
                 })
-                .when(crowd_price_pct.is_some(), move |el| {
-                    // Live divergence: latest model rate vs latest crowd price.
-                    let div_pp = match (last_rate, crowd_price_pct) {
-                        (Some(l), Some(c)) => Some(l * 100.0 - c),
-                        _ => None,
-                    };
-                    el.child(format!("vs crowd: {:+.1}pp", div_pp.unwrap_or(0.0)))
-                }),
+                .child(format!("{} events", event_count))
+                .child(format!("{} revisions", rate_count))
+                .child(format!("{} PM ticks", market_count)),
         );
 
     // ── Worm chart slot with interactive hover overlays ─────────────
     //
-    // The chart bitmap is rendered at fixed (chart_w, chart_h). We layer
-    // invisible 16×16 hover divs on top, one per event, at the pixel
-    // coordinates the chart placed each dot. Hovering a div toggles
-    // state.hovered_trajectory_event so:
-    //   • the matching row in the event list highlights
-    //   • a tooltip card surfaces the event details
+    // The chart bitmap is rendered at fixed (chart_w, chart_h). Three
+    // layers of interactivity sit on top:
     //
-    // The chart canvas is wrapped in an absolute-positioned container
-    // so the hover divs can position themselves with `left`/`top` in
-    // canvas-local coordinates.
+    //   1. Time-anchored hover: a full-plot-area listener tracks the
+    //      mouse position so we can render a vertical guide + tooltip
+    //      showing model/crowd/divergence at that instant. This is the
+    //      "scrub the timeline" affordance — the operator can trace a
+    //      finger across the chart and see the numbers evolve.
+    //   2. Per-event hitboxes: 16×16 invisible divs at each event dot
+    //      trigger the event-list highlight + rich tooltip below.
+    //   3. The bitmap itself renders the worms, divergence fill, and
+    //      static markers.
+    //
+    // Ordering matters: event hitboxes render AFTER the plot-area
+    // listener so they capture the hover first when the mouse is over
+    // a dot.
     let mut chart_overlay = div()
         .relative()
         .w(px(chart_w as f32))
@@ -14127,6 +14243,51 @@ fn render_trajectory_body(
                 .w(px(chart_w as f32))
                 .h(px(chart_h as f32)),
         );
+
+    // Time-anchored hover — approach:
+    //
+    // GPUI's on_mouse_move gives window-relative coords and we don't
+    // have a clean way to know the chart_overlay's window offset
+    // inside a listener closure. Instead of chasing that, divide the
+    // plot area into a strip grid: each strip is a hoverable div
+    // whose canvas-local x is baked into its closure. When a strip is
+    // hovered, we know exactly which time-slice the operator is on —
+    // no coord math required.
+    //
+    // 60 strips over ~700px of plot area = ~12px resolution. Finer than
+    // that visually flicker under fast mouse moves; coarser is
+    // noticeably choppy. Cost: 60 tiny interactive divs, cheap in GPUI.
+    let plot_area_left = plot_bounds.plot_left as f32;
+    let plot_area_top = plot_bounds.plot_top as f32;
+    let plot_area_w = (plot_bounds.plot_right - plot_bounds.plot_left) as f32;
+    let plot_area_h = (plot_bounds.plot_bot - plot_bounds.plot_top) as f32;
+    const N_STRIPS: usize = 60;
+    let strip_w = (plot_area_w / N_STRIPS as f32).max(1.0);
+    for i in 0..N_STRIPS {
+        let strip_left = plot_area_left + (i as f32) * strip_w;
+        let center_x = strip_left + strip_w / 2.0;
+        chart_overlay = chart_overlay.child(
+            div()
+                .id(ElementId::Name(format!("traj-strip-{}", i).into()))
+                .absolute()
+                .left(px(strip_left))
+                .top(px(plot_area_top))
+                .w(px(strip_w))
+                .h(px(plot_area_h))
+                .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
+                    if *hovered {
+                        let new = Some(center_x);
+                        if this.hovered_trajectory_x != new {
+                            this.hovered_trajectory_x = new;
+                            cx.notify();
+                        }
+                    } else if this.hovered_trajectory_x == Some(center_x) {
+                        this.hovered_trajectory_x = None;
+                        cx.notify();
+                    }
+                })),
+        );
+    }
 
     for (i, (x_pix, y_pix)) in event_pixels.iter().enumerate() {
         let hit_size = 16.0_f32;
@@ -14154,6 +14315,116 @@ fn render_trajectory_body(
                     }
                 })),
         );
+    }
+
+    // Vertical time-guide + tooltip. Rendered as siblings inside the
+    // chart_overlay so they position in canvas-local coords. Only
+    // visible when the operator is hovering the plot area.
+    if let Some(hover_x) = state.hovered_trajectory_x {
+        if let Some(t_secs) = plot_bounds.pixel_to_t_seconds(hover_x) {
+            let model_pct = crate::charts::interpolate_trajectory_rate(&worm_points, t_secs);
+            let crowd_pct = crate::charts::interpolate_trajectory_rate(&crowd_points, t_secs);
+
+            // Vertical guide line, drawn as a 1px div.
+            chart_overlay = chart_overlay.child(
+                div()
+                    .absolute()
+                    .left(px(hover_x))
+                    .top(px(plot_area_top))
+                    .w(px(1.0))
+                    .h(px(plot_area_h))
+                    .bg(rgb(theme::FG_DIM)),
+            );
+
+            // Little pill tooltip. Placed above the guide, or below if
+            // the mouse is near the top of the plot area. Content
+            // depends on which streams have coverage at t_secs.
+            let tooltip_top = if hover_x > (plot_area_left + plot_area_w * 0.5) {
+                plot_area_top + 4.0
+            } else {
+                plot_area_top + 4.0
+            };
+            // Anchor tooltip so it doesn't overrun the right edge when
+            // the mouse is near it.
+            let tooltip_left = if hover_x > (chart_w as f32 - 160.0) {
+                hover_x - 150.0
+            } else {
+                hover_x + 8.0
+            };
+
+            // Format the timestamp for the tooltip. Falls back to the
+            // raw offset when we lack an anchor.
+            let ts_label: String = match earliest {
+                Some(anchor) => {
+                    let ts = anchor + chrono::Duration::milliseconds((t_secs * 1000.0) as i64);
+                    ts.format("%b %-d, %H:%M").to_string()
+                }
+                None => format!("+{:.1}d", t_secs / 86400.0),
+            };
+
+            let divergence: Option<f64> = match (model_pct, crowd_pct) {
+                (Some(m), Some(c)) => Some(m - c),
+                _ => None,
+            };
+
+            let mut tooltip = div()
+                .absolute()
+                .left(px(tooltip_left))
+                .top(px(tooltip_top))
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .px(px(8.0))
+                .py(px(6.0))
+                .rounded(px(4.0))
+                .bg(theme::bg_elevated())
+                .border_1()
+                .border_color(theme::fg_faint())
+                .text_size(px(10.0))
+                .child(
+                    div()
+                        .text_color(rgb(theme::FG))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(ts_label),
+                );
+            if let Some(m) = model_pct {
+                tooltip = tooltip.child(
+                    div()
+                        .text_color(rgb(theme::CYAN))
+                        .child(format!("model  {:.1}%", m)),
+                );
+            }
+            if let Some(c) = crowd_pct {
+                tooltip = tooltip.child(
+                    div()
+                        .text_color(rgb(theme::PURPLE))
+                        .child(format!("crowd  {:.1}%", c)),
+                );
+            }
+            if let Some(d) = divergence {
+                let arrow = if d > 0.0 {
+                    "▲"
+                } else if d < 0.0 {
+                    "▼"
+                } else {
+                    "●"
+                };
+                let color = if d.abs() < 3.0 {
+                    theme::GREEN
+                } else if d.abs() < 10.0 {
+                    theme::GOLD
+                } else {
+                    theme::ORANGE
+                };
+                tooltip = tooltip.child(
+                    div()
+                        .text_color(rgb(color))
+                        .child(format!("Δ      {} {:+.1}pp", arrow, d)),
+                );
+            }
+            let _ = tooltip_top; // silence unused when compiled without warnings
+            chart_overlay = chart_overlay.child(tooltip);
+        }
     }
 
     let worm = div()
