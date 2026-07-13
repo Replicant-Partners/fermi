@@ -3059,6 +3059,20 @@ impl FermiConsole {
                         theme::GOLD,
                     )),
             )
+            // Live forecasts — the operator's active book. Moved here
+            // from the Portfolio panel where it competed for space with
+            // the named-portfolio sidebar. Dashboard is where you go
+            // for "what am I forecasting right now", Portfolio is where
+            // you go for "how have I organised my forecasts".
+            .when(self.connected && !self.active_forecasts.is_empty(), |el| {
+                el.child(self.render_forecast_section(
+                    "Live",
+                    "committed · Brier-scored",
+                    &self.active_forecasts,
+                    theme::CYAN,
+                    cx,
+                ))
+            })
             .child(
                 // Activity feed
                 div()
@@ -5225,73 +5239,110 @@ impl FermiConsole {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let fid = forecast_id.to_string();
-        div()
+
+        // Split portfolios into two groups so the meaning of each chip
+        // is unambiguous: memberships on one line, add-actions on
+        // another. Previously they were interleaved in a single row
+        // labelled 'Add to portfolio:' — which read as if the '✓ WC
+        // sims' chip was also an action, and as if the '+ company
+        // performance' chip on a WC forecast was an editorial
+        // recommendation instead of a raw add-to affordance.
+        let (member_of, addable): (Vec<_>, Vec<_>) = self.portfolios.iter().partition(|p| {
+            self.portfolio_forecasts
+                .get(&p.id)
+                .map(|fs| fs.iter().any(|f| f.id == fid))
+                .unwrap_or(false)
+        });
+
+        let container = div()
             .px(px(24.0))
             .py(px(8.0))
             .border_t_1()
             .border_color(theme::fg_faint())
             .flex()
-            .flex_wrap()
-            .items_center()
-            .gap(px(6.0))
-            .child(
-                div()
-                    .text_size(px(10.0))
-                    .text_color(theme::fg_faint())
-                    .child("Add to portfolio:"),
-            )
-            .when(!self.portfolios.is_empty(), |el| {
-                el.children(self.portfolios.iter().map(|p| {
-                    let pid = p.id.clone();
-                    let fid2 = fid.clone();
-                    let label = truncate(&p.title, 18);
-                    // Check if this forecast is already in this portfolio (from cache)
-                    let already_in = self
-                        .portfolio_forecasts
-                        .get(&p.id)
-                        .map(|fs| fs.iter().any(|f| f.id == fid))
-                        .unwrap_or(false);
+            .flex_col()
+            .gap(px(6.0));
 
-                    if already_in {
-                        div()
-                            .id(SharedString::from(format!("already-in-{}-{}", pid, fid)))
-                            .px(px(8.0))
-                            .py(px(3.0))
-                            .rounded(px(4.0))
-                            .border_1()
-                            .border_color(theme::fg_faint())
-                            .text_size(px(10.0))
-                            .text_color(theme::fg_faint())
-                            .child(format!("✓ {}", label))
-                            .into_any_element()
-                    } else {
-                        div()
-                            .id(SharedString::from(format!("add-to-{}-{}", pid, fid)))
-                            .px(px(8.0))
-                            .py(px(3.0))
-                            .rounded(px(4.0))
-                            .border_1()
-                            .border_color(rgb(theme::CYAN))
-                            .text_size(px(10.0))
-                            .text_color(rgb(theme::CYAN))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(theme::bg_hover()))
-                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                this.add_forecast_to_portfolio(fid2.clone(), pid.clone(), cx);
-                            }))
-                            .child(format!("+ {}", label))
-                            .into_any_element()
-                    }
-                }))
-            })
-            .when(self.portfolios.is_empty(), |el| {
-                el.child(
+        if self.portfolios.is_empty() {
+            return container
+                .child(
                     div()
                         .text_size(px(10.0))
                         .text_color(theme::fg_faint())
-                        .child("Create a portfolio above first"),
+                        .child("Create a portfolio to organise this forecast."),
+                )
+                .into_any_element();
+        }
+
+        container
+            // Row 1 — memberships. Shows only if the forecast is in at
+            // least one portfolio; the chip is read-only (no click).
+            .when(!member_of.is_empty(), |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap(px(6.0))
+                        .child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(theme::fg_faint())
+                                .child("In portfolios:"),
+                        )
+                        .children(member_of.into_iter().map(|p| {
+                            let label = truncate(&p.title, 22);
+                            div()
+                                .id(SharedString::from(format!("in-{}-{}", p.id, fid)))
+                                .px(px(8.0))
+                                .py(px(3.0))
+                                .rounded(px(4.0))
+                                .bg(theme::bg_hover())
+                                .text_size(px(10.0))
+                                .text_color(theme::fg())
+                                .child(format!("✓ {}", label))
+                        })),
                 )
             })
+            // Row 2 — add-to affordances. Shows only for portfolios the
+            // forecast is NOT yet in, so the chips are unambiguously
+            // actionable.
+            .when(!addable.is_empty(), |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap(px(6.0))
+                        .child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(theme::fg_faint())
+                                .child("Add to:"),
+                        )
+                        .children(addable.into_iter().map(|p| {
+                            let pid = p.id.clone();
+                            let fid2 = fid.clone();
+                            let label = truncate(&p.title, 22);
+                            div()
+                                .id(SharedString::from(format!("add-to-{}-{}", pid, fid)))
+                                .px(px(8.0))
+                                .py(px(3.0))
+                                .rounded(px(4.0))
+                                .border_1()
+                                .border_color(rgb(theme::CYAN))
+                                .text_size(px(10.0))
+                                .text_color(rgb(theme::CYAN))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(theme::bg_hover()))
+                                .on_click(cx.listener(move |this, _event, _window, cx| {
+                                    this.add_forecast_to_portfolio(fid2.clone(), pid.clone(), cx);
+                                }))
+                                .child(format!("+ {}", label))
+                        })),
+                )
+            })
+            .into_any_element()
     }
 
     fn render_portfolio(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -5744,16 +5795,10 @@ impl FermiConsole {
             })
             .when(self.connected && !self.forecasts_loading, |el| {
                 el
-                    // Live forecasts (committed, Brier-scored)
-                    .when(!self.active_forecasts.is_empty(), |el| {
-                        el.child(self.render_forecast_section(
-                            "Live",
-                            "committed · Brier-scored",
-                            &self.active_forecasts,
-                            theme::CYAN,
-                            cx,
-                        ))
-                    })
+                    // Note: the Live (active) section is now rendered
+                    // in render_dashboard — the Portfolio panel is
+                    // specifically for organising forecasts into named
+                    // portfolios, not for the raw active list.
                     // Draft forecasts (saved, not committed)
                     .when(!self.draft_forecasts.is_empty(), |el| {
                         el.child(self.render_forecast_section(
