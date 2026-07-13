@@ -1,61 +1,18 @@
 {
   "forecast_id": "2b60260e-bff4-48b8-85e5-093b2eb679f3",
-  "current_version": 7,
-  "predicted_probability": 0.10557471190717124,
-  "inside_view_explanation": "Inside view: model evaluates to 10.6% (p5=7.8%, p95=13.8%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "current_version": 1,
+  "predicted_probability": 0.2391045093536377,
+  "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-13 11:10",
-      "probability": 0.10557471190717124,
-      "change_summary": "Initial: 10.6% base=2%, 6 drivers, 4 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-07-13 11:10",
-      "probability": 0.10557471190717124,
-      "change_summary": "10.6% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-07-13 11:10",
-      "probability": 0.10557471190717124,
-      "change_summary": "10.6% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-07-13 11:10",
-      "probability": 0.10557471190717124,
-      "change_summary": "10.6% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 5,
-      "timestamp": "2026-07-13 11:10",
-      "probability": 0.10557471190717124,
-      "change_summary": "10.6% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 6,
-      "timestamp": "2026-07-13 11:10",
-      "probability": 0.10557471190717124,
-      "change_summary": "10.6% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 7,
-      "timestamp": "2026-07-13 11:10",
-      "probability": 0.10557471190717124,
-      "change_summary": "10.6% (→), 6 drivers, 4 evidence"
+      "timestamp": "2026-07-13 15:12",
+      "probability": 0.2391045093536377,
+      "change_summary": "Initial: 23.9% base=2%, 6 drivers, 4 evidence"
     }
   ],
-  "sim_results": {
-    "mean": 0.10557471190717124,
-    "median": 0.10431966187086542,
-    "p5": 0.07756445683285751,
-    "p95": 0.1382822127159251,
-    "std_dev": 0.01875439750096945,
-    "iterations": 10000
-  },
+  "sim_results": null,
   "base_rate": {
     "reference_class": "FIFA World Cup winners 1930–2022",
     "historical_frequency": 0.0208,
@@ -193,22 +150,14 @@
     "market_id": "558935",
     "question": "Will England win the 2026 FIFA World Cup?",
     "market_price": 0.2155,
-    "volume_24h": 1258525.314667001,
-    "liquidity": 7325658.85518,
+    "volume_24h": 1078405.5495689963,
+    "liquidity": 7225345.94379,
     "confidence": "Very High",
-    "price_change_1w": 0.076,
+    "price_change_1w": 0.071,
     "url": "https://polymarket.com/event/world-cup-winner",
     "price_history": [
       {
-        "t": 1783940935,
-        "p": 0.2155
-      },
-      {
-        "t": 1783940984,
-        "p": 0.2155
-      },
-      {
-        "t": 1783940988,
+        "t": 1783955563,
         "p": 0.2155
       }
     ]
