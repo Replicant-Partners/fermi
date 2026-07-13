@@ -1826,8 +1826,11 @@ const SCHEMA_TABLES: &[&str] = &[
     "fermi_forecasts",
     "fermi_forecast_updates",
     "fermi_market_observations",
+    "fermi_portfolios",
+    "fermi_portfolio_forecasts",
     "forecast_relationships",
     "forecast_relationship_groups",
+    "forecast_invites",
     "pending_cascades",
     "composition_versions",
     "harness_snapshots",
@@ -1835,6 +1838,8 @@ const SCHEMA_TABLES: &[&str] = &[
     "forecast_splits",
     "forecast_spacetime",
     "teams",
+    "team_members",
+    "object_shares",
 ];
 
 /// Functions declared in `ensure_critical_schema`. Signature is the

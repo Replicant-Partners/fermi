@@ -1162,6 +1162,46 @@ async fn ensure_critical_schema(db: &PgPool) {
          "CREATE INDEX IF NOT EXISTS idx_market_obs_resolved \
               ON public.fermi_market_observations(forecast_id, created_at) \
             WHERE pm_resolved = true"),
+
+        // ── 151: forecast_invites (unified invite primitive) ─────────
+        //
+        // Backs the three Spec 24 collab flows (share forecast, share
+        // portfolio, join team). The console's Access tab, teams panel,
+        // and Inbox all query this. Same failure class as 099/094: if
+        // migration 151 didn't apply, every invite POST 500s and every
+        // Inbox render silently shows empty. Bake in the CREATE + three
+        // partial indexes so team/invite flows self-heal on deploy.
+        ("forecast_invites.table",
+         "CREATE TABLE IF NOT EXISTS public.forecast_invites ( \
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(), \
+              target_type TEXT NOT NULL CHECK (target_type IN ('forecast', 'portfolio', 'team')), \
+              target_id TEXT NOT NULL, \
+              permission TEXT NOT NULL CHECK (permission IN ('view', 'edit', 'admin', 'owner', 'member', 'viewer')), \
+              invitee_user_id TEXT, \
+              invitee_email TEXT, \
+              token TEXT UNIQUE, \
+              inviter_id TEXT NOT NULL, \
+              message TEXT, \
+              status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'declined', 'revoked', 'expired')), \
+              expires_at TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '14 days', \
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
+              accepted_at TIMESTAMPTZ, \
+              CONSTRAINT forecast_invites_recipient_exactly_one \
+                CHECK ((invitee_user_id IS NOT NULL AND invitee_email IS NULL) \
+                    OR (invitee_user_id IS NULL AND invitee_email IS NOT NULL)) \
+          )"),
+        ("forecast_invites.idx_recipient_user",
+         "CREATE INDEX IF NOT EXISTS idx_invites_recipient_user \
+              ON public.forecast_invites(invitee_user_id) \
+            WHERE invitee_user_id IS NOT NULL AND status = 'pending'"),
+        ("forecast_invites.idx_recipient_email",
+         "CREATE INDEX IF NOT EXISTS idx_invites_recipient_email \
+              ON public.forecast_invites(LOWER(invitee_email)) \
+            WHERE invitee_email IS NOT NULL AND status = 'pending'"),
+        ("forecast_invites.idx_target",
+         "CREATE INDEX IF NOT EXISTS idx_invites_target \
+              ON public.forecast_invites(target_type, target_id) \
+            WHERE status = 'pending'"),
     ];
 
     println!(
