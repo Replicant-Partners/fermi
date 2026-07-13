@@ -2932,6 +2932,15 @@ async fn main() {
             "/api/admin/recompose-mutex-groups",
             post(handlers::admin::admin_recompose_mutex_groups_handler),
         )
+        // Schema health probe: verifies every table / function / column
+        // that ensure_critical_schema is responsible for landing is
+        // actually present in the DB. Returns 200 with status='degraded'
+        // when anything is missing, so this can be wired into monitoring
+        // without hard-failing the console.
+        .route(
+            "/api/admin/schema-health",
+            get(handlers::admin::admin_schema_health_handler),
+        )
         .route(
             "/api/admin/waitlist",
             get(handlers::admin::admin_list_waitlist_handler)

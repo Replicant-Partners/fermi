@@ -1801,3 +1801,200 @@ pub async fn admin_recompose_mutex_groups_handler(
         "per_group": per_group,
     })))
 }
+
+// ─── Schema health diagnostic ──────────────────────────────────
+//
+// Probes the DB for every schema object `ensure_critical_schema` is
+// responsible for landing. Answers the question we found ourselves
+// asking three times in a row: "which migration didn't apply THIS
+// time?"
+//
+// Returns per-object present/missing status + a summary count. If any
+// object is missing, `status` is "degraded" and HTTP is still 200 —
+// the endpoint is diagnostic, not enforcement.
+//
+// Kept in lockstep with ensure_critical_schema by hand for now. If we
+// ever generalise, the natural next step is to extract the schema
+// contract into a Vec<SchemaObject> shared between the ensurer and
+// this probe so they can't drift.
+
+/// Object types we check. Keeps the response schema stable and lets us
+/// filter for e.g. "just tables" in the UI without pattern-matching
+/// strings.
+const SCHEMA_TABLES: &[&str] = &[
+    "users",
+    "fermi_forecasts",
+    "fermi_forecast_updates",
+    "fermi_market_observations",
+    "forecast_relationships",
+    "forecast_relationship_groups",
+    "pending_cascades",
+    "composition_versions",
+    "harness_snapshots",
+    "forecast_commitments",
+    "forecast_splits",
+    "forecast_spacetime",
+    "teams",
+];
+
+/// Functions declared in `ensure_critical_schema`. Signature is the
+/// argument-type list Postgres uses to disambiguate overloads — same
+/// format that shows up in `function foo(text, boolean) does not exist`
+/// errors, so pasting either side into search works.
+const SCHEMA_FUNCTIONS: &[(&str, &str)] = &[
+    ("compute_brier_score", "real, boolean"),
+    ("resolve_forecast", "text, boolean, text, text"),
+    ("fn_forecast_spacetime_on_update", ""),
+];
+
+/// Columns that ensure_critical_schema is responsible for. These are
+/// the ALTER-COLUMN ensures that would otherwise silently vanish if a
+/// migration file didn't run.
+const SCHEMA_COLUMNS: &[(&str, &str)] = &[
+    ("teams", "mission"),
+    ("teams", "coordination_strategist_id"),
+    ("teams", "strategist_assigned_at"),
+    ("composition_versions", "rejected_by"),
+    ("composition_versions", "rejection_note"),
+];
+
+pub async fn admin_schema_health_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin(&principal)?;
+    let pool = &state.db;
+
+    // ── Tables ───────────────────────────────────────────────
+    let present_tables: std::collections::HashSet<String> = sqlx::query(
+        "SELECT table_name FROM information_schema.tables
+          WHERE table_schema = 'public'
+            AND table_name = ANY($1)",
+    )
+    .bind(SCHEMA_TABLES)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .into_iter()
+    .filter_map(|r| r.try_get::<String, _>("table_name").ok())
+    .collect();
+
+    let mut tables_missing: u32 = 0;
+    let tables: Vec<Value> = SCHEMA_TABLES
+        .iter()
+        .map(|name| {
+            let present = present_tables.contains(*name);
+            if !present {
+                tables_missing += 1;
+            }
+            json!({ "name": name, "present": present })
+        })
+        .collect();
+
+    // ── Functions ──────────────────────────────────────────────
+    // pg_proc joined with pg_namespace: proname is unique per
+    // (namespace, arg-type list). Compare argument types via
+    // pg_get_function_arguments so 0-arg fns match with empty string.
+    let present_functions: Vec<(String, String)> = sqlx::query(
+        "SELECT p.proname,
+                pg_get_function_identity_arguments(p.oid) AS args
+           FROM pg_catalog.pg_proc p
+           JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = 'public'
+            AND p.proname = ANY($1)",
+    )
+    .bind(SCHEMA_FUNCTIONS.iter().map(|(n, _)| *n).collect::<Vec<_>>())
+    .fetch_all(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .into_iter()
+    .filter_map(|r| {
+        Some((
+            r.try_get::<String, _>("proname").ok()?,
+            r.try_get::<String, _>("args").ok()?,
+        ))
+    })
+    .collect();
+
+    let normalise = |s: &str| s.replace(' ', "").to_lowercase();
+    let mut functions_missing: u32 = 0;
+    let functions: Vec<Value> = SCHEMA_FUNCTIONS
+        .iter()
+        .map(|(name, sig)| {
+            let want = normalise(sig);
+            let present = present_functions
+                .iter()
+                .any(|(n, s)| n == name && normalise(s) == want);
+            if !present {
+                functions_missing += 1;
+            }
+            json!({ "name": name, "signature": sig, "present": present })
+        })
+        .collect();
+
+    // ── Columns ────────────────────────────────────────────────
+    let tables_for_cols: Vec<String> = SCHEMA_COLUMNS.iter().map(|(t, _)| t.to_string()).collect();
+    let cols_for_cols: Vec<String> = SCHEMA_COLUMNS.iter().map(|(_, c)| c.to_string()).collect();
+    let present_columns: std::collections::HashSet<(String, String)> = sqlx::query(
+        "SELECT table_name, column_name FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = ANY($1)
+            AND column_name = ANY($2)",
+    )
+    .bind(&tables_for_cols)
+    .bind(&cols_for_cols)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .into_iter()
+    .filter_map(|r| {
+        Some((
+            r.try_get::<String, _>("table_name").ok()?,
+            r.try_get::<String, _>("column_name").ok()?,
+        ))
+    })
+    .collect();
+
+    let mut columns_missing: u32 = 0;
+    let columns: Vec<Value> = SCHEMA_COLUMNS
+        .iter()
+        .map(|(table, column)| {
+            let key = (table.to_string(), column.to_string());
+            let present = present_columns.contains(&key);
+            if !present {
+                columns_missing += 1;
+            }
+            json!({ "table": table, "column": column, "present": present })
+        })
+        .collect();
+
+    let total_missing = tables_missing + functions_missing + columns_missing;
+    let status = if total_missing == 0 {
+        "healthy"
+    } else {
+        "degraded"
+    };
+
+    Ok(Json(json!({
+        "status": status,
+        "checked_at": chrono::Utc::now().to_rfc3339(),
+        "tables": tables,
+        "functions": functions,
+        "columns": columns,
+        "summary": {
+            "tables": {
+                "total": SCHEMA_TABLES.len(),
+                "missing": tables_missing,
+            },
+            "functions": {
+                "total": SCHEMA_FUNCTIONS.len(),
+                "missing": functions_missing,
+            },
+            "columns": {
+                "total": SCHEMA_COLUMNS.len(),
+                "missing": columns_missing,
+            },
+            "total_missing": total_missing,
+        },
+    })))
+}
