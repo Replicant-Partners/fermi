@@ -1,43 +1,18 @@
 {
   "forecast_id": "1bc38d64-e05e-47ac-b26c-872cecee3821",
-  "current_version": 4,
-  "predicted_probability": 0.11423085675757474,
-  "inside_view_explanation": "Inside view: model evaluates to 11.4% (p5=8.4%, p95=14.9%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "current_version": 1,
+  "predicted_probability": 0.2586214244365692,
+  "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-12 12:43",
-      "probability": 0.25799620151519775,
-      "change_summary": "Initial: 25.8% base=2%, 6 drivers, 4 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-07-12 12:43",
-      "probability": 0.11423085675757474,
-      "change_summary": "11.4% (-14pp), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-07-12 12:43",
-      "probability": 0.11423085675757474,
-      "change_summary": "11.4% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-07-12 12:43",
-      "probability": 0.11423085675757474,
-      "change_summary": "11.4% (→), 6 drivers, 4 evidence"
+      "timestamp": "2026-07-13 10:48",
+      "probability": 0.2586214244365692,
+      "change_summary": "Initial: 25.9% base=2%, 6 drivers, 4 evidence"
     }
   ],
-  "sim_results": {
-    "mean": 0.11423085675757474,
-    "median": 0.1127524860803926,
-    "p5": 0.08435758513431015,
-    "p95": 0.14882338175490764,
-    "std_dev": 0.01975442479452513,
-    "iterations": 10000
-  },
+  "sim_results": null,
   "base_rate": {
     "reference_class": "FIFA World Cup winners 1930–2022",
     "historical_frequency": 0.0208,
@@ -184,14 +159,18 @@
     "market_id": "558936",
     "question": "Will France win the 2026 FIFA World Cup?",
     "market_price": 0.3885,
-    "volume_24h": 2982466.9924280234,
-    "liquidity": 5152829.87689,
+    "volume_24h": 1863674.2722899849,
+    "liquidity": 7091196.99331,
     "confidence": "Very High",
-    "price_change_1w": 0.034,
+    "price_change_1w": 0.059,
     "url": "https://polymarket.com/event/world-cup-winner",
     "price_history": [
       {
-        "t": 1783860195,
+        "t": 1783860538,
+        "p": 0.3885
+      },
+      {
+        "t": 1783860542,
         "p": 0.3885
       }
     ]
