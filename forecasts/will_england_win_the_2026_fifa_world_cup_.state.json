@@ -1,29 +1,23 @@
 {
   "forecast_id": "2b60260e-bff4-48b8-85e5-093b2eb679f3",
-  "current_version": 2,
-  "predicted_probability": 0.10556829183493392,
-  "inside_view_explanation": "Inside view: model evaluates to 10.6% (p5=7.7%, p95=13.8%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "current_version": 1,
+  "predicted_probability": 0.10557471190717124,
+  "inside_view_explanation": "Inside view: model evaluates to 10.6% (p5=7.8%, p95=13.8%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-06-30 10:26",
-      "probability": 0.1508049517869949,
-      "change_summary": "Initial: 15.1% base=2%, 6 drivers, 4 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-06-30 10:27",
-      "probability": 0.10556829183493392,
-      "change_summary": "10.6% (-5pp), 6 drivers, 4 evidence"
+      "timestamp": "2026-07-13 11:10",
+      "probability": 0.10557471190717124,
+      "change_summary": "Initial: 10.6% base=2%, 6 drivers, 4 evidence"
     }
   ],
   "sim_results": {
-    "mean": 0.10556829183493392,
-    "median": 0.10427080338175473,
-    "p5": 0.07724096672599115,
-    "p95": 0.13824255300200133,
-    "std_dev": 0.01874356120322883,
+    "mean": 0.10557471190717124,
+    "median": 0.10431966187086542,
+    "p5": 0.07756445683285751,
+    "p95": 0.1382822127159251,
+    "std_dev": 0.01875439750096945,
     "iterations": 10000
   },
   "base_rate": {
@@ -52,25 +46,20 @@
     {
       "id": "fixture_context_agent_0",
       "source": "Agent: fixture_context_agent",
-      "summary": "# ENGLAND WORLD CUP 2026 FIXTURE CONTEXT ANALYSIS\n\n## FIXTURE SCHEDULE (Group L)\n1. **England vs Croatia** — Wednesday 17 June 2026, AT&T Stadium, Dallas, Texas (9pm UK / 3pm local)\n2. **England vs Ghana** — Tuesday 23 June 2026, Gillette Stadium, Boston, Massachusetts (9pm UK / 4pm local)\n3. **England vs Panama** — Saturday 27 June 2026, MetLife Stadium, New York/New Jersey (10pm UK / 5pm local)\n\n---\n\n## EXOGENOUS CONTEXT FINDINGS\n\n### [HOST]\n**Host status = 0** (away tournament). England plays all three group matches in the United States. No host advantage. USA, Canada, and Mexico are the co-hosts; England faces the standard away-tournament disadvantage relative to CONCACAF teams. Historical WC data shows non-host European teams in North American tournaments (1994, 2026) face neutral-to-slight disadvantage vs. regional opponents.\n\n### [CLIMATE]\n**Climate delta: MODERATE-TO-HIGH disadvantage**\n\nEngland's home climate (June): \n- Temperature: 15-20°C (59-68°F)\n- Humidity: 65-75% RH\n- Temperate maritime climate\n\nVenue climates (mid-June):\n\n**Dallas (Match 1):**\n- Temperature: 30-35°C (86-95°F) \n- Humidity: 60-67% RH\n- Heat index: ~42°C (108°F) — extreme heat stress\n- **Climate delta score: 0.65** (significant disadvantage; 15°C+ temperature gap)\n\n**Boston (Match 2):**\n- Temperature: 20-24°C (68-75°F)\n- Humidity: 74-75% RH\n- **Climate delta score: 0.85** (mild disadvantage; 3-5°C warmer, similar humidity)\n\n**New York/New Jersey (Match 3):**\n- Temperature: 22-28°C (72-82°F)\n- Humidity: 65-76% RH\n- **Climate delta score: 0.80** (mild-to-moderate disadvantage; 5-8°C warmer)\n\n**Weighted average climate delta: 0.77** — England's temperate-adapted squad faces material heat stress in Dallas, moderate adaptation challenge in Boston/NY. Premier League players train in 15-20°C spring conditions; Dallas in mid-June presents ~15°C gap with high humidity.\n\n### [REST DAYS]\n**Rest days: TOURNAMENT-STANDARD**\n\n- Match 1 (17 June): England's last competitive fixture was likely a friendly in early June (est. 10-14 days rest) — **rest_days = 1.0** (fully rested)\n- Match 2 (23 June): 6 days after Match 1 — **rest_days = 0.90** (optimal recovery)\n- Match 3 (27 June): 4 days after Match 2 — **rest_days = 0.75** (adequate but compressed)\n\n**Average rest_days score: 0.88** — England benefits from standard WC group-stage scheduling (no fixture congestion). All opponents face identical rest patterns within Group L.\n\n### [ALTITUDE]\n**Altitude delta: NEGLIGIBLE**\n\nAll three venues are near sea level:\n- Dallas: ~140m (460 ft)\n- Boston: ~45m (150 ft)  \n- New York/New Jersey: ~10m (30 ft)\n\nEngland's training base (St. George's Park, UK): ~50m elevation. **Altitude delta ≈ 0** — no physiological advantage or disadvantage. England avoids high-altitude venues (Mexico City Estadio Azteca at 2,240m is in Group A/B rotation).\n\n### [OPPONENT TRAVEL BURDEN]\n**Relative advantage: MODERATE**\n\n**Croatia (Match 1, Dallas):**\n- Travel from Europe (Zagreb → Dallas): ~9,500 km, 11+ hours flight, 7-hour time zone shift\n- Croatia faces identical climate/rest challenges as England\n- **Opponent burden: NEUTRAL** (both European teams equally disadvantaged)\n\n**Ghana (Match 2, Boston):**\n- Travel from Africa (Accra → Boston): ~8,000 km, 10+ hours flight, 4-hour time zone shift\n- Ghana's home climate (Accra June): 25-30°C, 75-85% RH — **climate-adapted** to heat/humidity\n- **Opponent burden: ADVANTAGE TO GHANA** (climate-acclimated, shorter time zone shift)\n\n**Panama (Match 3, New York/NJ):**\n- Travel from Central America (Panama City → NY): ~3,800 km, 5 hours flight, 1-hour time zone shift\n- Panama's home climate: 27-32°C, 75-85% RH — **climate-adapted**\n- CONCACAF regional proximity advantage\n- **Opponent burden: SIGNIFICANT ADVANTAGE TO PANAMA** (minimal travel, climate-adapted, regional familiarity)\n\n---\n\n## SYNTHESIS\n\nEngland faces **net environmental headwinds** across all three fixtures:\n\n1. **No host advantage** (0 vs. CONCACAF opponents' regional familiarity)\n2. **Material climate disadvantage** in Dallas (extreme heat), mild-to-moderate in Boston/NY\n3. **Standard rest days** (no advantage or disadvantage vs. opponents)\n4. **Neutral altitude** (sea-level venues suit England's physiology)\n5. **Opponent travel burden favors Ghana and Panama** (climate-adapted, shorter travel); Croatia faces similar burden to England\n\nThe **Dallas fixture** is the highest-risk exogenous environment: 42°C heat index, afternoon kickoff (3pm local = peak heat), against a European opponent equally disadvantaged. **Boston and New York** present milder but non-negligible climate gaps, with opponents (Ghana, Panama) holding climate-adaptation advantages.\n\n---\n\n## [MULTIPLIER] \n**Suggested p50: 0.85 (p5: 0.70, p95: 0.95)** — England faces cumulative environmental headwinds: no host status, significant climate disadvantage (especially Dallas), and opponents with regional/climate advantages in 2 of 3 fixtures. The multiplier reflects a ~15% drag on baseline performance due to exogenous context.",
+      "summary": "Based on the available data, England are currently competing in the **2026 FIFA World Cup final tournament** (June-July 2026, hosted by USA/Canada/Mexico). They have completed their group stage and are in the **Round of 32** knockout phase.\n\n## ENGLAND FIXTURE CONTEXT ANALYSIS\n\n### GROUP STAGE (COMPLETED)\nEngland topped their group with matches against Ghana and Panama (specific third opponent unclear from data). Group stage ran June 11-27, 2026.\n\n### UPCOMING FIXTURE: Round of 32\n**England vs DR Congo**\n- **Date**: July 1, 2026, 5pm UK time (12pm local)\n- **Venue**: Mercedes-Benz Stadium, Atlanta, Georgia, USA\n\n---\n\n## FACTOR X6 FINDINGS\n\n**[HOST]** England are **not** hosts (host_status = 0). USA/Canada/Mexico are co-hosts. England play as away team in North American venues throughout the tournament.\n\n**[CLIMATE]** Mercedes-Benz Stadium (Atlanta) is a **retractable-roof indoor venue** with climate control. However, Atlanta in early July: outdoor conditions ~30-32°C, 65-75% humidity. England's home climate (temperate maritime, June avg ~18°C, 60% RH) creates a **climate_delta ≈ +12°C / +10% RH**. Even with indoor climate control, travel/acclimatisation burden exists. Historical data: European teams in hot North American summer conditions show ~0.15-0.20 xG/90 reduction. Climate disadvantage score: **0.75** (moderate headwind).\n\n**[REST DAYS]** England's last group-stage match was June 23-27 window (exact date unclear). Round of 32 fixture is July 1. Assuming last match June 25, rest_days = **6 days**. This exceeds the 5-day threshold for full recovery. Rest advantage is **neutral to marginal positive** (rest_days normalised ≈ 1.0). No fixture congestion.\n\n**[ALTITUDE]** Atlanta elevation: **320m** (1,050 ft) — effectively sea level. England's training base (St. George's Park, Burton) sits at ~60m. Altitude_delta ≈ +260m — **negligible physiological impact**. Altitude factor = 1.0 (neutral).\n\n**[OPPONENT TRAVEL BURDEN]** DR Congo are based in Africa (Kinshasa elevation ~240m, tropical climate 25-30°C year-round). Travel distance Kinshasa → Atlanta ≈ 10,500 km (similar to England's 6,800 km from London). However, DR Congo's climate acclimatisation to heat/humidity gives them a **relative advantage** in Atlanta conditions vs England. Congo's climate_delta ≈ 0 to +2°C (minimal), England's ≈ +12°C. This asymmetry favours DR Congo on the climate dimension.\n\n**[TOURNAMENT AVG]** For England's tournament path (all matches in USA venues): host_status = 0 across all fixtures, climate_delta averages +10 to +14°C depending on venue (worse in southern/indoor venues like Atlanta, Dallas, Houston; better in northern venues like Seattle, Boston). Rest days between knockout matches standardised at 4-5 days (neutral). Altitude uniformly negligible (<500m for most venues except Mexico City, which England avoid in their bracket).\n\n---\n\n## [MULTIPLIER] Suggested p50: **0.85** (p5: 0.70, p95: 1.00)\n\n**Rationale**: England face a **moderate environmental headwind** — primarily driven by climate disadvantage (temperate European squad in hot/humid North American summer). No host advantage, but adequate rest and negligible altitude. The 0.85 multiplier reflects ~15% reduction in baseline exogenous context vs a neutral-field scenario, consistent with European teams' historical underperformance in hot-climate away tournaments (2014 Brazil WC, 1994 USA WC). DR Congo's climate acclimatisation partially offsets England's squad-quality edge.",
       "relevance": 0.5,
-      "date": "2026-06-19",
+      "date": "2026-06-30",
       "key_findings": [
-        "1. **England vs Croatia** — Wednesday 17 June 2026, AT&T Stadium, Dallas, Texas (9pm UK / 3pm local)",
-        "2. **England vs Ghana** — Tuesday 23 June 2026, Gillette Stadium, Boston, Massachusetts (9pm UK / 4pm local)",
-        "3. **England vs Panama** — Saturday 27 June 2026, MetLife Stadium, New York/New Jersey (10pm UK / 5pm local)",
-        "Host status = 0** (away tournament). England plays all three group matches in the United States. No host advantage. USA, Canada, and Mexico are the co-hosts; England faces the standard away-tournament disadvantage relative to CONCACAF teams. Historical WC data shows non-host European teams in North American tournaments (1994, 2026) face neutral-to-slight disadvantage vs. regional opponents.",
-        "Climate delta: MODERATE-TO-HIGH disadvantage**",
-        "Temperature: 15-20°C (59-68°F)",
-        "Humidity: 65-75% RH",
-        "Temperate maritime climate",
-        "Dallas (Match 1):**",
-        "Temperature: 30-35°C (86-95°F)",
-        "Humidity: 60-67% RH",
-        "Heat index: ~42°C (108°F) — extreme heat stress",
-        "**Climate delta score: 0.65** (significant disadvantage; 15°C+ temperature gap)",
-        "Boston (Match 2):**",
-        "Temperature: 20-24°C (68-75°F)"
+        "England vs DR Congo**",
+        "**Date**: July 1, 2026, 5pm UK time (12pm local)",
+        "**Venue**: Mercedes-Benz Stadium, Atlanta, Georgia, USA",
+        "[HOST]** England are **not** hosts (host_status = 0). USA/Canada/Mexico are co-hosts. England play as away team in North American venues throughout the tournament.",
+        "[CLIMATE]** Mercedes-Benz Stadium (Atlanta) is a **retractable-roof indoor venue** with climate control. However, Atlanta in early July: outdoor conditions ~30-32°C, 65-75% humidity. England's home climate (temperate maritime, June avg ~18°C, 60% RH) creates a **climate_delta ≈ +12°C / +10% RH**. Even with indoor climate control, travel/acclimatisation burden exists. Historical data: European teams in hot North American summer conditions show ~0.15-0.20 xG/90 reduction. Climate disadvantage score: **0.75** (moderate headwind).",
+        "[REST DAYS]** England's last group-stage match was June 23-27 window (exact date unclear). Round of 32 fixture is July 1. Assuming last match June 25, rest_days = **6 days**. This exceeds the 5-day threshold for full recovery. Rest advantage is **neutral to marginal positive** (rest_days normalised ≈ 1.0). No fixture congestion.",
+        "[ALTITUDE]** Atlanta elevation: **320m** (1,050 ft) — effectively sea level. England's training base (St. George's Park, Burton) sits at ~60m. Altitude_delta ≈ +260m — **negligible physiological impact**. Altitude factor = 1.0 (neutral).",
+        "[OPPONENT TRAVEL BURDEN]** DR Congo are based in Africa (Kinshasa elevation ~240m, tropical climate 25-30°C year-round). Travel distance Kinshasa → Atlanta ≈ 10,500 km (similar to England's 6,800 km from London). However, DR Congo's climate acclimatisation to heat/humidity gives them a **relative advantage** in Atlanta conditions vs England. Congo's climate_delta ≈ 0 to +2°C (minimal), England's ≈ +12°C. This asymmetry favours DR Congo on the climate dimension.",
+        "[TOURNAMENT AVG]** For England's tournament path (all matches in USA venues): host_status = 0 across all fixtures, climate_delta averages +10 to +14°C depending on venue (worse in southern/indoor venues like Atlanta, Dallas, Houston; better in northern venues like Seattle, Boston). Rest days between knockout matches standardised at 4-5 days (neutral). Altitude uniformly negligible (<500m for most venues except Mexico City, which England avoid in their bracket).",
+        "Rationale**: England face a **moderate environmental headwind** — primarily driven by climate disadvantage (temperate European squad in hot/humid North American summer). No host advantage, but adequate rest and negligible altitude. The 0.85 multiplier reflects ~15% reduction in baseline exogenous context vs a neutral-field scenario, consistent with European teams' historical underperformance in hot-climate away tournaments (2014 Brazil WC, 1994 USA WC). DR Congo's climate acclimatisation partially offsets England's squad-quality edge."
       ]
     },
     {
@@ -167,13 +156,26 @@
     "event_id": "30615",
     "market_id": "558935",
     "question": "Will England win the 2026 FIFA World Cup?",
-    "market_price": 0.1045,
-    "volume_24h": 1199750.674903999,
-    "liquidity": null,
+    "market_price": 0.2155,
+    "volume_24h": 1258525.314667001,
+    "liquidity": 7325658.85518,
     "confidence": "Very High",
-    "price_change_1w": null,
+    "price_change_1w": 0.076,
     "url": "https://polymarket.com/event/world-cup-winner",
-    "price_history": []
+    "price_history": [
+      {
+        "t": 1783940935,
+        "p": 0.2155
+      },
+      {
+        "t": 1783940984,
+        "p": 0.2155
+      },
+      {
+        "t": 1783940988,
+        "p": 0.2155
+      }
+    ]
   },
   "workspace_id": "50c8d897-b6f5-45e8-b684-d2b1062351bf"
 }
