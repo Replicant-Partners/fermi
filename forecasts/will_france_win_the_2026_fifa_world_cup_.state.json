@@ -1,59 +1,23 @@
 {
   "forecast_id": "1bc38d64-e05e-47ac-b26c-872cecee3821",
-  "current_version": 7,
-  "predicted_probability": 0.25799685295010255,
+  "current_version": 1,
+  "predicted_probability": 0.11448819308904422,
   "inside_view_explanation": "Inside view: model evaluates to 11.4% (p5=8.4%, p95=14.9%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-13 10:48",
-      "probability": 0.2586214244365692,
-      "change_summary": "Initial: 25.9% base=2%, 6 drivers, 4 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-07-13 10:49",
-      "probability": 0.1144000246781454,
-      "change_summary": "11.4% (-14pp), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-07-13 10:49",
-      "probability": 0.25799685295010255,
-      "change_summary": "25.8% (+14pp), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-07-13 10:49",
-      "probability": 0.25799685295010255,
-      "change_summary": "25.8% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 5,
-      "timestamp": "2026-07-13 10:49",
-      "probability": 0.25799685295010255,
-      "change_summary": "25.8% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 6,
-      "timestamp": "2026-07-13 10:49",
-      "probability": 0.25799685295010255,
-      "change_summary": "25.8% (→), 6 drivers, 4 evidence"
-    },
-    {
-      "version": 7,
-      "timestamp": "2026-07-13 10:49",
-      "probability": 0.25799685295010255,
-      "change_summary": "25.8% (→), 6 drivers, 4 evidence"
+      "timestamp": "2026-07-13 15:14",
+      "probability": 0.11448819308904422,
+      "change_summary": "Initial: 11.4% base=2%, 6 drivers, 4 evidence"
     }
   ],
   "sim_results": {
-    "mean": 0.1144000246781454,
-    "median": 0.11323967390502115,
-    "p5": 0.08414516601390404,
-    "p95": 0.14912673263400145,
-    "std_dev": 0.01985773022072031,
+    "mean": 0.11448819308904422,
+    "median": 0.11316487244182402,
+    "p5": 0.08406937801055987,
+    "p95": 0.14942623266392946,
+    "std_dev": 0.019695074952531,
     "iterations": 10000
   },
   "base_rate": {
@@ -202,18 +166,14 @@
     "market_id": "558936",
     "question": "Will France win the 2026 FIFA World Cup?",
     "market_price": 0.3885,
-    "volume_24h": 1863674.2722899849,
-    "liquidity": 7091196.99331,
+    "volume_24h": 1291296.713768981,
+    "liquidity": 7010095.03564,
     "confidence": "Very High",
-    "price_change_1w": 0.059,
+    "price_change_1w": 0.061,
     "url": "https://polymarket.com/event/world-cup-winner",
     "price_history": [
       {
-        "t": 1783860538,
-        "p": 0.3885
-      },
-      {
-        "t": 1783860542,
+        "t": 1783955692,
         "p": 0.3885
       }
     ]
