@@ -403,6 +403,14 @@ pub struct CockpitState {
     /// sub-pixel accuracy GPUI hands us, so the guide line doesn't
     /// stutter as the mouse moves.
     pub hovered_trajectory_x: Option<f32>,
+    /// True while a fermi-agent invocation is scoped to a base-rate-only
+    /// update. When set, fire_agent's completion handler only extracts
+    /// the base_rate field from the fermi response — it must NEVER route
+    /// the result through process_macro_forecaster_result, which
+    /// rebuilds the entire driver set from scratch. The base rate is an
+    /// index/anchor, not a structural change; conflating the two was the
+    /// 'clicked Update base rate, lost all my drivers' bug.
+    pub base_rate_update_in_flight: bool,
     /// Polling interval for PM price updates. None = no polling.
     pub pm_poll_interval: Option<std::time::Duration>,
 
@@ -678,6 +686,7 @@ impl CockpitState {
             hovered_index_version: None,
             hovered_trajectory_event: None,
             hovered_trajectory_x: None,
+            base_rate_update_in_flight: false,
         };
 
         // Start SSE polling timer — periodically triggers re-renders
@@ -2376,6 +2385,15 @@ impl CockpitState {
                         if base_id == "macro_forecaster" && !is_driver_bound {
                             log::info!("[composer] → process_macro_forecaster_result");
                             state.process_macro_forecaster_result(&result_json, cx);
+                        } else if base_id == "fermi" && state.base_rate_update_in_flight {
+                            // Scoped call: 'Update base rate' pressed. Do NOT
+                            // rebuild the driver set — that's the destructive
+                            // behavior we're guarding against. Only refresh the
+                            // outside-view anchor.
+                            log::info!(
+                                "[composer] → apply_base_rate_only (base_rate_update_in_flight)"
+                            );
+                            state.apply_base_rate_only(&result_json, cx);
                         } else if base_id == "fermi" {
                             // Check multiple locations for the structured JSON decomposition:
                             // 1. metadata.reasoning (local executor path)
@@ -4869,6 +4887,13 @@ impl CockpitState {
 
     /// Update the outside rate (base rate) without resetting drivers.
     /// Fires Fermi to research the current base rate for the question.
+    ///
+    /// The base rate is an INDEX/ANCHOR (like the Polymarket crowd price),
+    /// not a structural change. This handler must never rebuild drivers or
+    /// touch the model expression — it only refreshes the outside-view
+    /// reference class + historical_frequency the forecast is anchored to.
+    /// Sets base_rate_update_in_flight so fire_agent's completion handler
+    /// takes the base-rate-only path instead of process_macro_forecaster_result.
     pub fn update_outside_rate(&mut self, cx: &mut Context<Self>) {
         let question = self
             .program
@@ -4879,11 +4904,18 @@ impl CockpitState {
             return;
         }
 
+        // Tightened prompt: emphasize that we want ONLY the base rate.
+        // The fermi agent's default behavior is full decomposition; we
+        // guard against that both in the prompt AND in fire_agent's
+        // completion handler.
         let query = format!(
-            "What is the base rate for this forecast question? \
-             Provide ONLY a JSON object: \
-             {{\"reference_class\": \"...\", \"historical_frequency\": 0.0-1.0, \
-             \"sample_size\": N, \"reasoning\": \"...\"}}\n\n\
+            "Update ONLY the base rate for this forecast question. \
+             Do NOT propose drivers or a decomposition. \
+             Return a single JSON object with EXACTLY these keys \
+             (no other top-level fields): \
+             {{\"base_rate\": {{\"reference_class\": \"...\", \
+             \"historical_frequency\": 0.0-1.0, \
+             \"sample_size\": N, \"reasoning\": \"...\"}}}}\n\n\
              Question: \"{}\"",
             question
         );
@@ -4911,8 +4943,129 @@ impl CockpitState {
             text: "⟳ Updating outside rate…".into(),
         });
 
-        // Fire fermi agent for base rate only
+        // Latch the guard flag so the completion handler goes through
+        // apply_base_rate_only() instead of the full decomposition path.
+        self.base_rate_update_in_flight = true;
         self.fire_agent("fermi", &query, cx);
+    }
+
+    /// Extract ONLY the base rate from a fermi agent response and update
+    /// the program's outside view. Never touches drivers, model, or any
+    /// other FPL structure. Called from fire_agent's completion handler
+    /// when base_rate_update_in_flight is set.
+    ///
+    /// The extraction is defensive: fermi's response format varies (JSON
+    /// in reasoning, JSON in evidence[0].summary, narrative prose) so we
+    /// try each source. If no base rate can be parsed we surface a
+    /// message and leave the existing base rate untouched — never
+    /// destroy state on a parse failure.
+    fn apply_base_rate_only(&mut self, result: &JsonValue, cx: &mut Context<Self>) {
+        self.base_rate_update_in_flight = false;
+
+        // Mark the agent-run row completed.
+        if let Some(run) = self
+            .agent_runs
+            .iter_mut()
+            .find(|r| r.agent_name == "fermi_base_rate" || r.agent_name == "fermi")
+        {
+            run.status = AgentRunStatus::Completed;
+            run.completed_at = Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            );
+        }
+
+        // Candidate sources for the JSON blob, in order of preference.
+        let reasoning = result
+            .get("metadata")
+            .and_then(|m| m.get("reasoning"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let evidence_summary = result
+            .get("evidence")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|e| e.get("summary"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        // Try each candidate: strip code fences, parse as JSON, extract
+        // the base_rate object. Accept both the wrapped form
+        // ({"base_rate": {...}}) and the bare form ({"reference_class":
+        // "...", "historical_frequency": ...}).
+        let parse = |text: &str| -> Option<JsonValue> {
+            let clean = text
+                .trim()
+                .strip_prefix("```json")
+                .or_else(|| text.trim().strip_prefix("```"))
+                .and_then(|s| s.strip_suffix("```"))
+                .unwrap_or(text)
+                .trim();
+            let value: JsonValue = serde_json::from_str(clean).ok()?;
+            if let Some(br) = value.get("base_rate") {
+                return Some(br.clone());
+            }
+            if value.get("historical_frequency").is_some() {
+                return Some(value);
+            }
+            None
+        };
+
+        let br_json = parse(reasoning).or_else(|| parse(evidence_summary));
+
+        let Some(br) = br_json else {
+            self.messages.push(AssistantMessage {
+                node: "question".into(),
+                kind: MessageKind::Info,
+                text: "Base-rate update: no parseable base rate in response. \
+                       Existing base rate preserved."
+                    .into(),
+            });
+            cx.notify();
+            return;
+        };
+
+        let reference_class = br
+            .get("reference_class")
+            .and_then(|v| v.as_str())
+            .unwrap_or("external reference class")
+            .to_string();
+        let historical_frequency = br
+            .get("historical_frequency")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0);
+        let sample_size = br
+            .get("sample_size")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as usize);
+        let reasoning_text = br
+            .get("reasoning")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        if let Some(q) = self.program.question_mut() {
+            q.base_rate = Some(BaseRate {
+                reference_class,
+                historical_frequency,
+                sample_size,
+                source: "fermi".into(),
+                reasoning: reasoning_text,
+                generated_by: GeneratedBy::Agent("fermi".into()),
+            });
+        }
+
+        self.messages.push(AssistantMessage {
+            node: "question".into(),
+            kind: MessageKind::Info,
+            text: format!(
+                "✓ Base rate updated: {:.1}% (drivers untouched).",
+                historical_frequency * 100.0
+            ),
+        });
+        cx.notify();
     }
 
     /// Flip the `learnable` flag on a driver. When ON, the driver's static
@@ -14409,12 +14562,18 @@ fn render_trajectory_body(
                 } else {
                     "●"
                 };
-                let color = if d.abs() < 3.0 {
-                    theme::GREEN
-                } else if d.abs() < 10.0 {
-                    theme::GOLD
+                // Divergence colour: neutral FG for tight, RED only when
+                // the gap is meaningful. Avoids the previous three-way
+                // clash where mid-divergence GOLD collided with the base-
+                // rate line + BayesOps-fit legend chip. The arrow + sign
+                // already communicate direction, so colour is reserved
+                // for magnitude urgency.
+                let color = if d.abs() < 5.0 {
+                    theme::FG
+                } else if d.abs() < 15.0 {
+                    theme::FG_DIM
                 } else {
-                    theme::ORANGE
+                    theme::RED
                 };
                 tooltip = tooltip.child(
                     div()
@@ -14434,22 +14593,44 @@ fn render_trajectory_body(
         .justify_center()
         .child(chart_overlay);
 
-    // Legend
+    // Legend — two logical groups so the color coding is unambiguous:
+    //
+    //   Row 1: LINES   — what the traces represent
+    //   Row 2: MARKERS — what the dots represent
+    //
+    // Previously a single flat row conflated "CYAN dot = rate revision"
+    // with "CYAN line = your model", and the operator saw no explicit
+    // 'your model' entry at all. Same for the GOLD collision between
+    // BayesOps-fit dots and the base-rate dashed line — both shared a
+    // colour, so 'gold dot on gold line' was unreadable.
     let legend = div()
         .px(px(16.0))
         .pb(px(8.0))
         .flex()
-        .gap(px(14.0))
+        .flex_col()
+        .gap(px(3.0))
         .text_size(px(10.0))
         .text_color(rgb(theme::FG_DIM))
-        .child(legend_chip("●", theme::CYAN, "Apply / rate revision"))
-        .child(legend_chip("●", theme::GOLD, "BayesOps fit"))
-        .child(legend_chip("●", theme::FG_DIM, "Agent run"))
-        .child(legend_chip("●", theme::PURPLE, "Polymarket tick"))
-        .child(legend_chip("─", theme::GOLD, "Base"))
-        .when(crowd_price_pct.is_some(), |el| {
-            el.child(legend_chip("─", theme::PURPLE, "Crowd"))
-        });
+        .child(
+            div()
+                .flex()
+                .gap(px(14.0))
+                .child(legend_chip("─", theme::CYAN, "Your model index"))
+                .when(
+                    crowd_price_pct.is_some() || !crowd_points.is_empty(),
+                    |el| el.child(legend_chip("─", theme::PURPLE, "Polymarket crowd")),
+                )
+                .child(legend_chip("─", theme::GOLD, "Base rate")),
+        )
+        .child(
+            div()
+                .flex()
+                .gap(px(14.0))
+                .child(legend_chip("●", theme::CYAN, "Rate revision"))
+                .child(legend_chip("●", theme::ORANGE, "BayesOps refit"))
+                .child(legend_chip("●", theme::PURPLE, "Polymarket tick"))
+                .child(legend_chip("●", theme::FG_DIM, "Agent run")),
+        );
 
     // Event list — each row carries its index so we can highlight the
     // one matching state.hovered_trajectory_event.

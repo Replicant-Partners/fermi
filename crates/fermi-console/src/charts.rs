@@ -34,6 +34,12 @@ const DIVERGENCE_FILL: RGBColor = RGBColor(58, 72, 92);
 // the console, so a resolved forecast reads consistently between the
 // portfolio list and the trajectory chart.
 const RESOLVED: RGBColor = RGBColor(186, 230, 126);
+// BayesOps fit / refit marker. Was GOLD, but GOLD is also the base-rate
+// horizontal — the collision made 'gold dot' unreadable next to the
+// gold dashed line. Orange is the console's warning/attention accent
+// (matches theme::ORANGE = 0xFF8F40), so refit events read as 'model
+// structure just changed' with no clash against the base-rate line.
+const REFIT: RGBColor = RGBColor(255, 143, 64);
 
 // ═══════════════════════════════════════════════════════════════════
 // Public data types
@@ -703,7 +709,7 @@ pub fn render_trajectory_worm(
             for ev in sorted {
                 let (color, size) = match ev.kind {
                     TrajectoryEventKind::RateRevision => (CYAN, 7),
-                    TrajectoryEventKind::BayesOpsFit => (GOLD, 7),
+                    TrajectoryEventKind::BayesOpsFit => (REFIT, 7),
                     TrajectoryEventKind::AgentRun => (LABEL, 3),
                     TrajectoryEventKind::MarketObservation => (PURPLE, 5),
                 };
@@ -806,7 +812,7 @@ pub fn render_trajectory_worm(
             let x_pix = plot_left + (frac * plot_w as f64) as i32;
             let color = match ev.kind {
                 TrajectoryEventKind::RateRevision => CYAN,
-                TrajectoryEventKind::BayesOpsFit => GOLD,
+                TrajectoryEventKind::BayesOpsFit => REFIT,
                 TrajectoryEventKind::AgentRun => LABEL,
                 TrajectoryEventKind::MarketObservation => PURPLE,
             };
