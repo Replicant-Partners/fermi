@@ -68,7 +68,10 @@ impl ToolAwareExecutor {
             inner,
             tool_registry,
             tool_context,
-            client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build().unwrap_or_default(),
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(90))
+                .build()
+                .unwrap_or_default(),
         }
     }
 
@@ -94,7 +97,10 @@ impl ToolAwareExecutor {
             ExecutionError::ExecutionFailed("ANTHROPIC_API_KEY not set".to_string())
         })?;
 
-        let sp = context.agent_card.capabilities.resolve_sampling_params(4096);
+        let sp = context
+            .agent_card
+            .capabilities
+            .resolve_sampling_params(4096);
         let thinking_block = if sp.extended_thinking {
             sp.thinking_budget_tokens.map(|budget| ClaudeThinking {
                 thinking_type: "enabled".to_string(),
@@ -104,9 +110,18 @@ impl ToolAwareExecutor {
             None
         };
 
+        // Anthropic rejects empty user messages. Custom-prompted agents
+        // (query defined by the system prompt) can legitimately arrive
+        // with an empty query; fall back to a nudge that lets the system
+        // prompt drive the interaction.
+        let user_content = if agent.query.trim().is_empty() {
+            "Begin.".to_string()
+        } else {
+            agent.query.clone()
+        };
         let mut messages: Vec<Message> = vec![Message {
             role: "user".to_string(),
-            content: MessageContent::Text(agent.query.clone()),
+            content: MessageContent::Text(user_content),
         }];
 
         let mut total_input_tokens: u32 = 0;
@@ -410,11 +425,20 @@ impl ToolAwareExecutor {
 
         let tools = self.tool_registry.to_openai_tools();
 
-        let sp_oai = context.agent_card.capabilities.resolve_sampling_params(2048);
+        let sp_oai = context
+            .agent_card
+            .capabilities
+            .resolve_sampling_params(2048);
 
+        // Same non-empty user-message guard as the Anthropic path.
+        let user_content: String = if agent.query.trim().is_empty() {
+            "Begin.".to_string()
+        } else {
+            agent.query.clone()
+        };
         let mut messages: Vec<OpenAIMessage> = vec![
             OpenAIMessage::chat("system", &system_prompt),
-            OpenAIMessage::chat("user", &agent.query),
+            OpenAIMessage::chat("user", &user_content),
         ];
 
         let mut total_tokens: u32 = 0;
@@ -562,10 +586,8 @@ impl ToolAwareExecutor {
                     total_tokens += usage.total_tokens;
                 }
                 if let Some(choice) = flush_response.choices.first() {
-                    last_finish_reason = choice
-                        .finish_reason
-                        .clone()
-                        .or(last_finish_reason.clone());
+                    last_finish_reason =
+                        choice.finish_reason.clone().or(last_finish_reason.clone());
                     if let Some(ref content) = choice.message.content {
                         if !content.trim().is_empty() {
                             text = content.clone();
@@ -682,11 +704,10 @@ impl ToolAwareExecutor {
         if !api_key.is_empty() {
             req = req.header("Authorization", format!("Bearer {}", api_key));
         }
-        let response = req
-            .json(request)
-            .send()
-            .await
-            .map_err(|e| ExecutionError::ExecutionFailed(format!("API request failed: {}", e)))?;
+        let response =
+            req.json(request).send().await.map_err(|e| {
+                ExecutionError::ExecutionFailed(format!("API request failed: {}", e))
+            })?;
 
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
@@ -815,8 +836,12 @@ fn resolve_openai_provider(provider: &str) -> Result<(String, String), Execution
 /// `dispatch_rabble_action` can return it to the creature-agent handlers for
 /// JSON parsing.
 fn parse_evidence_text(text: &str, agent_name: &str) -> (Vec<EvidenceStmt>, f64, Option<String>) {
-
-    fn make_stub(agent_name: &str, summary: Option<String>, findings: Vec<String>, confidence: f64) -> Vec<EvidenceStmt> {
+    fn make_stub(
+        agent_name: &str,
+        summary: Option<String>,
+        findings: Vec<String>,
+        confidence: f64,
+    ) -> Vec<EvidenceStmt> {
         vec![EvidenceStmt {
             id: format!("{}_evidence_{}", agent_name, Utc::now().timestamp()),
             source: format!("Agent: {}", agent_name),
@@ -834,7 +859,11 @@ fn parse_evidence_text(text: &str, agent_name: &str) -> (Vec<EvidenceStmt>, f64,
     // Creature agents always fall here because their responses are pure JSON.
     if is_json_contract_text(text) {
         let (summary, findings) = extract_summary_from_json_contract(text);
-        return (make_stub(agent_name, summary, findings, 0.5), 0.5, Some(text.to_string()));
+        return (
+            make_stub(agent_name, summary, findings, 0.5),
+            0.5,
+            Some(text.to_string()),
+        );
     }
 
     // ── 2. Embedded JSON — try EvidenceJson shape ─────────────────────────
@@ -845,8 +874,14 @@ fn parse_evidence_text(text: &str, agent_name: &str) -> (Vec<EvidenceStmt>, f64,
     // is NOT an EvidenceJson — it would deserialise with empty defaults
     // and set reasoning="" causing the handler to receive an empty response.
     let json_text = if let Some(start) = text.find('{') {
-        if let Some(end) = text.rfind('}') { &text[start..=end] } else { text }
-    } else { text };
+        if let Some(end) = text.rfind('}') {
+            &text[start..=end]
+        } else {
+            text
+        }
+    } else {
+        text
+    };
 
     let looks_like_evidence_json = json_text.contains("\"key_findings\"")
         || (json_text.contains("\"summary\"")
@@ -855,15 +890,31 @@ fn parse_evidence_text(text: &str, agent_name: &str) -> (Vec<EvidenceStmt>, f64,
     if looks_like_evidence_json {
         #[derive(serde::Deserialize)]
         struct EvidenceJson {
-            #[serde(default)] key_findings: Vec<String>,
-            #[serde(default)] summary: String,
-            #[serde(default)] confidence: f64,
-            #[serde(default)] reasoning: String,
+            #[serde(default)]
+            key_findings: Vec<String>,
+            #[serde(default)]
+            summary: String,
+            #[serde(default)]
+            confidence: f64,
+            #[serde(default)]
+            reasoning: String,
         }
         if let Ok(data) = serde_json::from_str::<EvidenceJson>(json_text) {
-            let confidence = if data.confidence > 0.0 { data.confidence } else { 0.5 };
-            return (make_stub(agent_name, Some(data.summary), data.key_findings, confidence),
-                    confidence, Some(data.reasoning));
+            let confidence = if data.confidence > 0.0 {
+                data.confidence
+            } else {
+                0.5
+            };
+            return (
+                make_stub(
+                    agent_name,
+                    Some(data.summary),
+                    data.key_findings,
+                    confidence,
+                ),
+                confidence,
+                Some(data.reasoning),
+            );
         }
     }
 
@@ -874,20 +925,32 @@ fn parse_evidence_text(text: &str, agent_name: &str) -> (Vec<EvidenceStmt>, f64,
     {
         // Try fenced block first
         let extracted = if let Some(fs) = text.find("```json").or_else(|| text.find("```JSON")) {
-            let after = text[fs..].trim_start_matches('`').trim_start_matches("json").trim_start_matches("JSON").trim_start();
+            let after = text[fs..]
+                .trim_start_matches('`')
+                .trim_start_matches("json")
+                .trim_start_matches("JSON")
+                .trim_start();
             after.find("```").map(|fe| after[..fe].trim().to_string())
         } else {
             None
         };
         // Fallback: first { to last }
         let extracted = extracted.or_else(|| {
-            text.find('{').and_then(|s| text.rfind('}').map(|e| text[s..=e].to_string()))
+            text.find('{')
+                .and_then(|s| text.rfind('}').map(|e| text[s..=e].to_string()))
         });
 
         if let Some(candidate) = extracted {
-            if serde_json::from_str::<serde_json::Value>(&candidate).map(|v| v.is_object()).unwrap_or(false) {
+            if serde_json::from_str::<serde_json::Value>(&candidate)
+                .map(|v| v.is_object())
+                .unwrap_or(false)
+            {
                 let (summary, findings) = extract_summary_from_json_contract(&candidate);
-                return (make_stub(agent_name, summary, findings, 0.5), 0.5, Some(candidate));
+                return (
+                    make_stub(agent_name, summary, findings, 0.5),
+                    0.5,
+                    Some(candidate),
+                );
             }
         }
     }
@@ -897,21 +960,44 @@ fn parse_evidence_text(text: &str, agent_name: &str) -> (Vec<EvidenceStmt>, f64,
         .lines()
         .filter(|l| {
             let t = l.trim();
-            if t.is_empty() || t.len() < 15 { return false; }
-            if t.starts_with('#') || t.starts_with("---") || t.starts_with("===") { return false; }
-            t.starts_with('-') || t.starts_with('•') || t.starts_with('*') || t.starts_with("▸")
-                || t.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
-                || t.contains('%') || t.contains('$') || t.contains("p50")
-                || t.contains("Suggested") || t.contains("confidence") || t.contains("relevance")
+            if t.is_empty() || t.len() < 15 {
+                return false;
+            }
+            if t.starts_with('#') || t.starts_with("---") || t.starts_with("===") {
+                return false;
+            }
+            t.starts_with('-')
+                || t.starts_with('•')
+                || t.starts_with('*')
+                || t.starts_with("▸")
+                || t.chars()
+                    .next()
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false)
+                || t.contains('%')
+                || t.contains('$')
+                || t.contains("p50")
+                || t.contains("Suggested")
+                || t.contains("confidence")
+                || t.contains("relevance")
         })
         .take(15)
-        .map(|l| l.trim().trim_start_matches(['-','•','*']).trim_start_matches("▸").trim().to_string())
+        .map(|l| {
+            l.trim()
+                .trim_start_matches(['-', '•', '*'])
+                .trim_start_matches("▸")
+                .trim()
+                .to_string()
+        })
         .filter(|s| !s.is_empty())
         .collect();
 
-    (make_stub(agent_name, Some(text.to_string()), findings, 0.5), 0.5, Some(text.to_string()))
+    (
+        make_stub(agent_name, Some(text.to_string()), findings, 0.5),
+        0.5,
+        Some(text.to_string()),
+    )
 }
-
 
 // ─── Tests ─────────────────────────────────────────────────────────
 
@@ -963,8 +1049,12 @@ mod tests {
     /// disable bypass for one of the affected agents.
     #[test]
     fn matches_uppercase_and_lowercase_return_variants() {
-        assert!(prompt_demands_structured_output("Return a valid JSON object"));
-        assert!(prompt_demands_structured_output("return a valid JSON object"));
+        assert!(prompt_demands_structured_output(
+            "Return a valid JSON object"
+        ));
+        assert!(prompt_demands_structured_output(
+            "return a valid JSON object"
+        ));
     }
 
     // ─── Issue #4 — parse_evidence_text addendum suppression ──────────
@@ -999,8 +1089,7 @@ mod tests {
 
     #[test]
     fn parse_evidence_text_recognises_array_contract() {
-        let (evidence, _conf, reasoning) =
-            super::parse_evidence_text(r#"[1, 2, 3]"#, "test_agent");
+        let (evidence, _conf, reasoning) = super::parse_evidence_text(r#"[1, 2, 3]"#, "test_agent");
         assert_eq!(evidence.len(), 1);
         assert!(evidence[0].summary.is_none());
         assert_eq!(reasoning.as_deref(), Some("[1, 2, 3]"));
@@ -1033,7 +1122,10 @@ mod tests {
             Some("A dragonfly in the immediate vicinity poses moderate predation risk."),
             "enemy_sensor summary must be extracted from the `summary` field"
         );
-        assert!(!evidence[0].key_findings.is_empty(), "threat descriptions should populate key_findings");
+        assert!(
+            !evidence[0].key_findings.is_empty(),
+            "threat descriptions should populate key_findings"
+        );
         assert!(reasoning.is_some(), "raw JSON must still be in reasoning");
     }
 
@@ -1067,7 +1159,10 @@ mod tests {
             Some("One viable prey target identified within immediate range."),
             "prey_locator summary must be extracted from `hunting_summary`"
         );
-        assert!(!evidence[0].key_findings.is_empty(), "prey_targets should populate key_findings");
+        assert!(
+            !evidence[0].key_findings.is_empty(),
+            "prey_targets should populate key_findings"
+        );
     }
 
     /// genome_profiler response: must extract `summary` from the nested `conservation` object.
@@ -1129,8 +1224,14 @@ mod tests {
         );
         // Reasoning must be the extracted JSON, not the full prose+fence text
         let r = reasoning.unwrap_or_default();
-        assert!(r.contains("Odonata"), "reasoning must contain the JSON content");
-        assert!(!r.contains("Perfect!"), "reasoning must not contain the prose preamble");
+        assert!(
+            r.contains("Odonata"),
+            "reasoning must contain the JSON content"
+        );
+        assert!(
+            !r.contains("Perfect!"),
+            "reasoning must not contain the prose preamble"
+        );
     }
 
     /// Prose + bare JSON (no fence) must also be handled.
@@ -1139,7 +1240,13 @@ mod tests {
         let text = "Here is the threat assessment: {\"threat_level\": \"low\", \"threats\": [], \"summary\": \"No immediate threats.\"}";
         let (_evidence, _conf, reasoning) = super::parse_evidence_text(text, "enemy_sensor");
         let r = reasoning.unwrap_or_default();
-        assert!(r.contains("threat_level"), "reasoning must contain the JSON");
-        assert!(!r.contains("Here is the threat"), "reasoning must not contain the prose");
+        assert!(
+            r.contains("threat_level"),
+            "reasoning must contain the JSON"
+        );
+        assert!(
+            !r.contains("Here is the threat"),
+            "reasoning must not contain the prose"
+        );
     }
 }

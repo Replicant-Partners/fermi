@@ -21,7 +21,10 @@ impl LLMExecutor {
     pub fn new(api_key: String) -> Self {
         LLMExecutor {
             api_key,
-            client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build().unwrap_or_default(),
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(90))
+                .build()
+                .unwrap_or_default(),
         }
     }
 
@@ -114,6 +117,15 @@ CARDINAL RULES (override everything else):
                 }
             }
 
+            // Anthropic rejects empty user messages with:
+            //   invalid_request_error: messages.0: user messages must have
+            //   non-empty content
+            // Custom-prompted agents whose query is blank AND have no driver
+            // refs previously produced exactly that. Fall back to a nudge
+            // that lets the system prompt do all the actual work.
+            if prompt.trim().is_empty() {
+                return "Begin.".to_string();
+            }
             return prompt;
         }
 
@@ -220,26 +232,26 @@ CARDINAL RULES (override everything else):
                 // `execution_result.metadata.raw_response`), so no
                 // information is lost; we just stop duplicating it into
                 // the evidence channel where it doesn't belong.
-                let looks_like_json_contract = is_json_contract_text(&text)
-                    || is_json_contract_text(json_text);
-                let (summary, findings): (Option<String>, Vec<String>) =
-                    if looks_like_json_contract {
-                        // Safety net (ABW issue — "Success + empty payload"):
-                        // even though this response is a structured JSON
-                        // contract that didn't match EvidenceData, try to
-                        // salvage a summary and key_findings from well-known
-                        // fields (e.g. enemy_sensor's `summary`,
-                        // prey_locator's `hunting_summary`, etc.).
-                        extract_summary_from_json_contract(&text)
-                    } else {
-                        let findings: Vec<String> = text
-                            .lines()
-                            .filter(|l| !l.trim().is_empty() && l.len() > 10)
-                            .take(10)
-                            .map(|l| l.trim().to_string())
-                            .collect();
-                        (Some(text.to_string()), findings)
-                    };
+                let looks_like_json_contract =
+                    is_json_contract_text(&text) || is_json_contract_text(json_text);
+                let (summary, findings): (Option<String>, Vec<String>) = if looks_like_json_contract
+                {
+                    // Safety net (ABW issue — "Success + empty payload"):
+                    // even though this response is a structured JSON
+                    // contract that didn't match EvidenceData, try to
+                    // salvage a summary and key_findings from well-known
+                    // fields (e.g. enemy_sensor's `summary`,
+                    // prey_locator's `hunting_summary`, etc.).
+                    extract_summary_from_json_contract(&text)
+                } else {
+                    let findings: Vec<String> = text
+                        .lines()
+                        .filter(|l| !l.trim().is_empty() && l.len() > 10)
+                        .take(10)
+                        .map(|l| l.trim().to_string())
+                        .collect();
+                    (Some(text.to_string()), findings)
+                };
 
                 Ok(EvidenceStmt {
                     id: format!("{}_evidence_{}", agent_name, Utc::now().timestamp()),
@@ -303,8 +315,15 @@ impl AgentExecutor for LLMExecutor {
 
         // Resolve sampling params — model_params JSONB overrides the legacy temperature f64.
         // Agents with custom system prompts (e.g. fermi decomposition) need more tokens.
-        let default_max = if Self::has_custom_prompt(context) { 4096 } else { 2048 };
-        let sp = context.agent_card.capabilities.resolve_sampling_params(default_max);
+        let default_max = if Self::has_custom_prompt(context) {
+            4096
+        } else {
+            2048
+        };
+        let sp = context
+            .agent_card
+            .capabilities
+            .resolve_sampling_params(default_max);
 
         let thinking = if sp.extended_thinking {
             sp.thinking_budget_tokens.map(|budget| ClaudeThinking {
@@ -569,8 +588,12 @@ pub(crate) fn extract_summary_from_json_contract(text: &str) -> (Option<String>,
     // --- summary string ---
     // Prefer the conventional "summary" key, then agent-specific variants.
     let summary_keys = [
-        "summary", "hunting_summary", "oracle_note", "note",
-        "description", "assessment",
+        "summary",
+        "hunting_summary",
+        "oracle_note",
+        "note",
+        "description",
+        "assessment",
     ];
     let summary = summary_keys
         .iter()
@@ -580,8 +603,15 @@ pub(crate) fn extract_summary_from_json_contract(text: &str) -> (Option<String>,
     // --- key findings ---
     // Collect short string descriptions from well-known array / scalar fields.
     let array_keys = [
-        "threats", "prey_targets", "key_findings", "findings", "items",
-        "risks", "notable_genes", "defining_traits", "sister_taxa",
+        "threats",
+        "prey_targets",
+        "key_findings",
+        "findings",
+        "items",
+        "risks",
+        "notable_genes",
+        "defining_traits",
+        "sister_taxa",
     ];
     let mut findings: Vec<String> = Vec::new();
     for key in &array_keys {
@@ -595,8 +625,12 @@ pub(crate) fn extract_summary_from_json_contract(text: &str) -> (Option<String>,
                     // For structured items, build a short description from
                     // common fields: species, relationship, reasoning, name, etc.
                     let desc_keys = [
-                        "species", "name", "relationship", "reasoning",
-                        "risk", "vulnerability",
+                        "species",
+                        "name",
+                        "relationship",
+                        "reasoning",
+                        "risk",
+                        "vulnerability",
                     ];
                     let parts: Vec<&str> = desc_keys
                         .iter()
@@ -635,7 +669,6 @@ struct EvidenceData {
     #[serde(default)]
     reasoning: String,
 }
-
 
 // ─── Tests ─────────────────────────────────────────────────────────
 
