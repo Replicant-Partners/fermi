@@ -1927,13 +1927,26 @@ pub async fn admin_schema_health_handler(
         .iter()
         .map(|(name, sig)| {
             let want = normalise(sig);
-            let present = present_functions
+            // Collect every signature we saw for this name so a mismatch
+            // is easy to diagnose ("expected real, boolean but the DB has
+            // predicted real, actual boolean"). Without this the probe
+            // only tells us present:false and we can't tell if the
+            // function is truly absent or just has a signature drift.
+            let found_sigs: Vec<String> = present_functions
                 .iter()
-                .any(|(n, s)| n == name && normalise(s) == want);
+                .filter(|(n, _)| n == name)
+                .map(|(_, s)| s.clone())
+                .collect();
+            let present = found_sigs.iter().any(|s| normalise(s) == want);
             if !present {
                 functions_missing += 1;
             }
-            json!({ "name": name, "signature": sig, "present": present })
+            json!({
+                "name": name,
+                "signature": sig,
+                "present": present,
+                "found_signatures": found_sigs,
+            })
         })
         .collect();
 
