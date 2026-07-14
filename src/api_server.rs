@@ -1559,6 +1559,13 @@ async fn main() {
             "/api/invites/by-token/:token",
             get(handlers::invites::get_invite_by_token_handler),
         )
+        // Public landing page for invite links. The operator shares
+        // /invites/<token> via any channel (email, Slack, WhatsApp);
+        // the recipient clicks it, sees the invite details, and
+        // accepts (or is prompted to sign in first). Client-side JS
+        // in the template hits the /api/invites/by-token/... routes
+        // above. Wired here on the public router so it works pre-auth.
+        .route("/invites/:token", get(handlers::pages::invite_landing_view))
         // Per-agent MCP endpoints
         .route(
             "/mcp/agents/:agent_id",

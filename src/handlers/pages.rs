@@ -209,10 +209,7 @@ pub async fn observatory_view() -> Html<String> {
         Ok(content) => content,
         Err(e) => {
             eprintln!("Error loading templates/observatory.html: {}", e);
-            format!(
-                "<h1>Observatory</h1><p>Error loading template: {}</p>",
-                e
-            )
+            format!("<h1>Observatory</h1><p>Error loading template: {}</p>", e)
         }
     };
     Html(html)
@@ -222,14 +219,8 @@ pub async fn observatory_hitl_view() -> Html<String> {
     let html = match std::fs::read_to_string("templates/observatory_hitl.html") {
         Ok(content) => content,
         Err(e) => {
-            eprintln!(
-                "Error loading templates/observatory_hitl.html: {}",
-                e
-            );
-            format!(
-                "<h1>Review Queue</h1><p>Error loading template: {}</p>",
-                e
-            )
+            eprintln!("Error loading templates/observatory_hitl.html: {}", e);
+            format!("<h1>Review Queue</h1><p>Error loading template: {}</p>", e)
         }
     };
     Html(html)
@@ -247,6 +238,26 @@ pub async fn app_detail_view() -> Html<String> {
     let html = match std::fs::read_to_string("templates/app_detail.html") {
         Ok(content) => content,
         Err(e) => format!("<h1>App</h1><p>Error loading template: {}</p>", e),
+    };
+    Html(html)
+}
+
+/// Invite landing page. Served at `/invites/:token` when an operator
+/// shares an invite link. The template loads inline JS that:
+///   1. Fetches invite details from /api/invites/by-token/:token
+///   2. Renders inviter + target + permission + expiry
+///   3. Shows Accept / Decline buttons
+///   4. Falls back to a sign-in prompt when the accept POST returns 401
+///
+/// The route is a static template; token extraction happens client-side
+/// so we don't need to thread the Path extractor through here.
+pub async fn invite_landing_view() -> Html<String> {
+    let html = match std::fs::read_to_string("templates/invite_landing.html") {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Error loading templates/invite_landing.html: {}", e);
+            format!("<h1>Invitation</h1><p>Error loading template: {}</p>", e)
+        }
     };
     Html(html)
 }

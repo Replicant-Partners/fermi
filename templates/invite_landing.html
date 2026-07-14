@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>You're invited · Fermi</title>
+    <style>
+      :root {
+        --bg: #1f2430;
+        --bg-elev: #272d38;
+        --fg: #cbccc6;
+        --fg-dim: #5c6773;
+        --cyan: #5ccfe6;
+        --green: #bae67e;
+        --red: #ff6666;
+        --border: #3e4b59;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+      }
+      body {
+        background: var(--bg);
+        color: var(--fg);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+      .card {
+        background: var(--bg-elev);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 28px 32px;
+        max-width: 480px;
+        width: 100%;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+      }
+      h1 {
+        font-size: 20px;
+        margin: 0 0 8px 0;
+        font-weight: 600;
+      }
+      .subtitle {
+        color: var(--fg-dim);
+        font-size: 14px;
+        margin-bottom: 24px;
+      }
+      .row {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--border);
+        font-size: 14px;
+      }
+      .row:last-of-type {
+        border-bottom: none;
+      }
+      .row-label {
+        color: var(--fg-dim);
+      }
+      .row-value {
+        color: var(--fg);
+        font-weight: 500;
+      }
+      button {
+        display: block;
+        width: 100%;
+        padding: 12px 16px;
+        border: none;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        margin-top: 16px;
+      }
+      button.primary {
+        background: var(--cyan);
+        color: var(--bg);
+      }
+      button.primary:hover {
+        opacity: 0.9;
+      }
+      button.secondary {
+        background: transparent;
+        color: var(--fg-dim);
+        border: 1px solid var(--border);
+      }
+      button.secondary:hover {
+        color: var(--fg);
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      .status {
+        margin-top: 16px;
+        padding: 12px;
+        border-radius: 8px;
+        font-size: 13px;
+        text-align: center;
+      }
+      .status.error {
+        background: rgba(255, 102, 102, 0.1);
+        color: var(--red);
+        border: 1px solid rgba(255, 102, 102, 0.3);
+      }
+      .status.success {
+        background: rgba(186, 230, 126, 0.1);
+        color: var(--green);
+        border: 1px solid rgba(186, 230, 126, 0.3);
+      }
+      .status.info {
+        background: rgba(92, 207, 230, 0.1);
+        color: var(--cyan);
+        border: 1px solid rgba(92, 207, 230, 0.3);
+      }
+      .spinner {
+        display: inline-block;
+        width: 18px;
+        height: 18px;
+        border: 2px solid var(--fg-dim);
+        border-top-color: var(--cyan);
+        border-radius: 50%;
+        animation: spin 0.7s linear infinite;
+        vertical-align: middle;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .footer {
+        margin-top: 24px;
+        text-align: center;
+        font-size: 12px;
+        color: var(--fg-dim);
+      }
+      .footer a {
+        color: var(--cyan);
+        text-decoration: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card" id="card">
+      <h1>You've been invited</h1>
+      <div class="subtitle" id="subtitle">Loading invitation…</div>
+      <div id="detail"></div>
+      <div id="actions"></div>
+      <div class="footer">
+        Fermi · <a href="/">home</a>
+      </div>
+    </div>
+
+    <script>
+      const path = window.location.pathname; // /invites/<token>
+      const token = path.split("/").pop();
+      const card = document.getElementById("card");
+      const subtitle = document.getElementById("subtitle");
+      const detail = document.getElementById("detail");
+      const actions = document.getElementById("actions");
+
+      function render(html) {
+        detail.innerHTML = html;
+      }
+      function status(msg, kind = "info") {
+        const el = document.createElement("div");
+        el.className = "status " + kind;
+        el.textContent = msg;
+        actions.appendChild(el);
+      }
+
+      async function loadInvite() {
+        try {
+          const res = await fetch(`/api/invites/by-token/${token}`);
+          if (res.status === 404) {
+            subtitle.textContent = "This invitation is no longer valid.";
+            status(
+              "The invite has expired, been revoked, or already accepted.",
+              "error",
+            );
+            return;
+          }
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const inv = await res.json();
+          subtitle.textContent =
+            (inv.inviter_display_name || "Someone") +
+            " invited you to a " +
+            inv.target_type +
+            ".";
+          render(`
+            <div class="row"><span class="row-label">Type</span><span class="row-value">${inv.target_type}</span></div>
+            <div class="row"><span class="row-label">Access</span><span class="row-value">${inv.permission}</span></div>
+            <div class="row"><span class="row-label">Expires</span><span class="row-value">${new Date(inv.expires_at).toLocaleDateString()}</span></div>
+          `);
+          const acceptBtn = document.createElement("button");
+          acceptBtn.className = "primary";
+          acceptBtn.textContent = "Accept invitation";
+          acceptBtn.onclick = async () => {
+            acceptBtn.disabled = true;
+            acceptBtn.innerHTML = '<span class="spinner"></span> Accepting…';
+            try {
+              const accept = await fetch(
+                `/api/invites/by-token/${token}/accept`,
+                {
+                  method: "POST",
+                  credentials: "include",
+                },
+              );
+              if (accept.status === 401) {
+                status(
+                  "Please sign in first, then click Accept again.",
+                  "info",
+                );
+                acceptBtn.disabled = false;
+                acceptBtn.textContent = "Accept invitation";
+                const signin = document.createElement("button");
+                signin.className = "secondary";
+                signin.textContent = "Sign in";
+                signin.onclick = () => {
+                  // Return here after signin.
+                  const back = encodeURIComponent(window.location.pathname);
+                  window.location.href = `/?return_to=${back}`;
+                };
+                actions.appendChild(signin);
+                return;
+              }
+              if (!accept.ok) {
+                const err = await accept.json().catch(() => ({}));
+                throw new Error(err.error || `HTTP ${accept.status}`);
+              }
+              status(
+                "Invitation accepted. You now have access.",
+                "success",
+              );
+              acceptBtn.textContent = "Accepted ✓";
+            } catch (e) {
+              status("Couldn't accept: " + e.message, "error");
+              acceptBtn.disabled = false;
+              acceptBtn.textContent = "Accept invitation";
+            }
+          };
+          actions.appendChild(acceptBtn);
+
+          const declineBtn = document.createElement("button");
+          declineBtn.className = "secondary";
+          declineBtn.textContent = "Decline";
+          declineBtn.onclick = async () => {
+            declineBtn.disabled = true;
+            acceptBtn.disabled = true;
+            try {
+              await fetch(`/api/invites/${inv.id}/decline`, {
+                method: "POST",
+                credentials: "include",
+              });
+              status("Invitation declined.", "info");
+            } catch (e) {
+              status("Couldn't decline: " + e.message, "error");
+              declineBtn.disabled = false;
+              acceptBtn.disabled = false;
+            }
+          };
+          actions.appendChild(declineBtn);
+        } catch (e) {
+          subtitle.textContent = "Something went wrong.";
+          status(String(e), "error");
+        }
+      }
+
+      loadInvite();
+    </script>
+  </body>
+</html>

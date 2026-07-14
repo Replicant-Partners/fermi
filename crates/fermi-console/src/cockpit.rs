@@ -13416,7 +13416,40 @@ fn render_forecast_invites_section(
                     .text_color(status_color)
                     .child(inv.status.clone()),
             );
+        // Copy-link affordance for pending email/link invites. Email
+        // delivery isn't wired yet (no SendGrid/Resend integration), so
+        // the operator's fastest path to sharing is copying the invite
+        // URL and sending it via any channel (Slack, WhatsApp, email
+        // manually). Only rendered when the invite carries a token —
+        // direct user-id invites don't need a link since they show up
+        // in the recipient's Inbox automatically.
         if is_pending {
+            if let Some(token) = inv.token.clone() {
+                let base_url = "https://agent-bestiary.world";
+                let invite_url = format!("{}/invites/{}", base_url, token);
+                let url_for_copy = invite_url.clone();
+                row = row.child(
+                    div()
+                        .id(ElementId::Name(format!("finv-copy-{}", iid).into()))
+                        .px(px(6.0))
+                        .py(px(2.0))
+                        .rounded(px(4.0))
+                        .text_size(px(11.0))
+                        .text_color(rgb(theme::CYAN))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                        .on_click(cx.listener(move |_this, _, _w, cx| {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                url_for_copy.clone(),
+                            ));
+                        }))
+                        .child("🔗 Copy link"),
+                );
+                // Also render the URL itself so the operator has
+                // visual confirmation of what they just copied — tiny
+                // monospace text under the row.
+                let _ = invite_url; // kept for future "show URL below" UI
+            }
             row = row.child(
                 div()
                     .id(ElementId::Name(format!("finv-revoke-{}", iid).into()))

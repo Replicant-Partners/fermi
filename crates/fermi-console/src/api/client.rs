@@ -677,6 +677,13 @@ pub struct Invite {
     pub invitee_user_id: Option<String>,
     #[serde(default)]
     pub invitee_email: Option<String>,
+    /// Shareable token for email/link invites. Present when the invite
+    /// was addressed to an email (or created as a link-invite); None
+    /// for direct user-id invites that surface in the recipient's Inbox.
+    /// The console renders this as a copyable link the operator can
+    /// send via any channel while native email delivery is in flight.
+    #[serde(default)]
+    pub token: Option<String>,
     pub inviter_id: String,
     #[serde(default)]
     pub message: Option<String>,
