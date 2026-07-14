@@ -41,6 +41,9 @@ pub mod polymarket;
 // Voice synthesis
 pub mod voice;
 
+// Outbound transactional email (Resend). No-ops when unconfigured.
+pub mod email;
+
 // Re-export main types
 pub use ast::*;
 pub use evaluator::{evaluate, EvalError, EvaluationContext};

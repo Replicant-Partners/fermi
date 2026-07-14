@@ -196,15 +196,23 @@ async fn require_team_invite_authority(
 // ─── Common invite-creation logic ──────────────────────────────────────
 
 /// Validate the request body, parse exactly-one-of-recipient,
-/// validate the permission value against the target type, and INSERT
-/// the row. Returns the resulting row as JSON for the response.
+/// validate the permission value against the target type, INSERT
+/// the row, and — for email invites — spawn a Resend delivery.
+/// Returns the resulting row as JSON for the response.
+///
+/// Takes `&AppState` (rather than just `&PgPool`) so it can reach
+/// `state.email` for the delivery step. When email delivery isn't
+/// configured (local dev, CI, or prod without RESEND_API_KEY) the
+/// send is a logged no-op; the DB row still lands and the operator's
+/// copy-link affordance remains a working fallback.
 async fn create_invite_row(
-    pool: &PgPool,
+    state: &AppState,
     target_type: &str,
     target_id: &str,
     inviter_id: &str,
     body: &InviteRequest,
 ) -> Result<JsonValue, (StatusCode, String)> {
+    let pool = &state.db;
     // Recipient: exactly one of user_id / email, trimmed and non-empty.
     let user_id = body
         .invitee_user_id
@@ -314,6 +322,46 @@ async fn create_invite_row(
         .await;
     }
 
+    // Email delivery for email-invites. Spawned so DB commit doesn't
+    // wait on Resend; the invite row is already persisted, so a
+    // bounced send just means the operator falls back to the copy-link
+    // affordance. Skipped when the recipient is a direct user_id (no
+    // email address on the invite) or when RESEND_API_KEY isn't set.
+    if let (Some(recipient_email), Some(token)) = (row.5.as_deref(), row.6.as_deref()) {
+        if state.email.is_configured() {
+            // Look up inviter display name so the email reads
+            // "Alice invited you…" instead of "550e8400-e29b…". Fails
+            // soft — fall back to the inviter_id string if the lookup
+            // errors or the user has no display name set yet.
+            let inviter_display: String = sqlx::query_scalar(
+                "SELECT COALESCE(NULLIF(display_name, ''), user_id) \
+                 FROM users WHERE user_id = $1 LIMIT 1",
+            )
+            .bind(inviter_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| inviter_id.to_string());
+
+            let args = fermi::email::OwnedInviteEmailArgs {
+                recipient_email: recipient_email.to_string(),
+                inviter_display,
+                target_type: target_type.to_string(),
+                permission: permission.to_string(),
+                invite_url: state.email.invite_url(token),
+                message: body.message.clone(),
+                expires_at: row.10.format("%B %-d, %Y").to_string(),
+            };
+            state.email.spawn_invite_email(args);
+        } else {
+            tracing::info!(
+                recipient = %recipient_email,
+                "invite email delivery skipped: RESEND_API_KEY not configured"
+            );
+        }
+    }
+
     Ok(json!({
         "id":              row.0,
         "target_type":     row.1,
@@ -340,7 +388,7 @@ pub async fn invite_to_forecast_handler(
 ) -> Result<(StatusCode, Json<JsonValue>), (StatusCode, String)> {
     require_admin_of_forecast(&state.db, &forecast_id, &principal).await?;
     let invite = create_invite_row(
-        &state.db,
+        &state,
         "forecast",
         &forecast_id,
         &principal.user_id(),
@@ -360,7 +408,7 @@ pub async fn invite_to_portfolio_handler(
 ) -> Result<(StatusCode, Json<JsonValue>), (StatusCode, String)> {
     require_admin_of_portfolio(&state.db, &portfolio_id, &principal).await?;
     let invite = create_invite_row(
-        &state.db,
+        &state,
         "portfolio",
         &portfolio_id,
         &principal.user_id(),
@@ -383,7 +431,7 @@ pub async fn invite_to_team_handler(
     // can_access uses for share_target on team-shared objects
     // (fermi-auth/src/visibility.rs:93).
     let invite = create_invite_row(
-        &state.db,
+        &state,
         "team",
         &team_id.to_string(),
         &principal.user_id(),

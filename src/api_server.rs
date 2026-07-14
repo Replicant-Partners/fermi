@@ -312,6 +312,13 @@ pub(crate) struct AppState {
     pub(crate) oauth: OAuthConfig,
     pub(crate) gas_fees: GasFees,
     pub(crate) stripe: StripeConfig,
+    /// Outbound transactional email (Resend). Cloneable, cheap; the
+    /// underlying reqwest::Client is Arc-shared. When not configured
+    /// (`RESEND_API_KEY` unset), every send_* call is a logged no-op
+    /// so local dev + CI don't require creds — the console's copy-
+    /// invite-link affordance is the fallback share path in that
+    /// mode.
+    pub(crate) email: fermi::email::EmailConfig,
     pub(crate) rate_limits: RateLimitConfig,
     pub(crate) ws_broadcast: broadcast::Sender<WorkspaceEvent>,
     pub(crate) rabble_broadcast: broadcast::Sender<RabbleEvent>,
@@ -1434,6 +1441,16 @@ async fn main() {
         eprintln!("Note: STRIPE_SECRET_KEY not set. Credit purchases will be disabled.");
     }
 
+    let email_config = fermi::email::EmailConfig::from_env();
+    if email_config.is_configured() {
+        println!("Email configured (Resend transactional delivery enabled)");
+    } else {
+        eprintln!(
+            "Note: RESEND_API_KEY not set. Invite emails will be no-ops \
+             — operators can still use the copy-link affordance."
+        );
+    }
+
     let state = AppState {
         db: db.clone(),
         memory_store,
@@ -1447,6 +1464,7 @@ async fn main() {
         oauth,
         gas_fees: GasFees::from_env(),
         stripe: stripe_config,
+        email: email_config,
         rate_limits: RateLimitConfig::from_env(),
         ws_broadcast: broadcast::channel::<WorkspaceEvent>(256).0,
         rabble_broadcast: broadcast::channel::<RabbleEvent>(256).0,
