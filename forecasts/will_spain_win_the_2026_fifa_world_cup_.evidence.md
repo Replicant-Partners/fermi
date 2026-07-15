@@ -1,6 +1,6 @@
 # Will Spain win the 2026 FIFA World Cup?
 
-**Probability:** 18.3% · **Version:** v21 · **Updated:** 2026-07-07 23:56 UTC
+**Probability:** 36.9% · **Version:** v1 · **Updated:** 2026-07-15 06:58 UTC
 
 **Confidence:** Medium (50%) · **Drivers:** 6 · **Evidence:** 3 · **Agents:** 4
 
@@ -10,14 +10,26 @@
 
 | Metric | Value |
 |---|---|
-| Crowd price | **18.6%** |
-| Fermi estimate | **18.3%** |
-| Divergence | +0.2pp below crowd (Consensus) |
-| 24h volume | $2.9M |
+| Crowd price | **58.1%** |
+| Fermi estimate | **36.9%** |
+| Divergence | +21.3pp below crowd (Significant disagreement — verify assumptions) |
+| 24h volume | $7.7M |
 | Market confidence | Very High |
-| 1-week trend | ↑ +7.8pp |
+| 1-week trend | ↑ +39.6pp |
 
 [View on Polymarket](https://polymarket.com/event/world-cup-winner)
+
+---
+
+## Inside View
+
+**Probability: 36.9%**
+
+Inside view: model evaluates to 11.9% (p5=8.8%, p95=15.5%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.
+
+**Forecast Confidence:** Medium (50%)
+
+**Divergence from base rate:** 35pp above (36.9% vs 2.1%)
 
 ---
 
@@ -32,33 +44,36 @@ Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverge
 
 ---
 
-## Forecast Index (version history)
+## Simulation Distribution
 
-| v | timestamp | model | base | crowd | Δ(model−base) | Δ(model−crowd) | note |
-|---|---|---|---|---|---|---|---|
-| v1 | 2026-07-07 23:56 | 18.3% | 2.1% | 18.6% | +16.2pp | -0.2pp | Initial: 18.3% base=2%, 6 drivers, 3 evidence |
-| v2 | 2026-07-07 23:56 | 18.3% | 2.1% | 18.6% | +16.2pp | -0.2pp | 18.3% (→), 6 drivers, 3 evidence |
-| v3 | 2026-07-07 23:56 | 18.3% | 2.1% | 18.6% | +16.2pp | -0.2pp | 18.3% (→), 6 drivers, 3 evidence |
-| v4 | 2026-07-07 23:56 | 18.3% | 2.1% | 18.6% | +16.2pp | -0.2pp | 18.3% (→), 6 drivers, 3 evidence |
-| v5 | 2026-07-07 23:56 | 18.3% | 2.1% | 18.6% | +16.2pp | -0.2pp | 18.3% (→), 6 drivers, 3 evidence |
-| v6 | 2026-07-07 23:56 | 18.3% | 2.1% | 18.6% | +16.2pp | -0.2pp | 18.3% (→), 6 drivers, 3 evidence |
-| v7 | 2026-07-07 23:56 | 18.3% | 2.1% | 18.6% | +16.2pp | -0.2pp | 18.3% (→), 6 drivers, 3 evidence |
-| v8 | 2026-07-07 23:56 | 18.3% | 2.1% | 18.6% | +16.2pp | -0.2pp | 18.3% (→), 6 drivers, 3 evidence |
-| v9 | 2026-07-07 23:56 | 18.3% | 2.1% | 18.6% | +16.2pp | -0.2pp | 18.3% (→), 6 drivers, 3 evidence |
-| v10 | 2026-07-07 23:56 | 18.3% | 2.1% | 18.6% | +16.2pp | -0.2pp | 18.3% (→), 6 drivers, 3 evidence |
-| v11 | 2026-07-07 23:56 | 18.3% | 2.1% | 18.6% | +16.2pp | -0.2pp | 18.3% (→), 6 drivers, 3 evidence |
-| v12 | 2026-07-07 23:56 | 18.3% | 2.1% | 18.6% | +16.2pp | -0.2pp | 18.3% (→), 6 drivers, 3 evidence |
-| v13 | 2026-07-07 23:56 | 18.3% | 2.1% | 18.6% | +16.2pp | -0.2pp | 18.3% (→), 6 drivers, 3 evidence |
-| v14 | 2026-07-07 23:56 | 18.3% | 2.1% | 18.6% | +16.2pp | -0.2pp | 18.3% (→), 6 drivers, 3 evidence |
-| v15 | 2026-07-07 23:56 | 18.3% | 2.1% | 18.6% | +16.2pp | -0.2pp | 18.3% (→), 6 drivers, 3 evidence |
-| v16 | 2026-07-07 23:56 | 18.3% | 2.1% | 18.6% | +16.2pp | -0.2pp | 18.3% (→), 6 drivers, 3 evidence |
-| v17 | 2026-07-07 23:56 | 18.3% | 2.1% | 18.6% | +16.2pp | -0.2pp | 18.3% (→), 6 drivers, 3 evidence |
-| v18 | 2026-07-07 23:56 | 18.3% | 2.1% | 18.6% | +16.2pp | -0.2pp | 18.3% (→), 6 drivers, 3 evidence |
-| v19 | 2026-07-07 23:56 | 18.3% | 2.1% | 18.6% | +16.2pp | -0.2pp | 18.3% (→), 6 drivers, 3 evidence |
-| v20 | 2026-07-07 23:56 | 18.3% | 2.1% | 18.6% | +16.2pp | -0.2pp | 18.3% (→), 6 drivers, 3 evidence |
-| v21 | 2026-07-07 23:56 | 18.3% | 2.1% | 18.6% | +16.2pp | -0.2pp | 18.3% (→), 6 drivers, 3 evidence |
+**10000 iterations** · p5 = 8.8% · median = 11.7% · p95 = 15.5% · σ = 0.021
 
-**Model line:** ```▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁``` (range 18.3% – 18.3%)
+```
+▁▂▃▅▆▇██▇▆▄▃▂▂▁▁▁▁▁▁
+```
+
+| Bin center | Count | % of sims |
+|---|---|---|
+| 7.0% | 34 | 0.3% |
+| 7.7% | 121 | 1.2% |
+| 8.4% | 340 | 3.4% |
+| 9.1% | 695 | 7.0% |
+| 9.9% | 1079 | 10.8% |
+| 10.6% | 1270 | 12.7% |
+| 11.3% | 1378 | 13.8% |
+| 12.1% | 1335 | 13.4% |
+| 12.8% | 1169 | 11.7% |
+| 13.5% | 935 | 9.3% |
+| 14.3% | 653 | 6.5% |
+| 15.0% | 427 | 4.3% |
+| 15.7% | 255 | 2.5% |
+| 16.4% | 151 | 1.5% |
+| 17.2% | 84 | 0.8% |
+| 17.9% | 44 | 0.4% |
+| 18.6% | 19 | 0.2% |
+| 19.4% | 6 | 0.1% |
+| 20.1% | 3 | 0.0% |
+| 20.8% | 2 | 0.0% |
 
 ---
 
@@ -66,7 +81,7 @@ Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverge
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.00 | 0.00 | 0.00 |  |
+| 0.80 | 1.00 | 1.20 |  |
 
 > Macro capacity for footballing investment: GDP, population, HDI.
 
@@ -158,7 +173,7 @@ Spain sits **+0.61 standard deviations above the WC field median** on socioecono
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.00 | 0.00 | 0.00 |  |
+| 0.80 | 1.00 | 1.20 |  |
 
 > Federation strength, league development, player pipeline depth.
 
@@ -271,7 +286,7 @@ All data **current as of Q1 2026** — no [DATA AGE] flag required.
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.00 | 0.00 | 0.00 |  |
+| 0.80 | 1.00 | 1.20 |  |
 
 > Recent form and Elo trajectory — refits as match outcomes accumulate.
 
@@ -288,7 +303,7 @@ _No evidence collected yet. Assign an agent to research this driver._
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.00 | 0.00 | 0.00 |  |
+| 0.80 | 1.00 | 1.20 |  |
 
 > Top-flight league penetration + market value concentration.
 
@@ -305,7 +320,7 @@ _No evidence collected yet. Assign an agent to research this driver._
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.00 | 0.00 | 0.00 |  |
+| 0.80 | 1.00 | 1.20 |  |
 
 > Shot conversion, defensive duels, pressing intensity.
 
@@ -322,7 +337,7 @@ _No evidence collected yet. Assign an agent to research this driver._
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.00 | 0.00 | 0.00 |  |
+| 0.80 | 1.00 | 1.20 |  |
 
 > Per-fixture context: venue, climate, rest, altitude.
 
@@ -333,74 +348,131 @@ _No evidence collected yet. Assign an agent to research this driver._
 
 ### Evidence (1) — Strong quality (70%)
 
-#### Agent: fixture_context_agent — relevance 50% · quality ●●● High (70%) · 2026-06-19
+#### Agent: fixture_context_agent — relevance 50% · quality ●●● High (70%) · 2026-07-15
 
-# SPAIN FIXTURE CONTEXT ANALYSIS — 2026 WORLD CUP GROUP STAGE
-
-Based on available data for Spain's upcoming World Cup 2026 Group H fixtures:
-
-## FIXTURE SCHEDULE
-
-**Match 1: Spain vs Cape Verde**
-- Date: June 15, 2026 (12:00 PM ET)
-- Venue: Mercedes-Benz Stadium, Atlanta, Georgia, USA
-- Altitude: ~320m (1,050 ft)
-
-**Match 2: Spain vs Saudi Arabia**
-- Date: June 21, 2026
-- Venue: NRG Stadium, Houston, Texas, USA
-- Altitude: ~15m (sea level)
-
-**Match 3: Spain vs Uruguay**
-- Date: June 26, 2026
-- Venue: Estadio Akron, Zapopan (Guadalajara), Mexico
-- Altitude: ~1,560m (5,118 ft)
+# FIXTURE CONTEXT ANALYSIS: SPAIN vs FRANCE
+## World Cup 2026 Semifinal | July 14, 2026 | AT&T Stadium, Arlington, Texas
 
 ---
 
-## FACTOR ANALYSIS
-
-[HOST] Spain is NOT a host nation (host_status = 0). USA/Canada/Mexico are co-hosts. Spain plays as a visiting European team across North American venues.
-
-[CLIMATE] Spain's group-stage venues span Atlanta (humid subtropical, June avg 27°C/81°F, 70% RH), Houston (hot humid, June avg 30°C/86°F, 75% RH), and Guadalajara (warm semi-arid, June avg 26°C/79°F, 55% RH). Spanish players are acclimated to Mediterranean summer (Madrid/Barcelona June avg 24-28°C, lower humidity). **Climate_delta ≈ 0.20** — moderate heat/humidity disadvantage in Atlanta and Houston, neutral in Guadalajara. European teams historically underperform by ~0.15-0.20 xG/90 in high-humidity Gulf/Southern US conditions.
-
-[REST DAYS] Spain's last competitive fixture before the World Cup: **Peru friendly on June 8, 2026** (Puebla, Mexico). First WC match June 15 = **7 rest days** (optimal recovery, rest_days = 1.0 normalized). Between group matches: June 15→21 = **6 days**, June 21→26 = **5 days**. All fixtures provide adequate recovery (>4 days). No congestion penalty.
-
-[ALTITUDE] 
-- **Match 1 (Atlanta)**: 320m — negligible delta vs Spain's sea-level training bases (0m Madrid, 12m Barcelona). Altitude_delta ≈ 0.
-- **Match 2 (Houston)**: 15m — sea level, altitude_delta ≈ 0.
-- **Match 3 (Guadalajara)**: 1,560m — **moderate altitude**. Spain trains at sea level; this represents a +1,560m delta. Medical literature shows performance decline begins at ~1,200m for unacclimatized athletes. At 1,560m, expect ~3-5% reduction in aerobic capacity in first 60 minutes. Altitude_delta ≈ 0.85 (disadvantage).
-
-[OPPONENT TRAVEL BURDEN]
-- **Cape Verde** (African island nation, ~4,500 miles from Praia to Atlanta): Long-haul transatlantic travel, +6hr time zone shift, minimal North American acclimatization. High travel burden.
-- **Saudi Arabia** (Middle East, ~8,000 miles Riyadh to Houston): Extreme long-haul travel, +9hr time zone shift. Highest travel burden in group.
-- **Uruguay** (South America, ~4,800 miles Montevideo to Guadalajara): Long-haul but same hemisphere, minimal time zone shift (+1hr). Moderate travel burden, but Uruguay has historical altitude experience (plays CONMEBOL qualifiers at altitude regularly — advantage over Spain).
-
-**Relative advantage**: Spain faces two opponents (Cape Verde, Saudi Arabia) with severe intercontinental travel burdens in Matches 1-2. Uruguay in Match 3 has altitude familiarity advantage that offsets their travel burden.
+## FIXTURE IDENTIFICATION
+**Match:** Spain vs France  
+**Competition:** FIFA World Cup 2026 Semifinal  
+**Date:** Tuesday, July 14, 2026  
+**Kickoff:** 3:00 PM ET (2:00 PM local, Arlington)  
+**Venue:** AT&T Stadium (Dallas Stadium), Arlington, Texas  
+**Coordinates:** 32.75°N, 97.09°W  
 
 ---
 
-## MULTIPLIER ASSESSMENT
+## EXOGENOUS CONTEXT FACTORS
 
-[MULTIPLIER] Suggested p50: **0.90** (p5: 0.75, p95: 1.05) — Spain faces net environmental headwinds: no host advantage, moderate climate disadvantage in humid southern venues (Atlanta/Houston), and a significant altitude challenge in Guadalajara against Uruguay. Opponent travel burdens provide partial offset in Matches 1-2, but Uruguay's altitude familiarity in Match 3 neutralizes Spain's rest advantage. Overall exogenous context is mildly unfavorable relative to field median.
+### [HOST] Host Status: Neutral (0.0)
+Neither Spain nor France are tournament hosts. The match is played on US soil (co-host nation), but neither competing team receives host advantage. Spain's previous match was also in the USA (SoFi Stadium, Inglewood, CA), so they remain in the host-nation environment but do not qualify for host-team advantage.
+
+**Host multiplier component:** 1.00 (neutral field)
+
+---
+
+### [REST DAYS] Recovery Period: 4 Days (Optimal)
+**Spain's previous fixture:** July 10, 2026 — Quarterfinal vs Belgium at SoFi Stadium, Inglewood  
+**France's previous fixture:** July 9, 2026 — Quarterfinal vs Morocco at Gillette Stadium, Foxborough, MA  
+**Spain rest days:** 4 days (July 10 → July 14)  
+**France rest days:** 5 days (July 9 → July 14)  
+
+Both teams operate in the optimal recovery window (3-5 days). FIFA medical research shows peak performance returns at 3+ days post-match. Spain has 4 days, France has 5 days — **France holds a marginal 1-day rest advantage**, though both are well-recovered. No fixture congestion penalty applies to either side.
+
+**Rest days assessment:** Spain at 0.70 normalised (4 days), France at 0.80 (5 days). France +0.10 advantage, translating to ~2-3% performance edge in high-intensity metrics (sprints, pressing).
+
+---
+
+### [CLIMATE] Temperature & Humidity: Moderate Disadvantage for Spain
+**Venue climate (Arlington, TX — July 14):**  
+- Temperature: ~28-32°C (82-90°F) daytime  
+- Humidity: High (60-75% RH typical for North Texas summer)  
+- **Crucially:** AT&T Stadium has a **retractable roof and climate control** — indoor conditions expected at 21-23°C (70-73°F) with controlled humidity ~50%
+
+**Spain's home climate baseline:**  
+Spanish national team trains primarily in Madrid/Valencia region — Mediterranean summer climate, 25-35°C, dry (30-50% RH). Spain's squad is acclimated to warm, dry conditions.
+
+**France's home climate baseline:**  
+French national team trains in Île-de-France region — temperate oceanic climate, 18-25°C summer, moderate humidity (60-70% RH).
+
+**Climate delta analysis:**  
+With AT&T Stadium's **climate-controlled indoor environment**, both teams play in artificial 21-23°C conditions. This **favours France** slightly — closer to their temperate training baseline. Spain loses the warm-weather advantage they'd have outdoors. However, the delta is small (~3-5°C from each team's comfort zone).
+
+**Climate disadvantage score:** Spain 0.85 (mild disadvantage), France 0.95 (near-optimal). **Relative advantage: France +0.10**, equivalent to ~0.05 xG/90 edge.
+
+---
+
+### [ALTITUDE] Elevation: Negligible (Sea-Level Venue)
+**AT&T Stadium elevation:** ~180m (590 feet) above sea level  
+**SoFi Stadium elevation (Spain's previous venue):** ~30m (100 feet)  
+**Gillette Stadium elevation (France's previous venue):** ~45m (150 feet)  
+
+All three venues are effectively **sea-level** (<200m). No altitude acclimatisation required. Both Spain and France train at low-altitude home bases (Madrid ~650m, Paris ~35m). 
+
+**Altitude delta:** 0.00 for both teams. No physiological advantage.
+
+---
+
+### [OPPONENT TRAVEL BURDEN] Geographic Displacement
+**Spain's travel:**  
+- July 10 match: Inglewood, CA (SoFi Stadium) → July 14 match: Arlington, TX (AT&T Stadium)  
+- Distance: ~2,200 km (1,370 miles)  
+- Time zones: Pacific (UTC-7) → Central (UTC-5) = **+2 hour eastward shift**  
+- Travel days: 3-4 days to adjust (sufficient for circadian re-alignment)
+
+**France's travel:**  
+- July 9 match: Foxborough, MA (Gillette Stadium) → July 14 match: Arlington, TX (AT&T Stadium)  
+- Distance: ~2,700 km (1,680 miles)  
+- Time zones: Eastern (UTC-4) → Central (UTC-5) = **-1 hour westward shift**  
+- Travel days: 4-5 days to adjust (more than sufficient)
+
+**Travel burden assessment:**  
+Spain crosses 2 time zones eastward (harder adjustment — "jet lag" direction). France crosses 1 time zone westward (easier adjustment). Both have adequate recovery time, but Spain's circadian disruption is marginally greater. However, with 4 days to adjust, the impact is minimal (<2% performance decrement).
+
+**Travel burden multiplier:** Spain 0.97, France 0.99. **France holds a marginal +0.02 edge.**
+
+---
+
+## FERMI SYNTHESIS: EXOGENOUS CONTEXT MULTIPLIER
+
+### Component Breakdown (Spain perspective):
+1. **Host status:** 1.00 (neutral)  
+2. **Rest days:** 0.97 (France +1 day advantage)  
+3. **Climate:** 0.95 (indoor climate slightly favours France's temperate baseline)  
+4. **Altitude:** 1.00 (negligible)  
+5. **Travel burden:** 0.98 (Spain's 2-hour eastward shift vs France's 1-hour westward)  
+
+**Combined multiplier:** 1.00 × 0.97 × 0.95 × 1.00 × 0.98 = **0.90**
+
+### Uncertainty Bounds:
+- **p5 (pessimistic):** 0.82 — if Spain underperforms circadian adjustment + indoor climate proves more disruptive than expected  
+- **p50 (median):** 0.90 — base case with marginal disadvantages stacking  
+- **p95 (optimistic):** 0.98 — if rest/travel effects prove negligible and Spain adapts fully  
+
+---
+
+## [MULTIPLIER] Suggested p50: 0.90 (p5: 0.82, p95: 0.98) — Spain faces marginal exogenous headwinds: France holds +1 rest day, easier travel (1-hour westward vs 2-hour eastward), and slight climate advantage in AT&T Stadium's controlled indoor environment; no single factor is decisive, but cumulative effect yields ~10% disadvantage on Factor X6.
 
 **Key findings:**
 
-- Match 1: Spain vs Cape Verde**
-- Date: June 15, 2026 (12:00 PM ET)
-- Venue: Mercedes-Benz Stadium, Atlanta, Georgia, USA
-- Altitude: ~320m (1,050 ft)
-- Match 2: Spain vs Saudi Arabia**
-- Date: June 21, 2026
-- Venue: NRG Stadium, Houston, Texas, USA
-- Altitude: ~15m (sea level)
-- Match 3: Spain vs Uruguay**
-- Date: June 26, 2026
-- Venue: Estadio Akron, Zapopan (Guadalajara), Mexico
-- Altitude: ~1,560m (5,118 ft)
-- [CLIMATE] Spain's group-stage venues span Atlanta (humid subtropical, June avg 27°C/81°F, 70% RH), Houston (hot humid, June avg 30°C/86°F, 75% RH), and Guadalajara (warm semi-arid, June avg 26°C/79°F, 55% RH). Spanish players are acclimated to Mediterranean summer (Madrid/Barcelona June avg 24-28°C, lower humidity). **Climate_delta ≈ 0.20** — moderate heat/humidity disadvantage in Atlanta and Houston, neutral in Guadalajara. European teams historically underperform by ~0.15-0.20 xG/90 in high-humidity Gulf/Southern US conditions.
-- **Match 1 (Atlanta)**: 320m — negligible delta vs Spain's sea-level training bases (0m Madrid, 12m Barcelona). Altitude_delta ≈ 0.
-- **Match 2 (Houston)**: 15m — sea level, altitude_delta ≈ 0.
+- Match:** Spain vs France
+- Competition:** FIFA World Cup 2026 Semifinal
+- Date:** Tuesday, July 14, 2026
+- Kickoff:** 3:00 PM ET (2:00 PM local, Arlington)
+- Venue:** AT&T Stadium (Dallas Stadium), Arlington, Texas
+- Coordinates:** 32.75°N, 97.09°W
+- Host multiplier component:** 1.00 (neutral field)
+- Spain's previous fixture:** July 10, 2026 — Quarterfinal vs Belgium at SoFi Stadium, Inglewood
+- France's previous fixture:** July 9, 2026 — Quarterfinal vs Morocco at Gillette Stadium, Foxborough, MA
+- Spain rest days:** 4 days (July 10 → July 14)
+- France rest days:** 5 days (July 9 → July 14)
+- Rest days assessment:** Spain at 0.70 normalised (4 days), France at 0.80 (5 days). France +0.10 advantage, translating to ~2-3% performance edge in high-intensity metrics (sprints, pressing).
+- Venue climate (Arlington, TX — July 14):**
+- Temperature: ~28-32°C (82-90°F) daytime
+- Humidity: High (60-75% RH typical for North Texas summer)
 
 ---
 
@@ -431,4 +503,4 @@ model: socio_capital * institutional_capacity * dynamic_performance * squad_qual
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v21 · 2026-07-07 23:56 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v1 · 2026-07-15 06:58 UTC_
