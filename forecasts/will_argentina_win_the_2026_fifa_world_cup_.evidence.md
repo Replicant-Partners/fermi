@@ -1,6 +1,6 @@
 # Will Argentina win the 2026 FIFA World Cup?
 
-**Probability:** 14.3% · **Version:** v5 · **Updated:** 2026-07-10 17:33 UTC
+**Probability:** 39.6% · **Version:** v1 · **Updated:** 2026-07-16 06:09 UTC
 
 **Confidence:** Medium (50%) · **Drivers:** 6 · **Evidence:** 6 · **Agents:** 4
 
@@ -10,84 +10,25 @@
 
 | Metric | Value |
 |---|---|
-| Crowd price | **17.8%** |
-| Fermi estimate | **14.3%** |
-| Divergence | +3.5pp below crowd (Minor divergence) |
-| 24h volume | $1.8M |
+| Crowd price | **41.5%** |
+| Fermi estimate | **39.6%** |
+| Divergence | +2.0pp below crowd (Consensus) |
+| 24h volume | $13.5M |
 | Market confidence | Very High |
-| 1-week trend | ↓ -1.5pp |
+| 1-week trend | ↑ +21.5pp |
 
 [View on Polymarket](https://polymarket.com/event/world-cup-winner)
 
 ---
 
-## Inside View
-
-**Probability: 14.3%**
-
-Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.1%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.
-
-**Forecast Confidence:** Medium (50%)
-
-**Divergence from base rate:** 12pp above (14.3% vs 2.1%)
-
----
-
 ## Outside View (Base Rate)
 
-**2.1%** — FIFA World Cup winners 1930–2022
+**8.7%** — FIFA World Cup winners (1930-2022)
 
-- **Sample size:** n=22
-- **Source:** FIFA tournament archive — 22 prior World Cups
+- **Sample size:** n=23
+- **Source:** fermi
 
-Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via the six factor-derived drivers.
-
----
-
-## Simulation Distribution
-
-**10000 iterations** · p5 = 6.1% · median = 8.3% · p95 = 11.1% · σ = 0.015
-
-```
-▁▁▂▄▅▇██▇▆▅▃▃▂▂▁▁▁▁▁
-```
-
-| Bin center | Count | % of sims |
-|---|---|---|
-| 4.6% | 13 | 0.1% |
-| 5.2% | 86 | 0.9% |
-| 5.7% | 260 | 2.6% |
-| 6.2% | 533 | 5.3% |
-| 6.7% | 889 | 8.9% |
-| 7.3% | 1115 | 11.2% |
-| 7.8% | 1387 | 13.9% |
-| 8.3% | 1356 | 13.6% |
-| 8.8% | 1278 | 12.8% |
-| 9.4% | 1018 | 10.2% |
-| 9.9% | 772 | 7.7% |
-| 10.4% | 483 | 4.8% |
-| 10.9% | 329 | 3.3% |
-| 11.5% | 205 | 2.1% |
-| 12.0% | 132 | 1.3% |
-| 12.5% | 72 | 0.7% |
-| 13.0% | 47 | 0.5% |
-| 13.6% | 10 | 0.1% |
-| 14.1% | 10 | 0.1% |
-| 14.6% | 5 | 0.1% |
-
----
-
-## Forecast Index (version history)
-
-| v | timestamp | model | base | crowd | Δ(model−base) | Δ(model−crowd) | note |
-|---|---|---|---|---|---|---|---|
-| v1 | 2026-07-10 17:33 | 14.3% | 2.1% | 17.8% | +12.3pp | -3.5pp | Initial: 14.3% base=2%, 6 drivers, 6 evidence |
-| v2 | 2026-07-10 17:33 | 8.4% | 2.1% | 17.8% | +6.3pp | -9.4pp | 8.4% (-6pp), 6 drivers, 6 evidence |
-| v3 | 2026-07-10 17:33 | 14.3% | 2.1% | 17.8% | +12.3pp | -3.5pp | 14.3% (+6pp), 6 drivers, 6 evidence |
-| v4 | 2026-07-10 17:33 | 14.3% | 2.1% | 17.8% | +12.3pp | -3.5pp | 14.3% (→), 6 drivers, 6 evidence |
-| v5 | 2026-07-10 17:33 | 14.3% | 2.1% | 17.8% | +12.3pp | -3.5pp | 14.3% (→), 6 drivers, 6 evidence |
-
-**Model line:** ```█▁███``` (range 8.4% – 14.3%)
+Argentina has won 3 of 23 World Cups (1978, 1986, 2022), giving them a 13% historical win rate as a specific nation. However, the more appropriate reference class for any single tournament is 'World Cup winner per tournament' = 1/32 qualified teams = 3.1% base rate. Argentina as a top-tier nation (historically top 5 in FIFA rankings, consistent deep runs) sits above the naive 1/32 baseline. Adjusting for Argentina's elite status: they've reached 6 finals in 23 tournaments (26% final rate), and converted 50% of finals to wins. A calibrated base rate for Argentina winning any given World Cup, accounting for their historical strength, is approximately 8-9%. Using 8.7% (their empirical win rate) as the starting point before adjusting for current-state drivers like defending champion status, Messi retirement impact, squad quality, and draw.
 
 ---
 
@@ -95,7 +36,7 @@ Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverge
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Macro capacity for footballing investment: GDP, population, HDI.
 
@@ -232,7 +173,7 @@ For a **+0.39 SD composite**, I map to a **p50 multiplier of 1.08**:
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Federation strength, league development, player pipeline depth.
 
@@ -284,7 +225,7 @@ Excellent! Now I have key data points. Let me compile the institutional capacity
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Recent form and Elo trajectory — refits as match outcomes accumulate.
 
@@ -512,7 +453,7 @@ Argentina's factor profile across X3 (Dynamic Performance), X4 (Squad Quality), 
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Top-flight league penetration + market value concentration.
 
@@ -740,7 +681,7 @@ Argentina's factor profile across X3 (Dynamic Performance), X4 (Squad Quality), 
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Shot conversion, defensive duels, pressing intensity.
 
@@ -968,7 +909,7 @@ Argentina's factor profile across X3 (Dynamic Performance), X4 (Squad Quality), 
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Per-fixture context: venue, climate, rest, altitude.
 
@@ -1156,4 +1097,4 @@ model: socio_capital * institutional_capacity * dynamic_performance * squad_qual
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v5 · 2026-07-10 17:33 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v1 · 2026-07-16 06:09 UTC_

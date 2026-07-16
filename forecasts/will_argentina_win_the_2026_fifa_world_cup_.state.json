@@ -1,55 +1,24 @@
 {
   "forecast_id": "9f1adf4c-ad59-4c6a-bb80-06d78c430eae",
-  "current_version": 5,
-  "predicted_probability": 0.14349971975044593,
-  "inside_view_explanation": "Inside view: model evaluates to 8.4% (p5=6.1%, p95=11.1%). Outside view (base rate): 2.1%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "current_version": 1,
+  "predicted_probability": 0.3955219089984894,
+  "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-10 17:33",
-      "probability": 0.1434910148382187,
-      "change_summary": "Initial: 14.3% base=2%, 6 drivers, 6 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-07-10 17:33",
-      "probability": 0.08423634182072105,
-      "change_summary": "8.4% (-6pp), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-07-10 17:33",
-      "probability": 0.14349971975044593,
-      "change_summary": "14.3% (+6pp), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-07-10 17:33",
-      "probability": 0.14349971975044593,
-      "change_summary": "14.3% (→), 6 drivers, 6 evidence"
-    },
-    {
-      "version": 5,
-      "timestamp": "2026-07-10 17:33",
-      "probability": 0.14349971975044593,
-      "change_summary": "14.3% (→), 6 drivers, 6 evidence"
+      "timestamp": "2026-07-16 06:09",
+      "probability": 0.3955219089984894,
+      "change_summary": "Initial: 39.6% base=9%, 6 drivers, 6 evidence"
     }
   ],
-  "sim_results": {
-    "mean": 0.08423634182072105,
-    "median": 0.0832450196430832,
-    "p5": 0.06095004450696472,
-    "p95": 0.11148964746061181,
-    "std_dev": 0.015294484877203715,
-    "iterations": 10000
-  },
+  "sim_results": null,
   "base_rate": {
-    "reference_class": "FIFA World Cup winners 1930–2022",
-    "historical_frequency": 0.0208,
-    "sample_size": 22,
-    "source": "FIFA tournament archive — 22 prior World Cups",
-    "reasoning": "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via the six factor-derived drivers."
+    "reference_class": "FIFA World Cup winners (1930-2022)",
+    "historical_frequency": 0.087,
+    "sample_size": 23,
+    "source": "fermi",
+    "reasoning": "Argentina has won 3 of 23 World Cups (1978, 1986, 2022), giving them a 13% historical win rate as a specific nation. However, the more appropriate reference class for any single tournament is 'World Cup winner per tournament' = 1/32 qualified teams = 3.1% base rate. Argentina as a top-tier nation (historically top 5 in FIFA rankings, consistent deep runs) sits above the naive 1/32 baseline. Adjusting for Argentina's elite status: they've reached 6 finals in 23 tournaments (26% final rate), and converted 50% of finals to wins. A calibrated base rate for Argentina winning any given World Cup, accounting for their historical strength, is approximately 8-9%. Using 8.7% (their empirical win rate) as the starting point before adjusting for current-state drivers like defending champion status, Messi retirement impact, squad quality, and draw."
   },
   "evidence": [
     {
@@ -204,16 +173,16 @@
     "event_id": "30615",
     "market_id": "558938",
     "question": "Will Argentina win the 2026 FIFA World Cup?",
-    "market_price": 0.1785,
-    "volume_24h": 1796241.636881994,
-    "liquidity": 6170783.3146,
+    "market_price": 0.4155,
+    "volume_24h": 13452499.69819006,
+    "liquidity": 6168552.7326,
     "confidence": "Very High",
-    "price_change_1w": -0.015,
+    "price_change_1w": 0.215,
     "url": "https://polymarket.com/event/world-cup-winner",
     "price_history": [
       {
-        "t": 1783704755,
-        "p": 0.1785
+        "t": 1784182148,
+        "p": 0.4155
       }
     ]
   },
