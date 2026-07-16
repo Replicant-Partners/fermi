@@ -28,7 +28,13 @@ use std::sync::Arc;
 use text_input::TextInput;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-// ─── Menu builder ─────────────────────────────────────────────────────────────
+/// How often the background refresh loop wakes up to re-fetch
+/// forecasts, stats, and the pending-cascade queue. 30 s balances
+/// "live enough" for operator UX against API load. See
+/// `FermiConsole::start_background_refresh`.
+const BACKGROUND_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+// ─── Menu builder ───────────────────────────────────────────────────────────────────
 
 fn build_menus() -> Vec<Menu> {
     vec![
@@ -477,6 +483,11 @@ struct FermiConsole {
     /// disables their buttons until the action completes so a
     /// double-click can't double-fire.
     cascade_action_in_flight: std::collections::HashSet<String>,
+    /// Guard so we only spawn the background refresh loop once per
+    /// process. Set true the first time try_connect succeeds; the
+    /// loop runs for the lifetime of the app and pauses itself
+    /// while `connected` is false (e.g. after sign-out).
+    background_refresh_started: bool,
 
     // ── Teams panel (Spec 24 §3.5.4) ──────────────────────────────
     /// Teams the user belongs to (left pane of Panel::Teams).
@@ -672,6 +683,7 @@ impl FermiConsole {
             pending_cascades_sheet_showing: false,
             pending_cascades_loading: false,
             cascade_action_in_flight: std::collections::HashSet::new(),
+            background_refresh_started: false,
             teams: Vec::new(),
             teams_loading: false,
             selected_team_id: None,
@@ -793,6 +805,7 @@ impl FermiConsole {
                                 this.user_display_name = Some(me.friendly_label());
                                 log::info!("[oauth] Connected as: {:?}", me.friendly_label());
                                 this.fetch_all_data(cx);
+                                this.start_background_refresh(cx);
                                 cx.notify();
                             })
                             .ok();
@@ -884,6 +897,7 @@ impl FermiConsole {
                         this.user_display_name = Some(me.friendly_label());
                         log::info!("Connected as: {:?}", me.friendly_label());
                         this.fetch_all_data(cx);
+                        this.start_background_refresh(cx);
                     })
                     .ok();
                 }
@@ -917,6 +931,60 @@ impl FermiConsole {
         self.fetch_pending_cascades(cx);
         // Collaboration inbox — pending forecast/portfolio/team invites.
         self.fetch_my_invites(cx);
+    }
+
+    /// Kick off a background poll that keeps the dashboard live without
+    /// requiring a restart. Fires once, guarded by
+    /// `background_refresh_started`. Every `BACKGROUND_REFRESH_INTERVAL`
+    /// the loop refreshes forecasts + stats + pending cascades so that
+    /// upstream events (PM auto-resolution, a teammate resolving a
+    /// shared forecast, workspace-scheduled resolves) surface without
+    /// operator intervention.
+    ///
+    /// Refresh is paused whenever a modal sheet is open (resolve, commit,
+    /// pending-cascades review) so a mid-review swap of the underlying
+    /// list can't shift the ground under the operator's feet.
+    fn start_background_refresh(&mut self, cx: &mut Context<Self>) {
+        if self.background_refresh_started {
+            return;
+        }
+        self.background_refresh_started = true;
+
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(BACKGROUND_REFRESH_INTERVAL)
+                    .await;
+
+                let keep_going = this
+                    .update(cx, |this, cx| {
+                        if !this.connected {
+                            // Session ended; end the loop so we don't
+                            // hammer the API in the background.
+                            return false;
+                        }
+                        // Pause during modal reviews — don't yank rows
+                        // out from under the operator.
+                        if this.resolve_sheet_showing
+                            || this.commit_sheet_showing
+                            || this.pending_cascades_sheet_showing
+                        {
+                            return true;
+                        }
+                        this.fetch_pending_cascades(cx);
+                        this.fetch_forecasts(cx);
+                        this.fetch_stats(cx);
+                        true
+                    })
+                    .ok()
+                    .unwrap_or(false);
+
+                if !keep_going {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     fn fetch_agents(&mut self, cx: &mut Context<Self>) {
@@ -2101,6 +2169,104 @@ impl FermiConsole {
         .detach();
     }
 
+    /// Rebuild the Dashboard's Recent Activity feed by merging recent
+    /// resolutions with recent live-forecast probability updates.
+    ///
+    /// Historically this only surfaced resolved forecasts sorted by
+    /// resolved_at DESC, which meant a dashboard with an active WC
+    /// portfolio would show a week's worth of old group-stage
+    /// eliminations and none of today's actual work (probability
+    /// updates on Argentina / England / Spain). Merge both streams
+    /// keyed on max(resolved_at, updated_at) and keep the top 8.
+    fn recompute_recent_activity(&mut self) {
+        #[derive(Clone)]
+        struct Candidate {
+            sort_key: String,
+            item: ActivityItem,
+        }
+
+        let mut candidates: Vec<Candidate> = Vec::new();
+
+        // Resolved forecasts → ✓ icon, Brier-colored.
+        for f in &self.resolved_forecasts {
+            let ts = f
+                .resolved_at
+                .clone()
+                .or_else(|| f.updated_at.clone())
+                .unwrap_or_default();
+            let brier = f.brier_score.unwrap_or(0.5);
+            let color = if brier < 0.15 {
+                theme::GREEN
+            } else if brier < 0.3 {
+                theme::GOLD
+            } else {
+                theme::ORANGE
+            };
+            let outcome = if f.actual_outcome == Some(true) {
+                "Yes"
+            } else {
+                "No"
+            };
+            candidates.push(Candidate {
+                sort_key: ts.clone(),
+                item: ActivityItem {
+                    icon: "✓",
+                    text: format!(
+                        "{} — {} (Brier {:.2})",
+                        truncate(&f.question_text, 40),
+                        outcome,
+                        brier,
+                    ),
+                    time: ts
+                        .split('T')
+                        .next()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("?")
+                        .to_string(),
+                    color,
+                },
+            });
+        }
+
+        // Active forecasts → ◐ icon, cyan. Uses updated_at as the sort key
+        // so a probability edit today lifts the row above a week-old
+        // resolution. Fall back to created_at if updated_at is missing.
+        for f in &self.active_forecasts {
+            let ts = f
+                .updated_at
+                .clone()
+                .or_else(|| f.created_at.clone())
+                .unwrap_or_default();
+            if ts.is_empty() {
+                continue;
+            }
+            candidates.push(Candidate {
+                sort_key: ts.clone(),
+                item: ActivityItem {
+                    icon: "◐",
+                    text: format!(
+                        "{} — {:.0}%",
+                        truncate(&f.question_text, 40),
+                        f.predicted_probability * 100.0,
+                    ),
+                    time: ts
+                        .split('T')
+                        .next()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("?")
+                        .to_string(),
+                    color: theme::CYAN,
+                },
+            });
+        }
+
+        // Newest first — lexicographic works because timestamps are
+        // ISO-8601 ("2026-07-15T…").
+        candidates.sort_by(|a, b| b.sort_key.cmp(&a.sort_key));
+
+        self.recent_activity = candidates.into_iter().take(8).map(|c| c.item).collect();
+    }
+
     fn fetch_forecasts(&mut self, cx: &mut Context<Self>) {
         self.forecasts_loading = true;
         let api = self.api.clone();
@@ -2129,58 +2295,6 @@ impl FermiConsole {
                     this.active_forecasts = resp.forecasts;
                 }
                 if let Ok(resp) = resolved_res {
-                    // Build activity feed from resolved forecasts.
-                    //
-                    // `resolved_q` sorts by brier_score ASC (best first) so the
-                    // Portfolio's Resolved column can lead with the operator's
-                    // wins. For the Dashboard's "Recent Activity" panel we want
-                    // the opposite — chronological, most recent first — or the
-                    // feed shows stale entries whenever the best-Brier hits are
-                    // old bulk resolutions (e.g. WC group-stage eliminations).
-                    // Re-sort a local view by resolved_at DESC instead of
-                    // issuing a second round-trip.
-                    let mut recent = resp.forecasts.clone();
-                    recent.sort_by(|a, b| {
-                        b.resolved_at
-                            .as_deref()
-                            .unwrap_or("")
-                            .cmp(a.resolved_at.as_deref().unwrap_or(""))
-                    });
-                    this.recent_activity = recent
-                        .iter()
-                        .take(8)
-                        .map(|f| {
-                            let brier = f.brier_score.unwrap_or(0.5);
-                            let color = if brier < 0.15 {
-                                theme::GREEN
-                            } else if brier < 0.3 {
-                                theme::GOLD
-                            } else {
-                                theme::ORANGE
-                            };
-                            let outcome = if f.actual_outcome == Some(true) {
-                                "Yes"
-                            } else {
-                                "No"
-                            };
-                            ActivityItem {
-                                icon: "✓",
-                                text: format!(
-                                    "{} — {} (Brier {:.2})",
-                                    truncate(&f.question_text, 40),
-                                    outcome,
-                                    brier,
-                                ),
-                                time: f
-                                    .resolved_at
-                                    .as_deref()
-                                    .and_then(|s| s.split('T').next())
-                                    .unwrap_or("?")
-                                    .to_string(),
-                                color,
-                            }
-                        })
-                        .collect();
                     // `resolved_forecasts` keeps the server-side brier-ASC order
                     // that the Portfolio's Resolved section renders directly.
                     this.resolved_forecasts = resp.forecasts;
@@ -2188,6 +2302,12 @@ impl FermiConsole {
                 if let Ok(resp) = draft_res {
                     this.draft_forecasts = resp.forecasts;
                 }
+                // Recompute Recent Activity from whatever we just refreshed.
+                // Merges recently-updated live forecasts with recently-resolved
+                // ones so the operator sees today's probability edits alongside
+                // yesterday's resolutions — not just a wall of week-old bulk
+                // WC group-stage eliminations.
+                this.recompute_recent_activity();
                 this.forecasts_loading = false;
                 cx.notify();
             })
@@ -2222,11 +2342,19 @@ impl FermiConsole {
     }
 
     /// Poll the server for pending cascades. Refreshed on app startup,
-    /// after every resolve, and periodically while the badge is shown
-    /// (so a cascade queued by an upstream workspace resolution appears
-    /// without the operator having to do anything).
+    /// after every resolve, and periodically by the background refresh
+    /// loop (so a cascade queued by an upstream workspace resolution
+    /// appears without the operator having to do anything).
+    ///
+    /// When the queue grows between fetches we surface a toast so the
+    /// operator knows there's new work — that's the whole reason we
+    /// poll in the background. Growth detection is gated on
+    /// `background_refresh_started` so the initial load doesn't toast
+    /// "N new cascades" just because the queue was non-empty already.
     fn fetch_pending_cascades(&mut self, cx: &mut Context<Self>) {
         self.pending_cascades_loading = true;
+        let prev_count = self.pending_cascades.len();
+        let notify_on_growth = self.background_refresh_started;
         let api = self.api.clone();
         cx.spawn(
             async move |this, cx| match api.list_pending_cascades().await {
@@ -2237,8 +2365,18 @@ impl FermiConsole {
                         .cloned()
                         .unwrap_or_default();
                     this.update(cx, |this, cx| {
+                        let new_count = pending.len();
                         this.pending_cascades = pending;
                         this.pending_cascades_loading = false;
+                        if notify_on_growth && new_count > prev_count {
+                            let delta = new_count - prev_count;
+                            let msg = if delta == 1 {
+                                "1 new cascade pending review".to_string()
+                            } else {
+                                format!("{} new cascades pending review", delta)
+                            };
+                            this.show_toast(msg, "⚡", theme::GOLD, cx);
+                        }
                         cx.notify();
                     })
                     .ok();
