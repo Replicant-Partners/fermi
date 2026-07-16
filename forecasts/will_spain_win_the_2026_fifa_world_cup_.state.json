@@ -1,48 +1,24 @@
 {
   "forecast_id": "4084aecc-9f12-4649-a30a-a5d06e734541",
-  "current_version": 5,
-  "predicted_probability": 0.52,
+  "current_version": 1,
+  "predicted_probability": 0.5586968660354614,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-16 21:20",
-      "probability": 0.52,
-      "change_summary": "Initial: 52.0% base=52%, 6 drivers, 5 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-07-16 21:20",
-      "probability": 0.52,
-      "change_summary": "52.0% (→), 6 drivers, 5 evidence, 1 agents"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-07-16 21:20",
-      "probability": 0.52,
-      "change_summary": "52.0% (→), 6 drivers, 5 evidence, 1 agents"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-07-16 21:20",
-      "probability": 0.52,
-      "change_summary": "52.0% (→), 6 drivers, 5 evidence, 1 agents"
-    },
-    {
-      "version": 5,
-      "timestamp": "2026-07-16 21:20",
-      "probability": 0.52,
-      "change_summary": "52.0% (→), 6 drivers, 5 evidence, 1 agents"
+      "timestamp": "2026-07-16 21:26",
+      "probability": 0.5586968660354614,
+      "change_summary": "Initial: 55.9% base=2%, 6 drivers, 4 evidence"
     }
   ],
   "sim_results": null,
   "base_rate": {
-    "reference_class": "European teams winning FIFA World Cup (1930-2022)",
-    "historical_frequency": 0.52,
-    "sample_size": 23,
-    "source": "macro_forecaster",
-    "reasoning": "Of 23 completed World Cups (excluding 1942/1946), European teams have won 12 times (Italy 4, Germany 4, Spain 1, France 2, England 1). This gives a 52% base rate for any European team. For Spain specifically as a top-tier European nation with recent tournament success (Euro 2024 winners, 2010 World Cup winners, Nations League 2023), the relevant reference class is 'elite European nations in modern era World Cups (1998-2022)' where Spain, France, Germany, Italy have combined to win 5 of 7 tournaments (71%). However, for a single named team across all tournaments, the rate is lower. Spain has won 1 of 23 World Cups they've entered (4.3%), but conditioning on their current elite status (top 5 FIFA ranking, recent major tournament win), comparable teams win approximately 10-15% of the time when entering as top contenders. Using 12% as the calibrated base rate for an elite European team entering a World Cup."
+    "reference_class": "FIFA World Cup winners 1930–2022",
+    "historical_frequency": 0.0208,
+    "sample_size": 22,
+    "source": "FIFA tournament archive — 22 prior World Cups",
+    "reasoning": "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via the six factor-derived drivers."
   },
   "evidence": [
     {
@@ -140,14 +116,6 @@
         "Home vs Away Split (2024 Nations League):**",
         "**Home:** 4W-1D-0L, 15 goals for, 9 against (3.0 GF/game, 1.8 GA/game)"
       ]
-    },
-    {
-      "id": "fermi_evidence_1784236847",
-      "source": "Agent: fermi (Claude API)",
-      "summary": "",
-      "relevance": 0.5,
-      "date": "2026-07-16",
-      "key_findings": []
     }
   ],
   "agents": [
@@ -196,14 +164,14 @@
     "market_id": "558934",
     "question": "Will Spain win the 2026 FIFA World Cup?",
     "market_price": 0.5835,
-    "volume_24h": 2552552.916930001,
-    "liquidity": 8978546.12711,
+    "volume_24h": 2518411.8710040003,
+    "liquidity": 8975203.52378,
     "confidence": "Very High",
     "price_change_1w": 0.389,
     "url": "https://polymarket.com/event/world-cup-winner",
     "price_history": [
       {
-        "t": 1784236788,
+        "t": 1784236876,
         "p": 0.5835
       }
     ]
