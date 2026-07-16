@@ -1,6 +1,6 @@
 {
   "forecast_id": "4084aecc-9f12-4649-a30a-a5d06e734541",
-  "current_version": 5,
+  "current_version": 6,
   "predicted_probability": 0.5586968660354614,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
@@ -32,6 +32,12 @@
     {
       "version": 5,
       "timestamp": "2026-07-16 21:26",
+      "probability": 0.5586968660354614,
+      "change_summary": "55.9% (→), 6 drivers, 4 evidence"
+    },
+    {
+      "version": 6,
+      "timestamp": "2026-07-16 21:48",
       "probability": 0.5586968660354614,
       "change_summary": "55.9% (→), 6 drivers, 4 evidence"
     }
@@ -188,10 +194,10 @@
     "market_id": "558934",
     "question": "Will Spain win the 2026 FIFA World Cup?",
     "market_price": 0.5835,
-    "volume_24h": 2518411.8710040003,
-    "liquidity": 8975203.52378,
+    "volume_24h": 2252820.371981002,
+    "liquidity": 8971155.79001,
     "confidence": "Very High",
-    "price_change_1w": 0.389,
+    "price_change_1w": 0.415,
     "url": "https://polymarket.com/event/world-cup-winner",
     "price_history": [
       {
