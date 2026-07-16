@@ -1,6 +1,6 @@
 # Will Spain win the 2026 FIFA World Cup?
 
-**Probability:** 36.8% · **Version:** v4 · **Updated:** 2026-07-15 07:03 UTC
+**Probability:** 55.8% · **Version:** v1 · **Updated:** 2026-07-16 06:08 UTC
 
 **Confidence:** Medium (50%) · **Drivers:** 6 · **Evidence:** 4 · **Agents:** 4
 
@@ -10,12 +10,12 @@
 
 | Metric | Value |
 |---|---|
-| Crowd price | **58.1%** |
-| Fermi estimate | **36.8%** |
-| Divergence | +21.4pp below crowd (Significant disagreement — verify assumptions) |
-| 24h volume | $7.7M |
+| Crowd price | **58.0%** |
+| Fermi estimate | **55.8%** |
+| Divergence | +2.1pp below crowd (Minor divergence) |
+| 24h volume | $4.7M |
 | Market confidence | Very High |
-| 1-week trend | ↑ +39.6pp |
+| 1-week trend | ↑ +39.2pp |
 
 [View on Polymarket](https://polymarket.com/event/world-cup-winner)
 
@@ -23,70 +23,57 @@
 
 ## Inside View
 
-**Probability: 36.8%**
+**Probability: 55.8%**
 
-Inside view: model evaluates to 11.9% (p5=8.8%, p95=15.5%). Outside view (base rate): 52.0%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.
+Inside view: model evaluates to 11.9% (p5=8.8%, p95=15.6%). Outside view (base rate): 52.0%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.
 
 **Forecast Confidence:** Medium (50%)
 
-**Divergence from base rate:** 15pp below (36.8% vs 52.0%)
+**Divergence from base rate:** 4pp above (55.8% vs 52.0%)
 
 ---
 
 ## Outside View (Base Rate)
 
-**52.0%** — European teams winning FIFA World Cup tournaments (1930-2022)
+**52.0%** — European teams winning FIFA World Cup (1930-2022)
 
 - **Sample size:** n=23
 - **Source:** fermi
 
-Of 23 World Cup tournaments held through 2022, European teams have won 12 times (Italy 4, Germany 4, Spain 1, England 1, France 2). This gives a 52% base rate for any European team winning. For Spain specifically: 1 win in 23 tournaments = 4.3% base rate. However, Spain is a top-tier European side (current FIFA ranking #3, 2010 champions, Euro 2024 winners), placing them in the elite subset. Among the 'Big 5' European nations (Germany, Italy, France, Spain, England), the win rate is 12/115 nation-tournaments = 10.4%. Given Spain's recent form (Euro 2024 victory, strong squad continuity, young core), using the elite European subset base rate of ~10% is most appropriate before adjusting for current team strength and tournament-specific factors.
+Of 23 World Cups held through 2022, European teams have won 12 (Italy 4, Germany 4, Spain 1, France 2, England 1). This 52% rate reflects Europe's structural advantages: depth of talent, competitive domestic leagues, and UEFA competition experience. For Spain specifically as a top-tier European nation: they won in 2010, reached semifinals in 1950/2010, and have consistently qualified. Among elite European nations (Germany, Italy, France, Spain, England), the per-tournament win rate is ~12/115 = 10.4% across their combined appearances. Spain's individual rate is 1/16 = 6.25% across their World Cup participations. Using the broader European win rate (52%) as the outer bound and adjusting for Spain being one of ~5-6 elite European contenders in any given tournament yields a base rate of approximately 8-12% for a top European team. Conservative anchor: 10%.
 
 ---
 
 ## Simulation Distribution
 
-**10000 iterations** · p5 = 8.8% · median = 11.8% · p95 = 15.5% · σ = 0.021
+**10000 iterations** · p5 = 8.8% · median = 11.8% · p95 = 15.6% · σ = 0.021
 
 ```
-▁▂▂▄▅▇▇█▇▆▅▄▃▂▂▁▁▁▁▁
+▁▂▃▅▇███▇▅▄▃▂▂▁▁▁▁▁▁
 ```
 
 | Bin center | Count | % of sims |
 |---|---|---|
-| 6.8% | 28 | 0.3% |
-| 7.5% | 101 | 1.0% |
-| 8.2% | 245 | 2.5% |
-| 8.9% | 513 | 5.1% |
-| 9.6% | 887 | 8.9% |
-| 10.3% | 1155 | 11.6% |
-| 11.1% | 1290 | 12.9% |
-| 11.8% | 1414 | 14.1% |
-| 12.5% | 1238 | 12.4% |
-| 13.2% | 1021 | 10.2% |
-| 13.9% | 805 | 8.1% |
-| 14.6% | 523 | 5.2% |
-| 15.3% | 319 | 3.2% |
-| 16.0% | 220 | 2.2% |
-| 16.7% | 123 | 1.2% |
-| 17.4% | 59 | 0.6% |
-| 18.1% | 31 | 0.3% |
-| 18.8% | 17 | 0.2% |
-| 19.5% | 7 | 0.1% |
-| 20.3% | 4 | 0.0% |
-
----
-
-## Forecast Index (version history)
-
-| v | timestamp | model | base | crowd | Δ(model−base) | Δ(model−crowd) | note |
-|---|---|---|---|---|---|---|---|
-| v1 | 2026-07-15 07:03 | 36.8% | 52.0% | 58.1% | -15.2pp | -21.4pp | Initial: 36.8% base=52%, 6 drivers, 4 evidence |
-| v2 | 2026-07-15 07:03 | 36.8% | 52.0% | 58.1% | -15.2pp | -21.4pp | 36.8% (→), 6 drivers, 4 evidence, 1 agents |
-| v3 | 2026-07-15 07:03 | 36.8% | 52.0% | 58.1% | -15.2pp | -21.4pp | 36.8% (→), 6 drivers, 4 evidence, 1 agents |
-| v4 | 2026-07-15 07:03 | 36.8% | 52.0% | 58.1% | -15.2pp | -21.4pp | 36.8% (→), 6 drivers, 4 evidence, 1 agents |
-
-**Model line:** ```▁▁▁▁``` (range 36.8% – 36.8%)
+| 6.9% | 22 | 0.2% |
+| 7.7% | 121 | 1.2% |
+| 8.5% | 371 | 3.7% |
+| 9.2% | 781 | 7.8% |
+| 10.0% | 1202 | 12.0% |
+| 10.8% | 1379 | 13.8% |
+| 11.6% | 1471 | 14.7% |
+| 12.4% | 1380 | 13.8% |
+| 13.1% | 1160 | 11.6% |
+| 13.9% | 830 | 8.3% |
+| 14.7% | 531 | 5.3% |
+| 15.5% | 374 | 3.7% |
+| 16.3% | 187 | 1.9% |
+| 17.0% | 116 | 1.2% |
+| 17.8% | 42 | 0.4% |
+| 18.6% | 17 | 0.2% |
+| 19.4% | 13 | 0.1% |
+| 20.2% | 1 | 0.0% |
+| 20.9% | 1 | 0.0% |
+| 21.7% | 1 | 0.0% |
 
 ---
 
@@ -1053,4 +1040,4 @@ model: socio_capital * institutional_capacity * dynamic_performance * squad_qual
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v4 · 2026-07-15 07:03 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v1 · 2026-07-16 06:08 UTC_
