@@ -1,6 +1,6 @@
 {
   "forecast_id": "4084aecc-9f12-4649-a30a-a5d06e734541",
-  "current_version": 2,
+  "current_version": 3,
   "predicted_probability": 0.5586968660354614,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
@@ -13,6 +13,12 @@
     },
     {
       "version": 2,
+      "timestamp": "2026-07-16 23:09",
+      "probability": 0.5586968660354614,
+      "change_summary": "55.9% (→), 6 drivers, 4 evidence, 1 agents"
+    },
+    {
+      "version": 3,
       "timestamp": "2026-07-16 23:09",
       "probability": 0.5586968660354614,
       "change_summary": "55.9% (→), 6 drivers, 4 evidence, 1 agents"
