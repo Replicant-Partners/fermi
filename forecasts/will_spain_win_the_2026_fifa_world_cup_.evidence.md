@@ -1,6 +1,6 @@
 # Will Spain win the 2026 FIFA World Cup?
 
-**Probability:** 55.9% · **Version:** v8 · **Updated:** 2026-07-16 23:10 UTC
+**Probability:** 55.9% · **Version:** v1 · **Updated:** 2026-07-16 23:10 UTC
 
 **Confidence:** Medium (50%) · **Drivers:** 6 · **Evidence:** 4 · **Agents:** 4
 
@@ -21,18 +21,6 @@
 
 ---
 
-## Inside View
-
-**Probability: 55.9%**
-
-Inside view: model evaluates to 11.9% (p5=8.8%, p95=15.6%). Outside view (base rate): 52.0%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.
-
-**Forecast Confidence:** Medium (50%)
-
-**Divergence from base rate:** 4pp above (55.9% vs 52.0%)
-
----
-
 ## Outside View (Base Rate)
 
 **52.0%** — European teams winning FIFA World Cup (1930-2022)
@@ -40,57 +28,7 @@ Inside view: model evaluates to 11.9% (p5=8.8%, p95=15.6%). Outside view (base r
 - **Sample size:** n=23
 - **Source:** fermi
 
-Of 23 World Cups held through 2022, European teams have won 12 (Italy 4, Germany 4, Spain 1, England 1, France 2). This gives a 52% base rate for European winners. Spain specifically has won 1 of 23 tournaments (4.3%), but as a top-tier European team with recent success (2010 winner, 2022 runner-up), the broader European reference class is more appropriate than Spain's individual history. The 2026 tournament expands to 48 teams (from 32), but historical data shows format changes have minimal impact on European win rates. Spain's recent form (Euro 2024 winners, Nations League contenders) places them in the upper tier of European contenders alongside France, Germany, and England.
-
----
-
-## Simulation Distribution
-
-**10000 iterations** · p5 = 8.8% · median = 11.8% · p95 = 15.6% · σ = 0.020
-
-```
-▁▂▂▄▆▇██▇▆▄▃▂▂▁▁▁▁▁▁
-```
-
-| Bin center | Count | % of sims |
-|---|---|---|
-| 6.9% | 15 | 0.1% |
-| 7.6% | 116 | 1.2% |
-| 8.4% | 294 | 2.9% |
-| 9.1% | 664 | 6.6% |
-| 9.8% | 995 | 10.0% |
-| 10.6% | 1304 | 13.0% |
-| 11.3% | 1441 | 14.4% |
-| 12.1% | 1408 | 14.1% |
-| 12.8% | 1203 | 12.0% |
-| 13.6% | 960 | 9.6% |
-| 14.3% | 640 | 6.4% |
-| 15.1% | 418 | 4.2% |
-| 15.8% | 262 | 2.6% |
-| 16.6% | 150 | 1.5% |
-| 17.3% | 67 | 0.7% |
-| 18.1% | 35 | 0.4% |
-| 18.8% | 18 | 0.2% |
-| 19.6% | 7 | 0.1% |
-| 20.3% | 2 | 0.0% |
-| 21.1% | 1 | 0.0% |
-
----
-
-## Forecast Index (version history)
-
-| v | timestamp | model | base | crowd | Δ(model−base) | Δ(model−crowd) | note |
-|---|---|---|---|---|---|---|---|
-| v1 | 2026-07-16 23:09 | 55.9% | 52.0% | 58.4% | +3.9pp | -2.5pp | Initial: 55.9% base=52%, 6 drivers, 4 evidence |
-| v2 | 2026-07-16 23:09 | 55.9% | 52.0% | 58.4% | +3.9pp | -2.5pp | 55.9% (→), 6 drivers, 4 evidence, 1 agents |
-| v3 | 2026-07-16 23:09 | 55.9% | 52.0% | 58.4% | +3.9pp | -2.5pp | 55.9% (→), 6 drivers, 4 evidence, 1 agents |
-| v4 | 2026-07-16 23:09 | 55.9% | 52.0% | 58.4% | +3.9pp | -2.5pp | 55.9% (→), 6 drivers, 4 evidence, 1 agents |
-| v5 | 2026-07-16 23:09 | 55.9% | 52.0% | 58.4% | +3.9pp | -2.5pp | 55.9% (→), 6 drivers, 4 evidence, 1 agents |
-| v6 | 2026-07-16 23:09 | 55.9% | 52.0% | 58.4% | +3.9pp | -2.5pp | 55.9% (→), 6 drivers, 4 evidence, 1 agents |
-| v7 | 2026-07-16 23:09 | 55.9% | 52.0% | 58.4% | +3.9pp | -2.5pp | 55.9% (→), 6 drivers, 4 evidence, 1 agents |
-| v8 | 2026-07-16 23:10 | 55.9% | 52.0% | 58.4% | +3.9pp | -2.5pp | 55.9% (→), 6 drivers, 4 evidence, 1 agents |
-
-**Model line:** ```▁▁▁▁▁▁▁█``` (range 55.9% – 55.9%)
+Of 23 World Cups held through 2022, European teams have won 12 (Italy 4, Germany 4, Spain 1, France 2, England 1). This gives a 52% base rate for European winners. Spain specifically has won 1 of 23 tournaments (4.3%), but as a top-tier European team with recent success (2010 winner, 2022 runner-up), the broader European reference class is more appropriate than Spain's individual history. The 2026 tournament will be the 24th World Cup. Alternative reference class: teams ranked in FIFA top 10 at tournament start have won 19 of 23 World Cups (83%), but this is less specific without knowing 2026 rankings. Using European team base rate as primary anchor.
 
 ---
 
@@ -98,7 +36,7 @@ Of 23 World Cups held through 2022, European teams have won 12 (Italy 4, Germany
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Macro capacity for footballing investment: GDP, population, HDI.
 
@@ -190,7 +128,7 @@ Spain sits **+0.61 standard deviations above the WC field median** on socioecono
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Federation strength, league development, player pipeline depth.
 
@@ -303,7 +241,7 @@ All data **current as of Q1 2026** — no [DATA AGE] flag required.
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Recent form and Elo trajectory — refits as match outcomes accumulate.
 
@@ -499,7 +437,7 @@ Based on the comprehensive data I've gathered, here's my analysis of Spain's cur
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Top-flight league penetration + market value concentration.
 
@@ -695,7 +633,7 @@ Based on the comprehensive data I've gathered, here's my analysis of Spain's cur
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Shot conversion, defensive duels, pressing intensity.
 
@@ -891,7 +829,7 @@ Based on the comprehensive data I've gathered, here's my analysis of Spain's cur
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Per-fixture context: venue, climate, rest, altitude.
 
@@ -1057,4 +995,4 @@ model: socio_capital * institutional_capacity * dynamic_performance * squad_qual
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v8 · 2026-07-16 23:10 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v1 · 2026-07-16 23:10 UTC_
