@@ -1,8 +1,8 @@
 # Will Spain win the 2026 FIFA World Cup?
 
-**Probability:** 55.8% · **Version:** v2 · **Updated:** 2026-07-16 06:08 UTC
+**Probability:** 52.0% · **Version:** v1 · **Updated:** 2026-07-16 21:20 UTC
 
-**Confidence:** Medium (50%) · **Drivers:** 6 · **Evidence:** 4 · **Agents:** 4
+**Confidence:** Medium (50%) · **Drivers:** 6 · **Evidence:** 5 · **Agents:** 4
 
 ---
 
@@ -10,26 +10,14 @@
 
 | Metric | Value |
 |---|---|
-| Crowd price | **58.0%** |
-| Fermi estimate | **55.8%** |
-| Divergence | +2.1pp below crowd (Minor divergence) |
-| 24h volume | $4.7M |
+| Crowd price | **58.4%** |
+| Fermi estimate | **52.0%** |
+| Divergence | +6.3pp below crowd (Moderate divergence — potential edge) |
+| 24h volume | $2.6M |
 | Market confidence | Very High |
-| 1-week trend | ↑ +39.2pp |
+| 1-week trend | ↑ +38.9pp |
 
 [View on Polymarket](https://polymarket.com/event/world-cup-winner)
-
----
-
-## Inside View
-
-**Probability: 55.8%**
-
-Inside view: model evaluates to 11.9% (p5=8.8%, p95=15.6%). Outside view (base rate): 52.0%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.
-
-**Forecast Confidence:** Medium (50%)
-
-**Divergence from base rate:** 4pp above (55.8% vs 52.0%)
 
 ---
 
@@ -38,53 +26,9 @@ Inside view: model evaluates to 11.9% (p5=8.8%, p95=15.6%). Outside view (base r
 **52.0%** — European teams winning FIFA World Cup (1930-2022)
 
 - **Sample size:** n=23
-- **Source:** fermi
+- **Source:** macro_forecaster
 
-Of 23 World Cups held through 2022, European teams have won 12 (Italy 4, Germany 4, Spain 1, France 2, England 1). This 52% rate reflects Europe's structural advantages: depth of talent, competitive domestic leagues, and UEFA competition experience. For Spain specifically as a top-tier European nation: they won in 2010, reached semifinals in 1950/2010, and have consistently qualified. Among elite European nations (Germany, Italy, France, Spain, England), the per-tournament win rate is ~12/115 = 10.4% across their combined appearances. Spain's individual rate is 1/16 = 6.25% across their World Cup participations. Using the broader European win rate (52%) as the outer bound and adjusting for Spain being one of ~5-6 elite European contenders in any given tournament yields a base rate of approximately 8-12% for a top European team. Conservative anchor: 10%.
-
----
-
-## Simulation Distribution
-
-**10000 iterations** · p5 = 8.8% · median = 11.8% · p95 = 15.6% · σ = 0.021
-
-```
-▁▂▃▅▇███▇▅▄▃▂▂▁▁▁▁▁▁
-```
-
-| Bin center | Count | % of sims |
-|---|---|---|
-| 6.9% | 22 | 0.2% |
-| 7.7% | 121 | 1.2% |
-| 8.5% | 371 | 3.7% |
-| 9.2% | 781 | 7.8% |
-| 10.0% | 1202 | 12.0% |
-| 10.8% | 1379 | 13.8% |
-| 11.6% | 1471 | 14.7% |
-| 12.4% | 1380 | 13.8% |
-| 13.1% | 1160 | 11.6% |
-| 13.9% | 830 | 8.3% |
-| 14.7% | 531 | 5.3% |
-| 15.5% | 374 | 3.7% |
-| 16.3% | 187 | 1.9% |
-| 17.0% | 116 | 1.2% |
-| 17.8% | 42 | 0.4% |
-| 18.6% | 17 | 0.2% |
-| 19.4% | 13 | 0.1% |
-| 20.2% | 1 | 0.0% |
-| 20.9% | 1 | 0.0% |
-| 21.7% | 1 | 0.0% |
-
----
-
-## Forecast Index (version history)
-
-| v | timestamp | model | base | crowd | Δ(model−base) | Δ(model−crowd) | note |
-|---|---|---|---|---|---|---|---|
-| v1 | 2026-07-16 06:08 | 55.8% | 52.0% | 58.0% | +3.8pp | -2.1pp | Initial: 55.8% base=52%, 6 drivers, 4 evidence |
-| v2 | 2026-07-16 06:08 | 55.8% | 52.0% | 58.0% | +3.8pp | -2.1pp | 55.8% (→), 6 drivers, 4 evidence, 1 agents |
-
-**Model line:** ```▁▁``` (range 55.8% – 55.8%)
+Of 23 completed World Cups (excluding 1942/1946), European teams have won 12 times (Italy 4, Germany 4, Spain 1, France 2, England 1). This gives a 52% base rate for any European team. For Spain specifically as a top-tier European nation with recent tournament success (Euro 2024 winners, 2010 World Cup winners, Nations League 2023), the relevant reference class is 'elite European nations in modern era World Cups (1998-2022)' where Spain, France, Germany, Italy have combined to win 5 of 7 tournaments (71%). However, for a single named team across all tournaments, the rate is lower. Spain has won 1 of 23 World Cups they've entered (4.3%), but conditioning on their current elite status (top 5 FIFA ranking, recent major tournament win), comparable teams win approximately 10-15% of the time when entering as top contenders. Using 12% as the calibrated base rate for an elite European team entering a World Cup.
 
 ---
 
@@ -92,7 +36,7 @@ Of 23 World Cups held through 2022, European teams have won 12 (Italy 4, Germany
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Macro capacity for footballing investment: GDP, population, HDI.
 
@@ -184,7 +128,7 @@ Spain sits **+0.61 standard deviations above the WC field median** on socioecono
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Federation strength, league development, player pipeline depth.
 
@@ -297,7 +241,7 @@ All data **current as of Q1 2026** — no [DATA AGE] flag required.
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Recent form and Elo trajectory — refits as match outcomes accumulate.
 
@@ -493,7 +437,7 @@ Based on the comprehensive data I've gathered, here's my analysis of Spain's cur
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Top-flight league penetration + market value concentration.
 
@@ -689,7 +633,7 @@ Based on the comprehensive data I've gathered, here's my analysis of Spain's cur
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Shot conversion, defensive duels, pressing intensity.
 
@@ -885,7 +829,7 @@ Based on the comprehensive data I've gathered, here's my analysis of Spain's cur
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Per-fixture context: venue, climate, rest, altitude.
 
@@ -1024,6 +968,16 @@ Spain crosses 2 time zones eastward (harder adjustment — "jet lag" direction).
 
 ---
 
+## General Evidence (1)
+
+_Evidence not linked to a specific driver._
+
+### Agent: fermi (Claude API) — relevance 50% · quality ●○○ Low (35%)
+
+
+
+---
+
 ## Methodology
 
 This forecast uses a **Fermi decomposition** approach based on Tetlock superforecasting methodology:
@@ -1051,4 +1005,4 @@ model: socio_capital * institutional_capacity * dynamic_performance * squad_qual
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v2 · 2026-07-16 06:08 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v1 · 2026-07-16 21:20 UTC_
