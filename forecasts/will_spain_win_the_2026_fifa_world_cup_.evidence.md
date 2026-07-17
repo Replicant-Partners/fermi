@@ -1,6 +1,6 @@
 # Will Spain win the 2026 FIFA World Cup?
 
-**Probability:** 55.9% · **Version:** v3 · **Updated:** 2026-07-17 00:49 UTC
+**Probability:** 55.9% · **Version:** v1 · **Updated:** 2026-07-17 01:48 UTC
 
 **Confidence:** Medium (50%) · **Drivers:** 6 · **Evidence:** 4 · **Agents:** 4
 
@@ -15,21 +15,9 @@
 | Divergence | +2.4pp below crowd (Minor divergence) |
 | 24h volume | $1.5M |
 | Market confidence | Very High |
-| 1-week trend | ↑ +40.8pp |
+| 1-week trend | ↑ +41.1pp |
 
 [View on Polymarket](https://polymarket.com/event/world-cup-winner)
-
----
-
-## Inside View
-
-**Probability: 55.9%**
-
-Inside view: model evaluates to 11.9% (p5=8.8%, p95=15.6%). Outside view (base rate): 52.0%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.
-
-**Forecast Confidence:** Medium (50%)
-
-**Divergence from base rate:** 4pp above (55.9% vs 52.0%)
 
 ---
 
@@ -40,52 +28,7 @@ Inside view: model evaluates to 11.9% (p5=8.8%, p95=15.6%). Outside view (base r
 - **Sample size:** n=23
 - **Source:** fermi
 
-Of 23 World Cup tournaments held through 2022, European teams have won 12 (Italy 4, Germany 4, Spain 1, France 2, England 1). This gives a 52% base rate for any European team winning. For Spain specifically: 1 win in 23 tournaments = 4.3% base rate. However, the relevant reference class is 'elite European national teams in modern era World Cups' (post-1998, 7 tournaments): European teams won 5/7 (71%). Spain's specific record in this period: 1 win in 7 tournaments (14%). Given Spain's consistent top-8 FIFA ranking since 2008, tier-1 European status, and World Cup expansion to 48 teams in 2026 (which may slightly favor depth-rich European teams), the appropriate anchor is between the Spain-specific modern rate (14%) and the elite-European rate (71%). Conservative anchor: 12% (roughly 1-in-8 for a top-tier European team in modern World Cups).
-
----
-
-## Simulation Distribution
-
-**10000 iterations** · p5 = 8.8% · median = 11.8% · p95 = 15.6% · σ = 0.021
-
-```
-▁▁▂▃▅▆███▇▅▄▃▂▂▁▁▁▁▁
-```
-
-| Bin center | Count | % of sims |
-|---|---|---|
-| 6.2% | 5 | 0.1% |
-| 6.9% | 20 | 0.2% |
-| 7.7% | 132 | 1.3% |
-| 8.5% | 362 | 3.6% |
-| 9.2% | 738 | 7.4% |
-| 10.0% | 1093 | 10.9% |
-| 10.7% | 1402 | 14.0% |
-| 11.5% | 1436 | 14.4% |
-| 12.3% | 1354 | 13.5% |
-| 13.0% | 1154 | 11.5% |
-| 13.8% | 881 | 8.8% |
-| 14.6% | 603 | 6.0% |
-| 15.3% | 365 | 3.6% |
-| 16.1% | 228 | 2.3% |
-| 16.9% | 127 | 1.3% |
-| 17.6% | 60 | 0.6% |
-| 18.4% | 20 | 0.2% |
-| 19.2% | 13 | 0.1% |
-| 19.9% | 4 | 0.0% |
-| 20.7% | 3 | 0.0% |
-
----
-
-## Forecast Index (version history)
-
-| v | timestamp | model | base | crowd | Δ(model−base) | Δ(model−crowd) | note |
-|---|---|---|---|---|---|---|---|
-| v1 | 2026-07-17 00:49 | 55.9% | 52.0% | 58.4% | +3.9pp | -2.4pp | Initial: 55.9% base=52%, 6 drivers, 4 evidence |
-| v2 | 2026-07-17 00:49 | 11.9% | 52.0% | 58.4% | -40.1pp | -46.4pp | 11.9% (-44pp), 6 drivers, 4 evidence, 1 agents |
-| v3 | 2026-07-17 00:49 | 55.9% | 52.0% | 58.4% | +3.9pp | -2.4pp | 55.9% (+44pp), 6 drivers, 4 evidence, 1 agents |
-
-**Model line:** ```█▁█``` (range 11.9% – 55.9%)
+Of 23 World Cup tournaments held through 2022, European teams have won 12 (Italy 4, Germany 4, Spain 1, France 2, England 1). This gives a 52% base rate for any European team winning. For Spain specifically as a single nation: 1 win in 23 tournaments = 4.3% base rate. However, Spain is not a random European team—they are a top-tier football nation. Among the 8 nations that have ever won a World Cup, the recurrence rate is higher. Since 1998 (modern era, 7 tournaments), winners have been: France (2), Brazil (1), Spain (1), Germany (1), Argentina (2). Spain's tier (elite European nation with recent success, strong league system, consistent tournament performance) suggests anchoring closer to the 'elite European contender' reference class of ~10-15% pre-tournament probability for top 3-4 favorites, rather than the naive 4.3% single-nation rate. Using the 8-team winner's club recurrence: 12 wins distributed among 8 nations over 23 tournaments, with unequal distribution favoring Brazil (5) and Germany/Italy (4 each). Spain's 1 win in the modern competitive era (post-1998) among 7 tournaments with their current strength profile suggests ~8-12% as the appropriate base rate for an elite European contender.
 
 ---
 
@@ -93,7 +36,7 @@ Of 23 World Cup tournaments held through 2022, European teams have won 12 (Italy
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Macro capacity for footballing investment: GDP, population, HDI.
 
@@ -185,7 +128,7 @@ Spain sits **+0.61 standard deviations above the WC field median** on socioecono
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Federation strength, league development, player pipeline depth.
 
@@ -298,7 +241,7 @@ All data **current as of Q1 2026** — no [DATA AGE] flag required.
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Recent form and Elo trajectory — refits as match outcomes accumulate.
 
@@ -494,7 +437,7 @@ Based on the comprehensive data I've gathered, here's my analysis of Spain's cur
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Top-flight league penetration + market value concentration.
 
@@ -690,7 +633,7 @@ Based on the comprehensive data I've gathered, here's my analysis of Spain's cur
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Shot conversion, defensive duels, pressing intensity.
 
@@ -886,7 +829,7 @@ Based on the comprehensive data I've gathered, here's my analysis of Spain's cur
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Per-fixture context: venue, climate, rest, altitude.
 
@@ -1052,4 +995,4 @@ model: socio_capital * institutional_capacity * dynamic_performance * squad_qual
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v3 · 2026-07-17 00:49 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v1 · 2026-07-17 01:48 UTC_
