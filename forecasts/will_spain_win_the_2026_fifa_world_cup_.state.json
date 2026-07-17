@@ -1,36 +1,24 @@
 {
   "forecast_id": "4084aecc-9f12-4649-a30a-a5d06e734541",
-  "current_version": 3,
-  "predicted_probability": 0.5589923858642578,
+  "current_version": 1,
+  "predicted_probability": 0.5591286420822144,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-16 23:30",
-      "probability": 0.5589923858642578,
+      "timestamp": "2026-07-17 00:49",
+      "probability": 0.5591286420822144,
       "change_summary": "Initial: 55.9% base=52%, 6 drivers, 4 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-07-16 23:30",
-      "probability": 0.5589923858642578,
-      "change_summary": "55.9% (→), 6 drivers, 4 evidence, 1 agents"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-07-16 23:30",
-      "probability": 0.5589923858642578,
-      "change_summary": "55.9% (→), 6 drivers, 4 evidence, 1 agents"
     }
   ],
   "sim_results": null,
   "base_rate": {
-    "reference_class": "European teams winning FIFA World Cup (1930-2022)",
+    "reference_class": "European teams winning FIFA World Cup tournaments (1930-2022)",
     "historical_frequency": 0.52,
     "sample_size": 23,
     "source": "fermi",
-    "reasoning": "Of 23 World Cups held through 2022, European teams won 12 (Italy 4, Germany 4, Spain 1, England 1, France 2). This gives a 52% base rate for European winners. Spain specifically has won 1 of 23 tournaments (4.3%), but as a top-tier European side with recent success (2010 winner, 2022 runner-up), the broader European elite reference class is more appropriate than Spain's individual frequency. Among the ~8 European teams typically considered contenders (Germany, France, Spain, Italy, England, Netherlands, Portugal, Belgium), the per-tournament win rate is approximately 12/184 team-tournaments ≈ 6.5%. Using Spain's tier (top-4 European side based on current FIFA ranking #3 and recent performance) suggests a starting base rate of 6-8% for a specific elite European contender."
+    "reasoning": "Of 23 World Cup tournaments held through 2022, European teams have won 12 (Italy 4, Germany 4, Spain 1, France 2, England 1). This gives a 52% base rate for any European team winning. For Spain specifically: 1 win in 23 tournaments = 4.3% base rate. However, the relevant reference class is 'elite European national teams in modern era World Cups' (post-1998, 7 tournaments): European teams won 5/7 (71%). Spain's specific record in this period: 1 win in 7 tournaments (14%). Given Spain's consistent top-8 FIFA ranking since 2008, tier-1 European status, and World Cup expansion to 48 teams in 2026 (which may slightly favor depth-rich European teams), the appropriate anchor is between the Spain-specific modern rate (14%) and the elite-European rate (71%). Conservative anchor: 12% (roughly 1-in-8 for a top-tier European team in modern World Cups)."
   },
   "evidence": [
     {
@@ -176,14 +164,14 @@
     "market_id": "558934",
     "question": "Will Spain win the 2026 FIFA World Cup?",
     "market_price": 0.5835,
-    "volume_24h": 1611281.8529689969,
-    "liquidity": 8743156.25183,
+    "volume_24h": 1493254.3588529986,
+    "liquidity": 8099811.67345,
     "confidence": "Very High",
-    "price_change_1w": 0.411,
+    "price_change_1w": 0.408,
     "url": "https://polymarket.com/event/world-cup-winner",
     "price_history": [
       {
-        "t": 1784244407,
+        "t": 1784249299,
         "p": 0.5835
       }
     ]
