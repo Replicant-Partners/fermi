@@ -1,8 +1,8 @@
 {
   "forecast_id": "4084aecc-9f12-4649-a30a-a5d06e734541",
-  "current_version": 1,
-  "predicted_probability": 0.5591350197792053,
-  "inside_view_explanation": "",
+  "current_version": 2,
+  "predicted_probability": 0.11910619926197201,
+  "inside_view_explanation": "Inside view: model evaluates to 11.9% (p5=8.8%, p95=15.4%). Outside view (base rate): 52.0%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
   "forecast_confidence": 0.5,
   "versions": [
     {
@@ -10,9 +10,22 @@
       "timestamp": "2026-07-17 01:48",
       "probability": 0.5591350197792053,
       "change_summary": "Initial: 55.9% base=52%, 6 drivers, 4 evidence"
+    },
+    {
+      "version": 2,
+      "timestamp": "2026-07-17 01:50",
+      "probability": 0.11910619926197201,
+      "change_summary": "11.9% (-44pp), 6 drivers, 4 evidence, 1 agents"
     }
   ],
-  "sim_results": null,
+  "sim_results": {
+    "mean": 0.11910619926197201,
+    "median": 0.11780483529337919,
+    "p5": 0.08833881152467513,
+    "p95": 0.15424095606942267,
+    "std_dev": 0.020169679884877834,
+    "iterations": 10000
+  },
   "base_rate": {
     "reference_class": "European teams winning FIFA World Cup tournaments (1930-2022)",
     "historical_frequency": 0.52,
