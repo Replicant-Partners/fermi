@@ -86,6 +86,45 @@ jobs:
             echo "tag=latest" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Build release body
+        id: notes
+        run: |
+          TAG=${{ steps.tag.outputs.tag }}
+          NOTES_FILE="RELEASE_NOTES_${TAG}.md"
+          # The in-app updater reads this body verbatim, so it should
+          # read like a changelog to a human tester — not a git log dump.
+          # Convention: land a RELEASE_NOTES_<tag>.md at repo root before
+          # tagging. If missing, we ship a minimal auto-generated body
+          # so the release still succeeds.
+          BODY_FILE="$(mktemp)"
+          if [ -f "$NOTES_FILE" ]; then
+            echo "Using $NOTES_FILE"
+            cat "$NOTES_FILE" >> "$BODY_FILE"
+            echo "" >> "$BODY_FILE"
+            echo "---" >> "$BODY_FILE"
+          else
+            echo "No $NOTES_FILE — using generic body"
+            echo "## Fermi Console $TAG" >> "$BODY_FILE"
+            echo "" >> "$BODY_FILE"
+          fi
+          {
+            echo ""
+            echo "## Install / Update"
+            echo ""
+            echo "Existing users: **Help → Check for Updates…** inside the app."
+            echo ""
+            echo "New users:"
+            echo ""
+            echo '```bash'
+            echo 'curl -fsSL https://raw.githubusercontent.com/Replicant-Partners/fermi/main/scripts/install-fermi-console.sh | bash'
+            echo '```'
+          } >> "$BODY_FILE"
+          {
+            echo 'body<<EOF_NOTES'
+            cat "$BODY_FILE"
+            echo 'EOF_NOTES'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Package binary
         run: |
           TAG=${{ steps.tag.outputs.tag }}
@@ -103,30 +142,11 @@ jobs:
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: Fermi Console ${{ steps.tag.outputs.tag }}
-          body: |
-            ## Fermi Console ${{ steps.tag.outputs.tag }}
-
-            ### Quick Install (Linux x86_64)
-
-            ```bash
-            curl -fsSL https://raw.githubusercontent.com/Replicant-Partners/fermi/main/scripts/install-fermi-console.sh | bash
-            ```
-
-            Or download directly:
-
-            ```bash
-            # Install runtime deps (one-time)
-            sudo apt-get install -y libxcb1 libxkbcommon0 libxkbcommon-x11-0 \
-              libfontconfig1 libfreetype6 libwayland-client0 libvulkan1 mesa-vulkan-drivers
-
-            # Download and run
-            curl -L https://github.com/Replicant-Partners/fermi/releases/latest/download/fermi-console-linux-x86_64 \
-              -o fermi-console && chmod +x fermi-console && ./fermi-console
-            ```
-
-            ### Building from source
-
-            See [README](https://github.com/Replicant-Partners/fermi/blob/main/crates/fermi-console/README.md).
+          # Body assembled by the previous step: RELEASE_NOTES_<tag>.md
+          # if present, else a generic header, always suffixed with the
+          # install/update snippet. The in-app updater renders this
+          # markdown as-is, so keep it user-facing.
+          body: ${{ steps.notes.outputs.body }}
           draft: false
           prerelease: ${{ steps.tag.outputs.tag == 'latest' }}
           files: |

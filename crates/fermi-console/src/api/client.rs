@@ -1610,6 +1610,39 @@ impl ApiClient {
     // declared relationships (e.g. WC sims mutex group).
     // ═══════════════════════════════════════════════════════════════
 
+    /// Declare a new forecast relationship (mutex / implies /
+    /// at_most_n / etc.). Server validates kind + forecast_ids and
+    /// returns the created row. Powers the Portfolio panel's cascade
+    /// declaration UI (Sprint B).
+    pub async fn create_relationship(
+        &self,
+        kind: &str,
+        forecast_ids: &[String],
+        parameters: JsonValue,
+        description: Option<&str>,
+    ) -> Result<JsonValue, ApiError> {
+        let body = json!({
+            "kind": kind,
+            "forecast_ids": forecast_ids,
+            "parameters": parameters,
+            "description": description,
+        });
+        self.post("/api/forecast-relationships", &body).await
+    }
+
+    /// List all relationships the calling user owns (no forecast_id
+    /// filter). Used to hydrate the Portfolio panel's relationships
+    /// sub-panel with every declared cascade rule.
+    pub async fn list_all_relationships(&self) -> Result<JsonValue, ApiError> {
+        self.get("/api/forecast-relationships").await
+    }
+
+    /// Delete a relationship by id. Owner-only (server-enforced).
+    pub async fn delete_relationship(&self, relationship_id: &str) -> Result<(), ApiError> {
+        self.delete(&format!("/api/forecast-relationships/{}", relationship_id))
+            .await
+    }
+
     /// List relationships involving a given forecast. Returns
     /// `{relationships: [{id, kind, forecast_ids, ...}], count}`.
     pub async fn list_relationships_for_forecast(

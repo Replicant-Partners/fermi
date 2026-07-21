@@ -8,6 +8,7 @@ mod charts;
 mod cockpit;
 mod composer;
 mod text_input;
+mod updater;
 
 use api::client::{
     ApiClient, ApiConfig, CalibrationData, CreatePortfolioRequest, CreateTeamRequest, Forecast,
@@ -86,13 +87,21 @@ fn build_menus() -> Vec<Menu> {
                 MenuItem::action("Reset Cockpit", ResetCockpit),
             ],
         },
-        // ── Window menu ───────────────────────────────────────────
+        // ── Window menu ─────────────────────────────────────────────
         Menu {
             name: "Window".into(),
             items: vec![
                 MenuItem::action("Minimize              Ctrl+M", MinimizeWindow),
                 MenuItem::action("Zoom", ZoomWindow),
                 MenuItem::action("Toggle Fullscreen     Ctrl+Shift+F", ToggleFullscreen),
+            ],
+        },
+        // ── Help menu ──────────────────────────────────────────────
+        Menu {
+            name: "Help".into(),
+            items: vec![
+                MenuItem::action("Check for Updates…", CheckForUpdates),
+                MenuItem::action("Release Notes…", ShowUpdateModal),
             ],
         },
     ]
@@ -192,6 +201,9 @@ actions!(
         ZoomWindow,
         ToggleFullscreen,
         ResetCockpit,
+        CheckForUpdates,
+        ShowUpdateModal,
+        DismissUpdateModal,
     ]
 );
 
@@ -473,6 +485,45 @@ struct FermiConsole {
     /// keeps only rows with a Polymarket link, etc. Combined with AND
     /// with the free-text filter.
     portfolio_quick_filters: std::collections::HashSet<String>,
+    /// Correlation assumption for the Portfolio Risk view's P(any yes)
+    /// slider. 0 = independent, +1 = perfectly positively correlated,
+    /// −1 = mutually exclusive. Stored on the console so it survives
+    /// panel navigation within a session.
+    portfolio_risk_rho: f64,
+
+    // ── Cascade / Relationships UI (Sprint B) ─────────────────────────
+    //
+    // Server has forecast_relationships fully wired (mutex, implies,
+    // at_most_n, exhaustive_cover, conditional, conjunction). Missing
+    // piece was UX to declare them. `all_relationships` holds every
+    // relationship the caller owns; the Portfolio detail's
+    // Relationships sub-panel filters this by
+    // `forecast_ids ∩ current_portfolio_forecasts`.
+    all_relationships: Vec<JsonValue>,
+    all_relationships_loading: bool,
+    /// True when the operator has expanded the Portfolio detail's
+    /// "⛓ Relationships" section. Collapsed by default to keep the
+    /// dense panel scannable.
+    relationships_showing: bool,
+    /// True when the operator has opened the inline "+ Declare
+    /// relationship" sheet. Rendered inside the Relationships section.
+    relationship_create_showing: bool,
+    /// Selected kind for the pending declaration.
+    relationship_create_kind: String,
+    /// Selected forecast_ids for the pending declaration — the
+    /// forecasts that will participate in the relationship. Defaults
+    /// to the current portfolio's active forecasts.
+    relationship_create_forecast_ids: std::collections::HashSet<String>,
+    /// String-typed "n" parameter for `at_most_n` (only used when the
+    /// selected kind requires it). Free-form text; parsed at submit.
+    relationship_create_n: String,
+    /// Optional description for the pending declaration.
+    relationship_create_description: Entity<TextInput>,
+    relationship_create_loading: bool,
+    relationship_create_error: Option<String>,
+    /// Set of relationship IDs currently being deleted; disables the
+    /// per-row button until the DELETE resolves.
+    relationship_delete_in_flight: std::collections::HashSet<String>,
 
     /// "Just-created invite" modal state (Sprint A). When an invite is
     /// created (from team, portfolio, or forecast), the response's
@@ -586,6 +637,24 @@ struct FermiConsole {
     // Toast notification (auto-dismiss after 3 s)
     // (message, icon, color)
     toast: Option<(String, &'static str, u32)>,
+
+    // ── Self-update state ─────────────────────────────────────────
+    //
+    // Populated by a background check fired at startup + every time
+    // the user picks Help → Check for Updates…. `None` means "no
+    // update available (or we haven't checked yet)". When Some, the
+    // sidebar shows a badge and the modal is available.
+    available_update: Option<updater::ReleaseInfo>,
+    /// True while an update check or download is in flight. Used to
+    /// disable the "Check for Updates" menu item during the check so
+    /// impatient clicks don't queue five HEAD requests.
+    update_check_in_flight: bool,
+    /// True when the operator has explicitly opened the release-notes
+    /// modal. Distinct from `available_update.is_some()` because we
+    /// want the badge visible without the modal blocking the UI.
+    update_modal_showing: bool,
+    /// Progress + error state for the download-and-install phase.
+    update_download: updater::DownloadState,
 }
 
 #[derive(Clone)]
@@ -647,6 +716,13 @@ impl FermiConsole {
             cx.new(|cx| TextInput::new(cx).with_placeholder("Add person by email or user id…"));
         let portfolio_share_input =
             cx.new(|cx| TextInput::new(cx).with_placeholder("email or user id…"));
+        // Sprint B: description field for the "+ Declare relationship"
+        // sheet. Optional freeform notes so the operator can remember
+        // *why* they declared a cascade ("WC 2026 group L mutex — only
+        // one team advances").
+        let rel_desc_input = cx.new(|cx| {
+            TextInput::new(cx).with_placeholder("Optional description — why this relationship?")
+        });
 
         let mut console = Self {
             active_panel: Panel::Dashboard,
@@ -711,6 +787,18 @@ impl FermiConsole {
             portfolio_filter_input,
             portfolio_expanded_rows: std::collections::HashSet::new(),
             portfolio_quick_filters: std::collections::HashSet::new(),
+            portfolio_risk_rho: 0.0,
+            all_relationships: Vec::new(),
+            all_relationships_loading: false,
+            relationships_showing: false,
+            relationship_create_showing: false,
+            relationship_create_kind: "mutually_exclusive".into(),
+            relationship_create_forecast_ids: std::collections::HashSet::new(),
+            relationship_create_n: "1".into(),
+            relationship_create_description: rel_desc_input,
+            relationship_create_loading: false,
+            relationship_create_error: None,
+            relationship_delete_in_flight: std::collections::HashSet::new(),
             invite_share_modal: None,
             commit_sheet_showing: false,
             commit_sheet_visibility: "private".into(),
@@ -760,6 +848,10 @@ impl FermiConsole {
             inbox_sheet_showing: false,
             inbox_action_in_flight: std::collections::HashSet::new(),
             toast: None,
+            available_update: None,
+            update_check_in_flight: false,
+            update_modal_showing: false,
+            update_download: updater::DownloadState::Idle,
         };
 
         // Try to load API key from environment (fallback for dev)
@@ -767,6 +859,13 @@ impl FermiConsole {
             console.api_key_input = key;
             console.try_connect(cx);
         }
+
+        // Fire an update check on launch. This is intentionally silent
+        // on failure — the user hasn't asked for it yet, so a network
+        // hiccup shouldn't produce a scary toast. If a new release is
+        // out we surface it as a passive sidebar badge; the user opens
+        // the modal on their own schedule.
+        console.check_for_updates(false, cx);
 
         console
     }
@@ -928,6 +1027,201 @@ impl FermiConsole {
         .detach();
     }
 
+    // ── Self-update ──────────────────────────────────────────────────────────
+
+    /// Query GitHub for a newer release. `verbose=true` when triggered
+    /// from the Help menu (surfaces both success and "up to date"
+    /// toasts); `false` on startup where we only make noise if there's
+    /// actually an update.
+    fn check_for_updates(&mut self, verbose: bool, cx: &mut Context<Self>) {
+        if self.update_check_in_flight {
+            return;
+        }
+        self.update_check_in_flight = true;
+        cx.notify();
+
+        let current = env!("CARGO_PKG_VERSION").to_string();
+
+        cx.spawn(async move |this, cx| {
+            let result = updater::check_latest(&current).await;
+            this.update(cx, |this, cx| {
+                this.update_check_in_flight = false;
+                match result {
+                    Ok(Some(release)) => {
+                        log::info!(
+                            "[updater] new version available: {} (running {})",
+                            release.tag,
+                            current
+                        );
+                        if verbose {
+                            this.show_toast(
+                                format!("Update available: {}", release.tag),
+                                "⬆",
+                                theme::CYAN,
+                                cx,
+                            );
+                        }
+                        this.available_update = Some(release);
+                    }
+                    Ok(None) => {
+                        if verbose {
+                            this.show_toast(
+                                format!("You're on the latest version (v{})", current),
+                                "✓",
+                                theme::GREEN,
+                                cx,
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("[updater] check failed: {}", e);
+                        if verbose {
+                            this.show_toast(
+                                format!("Update check failed: {}", e),
+                                "⚠",
+                                theme::GOLD,
+                                cx,
+                            );
+                        }
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Kick off the download + atomic self-replace + restart. Called
+    /// when the operator clicks "Update & Restart" in the release-notes
+    /// modal. The modal stays open while download progresses; on
+    /// success the process re-execs and this closure never returns.
+    fn perform_update(&mut self, cx: &mut Context<Self>) {
+        let Some(release) = self.available_update.clone() else {
+            return;
+        };
+        if matches!(
+            self.update_download,
+            updater::DownloadState::Downloading { .. }
+                | updater::DownloadState::Installing
+                | updater::DownloadState::Restarting
+        ) {
+            return; // already running
+        }
+
+        self.update_download = updater::DownloadState::Downloading {
+            received: 0,
+            total: release.size_bytes,
+        };
+        cx.notify();
+
+        // Progress callback needs to be Send + Sync + 'static. GPUI
+        // Entity handles can't be captured directly by non-cx closures,
+        // so we use an atomic pair the render loop polls.
+        // Simpler approach: use a channel and drain it from a small
+        // ticker task.
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(u64, u64)>();
+        let progress: updater::ProgressFn = std::sync::Arc::new(move |received, total| {
+            let _ = tx.send((received, total));
+        });
+
+        // Drain progress into the entity.
+        let this_for_progress = cx.entity().downgrade();
+        cx.spawn(async move |_, cx| {
+            while let Some((received, total)) = rx.recv().await {
+                if this_for_progress
+                    .update(cx, |this, cx| {
+                        this.update_download =
+                            updater::DownloadState::Downloading { received, total };
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+
+        // Do the download.
+        cx.spawn(async move |this, cx| {
+            let install_result = updater::download_and_install(&release, progress).await;
+            match install_result {
+                Ok(new_exe) => {
+                    // Flip UI to "restarting", give the render loop one
+                    // frame to paint it, then re-exec.
+                    this.update(cx, |this, cx| {
+                        this.update_download = updater::DownloadState::Restarting;
+                        cx.notify();
+                    })
+                    .ok();
+
+                    // Short delay so the user sees the state change.
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(250))
+                        .await;
+
+                    if let Err(e) = updater::restart(&new_exe) {
+                        log::error!("[updater] restart failed: {}", e);
+                        this.update(cx, |this, cx| {
+                            this.update_download =
+                                updater::DownloadState::Failed(format!("Restart failed: {}", e));
+                            cx.notify();
+                        })
+                        .ok();
+                    }
+                    // If restart() succeeded, this process has exited.
+                }
+                Err(e) => {
+                    log::error!("[updater] install failed: {}", e);
+                    this.update(cx, |this, cx| {
+                        this.update_download = updater::DownloadState::Failed(format!("{}", e));
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
+    }
+
+    // ── Menu actions for updates ──────────────────────────────────────────
+
+    fn on_check_for_updates(
+        &mut self,
+        _: &CheckForUpdates,
+        _w: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.check_for_updates(true, cx);
+    }
+
+    fn on_show_update_modal(
+        &mut self,
+        _: &ShowUpdateModal,
+        _w: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.available_update.is_some() {
+            self.update_modal_showing = true;
+            cx.notify();
+        } else {
+            // No update queued — treat this as "check now, and if
+            // there's one, open the modal automatically".
+            self.check_for_updates(true, cx);
+        }
+    }
+
+    fn on_dismiss_update_modal(
+        &mut self,
+        _: &DismissUpdateModal,
+        _w: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_modal_showing = false;
+        cx.notify();
+    }
+
     /// Populate `invite_share_modal` from a POST /invites response so
     /// the operator sees a one-click Copy Link affordance immediately
     /// after creating an invite. Idempotent w.r.t. previous modal
@@ -1038,6 +1332,9 @@ impl FermiConsole {
         // Pending cascades queue — the operator's inbox of probability-
         // mutating actions awaiting human approval.
         self.fetch_pending_cascades(cx);
+        // All declared relationships — hydrates the Portfolio panel's
+        // Relationships sub-panel.
+        self.fetch_all_relationships(cx);
         // Collaboration inbox — pending forecast/portfolio/team invites.
         self.fetch_my_invites(cx);
     }
@@ -1799,6 +2096,563 @@ impl FermiConsole {
         .detach();
     }
 
+    /// Renders the collapsible "⛓ Relationships" sub-panel (Sprint B).
+    ///
+    /// Filters `all_relationships` by `forecast_ids ∩ forecasts_in_portfolio`
+    /// so operators only see cascade rules that touch this portfolio.
+    /// When collapsed, shows just a count. When expanded, shows each
+    /// relationship as a row and offers a "+ Declare relationship"
+    /// inline sheet.
+    fn render_relationships_panel(
+        &self,
+        portfolio_forecasts: &[PortfolioForecast],
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        // Set of forecast_ids in this portfolio — used to filter the
+        // global relationships list down to what's relevant here.
+        let portfolio_fids: std::collections::HashSet<String> =
+            portfolio_forecasts.iter().map(|f| f.id.clone()).collect();
+
+        // Filter to relationships whose forecast_ids intersect this
+        // portfolio's forecasts. Empty intersection = irrelevant.
+        let relevant: Vec<&JsonValue> = self
+            .all_relationships
+            .iter()
+            .filter(|r| {
+                r.get("forecast_ids")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str())
+                            .any(|s| portfolio_fids.contains(s))
+                    })
+                    .unwrap_or(false)
+            })
+            .collect();
+        let n_relevant = relevant.len();
+
+        let mut container = div()
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .px(px(14.0))
+            .py(px(8.0))
+            .border_b_1()
+            .border_color(theme::fg_faint())
+            // Header row — title + counts + toggle chevron + declare button.
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .id("relationships-toggle")
+                            .cursor_pointer()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.relationships_showing = !this.relationships_showing;
+                                cx.notify();
+                            }))
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(if self.relationships_showing {
+                                        theme::cyan()
+                                    } else {
+                                        theme::fg_dim()
+                                    })
+                                    .child(if self.relationships_showing {
+                                        "▾"
+                                    } else {
+                                        "▸"
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(theme::fg_faint())
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(format!("⛓ RELATIONSHIPS ({})", n_relevant)),
+                            ),
+                    )
+                    .child(div().flex_grow())
+                    .when(self.relationships_showing, |el| {
+                        el.child(
+                            div()
+                                .id("rel-declare-toggle")
+                                .px(px(10.0))
+                                .py(px(3.0))
+                                .rounded(px(4.0))
+                                .border_1()
+                                .border_color(rgb(theme::CYAN))
+                                .text_size(px(10.0))
+                                .text_color(rgb(theme::CYAN))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(theme::bg_hover()))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.relationship_create_showing =
+                                        !this.relationship_create_showing;
+                                    this.relationship_create_error = None;
+                                    cx.notify();
+                                }))
+                                .child(if self.relationship_create_showing {
+                                    "Cancel"
+                                } else {
+                                    "+ Declare"
+                                }),
+                        )
+                    }),
+            );
+
+        if !self.relationships_showing {
+            return container;
+        }
+
+        // Inline create sheet.
+        if self.relationship_create_showing {
+            container =
+                container.child(self.render_relationship_create_sheet(portfolio_forecasts, cx));
+        }
+
+        // Existing relationships list. Titles look up via portfolio
+        // forecasts (best-effort — relationships can involve forecasts
+        // outside this portfolio too, which we render as "other").
+        let title_lookup: std::collections::HashMap<String, String> = portfolio_forecasts
+            .iter()
+            .map(|f| (f.id.clone(), f.question_text.clone()))
+            .collect();
+
+        if relevant.is_empty() {
+            container = container.child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(theme::fg_faint())
+                    .py(px(6.0))
+                    .child(
+                        "No cascades declared yet. Use + Declare to link forecasts — \
+                         e.g. mutex on all group-stage sim forecasts so an elimination \
+                         propagates.",
+                    ),
+            );
+        } else {
+            for rel in relevant {
+                container = container.child(self.render_relationship_row(rel, &title_lookup, cx));
+            }
+        }
+
+        container
+    }
+
+    /// Single row in the Relationships list: kind + count + description.
+    fn render_relationship_row(
+        &self,
+        rel: &JsonValue,
+        title_lookup: &std::collections::HashMap<String, String>,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let id = rel
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let kind = rel
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let forecast_ids: Vec<String> = rel
+            .get("forecast_ids")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let description = rel
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let parameters = rel
+            .get("parameters")
+            .and_then(|v| v.as_object())
+            .cloned()
+            .unwrap_or_default();
+
+        let n_in_portfolio = forecast_ids
+            .iter()
+            .filter(|fid| title_lookup.contains_key(*fid))
+            .count();
+        let n_total = forecast_ids.len();
+
+        // Kind-specific accent + label.
+        let (accent, kind_label) = match kind {
+            "mutually_exclusive" | "mutex" => (theme::PURPLE, "MUTEX"),
+            "logical_implies" | "implies" => (theme::CYAN, "IMPLIES"),
+            "conjunction" => (theme::CYAN, "CONJUNCTION"),
+            "conditional" => (theme::GOLD, "CONDITIONAL"),
+            "exhaustive_cover" => (theme::GREEN, "EXHAUSTIVE"),
+            "at_most_n" => (theme::ORANGE, "AT MOST N"),
+            _ => (theme::FG_DIM, "OTHER"),
+        };
+        let param_str = if let Some(n_val) = parameters.get("n").and_then(|v| v.as_i64()) {
+            format!(" n={}", n_val)
+        } else {
+            String::new()
+        };
+
+        let id_for_delete = id.clone();
+        let delete_in_flight = self.relationship_delete_in_flight.contains(&id);
+
+        // Preview first 3 titles that this row applies to.
+        let preview_titles: Vec<String> = forecast_ids
+            .iter()
+            .filter_map(|fid| title_lookup.get(fid).map(|t| truncate(t, 34)))
+            .take(3)
+            .collect();
+        let preview_str = if preview_titles.is_empty() {
+            format!("{} forecasts (outside this portfolio)", n_total)
+        } else if n_in_portfolio > preview_titles.len() {
+            format!(
+                "{}, +{} more",
+                preview_titles.join(", "),
+                n_in_portfolio - preview_titles.len()
+            )
+        } else {
+            preview_titles.join(", ")
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
+            .px(px(10.0))
+            .py(px(6.0))
+            .rounded(px(4.0))
+            .border_l_2()
+            .border_color(rgb(accent))
+            .bg(theme::bg_elevated())
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(rgb(accent))
+                            .font_weight(FontWeight::BOLD)
+                            .child(format!("{}{}", kind_label, param_str)),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_dim())
+                            .child(format!("{} forecasts", n_total)),
+                    )
+                    .child(div().flex_grow())
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("rel-del-{}", id)))
+                            .px(px(6.0))
+                            .py(px(1.0))
+                            .rounded(px(3.0))
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_dim())
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(theme::red()))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.delete_relationship(id_for_delete.clone(), cx);
+                            }))
+                            .child(if delete_in_flight { "…" } else { "Remove" }),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(theme::fg())
+                    .child(preview_str),
+            )
+            .when(!description.is_empty(), |el| {
+                el.child(
+                    div()
+                        .text_size(px(9.0))
+                        .text_color(theme::fg_faint())
+                        .child(description),
+                )
+            })
+    }
+
+    /// Inline "+ Declare relationship" sheet, rendered inside the
+    /// Relationships sub-panel.
+    fn render_relationship_create_sheet(
+        &self,
+        portfolio_forecasts: &[PortfolioForecast],
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let kinds: &[(&str, &str, &str)] = &[
+            (
+                "mutually_exclusive",
+                "Mutex",
+                "exactly one YES; if one resolves, the rest go NO",
+            ),
+            (
+                "exhaustive_cover",
+                "Exhaustive",
+                "one and only one is TRUE (partition)",
+            ),
+            (
+                "logical_implies",
+                "Implies",
+                "if A resolves YES then B resolves YES",
+            ),
+            ("conjunction", "Conjunction", "all resolve together"),
+            (
+                "conditional",
+                "Conditional",
+                "B is scored only if A resolves YES",
+            ),
+            (
+                "at_most_n",
+                "At most n",
+                "at most n forecasts can resolve YES",
+            ),
+        ];
+        let selected_kind = self.relationship_create_kind.clone();
+        let show_n_field = selected_kind == "at_most_n";
+
+        // Selected count for the header hint.
+        let n_selected = self.relationship_create_forecast_ids.len();
+
+        // Kind chip row.
+        let mut kind_row = div().flex().flex_wrap().gap(px(4.0)).child(
+            div()
+                .text_size(px(9.0))
+                .text_color(theme::fg_faint())
+                .child("KIND:"),
+        );
+        for (key, label, _desc) in kinds {
+            let is_on = *key == selected_kind;
+            let key_owned = (*key).to_string();
+            kind_row = kind_row.child(
+                div()
+                    .id(SharedString::from(format!("rel-kind-{}", key)))
+                    .px(px(8.0))
+                    .py(px(2.0))
+                    .rounded(px(10.0))
+                    .border_1()
+                    .border_color(if is_on {
+                        theme::cyan()
+                    } else {
+                        theme::fg_faint()
+                    })
+                    .bg(if is_on {
+                        theme::bg_active()
+                    } else {
+                        theme::bg_elevated()
+                    })
+                    .text_size(px(10.0))
+                    .text_color(if is_on {
+                        theme::cyan()
+                    } else {
+                        theme::fg_dim()
+                    })
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::bg_hover()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.relationship_create_kind = key_owned.clone();
+                        cx.notify();
+                    }))
+                    .child(label.to_string()),
+            );
+        }
+
+        // Kind description hint below the chip row.
+        let kind_desc = kinds
+            .iter()
+            .find(|(k, _, _)| *k == selected_kind)
+            .map(|(_, _, d)| *d)
+            .unwrap_or("");
+
+        // Forecast picker — all portfolio forecasts as toggleable chips.
+        let mut forecast_picker = div().flex().flex_wrap().gap(px(4.0)).child(
+            div()
+                .text_size(px(9.0))
+                .text_color(theme::fg_faint())
+                .child(format!("FORECASTS ({} selected):", n_selected)),
+        );
+        for f in portfolio_forecasts {
+            let is_on = self.relationship_create_forecast_ids.contains(&f.id);
+            let fid_owned = f.id.clone();
+            let title = truncate(&f.question_text, 28);
+            forecast_picker = forecast_picker.child(
+                div()
+                    .id(SharedString::from(format!("rel-fpick-{}", f.id)))
+                    .px(px(6.0))
+                    .py(px(2.0))
+                    .rounded(px(3.0))
+                    .border_1()
+                    .border_color(if is_on {
+                        theme::cyan()
+                    } else {
+                        theme::fg_faint()
+                    })
+                    .bg(if is_on {
+                        theme::bg_active()
+                    } else {
+                        theme::bg_elevated()
+                    })
+                    .text_size(px(9.0))
+                    .text_color(if is_on {
+                        theme::cyan()
+                    } else {
+                        theme::fg_dim()
+                    })
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::bg_hover()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if this.relationship_create_forecast_ids.contains(&fid_owned) {
+                            this.relationship_create_forecast_ids.remove(&fid_owned);
+                        } else {
+                            this.relationship_create_forecast_ids
+                                .insert(fid_owned.clone());
+                        }
+                        cx.notify();
+                    }))
+                    .child(if is_on {
+                        format!("✓ {}", title)
+                    } else {
+                        title
+                    }),
+            );
+        }
+
+        // n field (only visible for at_most_n).
+        let n_field: Option<AnyElement> = if show_n_field {
+            let current = self.relationship_create_n.clone();
+            Some(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .child(
+                        div()
+                            .text_size(px(9.0))
+                            .text_color(theme::fg_faint())
+                            .child("n:"),
+                    )
+                    // Simple stepper: - / value / +.
+                    .child(
+                        div()
+                            .id("rel-n-dec")
+                            .px(px(6.0))
+                            .py(px(1.0))
+                            .rounded(px(3.0))
+                            .border_1()
+                            .border_color(theme::fg_faint())
+                            .text_size(px(11.0))
+                            .text_color(theme::fg_dim())
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::bg_hover()))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let cur: i64 =
+                                    this.relationship_create_n.trim().parse().unwrap_or(1);
+                                this.relationship_create_n = (cur - 1).max(1).to_string();
+                                cx.notify();
+                            }))
+                            .child("–"),
+                    )
+                    .child(
+                        div()
+                            .px(px(8.0))
+                            .py(px(1.0))
+                            .text_size(px(11.0))
+                            .text_color(theme::cyan())
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(current),
+                    )
+                    .child(
+                        div()
+                            .id("rel-n-inc")
+                            .px(px(6.0))
+                            .py(px(1.0))
+                            .rounded(px(3.0))
+                            .border_1()
+                            .border_color(theme::fg_faint())
+                            .text_size(px(11.0))
+                            .text_color(theme::fg_dim())
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::bg_hover()))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let cur: i64 =
+                                    this.relationship_create_n.trim().parse().unwrap_or(1);
+                                this.relationship_create_n = (cur + 1).to_string();
+                                cx.notify();
+                            }))
+                            .child("+"),
+                    )
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .px(px(10.0))
+            .py(px(8.0))
+            .rounded(px(6.0))
+            .bg(theme::bg())
+            .border_1()
+            .border_color(rgb(theme::CYAN))
+            .child(kind_row)
+            .child(
+                div()
+                    .text_size(px(9.0))
+                    .text_color(theme::fg_dim())
+                    .child(kind_desc.to_string()),
+            )
+            .child(forecast_picker)
+            .children(n_field)
+            .child(self.relationship_create_description.clone())
+            .when(self.relationship_create_error.is_some(), |el| {
+                el.child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(theme::red())
+                        .child(self.relationship_create_error.clone().unwrap_or_default()),
+                )
+            })
+            .child(
+                div().flex().justify_end().gap(px(6.0)).child(
+                    div()
+                        .id("rel-submit")
+                        .px(px(14.0))
+                        .py(px(5.0))
+                        .rounded(px(6.0))
+                        .bg(rgb(theme::CYAN))
+                        .text_size(px(11.0))
+                        .text_color(rgb(theme::BG))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .cursor_pointer()
+                        .hover(|s| s.opacity(0.85))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.submit_relationship_create(cx);
+                        }))
+                        .child(if self.relationship_create_loading {
+                            "Declaring…"
+                        } else {
+                            "Declare"
+                        }),
+                ),
+            )
+    }
+
     /// Renders the collapsible portfolio Access panel (Spec 24 §3.5.3).
     fn render_portfolio_access_panel(&self, cx: &Context<Self>) -> impl IntoElement {
         let perm = self.portfolio_share_permission.clone();
@@ -2534,6 +3388,138 @@ impl FermiConsole {
         .detach();
     }
 
+    // ── Cascades / Relationships (Sprint B) ───────────────────────────────
+
+    /// Load every relationship the caller owns. Fired once on connect
+    /// and after any create/delete mutation so the Portfolio panel's
+    /// Relationships sub-panel stays fresh.
+    fn fetch_all_relationships(&mut self, cx: &mut Context<Self>) {
+        if self.all_relationships_loading {
+            return;
+        }
+        self.all_relationships_loading = true;
+        cx.notify();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.list_all_relationships().await;
+            this.update(cx, |this, cx| {
+                this.all_relationships_loading = false;
+                match result {
+                    Ok(resp) => {
+                        this.all_relationships = resp
+                            .get("relationships")
+                            .and_then(|v| v.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                    }
+                    Err(e) => {
+                        log::warn!("[relationships] fetch failed: {}", e);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Submit the pending relationship declaration. Reads the sheet's
+    /// state (kind, forecast_ids, n, description), POSTs to the
+    /// server, and refreshes the local list on success.
+    fn submit_relationship_create(&mut self, cx: &mut Context<Self>) {
+        // Validate: at least 2 forecasts.
+        if self.relationship_create_forecast_ids.len() < 2 {
+            self.relationship_create_error = Some("Pick at least 2 forecasts to link.".into());
+            cx.notify();
+            return;
+        }
+        let kind = self.relationship_create_kind.clone();
+        let forecast_ids: Vec<String> = self
+            .relationship_create_forecast_ids
+            .iter()
+            .cloned()
+            .collect();
+        // Parameters shape depends on kind. `at_most_n` needs an `n`.
+        let parameters = match kind.as_str() {
+            "at_most_n" => {
+                let n: i64 = self.relationship_create_n.trim().parse().unwrap_or(1);
+                serde_json::json!({ "n": n })
+            }
+            _ => serde_json::json!({}),
+        };
+        let description_str = self
+            .relationship_create_description
+            .read(cx)
+            .text()
+            .trim()
+            .to_string();
+        let description = if description_str.is_empty() {
+            None
+        } else {
+            Some(description_str)
+        };
+
+        self.relationship_create_loading = true;
+        self.relationship_create_error = None;
+        cx.notify();
+
+        let api = self.api.clone();
+        let desc_input = self.relationship_create_description.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api
+                .create_relationship(&kind, &forecast_ids, parameters, description.as_deref())
+                .await;
+            this.update(cx, |this, cx| {
+                this.relationship_create_loading = false;
+                match result {
+                    Ok(_) => {
+                        this.relationship_create_showing = false;
+                        this.relationship_create_forecast_ids.clear();
+                        desc_input.update(cx, |inp, cx| inp.set_text("", cx));
+                        this.show_toast("Relationship declared", "⛓", theme::CYAN, cx);
+                        this.fetch_all_relationships(cx);
+                    }
+                    Err(e) => {
+                        this.relationship_create_error = Some(e.to_string());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Delete a relationship by id. Two-step confirmation not needed —
+    /// relationships are lightweight declarative rows; deleting one
+    /// just stops future cascade propagations, no data is lost.
+    fn delete_relationship(&mut self, rid: String, cx: &mut Context<Self>) {
+        if !self.relationship_delete_in_flight.insert(rid.clone()) {
+            return;
+        }
+        cx.notify();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.delete_relationship(&rid).await;
+            this.update(cx, |this, cx| {
+                this.relationship_delete_in_flight.remove(&rid);
+                match result {
+                    Ok(_) => {
+                        this.show_toast("Relationship removed", "✓", theme::GREEN, cx);
+                        this.fetch_all_relationships(cx);
+                    }
+                    Err(e) => {
+                        log::warn!("[relationships] delete failed: {}", e);
+                        this.show_toast(&format!("Delete failed: {}", e), "⚠", theme::RED, cx);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn apply_pending_cascade(&mut self, cascade_id: String, cx: &mut Context<Self>) {
         if !self.cascade_action_in_flight.insert(cascade_id.clone()) {
             return; // already in flight
@@ -3209,7 +4195,38 @@ impl FermiConsole {
                             // Cargo.toml bump suffices — no stringly-typed drift
                             // between the cargo manifest and the footer label.
                             .child(format!("v{} — BayesOps", env!("CARGO_PKG_VERSION"))),
-                    ),
+                    )
+                    // ⬆ Update-available badge (Sprint distribution).
+                    // Only rendered when the background check has
+                    // returned a strictly-newer release. Clicking
+                    // opens the release-notes modal.
+                    .when(self.available_update.is_some(), |el| {
+                        let tag = self
+                            .available_update
+                            .as_ref()
+                            .map(|r| r.tag.clone())
+                            .unwrap_or_default();
+                        el.child(
+                            div()
+                                .id("sidebar-update-badge")
+                                .mt(px(6.0))
+                                .px(px(8.0))
+                                .py(px(4.0))
+                                .rounded(px(4.0))
+                                .bg(theme::bg_hover())
+                                .border_1()
+                                .border_color(rgb(theme::CYAN))
+                                .text_size(px(10.0))
+                                .text_color(theme::cyan())
+                                .cursor_pointer()
+                                .hover(|s| s.bg(theme::bg_active()))
+                                .on_click(cx.listener(|this, _, _w, cx| {
+                                    this.update_modal_showing = true;
+                                    cx.notify();
+                                }))
+                                .child(format!("⬆ Update to {}", tag)),
+                        )
+                    }),
             )
     }
 
@@ -5444,6 +6461,35 @@ impl FermiConsole {
                                         let forecasts_for_rollup = forecasts.clone();
                                         move |el| el.child(render_portfolio_rollup_strip(&forecasts_for_rollup))
                                     })
+                                    // Sprint B: Portfolio Risk view. Six
+                                    // metrics inline plus a correlation
+                                    // slider that recomputes P(any yes).
+                                    // Uses `WeakEntity` so the click
+                                    // handler on rho chips can update the
+                                    // console without borrow gymnastics.
+                                    .when(!forecasts.is_empty(), {
+                                        let forecasts_for_risk = forecasts.clone();
+                                        let rho = self.portfolio_risk_rho;
+                                        let handle = cx.weak_entity();
+                                        move |el| {
+                                            el.child(render_portfolio_risk_view(
+                                                &forecasts_for_risk,
+                                                rho,
+                                                move |new_rho, _w, app_cx| {
+                                                    if let Some(this) = handle.upgrade() {
+                                                        this.update(app_cx, |this, cx| {
+                                                            this.portfolio_risk_rho = new_rho;
+                                                            cx.notify();
+                                                        });
+                                                    }
+                                                },
+                                            ))
+                                        }
+                                    })
+                                    // Sprint B: Relationships / cascades
+                                    // sub-panel. Collapsible; declare +
+                                    // remove per-relationship inline.
+                                    .child(self.render_relationships_panel(&forecasts, cx))
                                     // Loading spinner
                                     .when(is_loading, |el| {
                                         el.child(
@@ -8317,6 +9363,259 @@ impl FermiConsole {
     // some testers prefer a link they can send via Slack / WhatsApp
     // rather than an email that might land in spam.
 
+    // ── Update modal ──────────────────────────────────────────────────────────
+    //
+    // Rendered only when `self.update_modal_showing && self.available_update.is_some()`.
+    // Three visual states, driven by `self.update_download`:
+    //
+    //   Idle          → release notes + "Update & Restart" primary button
+    //   Downloading   → progress bar with received/total bytes
+    //   Installing    → spinner ("Installing…")
+    //   Restarting    → "Restarting…" — process exits during this state
+    //   Failed(msg)   → red error banner + "Try again" button
+    fn render_update_modal(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let release = self
+            .available_update
+            .as_ref()
+            .expect("render_update_modal called with no update");
+        let current = env!("CARGO_PKG_VERSION");
+
+        // Format the notes: keep it readable but truncate absurdly long
+        // release bodies so the modal never grows past the window. If
+        // testers need the full text, they can hit the GitHub link.
+        let notes_display = if release.notes.len() > 2400 {
+            format!(
+                "{}…\n\n(truncated — see GitHub for full notes)",
+                &release.notes[..2400]
+            )
+        } else {
+            release.notes.clone()
+        };
+
+        // Progress row content depends on state.
+        let (progress_row, primary_label, primary_enabled, primary_color) =
+            match &self.update_download {
+                updater::DownloadState::Idle => {
+                    (None, "Update & Restart".to_string(), true, theme::CYAN)
+                }
+                updater::DownloadState::Downloading { received, total } => {
+                    let pct = if *total > 0 {
+                        ((*received as f64 / *total as f64) * 100.0).clamp(0.0, 100.0)
+                    } else {
+                        0.0
+                    };
+                    let mb_recv = *received as f64 / 1_048_576.0;
+                    let mb_total = *total as f64 / 1_048_576.0;
+                    let label = if *total > 0 {
+                        format!(
+                            "Downloading… {:.1} / {:.1} MB ({:.0}%)",
+                            mb_recv, mb_total, pct
+                        )
+                    } else {
+                        format!("Downloading… {:.1} MB", mb_recv)
+                    };
+                    let bar = div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.0))
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(theme::fg_dim())
+                                .child(label),
+                        )
+                        .child(
+                            div()
+                                .h(px(6.0))
+                                .w_full()
+                                .rounded(px(3.0))
+                                .bg(rgb(theme::BG))
+                                .border_1()
+                                .border_color(theme::fg_faint())
+                                .child(
+                                    div()
+                                        .h_full()
+                                        .w(gpui::relative(pct as f32 / 100.0))
+                                        .bg(rgb(theme::CYAN))
+                                        .rounded(px(3.0)),
+                                ),
+                        );
+                    (Some(bar), "Downloading…".to_string(), false, theme::FG_DIM)
+                }
+                updater::DownloadState::Installing => (
+                    Some(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(theme::fg_dim())
+                            .child("Installing…"),
+                    ),
+                    "Installing…".to_string(),
+                    false,
+                    theme::FG_DIM,
+                ),
+                updater::DownloadState::Restarting => (
+                    Some(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(theme::green())
+                            .child("Restarting…"),
+                    ),
+                    "Restarting…".to_string(),
+                    false,
+                    theme::FG_DIM,
+                ),
+                updater::DownloadState::Failed(msg) => (
+                    Some(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(theme::red())
+                            .child(format!("✗ {}", msg)),
+                    ),
+                    "Try again".to_string(),
+                    true,
+                    theme::GOLD,
+                ),
+            };
+
+        let release_url = format!(
+            "https://github.com/{}/releases/tag/{}",
+            std::env::var("FERMI_UPDATE_REPO")
+                .unwrap_or_else(|_| "Replicant-Partners/fermi".to_string()),
+            release.tag
+        );
+        let release_url_copy = release_url.clone();
+
+        let mut card = div()
+            .flex()
+            .flex_col()
+            .gap(px(14.0))
+            .w(px(600.0))
+            .max_h(px(640.0))
+            .p(px(24.0))
+            .rounded(px(12.0))
+            .bg(rgb(theme::BG_ELEVATED))
+            .border_1()
+            .border_color(rgb(theme::CYAN))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(div().text_size(px(20.0)).child("⬆"))
+                    .child(
+                        div()
+                            .text_size(px(16.0))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme::fg())
+                            .child(format!("Fermi Console {} is available", release.tag)),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(theme::fg_dim())
+                    .child(format!(
+                        "You're on v{}. New build published {}.",
+                        current,
+                        pretty_timestamp(&release.published_at)
+                    )),
+            )
+            // Release notes body — scrollable, monospace to preserve
+            // any markdown formatting the author included.
+            .child(
+                div()
+                    .id("update-modal-notes")
+                    .overflow_y_scroll()
+                    .max_h(px(340.0))
+                    .p(px(12.0))
+                    .rounded(px(6.0))
+                    .bg(rgb(theme::BG))
+                    .border_1()
+                    .border_color(theme::fg_faint())
+                    .text_size(px(11.0))
+                    .text_color(theme::fg())
+                    .child(notes_display),
+            );
+
+        if let Some(row) = progress_row {
+            card = card.child(row);
+        }
+
+        // Action row.
+        card = card.child(
+            div()
+                .flex()
+                .gap(px(8.0))
+                .items_center()
+                .child(
+                    // View on GitHub link — always available so testers
+                    // can eyeball what's actually shipping.
+                    div()
+                        .id("update-modal-github")
+                        .px(px(12.0))
+                        .py(px(7.0))
+                        .rounded(px(6.0))
+                        .text_size(px(11.0))
+                        .text_color(theme::fg_dim())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::bg_hover()))
+                        .on_click(move |_, _w, _cx| {
+                            let _ = open::that(release_url_copy.clone());
+                        })
+                        .child("View on GitHub ↗"),
+                )
+                .child(div().flex_grow()) // spacer
+                .child(
+                    div()
+                        .id("update-modal-later")
+                        .px(px(14.0))
+                        .py(px(7.0))
+                        .rounded(px(6.0))
+                        .text_size(px(12.0))
+                        .text_color(theme::fg_dim())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::bg_hover()))
+                        .on_click(cx.listener(|this, _, _w, cx| {
+                            this.update_modal_showing = false;
+                            cx.notify();
+                        }))
+                        .child("Remind me later"),
+                )
+                .child({
+                    let mut btn = div()
+                        .id("update-modal-primary")
+                        .px(px(16.0))
+                        .py(px(7.0))
+                        .rounded(px(6.0))
+                        .bg(rgb(primary_color))
+                        .text_size(px(12.0))
+                        .text_color(rgb(theme::BG))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(primary_label);
+                    if primary_enabled {
+                        btn =
+                            btn.cursor_pointer()
+                                .hover(|s| s.opacity(0.85))
+                                .on_click(cx.listener(|this, _, _w, cx| {
+                                    this.perform_update(cx);
+                                }));
+                    } else {
+                        btn = btn.opacity(0.6);
+                    }
+                    btn
+                }),
+        );
+
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::rgba(0x0A0E14CC))
+            .child(card)
+    }
+
     fn render_invite_share_modal(&self, cx: &mut Context<Self>) -> impl IntoElement {
         // Only rendered when `self.invite_share_modal.is_some()`; caller
         // is responsible for gating.
@@ -10066,6 +11365,10 @@ impl Render for FermiConsole {
             .invite_share_modal
             .is_some()
             .then(|| self.render_invite_share_modal(cx).into_any_element());
+        // Self-update release-notes modal. Gated on both the flag and
+        // presence of a ReleaseInfo so we can't render without data.
+        let update_overlay = (self.update_modal_showing && self.available_update.is_some())
+            .then(|| self.render_update_modal(cx).into_any_element());
 
         div()
             .key_context("FermiConsole")
@@ -10087,6 +11390,9 @@ impl Render for FermiConsole {
             .on_action(cx.listener(Self::on_toggle_fullscreen))
             .on_action(cx.listener(Self::on_reset_cockpit))
             .on_action(cx.listener(Self::on_new_forecast))
+            .on_action(cx.listener(Self::on_check_for_updates))
+            .on_action(cx.listener(Self::on_show_update_modal))
+            .on_action(cx.listener(Self::on_dismiss_update_modal))
             .relative()
             .flex()
             .size_full()
@@ -10130,6 +11436,8 @@ impl Render for FermiConsole {
             .children(resolve_overlay)
             // Pending cascades queue overlay (operator review)
             .children(pending_cascades_overlay)
+            // Self-update modal (release notes + download progress)
+            .children(update_overlay)
             // Toast notification overlay (bottom-right, auto-dismiss)
             .when(self.toast.is_some(), |el| {
                 if let Some((ref msg, icon, color)) = self.toast {
@@ -11169,6 +12477,515 @@ fn render_portfolio_rollup_strip(forecasts: &[PortfolioForecast]) -> impl IntoEl
         .into_any_element()
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Portfolio Risk view (Sprint B)
+//
+// Six inline metrics. All computed client-side from the loaded
+// PortfolioForecast list — no additional API round-trip. Values that
+// are ill-defined (empty book, no resolved rows) render as — so "we
+// don't know yet" is distinguishable from "we know and it's zero".
+//
+//   1. HHI concentration           — Herfindahl on normalised probability mass
+//   2. P(any yes) — independent    — 1 - ∏(1 - pᵢ)
+//   3. P(any yes) — correlated ρ   — approximation with correlation slider
+//   4. Expected book Brier         — Monte Carlo over Bernoulli(pᵢ)
+//   5. Drawdown scenario           — biggest edge resolves against you
+//   6. Joint-tree (top 4)          — 2⁴ outcomes with joint probability
+// ═══════════════════════════════════════════════════════════════════
+
+/// Package of computed risk metrics for a portfolio. Kept separate
+/// from the render fn so unit tests can exercise the math without
+/// pulling in the GPUI surface.
+struct PortfolioRiskMetrics {
+    /// Herfindahl-Hirschman Index on normalised probability shares.
+    /// 1/n = perfectly diversified; 1.0 = one bet dominates.
+    hhi: Option<f64>,
+    n_effective: Option<f64>,
+    /// P(at least one active forecast resolves YES) assuming independence.
+    p_any_yes_indep: Option<f64>,
+    /// Same, adjusted for pairwise correlation ρ via a Frank-style
+    /// bound. ρ = 0 recovers `p_any_yes_indep`; ρ → 1 collapses to
+    /// max(pᵢ); ρ → -1 collapses to min(1, ∑ pᵢ).
+    p_any_yes_corr: Option<f64>,
+    /// Expected Brier over the ACTIVE book, computed via 1000-sample
+    /// Monte Carlo where each active forecast resolves Bernoulli(pᵢ)
+    /// and the score is (pᵢ - outcome)² averaged across the book.
+    expected_brier: Option<f64>,
+    /// Worst-case impact if the largest-edge forecast (biggest
+    /// |Δ-vs-crowd|) resolves opposite to the model. Returns the
+    /// forecast title, its p, its edge, and the Brier cost of being wrong.
+    drawdown: Option<PortfolioDrawdown>,
+    /// Top-4 joint outcome tree. Each entry is a 4-bit outcome pattern
+    /// (bit i = forecast i resolves YES) and the joint probability
+    /// assuming independence.
+    joint_tree: Vec<JointOutcome>,
+    /// Titles that back the joint tree, index-aligned. Rendered as
+    /// column headers above the tree.
+    joint_titles: Vec<String>,
+}
+
+struct PortfolioDrawdown {
+    title: String,
+    model_prob: f64,
+    edge_pp: f64,
+    brier_if_wrong: f64,
+}
+
+struct JointOutcome {
+    /// Bitmask of which forecasts resolve YES. Bit 0 = first title, etc.
+    mask: u8,
+    joint_prob: f64,
+}
+
+fn compute_portfolio_risk(
+    forecasts: &[PortfolioForecast],
+    correlation_rho: f64,
+) -> PortfolioRiskMetrics {
+    let active: Vec<&PortfolioForecast> =
+        forecasts.iter().filter(|f| f.status == "active").collect();
+    let probs: Vec<f64> = active
+        .iter()
+        .filter_map(|f| f.predicted_probability)
+        .collect();
+
+    // HHI on normalised probability shares. When ∑p_i is zero (all
+    // active forecasts pin at 0%), fall back to "we don't know".
+    let (hhi, n_effective) = if probs.is_empty() {
+        (None, None)
+    } else {
+        let total: f64 = probs.iter().sum();
+        if total <= 1e-9 {
+            (None, None)
+        } else {
+            let hhi: f64 = probs.iter().map(|p| (p / total).powi(2)).sum();
+            let n_eff = if hhi > 0.0 { 1.0 / hhi } else { 0.0 };
+            (Some(hhi), Some(n_eff))
+        }
+    };
+
+    // Independent P(any yes) = 1 - ∏(1 - p_i).
+    let p_any_yes_indep = if probs.is_empty() {
+        None
+    } else {
+        let mut prod_no: f64 = 1.0;
+        for &p in &probs {
+            prod_no *= (1.0 - p).max(0.0);
+        }
+        Some((1.0 - prod_no).clamp(0.0, 1.0))
+    };
+
+    // Correlated P(any yes). At ρ = 0 we recover the independent
+    // value. At ρ = 1 the events are perfectly positively correlated
+    // — the union probability collapses to the max single event. We
+    // interpolate linearly between the two bounds for the UI slider.
+    // This is a rough approximation — correct in the limits, honest
+    // about being an approximation in the middle — but useful for
+    // eyeballing "how much does correlation move the number".
+    let p_any_yes_corr = match p_any_yes_indep {
+        Some(indep) => {
+            let max_single = probs.iter().cloned().fold(0.0_f64, f64::max);
+            let sum_probs: f64 = probs.iter().sum();
+            let interp = if correlation_rho >= 0.0 {
+                // Blend indep → max_single as ρ goes 0 → 1
+                indep * (1.0 - correlation_rho) + max_single * correlation_rho
+            } else {
+                // Blend indep → min(1, ∑p) as ρ goes 0 → -1 (anti-corr
+                // pushes toward mutual exclusivity, which raises P(any)
+                // toward the sum of probabilities capped at 1).
+                let anti = sum_probs.min(1.0);
+                indep * (1.0 + correlation_rho) + anti * (-correlation_rho)
+            };
+            Some(interp.clamp(0.0, 1.0))
+        }
+        None => None,
+    };
+
+    // Expected book Brier over active forecasts. 1000-sample MC where
+    // each forecast independently resolves Bernoulli(p_i). Reports the
+    // mean per-forecast Brier score (comparable to the /my-stats one).
+    // We use a simple xorshift for determinism across renders — the
+    // number should be stable per data snapshot.
+    let expected_brier = if probs.is_empty() {
+        None
+    } else {
+        const N_SAMPLES: usize = 1000;
+        let mut rng_state: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = || {
+            rng_state ^= rng_state << 13;
+            rng_state ^= rng_state >> 7;
+            rng_state ^= rng_state << 17;
+            // Convert to [0, 1).
+            ((rng_state >> 11) as f64) / ((1u64 << 53) as f64)
+        };
+        let mut total_brier = 0.0;
+        for _ in 0..N_SAMPLES {
+            let mut brier_sum = 0.0;
+            for &p in &probs {
+                let u = next();
+                let outcome = if u < p { 1.0 } else { 0.0 };
+                brier_sum += (p - outcome).powi(2);
+            }
+            total_brier += brier_sum / probs.len() as f64;
+        }
+        Some(total_brier / N_SAMPLES as f64)
+    };
+
+    // Drawdown — what if your biggest edge is wrong? Find the active
+    // forecast with the largest absolute divergence from the crowd,
+    // then compute the Brier cost if the outcome comes in opposite
+    // to the model.
+    let drawdown = active
+        .iter()
+        .filter(|f| f.pm_divergence_pp.is_some() && f.predicted_probability.is_some())
+        .max_by(|a, b| {
+            let ad = a.pm_divergence_pp.map(f64::abs).unwrap_or(0.0);
+            let bd = b.pm_divergence_pp.map(f64::abs).unwrap_or(0.0);
+            ad.partial_cmp(&bd).unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|f| {
+            let p = f.predicted_probability.unwrap_or(0.5);
+            let edge = f.pm_divergence_pp.unwrap_or(0.0);
+            // If model says p = 0.60 and edge is +5pp above crowd, the
+            // "model wrong" outcome is where the crowd was right —
+            // i.e. outcome = 0 (crowd expected NO). Brier cost of that
+            // is (p - 0)² = p². Symmetric for negative edge.
+            let outcome_if_crowd_right: f64 = if edge >= 0.0 { 0.0 } else { 1.0 };
+            let brier_if_wrong = (p - outcome_if_crowd_right).powi(2);
+            PortfolioDrawdown {
+                title: truncate(&f.question_text, 50),
+                model_prob: p,
+                edge_pp: edge,
+                brier_if_wrong,
+            }
+        });
+
+    // Joint tree — top 4 highest-conviction (by |p - 0.5|, i.e.
+    // strongest deviations from coin flip) so the tree captures the
+    // book's most opinionated positions. All 2⁴ = 16 outcomes; if the
+    // book has <4 active forecasts we tile to whatever's there.
+    let mut top: Vec<&PortfolioForecast> = active.iter().cloned().collect();
+    top.sort_by(|a, b| {
+        let ac = (a.predicted_probability.unwrap_or(0.5) - 0.5).abs();
+        let bc = (b.predicted_probability.unwrap_or(0.5) - 0.5).abs();
+        bc.partial_cmp(&ac).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let top: Vec<&PortfolioForecast> = top.into_iter().take(4).collect();
+    let joint_titles: Vec<String> = top.iter().map(|f| truncate(&f.question_text, 22)).collect();
+    let joint_probs: Vec<f64> = top
+        .iter()
+        .map(|f| f.predicted_probability.unwrap_or(0.5))
+        .collect();
+    let n = joint_probs.len();
+    let mut joint_tree: Vec<JointOutcome> = Vec::new();
+    if n > 0 {
+        for mask in 0u8..(1 << n) {
+            let mut prob = 1.0;
+            for (i, &p) in joint_probs.iter().enumerate() {
+                let yes = (mask >> i) & 1 == 1;
+                prob *= if yes { p } else { 1.0 - p };
+            }
+            joint_tree.push(JointOutcome {
+                mask,
+                joint_prob: prob,
+            });
+        }
+        // Sort by joint probability descending so the most likely
+        // scenario reads first.
+        joint_tree.sort_by(|a, b| {
+            b.joint_prob
+                .partial_cmp(&a.joint_prob)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
+
+    PortfolioRiskMetrics {
+        hhi,
+        n_effective,
+        p_any_yes_indep,
+        p_any_yes_corr,
+        expected_brier,
+        drawdown,
+        joint_tree,
+        joint_titles,
+    }
+}
+
+/// Render the Portfolio risk-view band. All six metrics inline, in a
+/// three-column responsive layout that mirrors the HUD's visual
+/// grammar (big value + label + one-line context). Includes an
+/// inline correlation slider that recomputes `p_any_yes_corr` and
+/// visually links the two P(any) numbers so the operator can eyeball
+/// how sensitive the union is to their assumption about correlation.
+fn render_portfolio_risk_view(
+    forecasts: &[PortfolioForecast],
+    correlation_rho: f64,
+    on_rho_change: impl Fn(f64, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let m = compute_portfolio_risk(forecasts, correlation_rho);
+    let dash = || "—".to_string();
+
+    // Metric tile helper — same visual grammar as the HUD.
+    let tile = |value: String, label: &'static str, sub: String, color: u32| {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
+            .px(px(12.0))
+            .py(px(8.0))
+            .min_w(px(150.0))
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(theme::fg_faint())
+            .bg(theme::bg_elevated())
+            .child(
+                div()
+                    .text_size(px(18.0))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(rgb(color))
+                    .child(value),
+            )
+            .child(
+                div()
+                    .text_size(px(9.0))
+                    .text_color(theme::fg_faint())
+                    .child(label.to_string()),
+            )
+            .child(
+                div()
+                    .text_size(px(9.0))
+                    .text_color(theme::fg_dim())
+                    .child(sub),
+            )
+    };
+
+    // Convert HHI to a plain-English concentration label.
+    let (hhi_label, hhi_color) = match m.hhi {
+        Some(h) if h >= 0.6 => ("very concentrated", theme::ORANGE),
+        Some(h) if h >= 0.3 => ("concentrated", theme::GOLD),
+        Some(h) if h >= 0.15 => ("balanced", theme::CYAN),
+        Some(_) => ("well-diversified", theme::GREEN),
+        None => ("no data", theme::FG_DIM),
+    };
+
+    // Header row + tiles.
+    let mut header_row = div().flex().items_center().justify_between().child(
+        div()
+            .text_size(px(11.0))
+            .text_color(theme::fg_faint())
+            .font_weight(FontWeight::SEMIBOLD)
+            .child("RISK VIEW"),
+    );
+    // Inline correlation slider (rendered as chips: −0.5 / 0 / 0.3 / 0.6 / 0.9).
+    let rho_stops: &[f64] = &[-0.5, 0.0, 0.3, 0.6, 0.9];
+    let mut slider = div().flex().items_center().gap(px(4.0)).child(
+        div()
+            .text_size(px(9.0))
+            .text_color(theme::fg_faint())
+            .child(format!("ρ = {:.1}", correlation_rho)),
+    );
+    let on_rho = Arc::new(on_rho_change);
+    for &stop in rho_stops {
+        let is_on = (stop - correlation_rho).abs() < 1e-3;
+        let on_click = on_rho.clone();
+        slider = slider.child(
+            div()
+                .id(SharedString::from(
+                    format!("rho-chip-{:.1}", stop)
+                        .replace('.', "_")
+                        .replace('-', "n"),
+                ))
+                .px(px(6.0))
+                .py(px(1.0))
+                .rounded(px(4.0))
+                .border_1()
+                .border_color(if is_on {
+                    theme::cyan()
+                } else {
+                    theme::fg_faint()
+                })
+                .text_size(px(9.0))
+                .text_color(if is_on {
+                    theme::cyan()
+                } else {
+                    theme::fg_dim()
+                })
+                .cursor_pointer()
+                .hover(|s| s.bg(theme::bg_hover()))
+                .on_click(move |_ev, w, cx| on_click(stop, w, cx))
+                .child(format!("{:.1}", stop)),
+        );
+    }
+    header_row = header_row.child(slider);
+
+    // Tiles grid — three tiles per row.
+    let tiles_row_1 = div()
+        .flex()
+        .flex_wrap()
+        .gap(px(8.0))
+        .child(tile(
+            m.hhi.map(|h| format!("{:.2}", h)).unwrap_or_else(dash),
+            "CONCENTRATION",
+            format!(
+                "{} · n_eff {}",
+                hhi_label,
+                m.n_effective
+                    .map(|n| format!("{:.1}", n))
+                    .unwrap_or_else(dash),
+            ),
+            hhi_color,
+        ))
+        .child(tile(
+            m.p_any_yes_indep
+                .map(|p| format!("{:.1}%", p * 100.0))
+                .unwrap_or_else(dash),
+            "P(ANY YES) IF INDEPENDENT",
+            "1 - ∏(1 - pᵢ)".into(),
+            theme::CYAN,
+        ))
+        .child(tile(
+            m.p_any_yes_corr
+                .map(|p| format!("{:.1}%", p * 100.0))
+                .unwrap_or_else(dash),
+            "P(ANY YES) AT ρ",
+            format!("correlation {:.2}", correlation_rho),
+            if correlation_rho.abs() >= 0.1 {
+                theme::GOLD
+            } else {
+                theme::FG_DIM
+            },
+        ));
+
+    let tiles_row_2 = div()
+        .flex()
+        .flex_wrap()
+        .gap(px(8.0))
+        .child(tile(
+            m.expected_brier
+                .map(|b| format!("{:.3}", b))
+                .unwrap_or_else(dash),
+            "EXPECTED BRIER",
+            "MC over active book (n=1000)".into(),
+            match m.expected_brier {
+                Some(b) if b <= 0.15 => theme::GREEN,
+                Some(b) if b <= 0.25 => theme::CYAN,
+                Some(b) if b <= 0.35 => theme::GOLD,
+                Some(_) => theme::ORANGE,
+                None => theme::FG_DIM,
+            },
+        ))
+        .child(tile(
+            m.drawdown
+                .as_ref()
+                .map(|d| format!("{:.3}", d.brier_if_wrong))
+                .unwrap_or_else(dash),
+            "DRAWDOWN IF BIG EDGE WRONG",
+            m.drawdown
+                .as_ref()
+                .map(|d| {
+                    format!(
+                        "{} — model {:.0}%, edge {:+.1}pp",
+                        d.title,
+                        d.model_prob * 100.0,
+                        d.edge_pp
+                    )
+                })
+                .unwrap_or_else(|| "no linked markets".into()),
+            theme::ORANGE,
+        ))
+        .child(tile(
+            format!("{}", m.joint_tree.len()),
+            "JOINT SCENARIOS (TOP 4)",
+            format!("see tree below →"),
+            theme::PURPLE,
+        ));
+
+    // Joint outcome tree — up to 8 rows (half the 2⁴ space, top by
+    // joint probability) with a per-forecast YES/NO bit row.
+    let tree_rows: Vec<AnyElement> = if m.joint_tree.is_empty() {
+        vec![]
+    } else {
+        let titles = m.joint_titles.clone();
+        let n_titles = titles.len();
+        // Header row for the tree columns.
+        let mut header = div()
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .px(px(4.0))
+            .py(px(2.0))
+            .child(
+                div()
+                    .w(px(60.0))
+                    .text_size(px(9.0))
+                    .text_color(theme::fg_faint())
+                    .child("P(joint)"),
+            );
+        for t in &titles {
+            header = header.child(
+                div()
+                    .w(px(72.0))
+                    .text_size(px(9.0))
+                    .text_color(theme::fg_faint())
+                    .child(t.clone()),
+            );
+        }
+        let mut rows: Vec<AnyElement> = vec![header.into_any_element()];
+        for outcome in m.joint_tree.iter().take(8) {
+            let mut row = div()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .px(px(4.0))
+                .py(px(2.0))
+                .child(
+                    div()
+                        .w(px(60.0))
+                        .text_size(px(10.0))
+                        .text_color(theme::cyan())
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(format!("{:.1}%", outcome.joint_prob * 100.0)),
+                );
+            for i in 0..n_titles {
+                let yes = (outcome.mask >> i) & 1 == 1;
+                row = row.child(
+                    div()
+                        .w(px(72.0))
+                        .text_size(px(9.0))
+                        .text_color(if yes { theme::green() } else { theme::red() })
+                        .child(if yes { "YES" } else { "NO" }),
+                );
+            }
+            rows.push(row.into_any_element());
+        }
+        rows
+    };
+
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .px(px(14.0))
+        .py(px(10.0))
+        .border_b_1()
+        .border_color(theme::fg_faint())
+        .child(header_row)
+        .child(tiles_row_1)
+        .child(tiles_row_2)
+        .when(!tree_rows.is_empty(), |el| {
+            el.child(
+                div()
+                    .mt(px(6.0))
+                    .flex()
+                    .flex_col()
+                    .rounded(px(6.0))
+                    .border_1()
+                    .border_color(theme::fg_faint())
+                    .bg(theme::bg_elevated())
+                    .children(tree_rows),
+            )
+        })
+}
+
 fn render_portfolio_stats_panel(stats: &PortfolioStats) -> impl IntoElement {
     let s = &stats.stats;
     let c = &stats.calibration;
@@ -11459,7 +13276,37 @@ fn urlish_decode(s: &str) -> String {
     result
 }
 
-// ─── Entry Point ──────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Render a GitHub-style ISO-8601 timestamp as a compact relative
+/// phrase ("2h ago", "3d ago"). Falls back to the raw string when
+/// parsing fails so we never crash on an unexpected format.
+fn pretty_timestamp(iso: &str) -> String {
+    if iso.is_empty() {
+        return "just now".to_string();
+    }
+    match chrono::DateTime::parse_from_rfc3339(iso) {
+        Ok(dt) => {
+            let now = chrono::Utc::now();
+            let diff = now.signed_duration_since(dt.with_timezone(&chrono::Utc));
+            let secs = diff.num_seconds().max(0);
+            if secs < 60 {
+                "just now".to_string()
+            } else if secs < 3600 {
+                format!("{}m ago", secs / 60)
+            } else if secs < 86_400 {
+                format!("{}h ago", secs / 3600)
+            } else if secs < 86_400 * 30 {
+                format!("{}d ago", secs / 86_400)
+            } else {
+                dt.format("%Y-%m-%d").to_string()
+            }
+        }
+        Err(_) => iso.to_string(),
+    }
+}
+
+// ─── Entry Point ──────────────────────────────────────────────────────────
 
 fn main() {
     env_logger::init();

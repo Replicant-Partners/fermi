@@ -118,6 +118,25 @@ fermi/
 └── target/                  # Build output
 ```
 
+## Updates
+
+After the first install, the console phones home to GitHub Releases
+on every launch. When a newer build is available:
+
+- An **⬆ Update to vX.Y.Z** badge appears in the sidebar footer.
+- **Help → Release Notes…** opens a modal with the changelog.
+- Clicking **Update & Restart** downloads the new binary, atomically
+  swaps it in, and re-execs the app.
+
+Manual check: **Help → Check for Updates…**.
+
+Opt out (offline demos): `export FERMI_DISABLE_UPDATE_CHECK=1`.
+
+Staging channel: `export FERMI_UPDATE_REPO=your-fork/fermi` before launch.
+
+Build + publish flow (for maintainers): see
+`docs/RELEASE_NOTES_TEMPLATE.md`.
+
 ## More Info
 
 - See `crates/fermi-console/README.md` for detailed architecture
