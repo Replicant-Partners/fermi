@@ -1,8 +1,8 @@
 //! HTML page-serving handlers.
 
 use axum::{
-    http::{header, StatusCode},
-    response::Html,
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::{Html, IntoResponse, Response},
 };
 
 // ─── Fallback (404) ────────────────────────────────────────────────
@@ -77,6 +77,67 @@ pub async fn catalogue() -> Html<String> {
         }
     };
     Html(html)
+}
+
+// ─── Fermi Console installer landing (Bar A) ───────────────────
+//
+// `/fermi-console/install`    → friendly HTML page with a big Copy button.
+// `/fermi-console/install.sh` → the actual bash script served as text/plain
+//                                so `curl -fsSL .../install.sh | bash` works,
+//                                AND cautious testers can preview it in a
+//                                browser tab before running.
+//
+// The script is `include_str!`'d rather than read from disk at request
+// time. Reason: the Railway Dockerfile deliberately doesn't COPY the
+// `scripts/` tree into the runtime image, so a disk-based serve would
+// 404 in production. Baking the script into the binary means the
+// released api-server always serves the script that shipped with it.
+// Single source of truth, no drift, no filesystem dependency.
+const INSTALL_SCRIPT: &str = include_str!("../../scripts/install-fermi-console.sh");
+
+/// Serve the friendly install landing page. All the client-side logic
+/// (copy button, OS sniffing, host substitution) lives inside the
+/// template; this handler just streams the file.
+pub async fn install_page() -> Html<String> {
+    let html = match std::fs::read_to_string("templates/install.html") {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Error loading templates/install.html: {}", e);
+            // Graceful fallback — if the template is missing we still
+            // want the tester to be able to get moving, so surface the
+            // raw one-liner.
+            format!(
+                "<h1>Install Fermi Console</h1>\n\
+                 <p>Run this in a Linux terminal:</p>\n\
+                 <pre>curl -fsSL https://raw.githubusercontent.com/Replicant-Partners/\
+                 fermi/main/scripts/install-fermi-console.sh | bash</pre>\n\
+                 <p>(template load failed: {})</p>",
+                e
+            )
+        }
+    };
+    Html(html)
+}
+
+/// Serve the install script as `text/plain` so browsers show it as
+/// source (letting cautious testers eyeball it) and `curl | bash`
+/// treats it as a script.
+///
+/// We deliberately do NOT set `Content-Disposition: attachment` — the
+/// happy path is piping into bash, not saving a file.
+pub async fn install_script() -> Response {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
+    // Short cache: script changes are rare but we want fixes to
+    // propagate quickly when they do land.
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=300"),
+    );
+    (StatusCode::OK, headers, INSTALL_SCRIPT).into_response()
 }
 
 pub async fn agent_detail() -> Html<String> {

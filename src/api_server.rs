@@ -1561,6 +1561,16 @@ async fn main() {
         .route("/", get(handlers::pages::landing))
         .route("/aspiration", get(handlers::pages::aspiration))
         .route("/catalogue", get(handlers::pages::catalogue))
+        // Fermi Console installer — the URL you send to non-technical
+        // testers. See handlers::pages::install_page for the shape.
+        // The script sibling is served from the same prefix so the
+        // `curl -fsSL <host>/fermi-console/install.sh | bash` snippet
+        // on the landing page resolves against a stable path.
+        .route("/fermi-console/install", get(handlers::pages::install_page))
+        .route(
+            "/fermi-console/install.sh",
+            get(handlers::pages::install_script),
+        )
         .route("/apps", get(handlers::pages::apps_catalogue_view))
         .route("/apps/:slug", get(handlers::pages::app_detail_view))
         .route("/docs", get(handlers::pages::docs_view))

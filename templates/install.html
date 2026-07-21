@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en" class="theme-hasui">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Install Fermi Console</title>
+    <meta
+      name="description"
+      content="One-line install for the Fermi Console — probabilistic forecasting on Linux."
+    />
+    <link rel="stylesheet" href="/static/css/variables.css" />
+    <link rel="stylesheet" href="/static/css/common.css" />
+    <style>
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
+        line-height: 1.6;
+        margin: 0;
+      }
+
+      .site-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 40px;
+        border-bottom: 1px solid var(--bg2);
+        background: var(--bg0);
+      }
+      .site-header .logo {
+        color: var(--fg0);
+        text-decoration: none;
+        font-size: 1.1em;
+        font-weight: 500;
+        letter-spacing: 0.05em;
+      }
+
+      .wrap {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 80px 24px 120px;
+      }
+
+      h1 {
+        font-size: 2em;
+        font-weight: 300;
+        color: var(--fg0);
+        margin: 0 0 12px;
+        letter-spacing: -0.01em;
+      }
+      h1 em {
+        font-style: normal;
+        color: var(--yellow);
+      }
+      .subtitle {
+        color: var(--fg3);
+        font-size: 1.05em;
+        margin-bottom: 48px;
+      }
+
+      /* Numbered steps — the whole point of this page. */
+      ol.steps {
+        list-style: none;
+        counter-reset: step;
+        padding: 0;
+        margin: 0;
+      }
+      ol.steps > li {
+        counter-increment: step;
+        position: relative;
+        padding: 0 0 40px 56px;
+        border-left: 1px dashed var(--bg2);
+        margin-left: 20px;
+      }
+      ol.steps > li:last-child {
+        border-left: 1px dashed transparent;
+        padding-bottom: 0;
+      }
+      ol.steps > li::before {
+        content: counter(step);
+        position: absolute;
+        left: -20px;
+        top: -4px;
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        background: var(--bg1);
+        color: var(--yellow);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 500;
+        font-size: 1em;
+        border: 1px solid var(--bg2);
+      }
+      ol.steps > li h2 {
+        font-size: 1.15em;
+        font-weight: 500;
+        color: var(--fg0);
+        margin: 0 0 8px;
+      }
+      ol.steps > li p {
+        color: var(--fg2);
+        margin: 0 0 16px;
+        font-size: 0.95em;
+      }
+
+      /* Copy-command box — the star of the show. */
+      .cmdbox {
+        position: relative;
+        background: var(--bg0-hard);
+        border: 1px solid var(--bg2);
+        border-radius: 4px;
+        padding: 16px 96px 16px 16px;
+        font-family:
+          "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
+        font-size: 0.95em;
+        color: var(--fg1);
+        overflow-x: auto;
+        white-space: nowrap;
+        line-height: 1.4;
+      }
+      .cmdbox .prompt {
+        color: var(--gray);
+        user-select: none;
+      }
+
+      .copy-btn {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        bottom: 8px;
+        padding: 0 16px;
+        background: var(--yellow);
+        color: var(--bg0-hard);
+        border: none;
+        font-weight: 500;
+        font-size: 0.85em;
+        letter-spacing: 0.03em;
+        cursor: pointer;
+        border-radius: 3px;
+        transition: filter 0.15s;
+        font-family: inherit;
+      }
+      .copy-btn:hover {
+        filter: brightness(1.1);
+      }
+      .copy-btn.copied {
+        background: var(--green);
+      }
+
+      .callout {
+        background: var(--bg1);
+        border-left: 3px solid var(--yellow);
+        padding: 12px 16px;
+        margin: 24px 0;
+        color: var(--fg2);
+        font-size: 0.9em;
+        border-radius: 0 4px 4px 0;
+      }
+      .callout strong {
+        color: var(--fg0);
+        font-weight: 500;
+      }
+
+      details {
+        margin-top: 12px;
+        color: var(--fg3);
+        font-size: 0.9em;
+      }
+      details summary {
+        cursor: pointer;
+        color: var(--fg3);
+        padding: 6px 0;
+      }
+      details summary:hover {
+        color: var(--yellow);
+      }
+      details .body {
+        padding: 8px 0 4px;
+      }
+
+      code.inline {
+        background: var(--bg1);
+        padding: 1px 6px;
+        border-radius: 3px;
+        font-family:
+          "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
+        font-size: 0.9em;
+        color: var(--fg1);
+      }
+
+      .footer-links {
+        margin-top: 48px;
+        padding-top: 24px;
+        border-top: 1px solid var(--bg2);
+        color: var(--fg3);
+        font-size: 0.85em;
+        display: flex;
+        gap: 24px;
+        flex-wrap: wrap;
+      }
+      .footer-links a {
+        color: var(--fg3);
+        text-decoration: none;
+      }
+      .footer-links a:hover {
+        color: var(--yellow);
+      }
+
+      /* OS-mismatch banner, hidden by default */
+      #os-warn {
+        display: none;
+        background: var(--bg1);
+        border-left: 3px solid var(--orange);
+        padding: 14px 18px;
+        margin-bottom: 32px;
+        color: var(--fg1);
+        font-size: 0.95em;
+        border-radius: 0 4px 4px 0;
+      }
+      #os-warn strong {
+        color: var(--orange);
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <a href="/" class="logo">Fermi</a>
+      <nav>
+        <a
+          href="https://github.com/Replicant-Partners/fermi"
+          style="color: var(--fg3); text-decoration: none; font-size: 0.9em"
+          >GitHub ↗</a
+        >
+      </nav>
+    </header>
+
+    <main class="wrap">
+      <h1>Install <em>Fermi Console</em></h1>
+      <p class="subtitle">
+        Native desktop app for probabilistic forecasting with AI agents. Three
+        steps, about two minutes.
+      </p>
+
+      <!-- Non-Linux users see this instead of the terminal command. -->
+      <div id="os-warn">
+        <strong>Heads-up:</strong> pre-built binaries are Linux only right now.
+        On macOS / Windows you'll need to build from source — see the
+        <a
+          href="https://github.com/Replicant-Partners/fermi/blob/main/FERMI_CONSOLE.md"
+          style="color: var(--yellow)"
+          >build instructions</a
+        >.
+      </div>
+
+      <ol class="steps">
+        <li>
+          <h2>Open Terminal</h2>
+          <p>
+            On Ubuntu / Debian / Pop!_OS: press
+            <code class="inline">Ctrl + Alt + T</code>. On other distros, launch
+            your usual terminal app.
+          </p>
+        </li>
+
+        <li>
+          <h2>Paste this command and press Enter</h2>
+          <p>
+            It installs system libraries, downloads the latest build, and puts
+            <code class="inline">fermi-console</code> in
+            <code class="inline">~/.local/bin</code>.
+          </p>
+          <div class="cmdbox" id="cmdbox">
+            <span class="prompt">$ </span
+            ><span id="cmd"
+              >curl -fsSL https://__HOST__/fermi-console/install.sh | bash</span
+            >
+            <button
+              type="button"
+              class="copy-btn"
+              id="copy-btn"
+              aria-label="Copy command to clipboard"
+            >
+              Copy
+            </button>
+          </div>
+          <div class="callout">
+            <strong>What this does:</strong> reads a small script from this site
+            (you can
+            <a href="/fermi-console/install.sh" style="color: var(--yellow)"
+              >preview it here</a
+            >) that runs <code class="inline">apt-get install</code> for a few
+            graphics libraries, then downloads the binary from GitHub Releases.
+            It asks for your <em>sudo password</em> once, to install the
+            libraries.
+          </div>
+          <details>
+            <summary>What if I don't want to pipe curl into bash?</summary>
+            <div class="body">
+              Fair. Save it first, read it, then run it:
+              <div class="cmdbox" style="margin-top: 12px">
+                <span class="prompt">$ </span>curl -fsSL
+                https://__HOST__/fermi-console/install.sh -o install.sh
+                &amp;&amp; less install.sh &amp;&amp; bash install.sh
+              </div>
+            </div>
+          </details>
+        </li>
+
+        <li>
+          <h2>Launch it</h2>
+          <p>In the same terminal, type:</p>
+          <div class="cmdbox"><span class="prompt">$ </span>fermi-console</div>
+          <p style="margin-top: 16px">
+            A window will appear. Sign in on the Dashboard with Google or
+            GitHub, and you're done. Future updates are handled in-app under
+            <strong>Help → Check for Updates</strong>.
+          </p>
+        </li>
+      </ol>
+
+      <div class="footer-links">
+        <a href="https://github.com/Replicant-Partners/fermi/releases"
+          >Release notes</a
+        >
+        <a
+          href="https://github.com/Replicant-Partners/fermi/blob/main/FERMI_CONSOLE.md"
+          >Full docs</a
+        >
+        <a href="https://github.com/Replicant-Partners/fermi/issues/new"
+          >Report a problem</a
+        >
+      </div>
+    </main>
+
+    <script>
+      // Rewrite __HOST__ placeholders to the current origin so the
+      // command works whether we're on the production domain, a
+      // preview URL, or localhost during dev.
+      (function () {
+        var host = window.location.host;
+        document.querySelectorAll(".cmdbox").forEach(function (box) {
+          box.innerHTML = box.innerHTML.replace(/__HOST__/g, host);
+        });
+
+        // OS gate: if we can tell the visitor is not on Linux, show
+        // the banner (they still get the command in case they want it,
+        // but at least they're warned).
+        var ua = (navigator.userAgent || "").toLowerCase();
+        var isLinux =
+          ua.indexOf("linux") !== -1 && ua.indexOf("android") === -1;
+        if (!isLinux) {
+          document.getElementById("os-warn").style.display = "block";
+        }
+      })();
+
+      // Copy-to-clipboard on the main command.
+      (function () {
+        var btn = document.getElementById("copy-btn");
+        var cmdEl = document.getElementById("cmd");
+        if (!btn || !cmdEl) return;
+
+        btn.addEventListener("click", function () {
+          var text = cmdEl.textContent.trim();
+          // Rewrite placeholder if the script above hasn't run yet
+          // (paranoia — order of DOMContentLoaded is fine, but this
+          // guards against future refactors).
+          text = text.replace(/__HOST__/g, window.location.host);
+
+          var done = function () {
+            var original = btn.textContent;
+            btn.textContent = "Copied ✓";
+            btn.classList.add("copied");
+            setTimeout(function () {
+              btn.textContent = original;
+              btn.classList.remove("copied");
+            }, 1600);
+          };
+
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(done, function () {
+              // Fallback for insecure contexts / older browsers.
+              fallbackCopy(text, done);
+            });
+          } else {
+            fallbackCopy(text, done);
+          }
+        });
+
+        function fallbackCopy(text, done) {
+          var ta = document.createElement("textarea");
+          ta.value = text;
+          ta.setAttribute("readonly", "");
+          ta.style.position = "absolute";
+          ta.style.left = "-9999px";
+          document.body.appendChild(ta);
+          ta.select();
+          try {
+            document.execCommand("copy");
+          } catch (_) {}
+          document.body.removeChild(ta);
+          done();
+        }
+      })();
+    </script>
+  </body>
+</html>

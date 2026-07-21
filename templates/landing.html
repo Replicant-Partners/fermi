@@ -439,6 +439,49 @@
           >Create an Agent</a
         >
       </div>
+      <!-- Fermi Console tester funnel. Distinct from the catalogue CTAs
+           because this is a separate product (desktop app) with its own
+           audience (beta testers). The "BETA" chip signals that.
+           Linux-only for now — the install page itself handles OS gating. -->
+      <div style="margin-top: 20px">
+        <a
+          href="/fermi-console/install"
+          style="
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 20px;
+            border: 1px dashed var(--bg3);
+            color: var(--fg2);
+            text-decoration: none;
+            font-size: 0.9em;
+            letter-spacing: 0.02em;
+            transition: all 0.2s;
+          "
+          onmouseover="
+            this.style.borderColor = 'var(--yellow)';
+            this.style.color = 'var(--yellow)';
+          "
+          onmouseout="
+            this.style.borderColor = 'var(--bg3)';
+            this.style.color = 'var(--fg2)';
+          "
+        >
+          <span
+            style="
+              font-size: 0.7em;
+              background: var(--yellow);
+              color: var(--bg0-hard);
+              padding: 2px 6px;
+              font-weight: 600;
+              letter-spacing: 0.08em;
+            "
+            >BETA</span
+          >
+          Install <strong>Fermi Console</strong> — desktop forecasting workspace
+          <span style="color: var(--gray); font-size: 0.85em">(Linux)</span>
+        </a>
+      </div>
       <div
         id="waitlist-form"
         style="

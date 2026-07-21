@@ -424,6 +424,13 @@ struct FermiConsole {
     agent_cards: Vec<JsonValue>,
     agents_loading: bool,
     agent_search: String,
+    /// Marketplace tier filter chip. "all" | "popular" | "established"
+    /// | "rising" | "fresh". Backs the Agent Fleet's tier chips.
+    /// Sprint C.
+    agent_marketplace_tier: String,
+    /// Marketplace sort mode. "score" (default) | "cost" | "executions"
+    /// | "success" | "contribution". Sprint C.
+    agent_marketplace_sort: String,
 
     // Leaderboard data (from /api/leaderboard)
     leaderboard: Vec<LeaderboardEntry>,
@@ -752,6 +759,8 @@ impl FermiConsole {
             agent_cards: Vec::new(),
             agents_loading: false,
             agent_search: String::new(),
+            agent_marketplace_tier: "all".into(),
+            agent_marketplace_sort: "score".into(),
             leaderboard: Vec::new(),
             leaderboard_loading: false,
             local_forecasts: Vec::new(),
@@ -8571,7 +8580,22 @@ impl FermiConsole {
                         }),
                 )
             })
-            // ── Agent cards ───────────────────────────────────────────
+            // ── Marketplace (Sprint C) ────────────────────────────────────────────
+            .child(self.render_agent_marketplace(&fermi_agents, &agent_runs, cx))
+            // ── Session agent cards (per-forecast run status) ────────────
+            .when(!agent_runs.is_empty(), |el| {
+                el.child(
+                    div()
+                        .px(px(16.0))
+                        .py(px(8.0))
+                        .border_t_1()
+                        .border_color(theme::fg_faint())
+                        .text_size(px(11.0))
+                        .text_color(theme::fg_faint())
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child("THIS SESSION"),
+                )
+            })
             .child(
                 div()
                     .flex()
@@ -8611,9 +8635,381 @@ impl FermiConsole {
             )
     }
 
-    // ── Leaderboard Panel ─────────────────────────────────────────────────
+    // ── Agent marketplace (Sprint C) ──────────────────────────────────────
+    //
+    // Ranked cards with cost / success / usage / contribution stats and
+    // a Hire button that assigns the agent in the currently-open
+    // cockpit forecast. Rendered above the per-session status list.
 
-    // ── Teams panel (Spec 24 §3.5.4) ───────────────────────────────────
+    fn render_agent_marketplace(
+        &self,
+        local_cards: &[&AgentCard],
+        session_runs: &[cockpit::AgentExecution],
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let mut entries = build_agent_marketplace(local_cards, &self.agent_cards, session_runs);
+        sort_marketplace(&mut entries, &self.agent_marketplace_sort);
+
+        // Apply tier filter.
+        if self.agent_marketplace_tier != "all" {
+            let want = self.agent_marketplace_tier.clone();
+            entries.retain(|e| e.tier == want);
+        }
+
+        // Tier chip row.
+        let tier_defs: &[(&str, &str)] = &[
+            ("all", "All"),
+            ("popular", "🏆 Popular"),
+            ("established", "◉ Established"),
+            ("rising", "▲ Rising"),
+            ("fresh", "✨ Fresh"),
+        ];
+        let mut tier_row = div().flex().flex_wrap().gap(px(6.0)).child(
+            div()
+                .text_size(px(9.0))
+                .text_color(theme::fg_faint())
+                .child("TIER:"),
+        );
+        for (key, label) in tier_defs {
+            let is_on = *key == self.agent_marketplace_tier;
+            let key_owned = (*key).to_string();
+            tier_row = tier_row.child(
+                div()
+                    .id(SharedString::from(format!("mkt-tier-{}", key)))
+                    .px(px(8.0))
+                    .py(px(2.0))
+                    .rounded(px(10.0))
+                    .border_1()
+                    .border_color(if is_on {
+                        theme::cyan()
+                    } else {
+                        theme::fg_faint()
+                    })
+                    .bg(if is_on {
+                        theme::bg_active()
+                    } else {
+                        theme::bg_elevated()
+                    })
+                    .text_size(px(10.0))
+                    .text_color(if is_on {
+                        theme::cyan()
+                    } else {
+                        theme::fg_dim()
+                    })
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::bg_hover()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.agent_marketplace_tier = key_owned.clone();
+                        cx.notify();
+                    }))
+                    .child(label.to_string()),
+            );
+        }
+
+        // Sort chip row.
+        let sort_defs: &[(&str, &str)] = &[
+            ("score", "Ranked"),
+            ("contribution", "Best contribution"),
+            ("cost", "Cheapest"),
+            ("success", "Most reliable"),
+            ("executions", "Most used"),
+        ];
+        let mut sort_row = div().flex().flex_wrap().gap(px(6.0)).child(
+            div()
+                .text_size(px(9.0))
+                .text_color(theme::fg_faint())
+                .child("SORT:"),
+        );
+        for (key, label) in sort_defs {
+            let is_on = *key == self.agent_marketplace_sort;
+            let key_owned = (*key).to_string();
+            sort_row = sort_row.child(
+                div()
+                    .id(SharedString::from(format!("mkt-sort-{}", key)))
+                    .px(px(8.0))
+                    .py(px(2.0))
+                    .rounded(px(10.0))
+                    .border_1()
+                    .border_color(if is_on {
+                        theme::cyan()
+                    } else {
+                        theme::fg_faint()
+                    })
+                    .bg(if is_on {
+                        theme::bg_active()
+                    } else {
+                        theme::bg_elevated()
+                    })
+                    .text_size(px(10.0))
+                    .text_color(if is_on {
+                        theme::cyan()
+                    } else {
+                        theme::fg_dim()
+                    })
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::bg_hover()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.agent_marketplace_sort = key_owned.clone();
+                        cx.notify();
+                    }))
+                    .child(label.to_string()),
+            );
+        }
+
+        // Card list.
+        let cards = div().flex().flex_col().gap(px(8.0)).children(
+            entries
+                .into_iter()
+                .enumerate()
+                .map(|(rank, e)| self.render_marketplace_card(rank + 1, &e, cx)),
+        );
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .px(px(16.0))
+            .py(px(12.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .child(
+                        div()
+                            .text_size(px(13.0))
+                            .text_color(theme::fg())
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("AGENT MARKETPLACE"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_faint())
+                            .child("hire agents to research your drivers"),
+                    ),
+            )
+            .child(tier_row)
+            .child(sort_row)
+            .child(cards)
+    }
+
+    fn render_marketplace_card(
+        &self,
+        rank: usize,
+        e: &AgentMarketplaceEntry,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        // Cost tag.
+        let cost_str = e
+            .avg_cost_per_run
+            .map(|c| format!("${:.3}/run", c))
+            .unwrap_or_else(|| "cost n/a".into());
+        let cost_color = match e.avg_cost_per_run {
+            Some(c) if c <= 0.05 => theme::GREEN,
+            Some(c) if c <= 0.15 => theme::CYAN,
+            Some(c) if c <= 0.30 => theme::GOLD,
+            Some(_) => theme::ORANGE,
+            None => theme::FG_DIM,
+        };
+        let success_str = if e.total_executions == 0 {
+            "— no runs".to_string()
+        } else {
+            format!("{:.0}% success", e.success_rate * 100.0)
+        };
+        let success_color = if e.success_rate >= 0.9 {
+            theme::GREEN
+        } else if e.success_rate >= 0.75 {
+            theme::CYAN
+        } else if e.total_executions > 0 {
+            theme::GOLD
+        } else {
+            theme::FG_DIM
+        };
+        let usage_str = format!("{} runs", e.total_executions);
+        let contribution_str = e
+            .avg_confidence_this_session
+            .map(|c| format!("session confidence {:.0}%", c * 100.0));
+
+        // Tag pills (up to 3).
+        let tag_row = {
+            let mut row = div().flex().flex_wrap().gap(px(4.0));
+            for tag in e.tags.iter().take(3) {
+                row = row.child(
+                    div()
+                        .px(px(5.0))
+                        .py(px(1.0))
+                        .rounded(px(3.0))
+                        .bg(theme::bg_hover())
+                        .text_size(px(9.0))
+                        .text_color(theme::fg_dim())
+                        .child(tag.clone()),
+                );
+            }
+            row
+        };
+
+        let agent_id_for_hire = e.agent_id.clone();
+        let hire_label = if e.already_used {
+            "Assigned this session"
+        } else {
+            "Assign to a driver…"
+        };
+        let hire_color = if e.already_used {
+            theme::FG_DIM
+        } else {
+            theme::CYAN
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .px(px(12.0))
+            .py(px(10.0))
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(theme::fg_faint())
+            .bg(theme::bg_elevated())
+            // Header row: rank + name + tier + score
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .child(
+                        div()
+                            .w(px(28.0))
+                            .text_size(px(14.0))
+                            .text_color(theme::fg_dim())
+                            .font_weight(FontWeight::BOLD)
+                            .child(format!("#{}", rank)),
+                    )
+                    .child(
+                        div()
+                            .flex_grow()
+                            .text_size(px(13.0))
+                            .text_color(theme::fg())
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(e.display_name.clone()),
+                    )
+                    .child(
+                        div()
+                            .px(px(6.0))
+                            .py(px(1.0))
+                            .rounded(px(4.0))
+                            .bg(theme::bg_hover())
+                            .text_size(px(9.0))
+                            .text_color(rgb(e.tier_color))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(e.tier.to_uppercase()),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::gold())
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(format!("score {:.0}", e.score)),
+                    ),
+            )
+            // Description
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(theme::fg_dim())
+                    .child(truncate(&e.description, 140)),
+            )
+            // Stats row
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .flex_wrap()
+                    .gap(px(10.0))
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(rgb(cost_color))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(cost_str),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(rgb(success_color))
+                            .child(success_str),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_dim())
+                            .child(usage_str),
+                    )
+                    .when(contribution_str.is_some(), |el| {
+                        el.child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(theme::cyan())
+                                .child(contribution_str.clone().unwrap_or_default()),
+                        )
+                    }),
+            )
+            // Tags + hire button.
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .child(tag_row)
+                    .child(div().flex_grow())
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("mkt-hire-{}", e.agent_id)))
+                            .px(px(12.0))
+                            .py(px(4.0))
+                            .rounded(px(6.0))
+                            .border_1()
+                            .border_color(rgb(hire_color))
+                            .text_size(px(10.0))
+                            .text_color(rgb(hire_color))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::bg_hover()))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.hire_agent_from_marketplace(agent_id_for_hire.clone(), cx);
+                            }))
+                            .child(hire_label),
+                    ),
+            )
+    }
+
+    /// Handle a marketplace "Hire" click. If a cockpit forecast is open,
+    /// route to the Composer with a hint pushed to the cockpit's
+    /// pending_toasts so the operator sees a next-step prompt. If no
+    /// forecast is open, navigate to the Composer so they can start
+    /// one and then wire the agent.
+    fn hire_agent_from_marketplace(&mut self, agent_id: String, cx: &mut Context<Self>) {
+        // If cockpit exists, drop a hint. The proper flow ("pick a
+        // driver to assign this agent to") would be a modal; for v1
+        // we surface a message and switch panels.
+        if let Some(ref cockpit) = self.cockpit {
+            let cockpit = cockpit.clone();
+            let agent_id_msg = agent_id.clone();
+            cockpit.update(cx, |state, cx| {
+                state.pending_toasts.push(format!(
+                    "Hire flow: assign {} via + Assign Agent on any driver.",
+                    agent_id_msg
+                ));
+                cx.notify();
+            });
+        }
+        self.active_panel = Panel::Composer;
+        cx.notify();
+    }
+
+    // ── Leaderboard Panel ──────────────────────────────────────────────────────
+
+    // ── Teams panel (Spec 24 §3.5.4) ─────────────────────────────────
 
     fn render_teams_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected_id = self.selected_team_id.clone();
@@ -11810,6 +12206,206 @@ fn render_forecast_detail(f: &Forecast) -> impl IntoElement {
 
 /// Render a key-value pair for the forecast detail view.
 /// Full-width fleet row: agent identity + live run status + driver assignments + credits.
+// ═══════════════════════════════════════════════════════════════════
+// Agent Marketplace (Sprint C)
+//
+// Turns the flat fleet list into a ranked marketplace. Each entry is
+// a synthesis of:
+//   - Local card definition (name, description, tags, capabilities)
+//   - Server /api/agents `execution_stats` (executions, cost, success
+//     rate) — the outcome-contribution signal Sprint C promised
+//   - Local session `agent_runs` (per-session confidence)
+//
+// Ranking is transparent and simple: a weighted score the operator
+// can eyeball, not a black-box ML model. Weights are conservative:
+//   base = success_rate * 100         // 0–100
+//   + popularity_bonus (log-scaled)   // up to +25
+//   + confidence_bonus                // up to +25 if this session ran it
+//   - cost_penalty                    // per $ per run above $0.10
+//
+// Tier is a bucket over total_executions so operators can filter
+// "who's proven" vs. "who's new":
+//   Popular      ≥ 100 runs
+//   Established  ≥ 20
+//   Rising       ≥ 5
+//   Fresh        < 5
+// ═══════════════════════════════════════════════════════════════════
+
+struct AgentMarketplaceEntry {
+    agent_id: String,
+    display_name: String,
+    description: String,
+    tags: Vec<String>,
+    total_executions: i64,
+    success_rate: f64,
+    avg_cost_per_run: Option<f64>,
+    avg_confidence_this_session: Option<f64>,
+    tier: &'static str,
+    tier_color: u32,
+    score: f64,
+    /// Whether this session already invoked this agent (→ hire
+    /// button label switches to "Assigned").
+    already_used: bool,
+}
+
+fn build_agent_marketplace(
+    local_cards: &[&AgentCard],
+    server_cards: &[JsonValue],
+    session_runs: &[cockpit::AgentExecution],
+) -> Vec<AgentMarketplaceEntry> {
+    // Index server cards by agent_id (the string handle, not the UUID).
+    let server_by_id: std::collections::HashMap<String, &JsonValue> = server_cards
+        .iter()
+        .filter_map(|c| {
+            let id = c.get("agent_id").and_then(|v| v.as_str())?;
+            Some((id.to_string(), c))
+        })
+        .collect();
+
+    // Index session runs by agent_name (with confidence averages).
+    let mut session_confidence: std::collections::HashMap<String, (f64, usize)> =
+        std::collections::HashMap::new();
+    for run in session_runs {
+        if let Some(c) = run.confidence {
+            let entry = session_confidence
+                .entry(base_agent_name_local(&run.agent_name).to_string())
+                .or_insert((0.0, 0));
+            entry.0 += c;
+            entry.1 += 1;
+        }
+    }
+
+    let mut entries: Vec<AgentMarketplaceEntry> = Vec::new();
+    for card in local_cards {
+        let agent_id = card.agent_id.clone();
+        let server = server_by_id.get(&agent_id);
+        let stats = server.and_then(|s| s.get("execution_stats"));
+        let total_executions = stats
+            .and_then(|s| s.get("total_executions"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let successful = stats
+            .and_then(|s| s.get("successful_executions"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let total_cost = stats
+            .and_then(|s| s.get("total_cost_usd"))
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let success_rate = if total_executions > 0 {
+            successful as f64 / total_executions as f64
+        } else {
+            0.0
+        };
+        let avg_cost = if total_executions > 0 && total_cost > 0.0 {
+            Some(total_cost / total_executions as f64)
+        } else {
+            None
+        };
+
+        let (sum_conf, n_conf) = session_confidence
+            .get(&agent_id)
+            .copied()
+            .unwrap_or((0.0, 0));
+        let avg_session_conf = if n_conf > 0 {
+            Some(sum_conf / n_conf as f64)
+        } else {
+            None
+        };
+
+        // Tier bucket.
+        let (tier, tier_color) = match total_executions {
+            n if n >= 100 => ("popular", theme::GOLD),
+            n if n >= 20 => ("established", theme::CYAN),
+            n if n >= 5 => ("rising", theme::BLUE),
+            _ => ("fresh", theme::FG_DIM),
+        };
+
+        // Score.
+        let base = success_rate * 100.0;
+        let popularity_bonus = if total_executions > 0 {
+            ((total_executions as f64 + 1.0).log10() * 10.0).min(25.0)
+        } else {
+            0.0
+        };
+        let confidence_bonus = avg_session_conf.map(|c| c * 25.0).unwrap_or(0.0);
+        // Penalty: $0.10 per run is "cheap", each extra $ costs 5 points.
+        let cost_penalty = avg_cost
+            .map(|c| ((c - 0.10).max(0.0) * 5.0).min(30.0))
+            .unwrap_or(0.0);
+        let score = base + popularity_bonus + confidence_bonus - cost_penalty;
+
+        entries.push(AgentMarketplaceEntry {
+            agent_id: agent_id.clone(),
+            display_name: agent_id.clone(),
+            description: card.metadata.description.clone(),
+            tags: card.metadata.tags.clone(),
+            total_executions,
+            success_rate,
+            avg_cost_per_run: avg_cost,
+            avg_confidence_this_session: avg_session_conf,
+            tier,
+            tier_color,
+            score,
+            already_used: n_conf > 0,
+        });
+    }
+    entries
+}
+
+/// Sort a marketplace list by the operator's chosen mode.
+fn sort_marketplace(entries: &mut Vec<AgentMarketplaceEntry>, mode: &str) {
+    entries.sort_by(|a, b| {
+        use std::cmp::Ordering::Equal;
+        let cmp = match mode {
+            "cost" => {
+                // Cheapest first; None (no cost data) sorts last.
+                let ac = a.avg_cost_per_run.unwrap_or(f64::MAX);
+                let bc = b.avg_cost_per_run.unwrap_or(f64::MAX);
+                ac.partial_cmp(&bc).unwrap_or(Equal)
+            }
+            "executions" => b.total_executions.cmp(&a.total_executions),
+            "success" => b.success_rate.partial_cmp(&a.success_rate).unwrap_or(Equal),
+            "contribution" => {
+                // Highest session confidence first; None sorts last.
+                let ac = a.avg_confidence_this_session.unwrap_or(-1.0);
+                let bc = b.avg_confidence_this_session.unwrap_or(-1.0);
+                bc.partial_cmp(&ac).unwrap_or(Equal)
+            }
+            _ => b.score.partial_cmp(&a.score).unwrap_or(Equal),
+        };
+        cmp.then_with(|| a.display_name.cmp(&b.display_name))
+    });
+}
+
+/// Local copy of the cockpit's base_agent_name helper. Used to align
+/// session runs (whose IDs may be compound like "macro_forecaster_x")
+/// with catalog agent_ids ("macro_forecaster"). The cockpit's version
+/// is private to that module; keep this mirror in sync with any changes
+/// there.
+fn base_agent_name_local(name: &str) -> &str {
+    // Common bound-agent suffix pattern: "<agent>_<driver>". The
+    // registry doesn't expose the split rule, but every known compound
+    // uses a `_` separator and the catalog agent_ids are all lowercase
+    // snake. Match longest catalog prefix.
+    const KNOWN_BASES: &[&str] = &[
+        "macro_forecaster",
+        "fermi",
+        "market_research",
+        "simops_advisor",
+        "simops_optimizer",
+        "simops_cascade",
+        "simops_narrator_local",
+        "valuechain_mapper",
+    ];
+    for base in KNOWN_BASES {
+        if name == *base || name.starts_with(&format!("{}_", base)) {
+            return base;
+        }
+    }
+    name
+}
+
 fn render_fleet_agent_row(
     card: &AgentCard,
     run: Option<&cockpit::AgentExecution>,
