@@ -33,7 +33,9 @@ use fermi::ast;
 use crate::handlers::eval_brier::{AgentNameResolver, BrierLookupSqlx};
 use crate::handlers::eval_judge::LlmJudgeAnthropic;
 use crate::handlers::eval_projection::ProjectionLookupSqlx;
-use crate::{agent_output_to_episode, create_notification, resolve_agent, resolve_agent_card, AppState};
+use crate::{
+    agent_output_to_episode, create_notification, resolve_agent, resolve_agent_card, AppState,
+};
 
 // Track B — native evaluator family (registered per eval run)
 use evaluator_character::CharacterEvaluator;
@@ -194,8 +196,7 @@ pub async fn trigger_eval_run_handler(
     }
     let agent_name = agent_id.clone();
     let (run_id, total_cases) =
-        trigger_eval_run_core(&state, db_agent, agent_name, user_id, body.judge, body.tags)
-            .await?;
+        trigger_eval_run_core(&state, db_agent, agent_name, user_id, body.judge, body.tags).await?;
     Ok(Json(json!({
         "run_id": run_id,
         "status": "running",
@@ -396,7 +397,7 @@ struct StaticAgentNameResolver {
     agent_name: String,
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl AgentNameResolver for StaticAgentNameResolver {
     async fn resolve(&self, agent_id: uuid::Uuid) -> Option<String> {
         if agent_id == self.agent_id {
@@ -474,7 +475,14 @@ pub async fn run_eval_cases(
     // LLM config for LLM-backed evaluators.
     let llm_api_key = std::env::var("ANTHROPIC_API_KEY").ok();
 
-    let registry = build_registry(&state, &db_agent, &agent_name, judge_enabled, lifelong_signal, llm_api_key);
+    let registry = build_registry(
+        &state,
+        &db_agent,
+        &agent_name,
+        judge_enabled,
+        lifelong_signal,
+        llm_api_key,
+    );
     let mut per_case_signals: Vec<AggregatedSignal> = Vec::new();
     let mut any_prefilter_blocked = false;
 
@@ -527,7 +535,8 @@ pub async fn run_eval_cases(
 
         let result = tool_executor.execute(&agent_stmt, &context).await;
 
-        let (case_passed, exec_time, tokens, episode_id, reasoning, stored_episode) = match &result {
+        let (case_passed, exec_time, tokens, episode_id, reasoning, stored_episode) = match &result
+        {
             Ok(output) => {
                 let mut ep = agent_output_to_episode(db_agent.agent_id, &tc.query, output);
                 // Stamp persona_version_at_write so drift monitoring (Phase 3)
@@ -544,20 +553,19 @@ pub async fn run_eval_cases(
                     output.metadata.reasoning.as_deref().unwrap_or("")
                 );
                 let t_embed = tokio::time::Instant::now();
-                let provenance =
-                    match state.embedder.generate_provenanced(&embed_text).await {
-                        Ok(p) => {
-                            tracing::info!(
-                                elapsed_ms = t_embed.elapsed().as_millis() as u64,
-                                model = %p.model_id,
-                                site = "eval_runner",
-                                "embed_call"
-                            );
-                            ep.embedding = Some(p.vector.clone());
-                            Some(p)
-                        }
-                        Err(_) => None,
-                    };
+                let provenance = match state.embedder.generate_provenanced(&embed_text).await {
+                    Ok(p) => {
+                        tracing::info!(
+                            elapsed_ms = t_embed.elapsed().as_millis() as u64,
+                            model = %p.model_id,
+                            site = "eval_runner",
+                            "embed_call"
+                        );
+                        ep.embedding = Some(p.vector.clone());
+                        Some(p)
+                    }
+                    Err(_) => None,
+                };
                 let source_ref = serde_json::json!({
                     "kind": "eval_runner",
                     "agent_id": db_agent.agent_id,
@@ -642,10 +650,7 @@ pub async fn run_eval_cases(
                 episode.persona_version_at_write,
             );
             if let Err(e) = state.memory_store.create_eval_signals(&signals).await {
-                eprintln!(
-                    "Failed to persist eval signals for run {}: {}",
-                    run_id, e
-                );
+                eprintln!("Failed to persist eval signals for run {}: {}", run_id, e);
             }
 
             // Phase 3 — inline timeline-entry write. Cheap; lets the
@@ -661,10 +666,7 @@ pub async fn run_eval_cases(
                 )
                 .await
             {
-                eprintln!(
-                    "Failed to write timeline entry for run {}: {}",
-                    run_id, e
-                );
+                eprintln!("Failed to write timeline entry for run {}: {}", run_id, e);
             }
 
             // Pull the legacy avg_judge_score signal so the Phase 1
@@ -723,8 +725,8 @@ pub async fn run_eval_cases(
     // skipped by a pre-filter short-circuit).
     let run_aggregate = aggregate_run_signals(&per_case_signals);
     let aggregated_signal_json = serde_json::to_value(&run_aggregate).ok();
-    let conflict_flags_json = serde_json::to_value(&run_aggregate.conflicts)
-        .unwrap_or_else(|_| json!([]));
+    let conflict_flags_json =
+        serde_json::to_value(&run_aggregate.conflicts).unwrap_or_else(|_| json!([]));
 
     // Regression detection (legacy — Phase 1 logic, kept) plus
     // per-dimension drops surfaced from the run aggregate (Phase 2).
@@ -929,9 +931,8 @@ fn build_registry(
         agent_id: db_agent.agent_id,
         agent_name: agent_name.to_string(),
     });
-    let brier_lookup = Arc::new(
-        BrierLookupSqlx::new(state.db.clone()).with_agent_name_resolver(resolver),
-    );
+    let brier_lookup =
+        Arc::new(BrierLookupSqlx::new(state.db.clone()).with_agent_name_resolver(resolver));
     registry.register(Arc::new(BrierEvaluator::new(brier_lookup)));
 
     // Projection accuracy (hard-verified; SimOps only — self-filters).
@@ -1213,7 +1214,8 @@ pub async fn detect_regression(
 
 fn format_regression_body(details: &Option<Value>) -> String {
     let Some(details) = details else {
-        return "Regressions detected in the latest eval run. Open the eval dashboard to review.".into();
+        return "Regressions detected in the latest eval run. Open the eval dashboard to review."
+            .into();
     };
     let empty = vec![];
     let regressions = details.as_array().unwrap_or(&empty);
@@ -1224,7 +1226,10 @@ fn format_regression_body(details: &Option<Value>) -> String {
     )];
 
     for r in regressions {
-        let dim = r.get("dimension").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let dim = r
+            .get("dimension")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         let line = match dim {
             "pass_rate" => {
                 let prev = r.get("previous").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -1239,7 +1244,12 @@ fn format_regression_body(details: &Option<Value>) -> String {
             "judge_score" => {
                 let prev = r.get("previous").and_then(|v| v.as_f64()).unwrap_or(0.0);
                 let curr = r.get("current").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                format!("• Judge score: {:.1} → {:.1} ({:+.1})", prev, curr, curr - prev)
+                format!(
+                    "• Judge score: {:.1} → {:.1} ({:+.1})",
+                    prev,
+                    curr,
+                    curr - prev
+                )
             }
             "latency" => {
                 let prev = r.get("previous_ms").and_then(|v| v.as_i64()).unwrap_or(0);
@@ -1295,8 +1305,12 @@ pub async fn generate_rubrics_handler(
         return Err((StatusCode::FORBIDDEN, "Not the agent owner".into()));
     }
 
-    let api_key = std::env::var("ANTHROPIC_API_KEY")
-        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "ANTHROPIC_API_KEY not set".into()))?;
+    let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ANTHROPIC_API_KEY not set".into(),
+        )
+    })?;
 
     let cases = state
         .memory_store
@@ -1304,15 +1318,21 @@ pub async fn generate_rubrics_handler(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let needs_rubric: Vec<_> = cases.iter().filter(|c| c.is_active && c.rubric.is_none()).collect();
+    let needs_rubric: Vec<_> = cases
+        .iter()
+        .filter(|c| c.is_active && c.rubric.is_none())
+        .collect();
     let skipped = cases.len() - needs_rubric.len();
 
     if needs_rubric.is_empty() {
-        return Ok(Json(json!({ "updated": 0, "skipped": skipped, "message": "All active test cases already have rubrics." })));
+        return Ok(Json(
+            json!({ "updated": 0, "skipped": skipped, "message": "All active test cases already have rubrics." }),
+        ));
     }
 
     // Truncate system prompt to keep the LLM request compact
-    let system_excerpt = db_agent.system_prompt
+    let system_excerpt = db_agent
+        .system_prompt
         .as_deref()
         .unwrap_or("A helpful AI assistant.")
         .chars()
@@ -1369,11 +1389,17 @@ Return ONLY the rubric sentence. No preamble, no quotes, no extra text."#,
             Ok(r) => {
                 let body: serde_json::Value = match r.json().await {
                     Ok(b) => b,
-                    Err(e) => { errors.push(format!("{}: parse error: {}", tc.test_case_id, e)); continue; }
+                    Err(e) => {
+                        errors.push(format!("{}: parse error: {}", tc.test_case_id, e));
+                        continue;
+                    }
                 };
                 match body["content"][0]["text"].as_str() {
                     Some(t) => t.trim().to_string(),
-                    None => { errors.push(format!("{}: no text in response", tc.test_case_id)); continue; }
+                    None => {
+                        errors.push(format!("{}: no text in response", tc.test_case_id));
+                        continue;
+                    }
                 }
             }
         };
@@ -1456,9 +1482,8 @@ pub async fn batch_eval_run_handler(
             owned_agents
                 .into_iter()
                 .filter(|a| {
-                    ids.iter().any(|id| {
-                        id == &a.agent_id.to_string() || id == &a.agent_name
-                    })
+                    ids.iter()
+                        .any(|id| id == &a.agent_id.to_string() || id == &a.agent_name)
                 })
                 .collect()
         }
@@ -1549,7 +1574,8 @@ impl<'de> serde::Deserialize<'de> for AgentSelection {
         match v {
             serde_json::Value::String(s) if s.to_lowercase() == "all" => Ok(AgentSelection::All),
             serde_json::Value::Array(arr) => {
-                let ids = arr.into_iter()
+                let ids = arr
+                    .into_iter()
                     .filter_map(|x| x.as_str().map(str::to_string))
                     .collect();
                 Ok(AgentSelection::Subset(ids))

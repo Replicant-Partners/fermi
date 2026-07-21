@@ -478,16 +478,24 @@ pub fn render_trajectory_worm(
         {
             let span = x_max - x_min;
 
-            // Sparse grid — 3 horizontal lines, 4 vertical, no decoration.
-            // Tufte: the data is the chart, gridlines are scaffolding.
+            // Sparse grid — 4 horizontal, 4 vertical. Faint horizontal
+            // gridlines only (the y-axis is what the operator's eye tracks;
+            // vertical gridlines add noise without carrying meaning). Uses
+            // `light_line_style` for a whisper-of-a-line — visible enough
+            // to trace a value across the chart, dim enough not to compete
+            // with the worms.
             let _ = chart
                 .configure_mesh()
                 .x_labels(4)
-                .y_labels(3)
+                .y_labels(4)
                 .label_style(("sans-serif", 10).into_font().color(&LABEL))
                 .axis_style(ShapeStyle::from(CHROME).stroke_width(1))
-                // Don't draw the heavy mesh lines — too noisy.
-                .disable_mesh()
+                .light_line_style(ShapeStyle::from(CHROME).stroke_width(1))
+                // Keep the heavy bold mesh disabled; only the light
+                // horizontal gridlines get drawn (see `.disable_x_mesh`
+                // below which silences the vertical light lines).
+                .disable_x_mesh()
+                .max_light_lines(4)
                 .y_label_formatter(&|v| format!("{:.0}%", v))
                 .x_label_formatter(&|v| {
                     // Prefer calendar-formatted labels when we have an
@@ -695,6 +703,14 @@ pub fn render_trajectory_worm(
             // pop on the dark background. Render in priority order:
             // agent_run dots first (smallest, most numerous), then market
             // obs, then BayesOps fits, then rate revisions on top.
+            //
+            // Shape channel: each kind uses a distinct SHAPE in addition
+            // to color, so the chart is legible without color perception
+            // (protanopia/deuteranopia readers, screenshots, etc.):
+            //   RateRevision       → filled circle (the primary event)
+            //   BayesOpsFit        → diamond      (structure change)
+            //   MarketObservation  → hollow ring  (external observation)
+            //   AgentRun           → short tick   (activity, non-moving)
             let kind_priority = |k: &TrajectoryEventKind| -> u8 {
                 match k {
                     TrajectoryEventKind::AgentRun => 0,
@@ -706,26 +722,98 @@ pub fn render_trajectory_worm(
             let mut sorted: Vec<&TrajectoryEvent> = events.iter().collect();
             sorted.sort_by_key(|e| kind_priority(&e.kind));
 
+            // Data-to-pixel helper so we can drop shape primitives
+            // directly (plotters' Circle handles data coords, but
+            // Polygon/PathElement in data coords is fiddly — build the
+            // diamond in data space here).
+            let x_span = (x_max - x_min).max(1e-9);
+            let y_span = (y_max - y_min).max(1e-9);
+            // Pixel-to-data conversion for the ~800x226 chart area.
+            // Diamond half-widths ~7px — convert to data units.
+            let px_to_x = |px: f64| px * x_span / ((width as f64) - 60.0 - 46.0);
+            let px_to_y = |py: f64| py * y_span / ((chart_height as f64) - 38.0);
+
             for ev in sorted {
-                let (color, size) = match ev.kind {
-                    TrajectoryEventKind::RateRevision => (CYAN, 7),
-                    TrajectoryEventKind::BayesOpsFit => (REFIT, 7),
-                    TrajectoryEventKind::AgentRun => (LABEL, 3),
-                    TrajectoryEventKind::MarketObservation => (PURPLE, 5),
+                let (color, kind_size) = match ev.kind {
+                    TrajectoryEventKind::RateRevision => (CYAN, 8),
+                    TrajectoryEventKind::BayesOpsFit => (REFIT, 8),
+                    TrajectoryEventKind::AgentRun => (LABEL, 4),
+                    TrajectoryEventKind::MarketObservation => (PURPLE, 6),
                 };
-                // Outline ring (BG color) — visually lifts the dot off
-                // the trail line.
-                let _ = chart.draw_series(std::iter::once(Circle::new(
-                    (ev.t_seconds, ev.rate_pct),
-                    size + 1,
-                    ShapeStyle::from(BG).filled(),
-                )));
-                // Filled core
-                let _ = chart.draw_series(std::iter::once(Circle::new(
-                    (ev.t_seconds, ev.rate_pct),
-                    size,
-                    ShapeStyle::from(color).filled(),
-                )));
+                match ev.kind {
+                    TrajectoryEventKind::RateRevision => {
+                        // Solid filled circle with BG outline ring.
+                        let _ = chart.draw_series(std::iter::once(Circle::new(
+                            (ev.t_seconds, ev.rate_pct),
+                            kind_size + 1,
+                            ShapeStyle::from(BG).filled(),
+                        )));
+                        let _ = chart.draw_series(std::iter::once(Circle::new(
+                            (ev.t_seconds, ev.rate_pct),
+                            kind_size,
+                            ShapeStyle::from(color).filled(),
+                        )));
+                    }
+                    TrajectoryEventKind::BayesOpsFit => {
+                        // Diamond — rotated square built as a 4-vertex
+                        // Polygon in data coords. Same visual weight as
+                        // the RateRevision circle but distinguishable
+                        // at a glance (and colorblind-safe).
+                        let hx = px_to_x(kind_size as f64);
+                        let hy = px_to_y(kind_size as f64);
+                        // BG outline diamond (slightly larger)
+                        let hx_out = px_to_x(kind_size as f64 + 1.5);
+                        let hy_out = px_to_y(kind_size as f64 + 1.5);
+                        let outline = vec![
+                            (ev.t_seconds, ev.rate_pct + hy_out),
+                            (ev.t_seconds + hx_out, ev.rate_pct),
+                            (ev.t_seconds, ev.rate_pct - hy_out),
+                            (ev.t_seconds - hx_out, ev.rate_pct),
+                        ];
+                        let _ = chart.draw_series(std::iter::once(Polygon::new(
+                            outline,
+                            ShapeStyle::from(BG).filled(),
+                        )));
+                        let core = vec![
+                            (ev.t_seconds, ev.rate_pct + hy),
+                            (ev.t_seconds + hx, ev.rate_pct),
+                            (ev.t_seconds, ev.rate_pct - hy),
+                            (ev.t_seconds - hx, ev.rate_pct),
+                        ];
+                        let _ = chart.draw_series(std::iter::once(Polygon::new(
+                            core,
+                            ShapeStyle::from(color).filled(),
+                        )));
+                    }
+                    TrajectoryEventKind::MarketObservation => {
+                        // Hollow ring (outer purple circle, BG inner
+                        // punch). Distinguishes market obs from other
+                        // filled markers without needing color.
+                        let _ = chart.draw_series(std::iter::once(Circle::new(
+                            (ev.t_seconds, ev.rate_pct),
+                            kind_size,
+                            ShapeStyle::from(color).filled(),
+                        )));
+                        let _ = chart.draw_series(std::iter::once(Circle::new(
+                            (ev.t_seconds, ev.rate_pct),
+                            (kind_size - 2).max(2),
+                            ShapeStyle::from(BG).filled(),
+                        )));
+                    }
+                    TrajectoryEventKind::AgentRun => {
+                        // Short vertical tick anchored to the rate
+                        // line: quiet enough to imply "activity here"
+                        // without competing with the moving markers.
+                        let tick_h = px_to_y(3.5);
+                        let _ = chart.draw_series(LineSeries::new(
+                            vec![
+                                (ev.t_seconds, ev.rate_pct - tick_h),
+                                (ev.t_seconds, ev.rate_pct + tick_h),
+                            ],
+                            ShapeStyle::from(color).stroke_width(2),
+                        ));
+                    }
+                }
             }
 
             // Inline labels for reference lines, drawn at the right
@@ -737,46 +825,101 @@ pub fn render_trajectory_worm(
         drop(chart_root);
     }
 
-    // ── Pass 2: inline reference labels (base rate / crowd) ──────────
+    // ── Pass 2: right-margin reference legend column ──────────────
     //
-    // Plotters' chart-area margins don't expose the inner pixel
-    // coordinates we'd need to put labels exactly on the axis lines.
-    // Emulate by drawing into a fresh DrawingArea using the full canvas
-    // and computing y-pixel from the same y_min..y_max range we used
-    // above. The horizontal placement is fixed at right-edge - 56px.
+    // Instead of placing labels inline (which collided with the worm
+    // whenever a value drifted near a reference line), reserve a
+    // permanent 58px column on the right edge of the chart. For each
+    // reference (inside/outside/crowd), draw a small color-coded chip
+    // that sits at the *current y-value of that reference*, plus a
+    // short leader tick pointing back at the plot area. The result is
+    // an always-legible, non-colliding legend that also anchors the
+    // eye to "this line means X%".
     //
-    // This is approximate (the chart's plot area starts ~46px left of
-    // the right edge after the legend margin), but the operator's eye
-    // tolerates a few-pixel offset. The alternative is rebuilding the
-    // chart with explicit text annotations inside the data area, which
-    // collides with the plot when y-values cluster near the references.
+    // Chip layout (per row):
+    //   │ ┄ ┄   │ base 34.2%   →  a) 4px stub inside the plot area,
+    //                                    color-matched to the line
+    //                                 b) name + value in the same color,
+    //                                    baseline-aligned to the stub
+    //
+    // The chips are then de-collided (bumped apart in y) so two lines
+    // whose current values are within 12px of each other don't overlap.
     {
         let label_root = BitMapBackend::with_buffer(&mut buf, (width, height)).into_drawing_area();
+        let plot_top = 10i32;
+        let plot_bot = chart_height as i32 - 28;
+        let plot_h = (plot_bot - plot_top).max(1);
         let y_to_px = |y: f64| -> i32 {
-            // chart's plot area: top 10px margin, bottom RUG_HEIGHT + 8 + 20 (x-label area).
-            let plot_top = 10i32;
-            let plot_bot = chart_height as i32 - 28;
-            let plot_h = plot_bot - plot_top;
             if y_max <= y_min {
                 return plot_top;
             }
             let frac = (y - y_min) / (y_max - y_min);
             plot_bot - (frac * plot_h as f64) as i32
         };
-        let label_x = (width as i32) - 58;
 
-        if let Some(b) = base_rate_pct {
-            let _ = label_root.draw(&Text::new(
-                format!("base {:.1}%", b),
-                (label_x, y_to_px(b) - 6),
-                ("sans-serif", 9u32).into_font().color(&GOLD),
-            ));
+        // Right-hand column: plot_right (= width - 60) is the chart's
+        // right edge; we sit chips just inside the margin so they
+        // don't fall off the canvas on narrow renders.
+        let plot_right = (width as i32) - 60;
+        let chip_x = plot_right + 6;
+        let stub_x0 = plot_right - 4;
+        let stub_x1 = plot_right + 3;
+
+        // Collect references to render, each with (label, value, color).
+        // `crowd_pct_now` prefers the live worm's tail over the
+        // point-in-time crowd_price_pct so the label always reflects
+        // the freshest signal on the chart.
+        let crowd_pct_now = crowd_series.last().map(|p| p.rate_pct).or(crowd_price_pct);
+        let inside_pct_now = series.last().map(|p| p.rate_pct);
+
+        let mut chips: Vec<(String, f64, RGBColor)> = Vec::new();
+        if let Some(v) = inside_pct_now {
+            chips.push((format!("you {:.1}%", v), v, CYAN));
         }
-        if let Some(c) = crowd_price_pct {
+        if let Some(v) = crowd_pct_now {
+            chips.push((format!("crowd {:.1}%", v), v, PURPLE));
+        }
+        if let Some(v) = base_rate_pct {
+            chips.push((format!("base {:.1}%", v), v, GOLD));
+        }
+
+        // Compute y-pixels, then de-collide by bumping the closer-to-
+        // midline chip. A 12px minimum spacing keeps two-line texts
+        // legible without over-separating chips whose real values are
+        // close together (we still want the chip's y to reflect the
+        // actual value).
+        let mut placed: Vec<(String, i32, RGBColor, i32)> = chips
+            .iter()
+            .map(|(label, v, color)| {
+                let anchor_y = y_to_px(*v);
+                (label.clone(), anchor_y, *color, anchor_y)
+            })
+            .collect();
+        // Sort by anchor y (top to bottom) and enforce 14px min spacing
+        // between chips, biased downward so the topmost chip stays
+        // anchored to its true value.
+        placed.sort_by_key(|c| c.1);
+        const MIN_SPACING: i32 = 14;
+        for i in 1..placed.len() {
+            let prev_y = placed[i - 1].3;
+            if placed[i].3 < prev_y + MIN_SPACING {
+                placed[i].3 = prev_y + MIN_SPACING;
+            }
+        }
+
+        for (label, anchor_y, color, chip_y) in &placed {
+            // Short horizontal leader from the chip back to the plot
+            // edge at the actual data y. If the chip had to be bumped
+            // to de-collide, the leader points to the true value so the
+            // relationship stays honest.
+            let _ = label_root.draw(&PathElement::new(
+                vec![(stub_x0, *anchor_y), (stub_x1, *chip_y)],
+                ShapeStyle::from(*color).stroke_width(1),
+            ));
             let _ = label_root.draw(&Text::new(
-                format!("crowd {:.1}%", c),
-                (label_x, y_to_px(c) - 6),
-                ("sans-serif", 9u32).into_font().color(&PURPLE),
+                label.clone(),
+                (chip_x, chip_y - 5),
+                ("sans-serif", 10u32).into_font().color(color),
             ));
         }
         let _ = label_root.present();

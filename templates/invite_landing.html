@@ -152,9 +152,7 @@
       <div class="subtitle" id="subtitle">Loading invitation…</div>
       <div id="detail"></div>
       <div id="actions"></div>
-      <div class="footer">
-        Fermi · <a href="/">home</a>
-      </div>
+      <div class="footer">Fermi · <a href="/">home</a></div>
     </div>
 
     <script>
@@ -175,6 +173,41 @@
         actions.appendChild(el);
       }
 
+      // Check whether we're currently signed in. Determines whether
+      // the primary action reads "Accept" (already logged in) or
+      // "Sign in / Sign up to accept" (fresh user). Fails soft: on
+      // any error we assume not signed in and show the OAuth path,
+      // which is the safer default for external testers.
+      async function isSignedIn() {
+        try {
+          const r = await fetch("/api/auth/me", { credentials: "include" });
+          return r.ok;
+        } catch (_) {
+          return false;
+        }
+      }
+
+      function renderOAuthButtons() {
+        // /auth/google and /auth/github honour ?redirect= via
+        // auth_callback_inner's redirect_to parsing. Landing back on
+        // /invites/:token brings the invitee straight to "Accept".
+        const back = encodeURIComponent(window.location.pathname);
+        const googleBtn = document.createElement("button");
+        googleBtn.className = "primary";
+        googleBtn.textContent = "Continue with Google";
+        googleBtn.onclick = () => {
+          window.location.href = `/auth/google?redirect=${back}`;
+        };
+        actions.appendChild(googleBtn);
+        const ghBtn = document.createElement("button");
+        ghBtn.className = "secondary";
+        ghBtn.textContent = "Continue with GitHub";
+        ghBtn.onclick = () => {
+          window.location.href = `/auth/github?redirect=${back}`;
+        };
+        actions.appendChild(ghBtn);
+      }
+
       async function loadInvite() {
         try {
           const res = await fetch(`/api/invites/by-token/${token}`);
@@ -192,12 +225,26 @@
             (inv.inviter_display_name || "Someone") +
             " invited you to a " +
             inv.target_type +
-            ".";
+            " on Fermi.";
           render(`
             <div class="row"><span class="row-label">Type</span><span class="row-value">${inv.target_type}</span></div>
             <div class="row"><span class="row-label">Access</span><span class="row-value">${inv.permission}</span></div>
             <div class="row"><span class="row-label">Expires</span><span class="row-value">${new Date(inv.expires_at).toLocaleDateString()}</span></div>
           `);
+
+          // If not signed in, front-load the OAuth choice — accept
+          // requires an authenticated session and we don't want the
+          // "try Accept, get 401, retry" round-trip for first-time
+          // testers.
+          const signedIn = await isSignedIn();
+          if (!signedIn) {
+            status(
+              "New here? Sign up with Google or GitHub to accept. You'll return here automatically.",
+              "info",
+            );
+            renderOAuthButtons();
+            return;
+          }
           const acceptBtn = document.createElement("button");
           acceptBtn.className = "primary";
           acceptBtn.textContent = "Accept invitation";
@@ -214,30 +261,38 @@
               );
               if (accept.status === 401) {
                 status(
-                  "Please sign in first, then click Accept again.",
+                  "Sign in or sign up with Google or GitHub, then click Accept.",
                   "info",
                 );
                 acceptBtn.disabled = false;
                 acceptBtn.textContent = "Accept invitation";
-                const signin = document.createElement("button");
-                signin.className = "secondary";
-                signin.textContent = "Sign in";
-                signin.onclick = () => {
-                  // Return here after signin.
-                  const back = encodeURIComponent(window.location.pathname);
-                  window.location.href = `/?return_to=${back}`;
+                // The invite token URL is where the operator should
+                // land after OAuth completes — preserves the fermi
+                // invite context so "Accept" is one click away.
+                // /auth/google and /auth/github both honour ?redirect=
+                // via auth_callback_inner's redirect_to parsing.
+                const back = encodeURIComponent(window.location.pathname);
+                const googleBtn = document.createElement("button");
+                googleBtn.className = "secondary";
+                googleBtn.textContent = "Continue with Google";
+                googleBtn.onclick = () => {
+                  window.location.href = `/auth/google?redirect=${back}`;
                 };
-                actions.appendChild(signin);
+                actions.appendChild(googleBtn);
+                const ghBtn = document.createElement("button");
+                ghBtn.className = "secondary";
+                ghBtn.textContent = "Continue with GitHub";
+                ghBtn.onclick = () => {
+                  window.location.href = `/auth/github?redirect=${back}`;
+                };
+                actions.appendChild(ghBtn);
                 return;
               }
               if (!accept.ok) {
                 const err = await accept.json().catch(() => ({}));
                 throw new Error(err.error || `HTTP ${accept.status}`);
               }
-              status(
-                "Invitation accepted. You now have access.",
-                "success",
-              );
+              status("Invitation accepted. You now have access.", "success");
               acceptBtn.textContent = "Accepted ✓";
             } catch (e) {
               status("Couldn't accept: " + e.message, "error");

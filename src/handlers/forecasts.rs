@@ -76,6 +76,14 @@ pub struct UpdateForecastRequest {
     pub visibility: Option<String>,
     pub tags: Option<Vec<String>>,
     pub status: Option<String>,
+    /// Free-form JSON metadata. When present, the server MERGES this
+    /// object into the existing `metadata` column (JSONB `||`), so a
+    /// caller can PATCH `metadata.base_rate` without clobbering
+    /// `metadata.polymarket`, and vice-versa. This is what powers the
+    /// cockpit's "Update base rate" persistence — the AST mutation
+    /// is echoed to `metadata.base_rate` here so a panel-switch reload
+    /// doesn't silently revert it.
+    pub metadata: Option<JsonValue>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -241,7 +249,9 @@ pub async fn create_forecast_handler(
         let salt = std::env::var("BENCHMARK_SPLIT_SALT").unwrap_or_else(|_| "fermi-v1-2026".into());
 
         // Capture harness snapshot (conductor version from agents_used field)
-        let conductor_version = req.agents_used.as_ref()
+        let conductor_version = req
+            .agents_used
+            .as_ref()
             .and_then(|au| au.as_array())
             .and_then(|arr| arr.first())
             .and_then(|a| a.get("agent_id"))
@@ -253,22 +263,31 @@ pub async fn create_forecast_handler(
             req.agents_used.as_ref().unwrap_or(&serde_json::json!([])),
             None, // routing weights: populated later via calibration endpoint
             None, // bayesops_params: null until BayesOps operational
-        ).await;
+        )
+        .await;
 
         let commitment_hash = crate::handlers::forecast_benchmark::anchor_forecast(
-            pool, &forecast_id, None,
+            pool,
+            &forecast_id,
+            None,
             req.predicted_probability as f64,
             req.fpl_source.as_deref(),
             now,
             Some("auto-anchor on create"),
-        ).await.ok();
+        )
+        .await
+        .ok();
 
         // Link harness snapshot to the spacetime row if both exist
         if let (Some(snap_id), Some(_)) = (harness_snapshot_id, commitment_hash.as_ref()) {
             let _ = sqlx::query(
                 "UPDATE forecast_spacetime SET harness_snapshot_id = $1
-                 WHERE forecast_id = $2 AND revision_seq = 0"
-            ).bind(snap_id).bind(&forecast_id).execute(pool).await;
+                 WHERE forecast_id = $2 AND revision_seq = 0",
+            )
+            .bind(snap_id)
+            .bind(&forecast_id)
+            .execute(pool)
+            .await;
         }
 
         let _ = crate::handlers::forecast_benchmark::ensure_split(pool, &forecast_id, &salt).await;
@@ -677,6 +696,10 @@ pub async fn update_forecast_handler(
             visibility = COALESCE($14, visibility),
             tags = COALESCE($15, tags),
             status = COALESCE($16, status),
+            metadata = CASE
+                WHEN $17::jsonb IS NULL THEN metadata
+                ELSE COALESCE(metadata, '{}'::jsonb) || $17::jsonb
+            END,
             updated_at = NOW()
          WHERE id = $1",
     )
@@ -696,6 +719,7 @@ pub async fn update_forecast_handler(
     .bind(&req.visibility)
     .bind(&req.tags)
     .bind(&req.status)
+    .bind(&req.metadata)
     .execute(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -737,7 +761,10 @@ pub async fn delete_forecast_handler(
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             if !level.has_admin() {
-                return Err((StatusCode::FORBIDDEN, "Admin access required to delete".into()));
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    "Admin access required to delete".into(),
+                ));
             }
         }
         None => return Err((StatusCode::NOT_FOUND, "Forecast not found".into())),
@@ -784,9 +811,16 @@ pub async fn resolve_forecast_handler(
             let owner_id: String = r.try_get("owner_id").unwrap_or_default();
             let visibility: String = r.try_get("visibility").unwrap_or_default();
             let vis = Visibility::from_legacy(&visibility);
-            let granted = can_edit(pool, &principal, ObjectType::Forecast, &forecast_id, &owner_id, vis)
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            let granted = can_edit(
+                pool,
+                &principal,
+                ObjectType::Forecast,
+                &forecast_id,
+                &owner_id,
+                vis,
+            )
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             if !granted {
                 return Err((StatusCode::FORBIDDEN, "Edit access denied".into()));
             }
@@ -841,20 +875,19 @@ pub async fn resolve_forecast_handler(
 
         tokio::spawn(async move {
             // Fetch the forecast to get agents_used
-            let agents_used: Vec<serde_json::Value> = match sqlx::query(
-                "SELECT agents_used FROM fermi_forecasts WHERE id = $1",
-            )
-            .bind(&forecast_id_clone)
-            .fetch_optional(&pool_annotate)
-            .await
-            {
-                Ok(Some(row)) => row
-                    .try_get::<serde_json::Value, _>("agents_used")
-                    .ok()
-                    .and_then(|v| v.as_array().cloned())
-                    .unwrap_or_default(),
-                _ => return,
-            };
+            let agents_used: Vec<serde_json::Value> =
+                match sqlx::query("SELECT agents_used FROM fermi_forecasts WHERE id = $1")
+                    .bind(&forecast_id_clone)
+                    .fetch_optional(&pool_annotate)
+                    .await
+                {
+                    Ok(Some(row)) => row
+                        .try_get::<serde_json::Value, _>("agents_used")
+                        .ok()
+                        .and_then(|v| v.as_array().cloned())
+                        .unwrap_or_default(),
+                    _ => return,
+                };
 
             let since = chrono::Utc::now() - chrono::Duration::days(7);
 
@@ -898,21 +931,30 @@ pub async fn resolve_forecast_handler(
 
                     // Annotate with outcome
                     if let Some(obj) = ctx.as_object_mut() {
-                        obj.insert("outcome_quality".to_string(), serde_json::json!(calibration_quality));
-                        obj.insert("outcome_source".to_string(), serde_json::json!("brier_forecast"));
-                        obj.insert("outcome_brier_score".to_string(), serde_json::json!(brier_score));
-                        obj.insert("outcome_annotated_at".to_string(),
-                            serde_json::json!(chrono::Utc::now().to_rfc3339()));
+                        obj.insert(
+                            "outcome_quality".to_string(),
+                            serde_json::json!(calibration_quality),
+                        );
+                        obj.insert(
+                            "outcome_source".to_string(),
+                            serde_json::json!("brier_forecast"),
+                        );
+                        obj.insert(
+                            "outcome_brier_score".to_string(),
+                            serde_json::json!(brier_score),
+                        );
+                        obj.insert(
+                            "outcome_annotated_at".to_string(),
+                            serde_json::json!(chrono::Utc::now().to_rfc3339()),
+                        );
                     }
 
                     // Write the annotated context back
-                    let _ = sqlx::query(
-                        "UPDATE episodes SET context = $1 WHERE episode_id = $2",
-                    )
-                    .bind(&ctx)
-                    .bind(episode_id)
-                    .execute(&pool_annotate)
-                    .await;
+                    let _ = sqlx::query("UPDATE episodes SET context = $1 WHERE episode_id = $2")
+                        .bind(&ctx)
+                        .bind(episode_id)
+                        .execute(&pool_annotate)
+                        .await;
                 }
             }
 
@@ -978,20 +1020,19 @@ pub async fn record_forecast_calibration_signals(
     let calibration = (1.0 - brier_score.clamp(0.0, 1.0)).clamp(0.0, 1.0);
 
     // agents_used entries look like {"name": "macro_data_agent", ...}.
-    let agents_used: Vec<JsonValue> = match sqlx::query(
-        "SELECT agents_used FROM fermi_forecasts WHERE id = $1",
-    )
-    .bind(forecast_id)
-    .fetch_optional(pool)
-    .await
-    {
-        Ok(Some(row)) => row
-            .try_get::<JsonValue, _>("agents_used")
-            .ok()
-            .and_then(|v| v.as_array().cloned())
-            .unwrap_or_default(),
-        _ => return,
-    };
+    let agents_used: Vec<JsonValue> =
+        match sqlx::query("SELECT agents_used FROM fermi_forecasts WHERE id = $1")
+            .bind(forecast_id)
+            .fetch_optional(pool)
+            .await
+        {
+            Ok(Some(row)) => row
+                .try_get::<JsonValue, _>("agents_used")
+                .ok()
+                .and_then(|v| v.as_array().cloned())
+                .unwrap_or_default(),
+            _ => return,
+        };
 
     if agents_used.is_empty() {
         tracing::info!(
@@ -1001,27 +1042,29 @@ pub async fn record_forecast_calibration_signals(
         return;
     }
 
-    let rationale = format!("forecast {} resolved (brier={:.4})", forecast_id, brier_score);
+    let rationale = format!(
+        "forecast {} resolved (brier={:.4})",
+        forecast_id, brier_score
+    );
 
     for entry in &agents_used {
         // Accept either {"name": ...} (current schema) or {"agent_id": ...}.
-        let agent_id: Option<uuid::Uuid> = if let Some(name) =
-            entry.get("name").and_then(|v| v.as_str())
-        {
-            sqlx::query_scalar::<_, uuid::Uuid>(
-                "SELECT agent_id FROM agents WHERE agent_name = $1 LIMIT 1",
-            )
-            .bind(name)
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten()
-        } else {
-            entry
-                .get("agent_id")
-                .and_then(|v| v.as_str())
-                .and_then(|s| uuid::Uuid::parse_str(s).ok())
-        };
+        let agent_id: Option<uuid::Uuid> =
+            if let Some(name) = entry.get("name").and_then(|v| v.as_str()) {
+                sqlx::query_scalar::<_, uuid::Uuid>(
+                    "SELECT agent_id FROM agents WHERE agent_name = $1 LIMIT 1",
+                )
+                .bind(name)
+                .fetch_optional(pool)
+                .await
+                .ok()
+                .flatten()
+            } else {
+                entry
+                    .get("agent_id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+            };
 
         let Some(aid) = agent_id else { continue };
 
@@ -1091,11 +1134,21 @@ pub async fn void_forecast_handler(
                 ));
             }
             let vis = Visibility::from_legacy(&visibility);
-            let level = can_access(pool, &principal, ObjectType::Forecast, &forecast_id, &owner_id, vis)
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            let level = can_access(
+                pool,
+                &principal,
+                ObjectType::Forecast,
+                &forecast_id,
+                &owner_id,
+                vis,
+            )
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             if !level.has_admin() {
-                return Err((StatusCode::FORBIDDEN, "Admin access required to void".into()));
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    "Admin access required to void".into(),
+                ));
             }
         }
         None => return Err((StatusCode::NOT_FOUND, "Forecast not found".into())),
@@ -1166,9 +1219,16 @@ pub async fn update_probability_handler(
     let owner_id: String = row.try_get("owner_id").unwrap_or_default();
     let visibility: String = row.try_get("visibility").unwrap_or_default();
     let vis = Visibility::from_legacy(&visibility);
-    let granted = can_edit(pool, &principal, ObjectType::Forecast, &forecast_id, &owner_id, vis)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let granted = can_edit(
+        pool,
+        &principal,
+        ObjectType::Forecast,
+        &forecast_id,
+        &owner_id,
+        vis,
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     if !granted {
         return Err((StatusCode::FORBIDDEN, "Edit access denied".into()));
     }
@@ -1263,10 +1323,16 @@ pub async fn update_probability_handler(
         // Anchor the DISPLAYED probability — the recomposed value is what
         // the forecast actually asserts.
         crate::handlers::forecast_benchmark::anchor_forecast(
-            pool, &forecast_id, Some(&update_id),
-            displayed, None,
-            chrono::Utc::now(), Some("auto-anchor on probability update"),
-        ).await.ok()
+            pool,
+            &forecast_id,
+            Some(&update_id),
+            displayed,
+            None,
+            chrono::Utc::now(),
+            Some("auto-anchor on probability update"),
+        )
+        .await
+        .ok()
     };
 
     Ok(Json(json!({
@@ -1421,9 +1487,16 @@ pub async fn portfolio_stats_handler(
     let owner_id: String = portfolio.get("owner_id");
     let visibility: String = portfolio.get("visibility");
     let vis = Visibility::from_legacy(&visibility);
-    let granted = can_view(pool, &principal, ObjectType::Portfolio, &portfolio_id, &owner_id, vis)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let granted = can_view(
+        pool,
+        &principal,
+        ObjectType::Portfolio,
+        &portfolio_id,
+        &owner_id,
+        vis,
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     if !granted {
         return Err((StatusCode::FORBIDDEN, "Access denied".into()));
     }
@@ -1543,9 +1616,16 @@ pub async fn add_forecast_to_portfolio_handler(
             let owner_id: String = r.try_get("owner_id").unwrap_or_default();
             let visibility: String = r.try_get("visibility").unwrap_or_default();
             let vis = Visibility::from_legacy(&visibility);
-            let granted = can_edit(pool, &principal, ObjectType::Portfolio, &portfolio_id, &owner_id, vis)
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            let granted = can_edit(
+                pool,
+                &principal,
+                ObjectType::Portfolio,
+                &portfolio_id,
+                &owner_id,
+                vis,
+            )
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             if !granted {
                 return Err((StatusCode::FORBIDDEN, "Edit access denied".into()));
             }
@@ -1592,9 +1672,16 @@ pub async fn remove_forecast_from_portfolio_handler(
             let owner_id: String = r.try_get("owner_id").unwrap_or_default();
             let visibility: String = r.try_get("visibility").unwrap_or_default();
             let vis = Visibility::from_legacy(&visibility);
-            let granted = can_edit(pool, &principal, ObjectType::Portfolio, &portfolio_id, &owner_id, vis)
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            let granted = can_edit(
+                pool,
+                &principal,
+                ObjectType::Portfolio,
+                &portfolio_id,
+                &owner_id,
+                vis,
+            )
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             if !granted {
                 return Err((StatusCode::FORBIDDEN, "Edit access denied".into()));
             }
@@ -1635,11 +1722,21 @@ pub async fn delete_portfolio_handler(
             let owner_id: String = r.try_get("owner_id").unwrap_or_default();
             let visibility: String = r.try_get("visibility").unwrap_or_default();
             let vis = Visibility::from_legacy(&visibility);
-            let level = can_access(pool, &principal, ObjectType::Portfolio, &portfolio_id, &owner_id, vis)
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            let level = can_access(
+                pool,
+                &principal,
+                ObjectType::Portfolio,
+                &portfolio_id,
+                &owner_id,
+                vis,
+            )
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             if !level.has_admin() {
-                return Err((StatusCode::FORBIDDEN, "Admin access required to delete".into()));
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    "Admin access required to delete".into(),
+                ));
             }
         }
         None => return Err((StatusCode::NOT_FOUND, "Portfolio not found".into())),
@@ -1696,11 +1793,21 @@ pub async fn patch_portfolio_handler(
             let owner_id: String = r.try_get("owner_id").unwrap_or_default();
             let visibility: String = r.try_get("visibility").unwrap_or_default();
             let vis = Visibility::from_legacy(&visibility);
-            let level = can_access(pool, &principal, ObjectType::Portfolio, &portfolio_id, &owner_id, vis)
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            let level = can_access(
+                pool,
+                &principal,
+                ObjectType::Portfolio,
+                &portfolio_id,
+                &owner_id,
+                vis,
+            )
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             if !level.has_admin() {
-                return Err((StatusCode::FORBIDDEN, "Admin access required to delete".into()));
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    "Admin access required to delete".into(),
+                ));
             }
         }
         None => return Err((StatusCode::NOT_FOUND, "Portfolio not found".into())),
@@ -1723,14 +1830,12 @@ pub async fn patch_portfolio_handler(
     // binding — fermi_portfolios.team_id is `uuid` in prod (verified
     // 2026-06-19). A bad uuid is a 400, not a 500.
     let team_id_uuid: Option<Uuid> = match req.team_id.as_deref() {
-        Some(s) => Some(
-            Uuid::parse_str(s).map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    format!("invalid team_id '{}': {}", s, e),
-                )
-            })?,
-        ),
+        Some(s) => Some(Uuid::parse_str(s).map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("invalid team_id '{}': {}", s, e),
+            )
+        })?),
         None => None,
     };
 
@@ -1787,9 +1892,16 @@ pub async fn list_portfolio_forecasts_handler(
             let owner: String = row.get("owner_id");
             let visibility: String = row.get("visibility");
             let vis = Visibility::from_legacy(&visibility);
-            let granted = can_view(pool, &principal, ObjectType::Portfolio, &portfolio_id, &owner, vis)
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            let granted = can_view(
+                pool,
+                &principal,
+                ObjectType::Portfolio,
+                &portfolio_id,
+                &owner,
+                vis,
+            )
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             if !granted {
                 return Err((StatusCode::FORBIDDEN, "Not your portfolio".into()));
             }
@@ -2284,7 +2396,10 @@ pub async fn upsert_forecast_schedule_handler(
     // query) but the overdue-driven auto-fire never triggers because
     // next_run_at is set to the year-3000 sentinel.
     if req.interval_hours < 0 || req.interval_hours > 8760 {
-        return Err((StatusCode::BAD_REQUEST, "interval_hours must be 0–8760".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "interval_hours must be 0–8760".into(),
+        ));
     }
 
     let next_run_at = if req.interval_hours == 0 {
@@ -2407,8 +2522,13 @@ pub async fn record_schedule_run_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let next_run_at = row
-        .and_then(|r| r.try_get::<chrono::DateTime<chrono::Utc>, _>("next_run_at").ok())
+        .and_then(|r| {
+            r.try_get::<chrono::DateTime<chrono::Utc>, _>("next_run_at")
+                .ok()
+        })
         .map(|t| t.to_rfc3339());
 
-    Ok(Json(json!({ "recorded": true, "next_run_at": next_run_at })))
+    Ok(Json(
+        json!({ "recorded": true, "next_run_at": next_run_at }),
+    ))
 }

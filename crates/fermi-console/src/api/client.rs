@@ -890,6 +890,17 @@ impl ApiClient {
         config.base_url.clone()
     }
 
+    /// Synchronous accessor for the base URL. Suitable for GPUI render
+    /// paths where `.await` isn't available (invite copy-link, share
+    /// widgets, etc.). The underlying read is a non-blocking
+    /// `RwLock::read()` on an in-memory config, so making this
+    /// synchronous carries no cost — the `async` variant above exists
+    /// only because early call sites happened to be in async contexts.
+    pub fn base_url_sync(&self) -> String {
+        let config = self.config.read().unwrap();
+        config.base_url.clone()
+    }
+
     // ── Internal helpers ──────────────────────────────────────────────
 
     async fn headers(&self) -> Result<reqwest::header::HeaderMap, ApiError> {

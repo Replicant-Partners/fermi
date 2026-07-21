@@ -352,6 +352,11 @@ pub(crate) struct AppState {
     /// `docs/specs/23_BAYESOPS_WORLD_CUP_DEMO.md` §3.4 and
     /// `src/handlers/workspace/refit.rs`.
     pub(crate) extractor_registry: posterior::ExtractorRegistry,
+
+    /// Spec 23 D8 Phase 2: sqlx-backed BrierLookup for the evaluator system.
+    /// Wraps a PgPool and resolves Brier scores from `fermi_forecasts` for
+    /// the `BrierEvaluator` dimensional evaluator. Populated at server boot.
+    pub(crate) brier_lookup: Arc<dyn agent_bestiary_evaluators::BrierLookup + Send + Sync>,
 }
 
 // Implement From<AppState> for AuthState so middleware can extract it
@@ -1526,6 +1531,10 @@ async fn main() {
         // binary_field_value, scalar_field_value, scalar_difference).
         // New extractors are added by code change + server restart.
         extractor_registry: posterior::ExtractorRegistry::with_builtins(),
+        // Spec 23 D8 Phase 2 — sqlx-backed BrierLookup for the evaluator system.
+        brier_lookup: Arc::new(crate::handlers::eval_brier::BrierLookupSqlx::new(
+            db.clone(),
+        )),
     };
 
     if state.secret_encryptor.is_some() {

@@ -8,17 +8,19 @@
 //! - coherence.rs Coherence eval, ontology, files, git log, workflow
 //! - actions.rs   Generalised App action protocol (mutate_document, fork_state, etc.)
 
+pub mod actions;
+pub mod agent_params_hook;
+mod coherence;
 mod core;
 mod messages;
-mod coherence;
-pub mod actions;
 pub mod outputs;
-pub mod resolution;
 pub mod refit;
+pub mod resolution;
 
+pub use agent_params_hook::*;
+pub use coherence::*;
 pub use core::*;
 pub use messages::*;
-pub use coherence::*;
 pub use outputs::*;
 pub use refit::*;
 pub use resolution::*;

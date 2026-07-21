@@ -120,6 +120,10 @@ pub async fn execute_agent_handler(
             state: state.clone(),
         })),
     });
+    // Clone the Arc before moving into ToolAwareExecutor::new so the
+    // post-hook below (which needs workspace_id from the same context)
+    // can still read it. Arc<T> clone is cheap — just bumps a refcount.
+    let tool_context_for_hook = tool_context.clone();
     let tool_executor = ToolAwareExecutor::new(
         state.registry.executor_arc(),
         ToolRegistry::standard(),
@@ -134,6 +138,43 @@ pub async fn execute_agent_handler(
                 format!("Execution failed: {}", e),
             )
         })?;
+
+    // 3.5 Post-agent hook: apply multiplier recommendations to workspace params.
+    // If the ToolContext has a workspace_id AND the agent produced evidence with
+    // [MULTIPLIER] blocks, write them to the workspace's params and trigger a refit.
+    let ws_id_opt = tool_context_for_hook.workspace_id; // Copy (Option<Uuid>)m to the workspace's params and trigger a refit.
+    if let Some(ws_id) = ws_id_opt {
+        if !output.evidence.is_empty() {
+            let pool = state.db.clone();
+            let registry = state.extractor_registry.clone();
+            let agent_name = agent_id.clone();
+            let evidence = output.evidence.clone();
+            tokio::spawn(async move {
+                match crate::handlers::workspace::agent_params_hook::apply_agent_multipliers(
+                    &pool,
+                    &registry,
+                    ws_id,
+                    &agent_name,
+                    &evidence,
+                )
+                .await
+                {
+                    Ok(true) => tracing::info!(
+                        workspace = %ws_id,
+                        agent = %agent_name,
+                        "agent multipliers applied to workspace params"
+                    ),
+                    Ok(false) => {} // no multiplier found, nothing to do
+                    Err(e) => tracing::warn!(
+                        workspace = %ws_id,
+                        agent = %agent_name,
+                        error = %e,
+                        "failed to apply agent multipliers"
+                    ),
+                }
+            });
+        }
+    }
 
     // 4. Record stats in registry
     let _ = state.registry.record_execution(&agent_id, &output);

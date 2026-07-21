@@ -327,7 +327,14 @@ async fn create_invite_row(
     // bounced send just means the operator falls back to the copy-link
     // affordance. Skipped when the recipient is a direct user_id (no
     // email address on the invite) or when RESEND_API_KEY isn't set.
+    //
+    // `email_sent` tracks whether the dispatch was spawned so the
+    // client can render the correct "invite emailed — also copy link"
+    // vs. "email not configured — share this link directly" modal.
+    let mut email_sent = false;
+    let mut invite_url_out: Option<String> = None;
     if let (Some(recipient_email), Some(token)) = (row.5.as_deref(), row.6.as_deref()) {
+        invite_url_out = Some(state.email.invite_url(token));
         if state.email.is_configured() {
             // Look up inviter display name so the email reads
             // "Alice invited you…" instead of "550e8400-e29b…". Fails
@@ -354,6 +361,7 @@ async fn create_invite_row(
                 expires_at: row.10.format("%B %-d, %Y").to_string(),
             };
             state.email.spawn_invite_email(args);
+            email_sent = true;
         } else {
             tracing::info!(
                 recipient = %recipient_email,
@@ -375,6 +383,14 @@ async fn create_invite_row(
         "status":          row.9,
         "expires_at":      row.10.to_rfc3339(),
         "created_at":      row.11.to_rfc3339(),
+        // Sprint A: server-side hints so the client can render the
+        // "just-created invite" modal accurately without a second call.
+        // `email_sent` is true when Resend dispatch was actually
+        // spawned; `invite_url` is the absolute URL for the copy-link.
+        // Both are omitted for direct user-id invites (no token, no
+        // email) — those surface in the invitee's inbox.
+        "email_sent":      email_sent,
+        "invite_url":      invite_url_out,
     }))
 }
 
@@ -1046,6 +1062,7 @@ fn map_target_invite_row(
         Option<String>,
         Option<String>,
         Option<String>,
+        Option<String>, // token (email/link invites only)
     ),
 ) -> JsonValue {
     // Prefer display_name, then email, then the raw user_id.
@@ -1067,6 +1084,12 @@ fn map_target_invite_row(
         "created_at":             r.9.to_rfc3339(),
         "invitee_display_name":   invitee_display_name,
         "inviter_display_name":   inviter_display_name,
+        // Shareable token — present only when the invite was created
+        // against an email (or as a link-invite). Returned to the
+        // inviter/admin (who already passed the admin-of-target check)
+        // so the console can render a copy-link fallback when email
+        // delivery isn't configured (`RESEND_API_KEY` absent).
+        "token":                  r.13,
     })
 }
 
@@ -1096,6 +1119,7 @@ async fn list_target_invites(
             Option<String>, // invitee.display_name
             Option<String>, // inviter.display_name
             Option<String>, // inviter.email
+            Option<String>, // fi.token
         ),
     >(
         "SELECT fi.id, fi.status, fi.permission,
@@ -1104,7 +1128,8 @@ async fn list_target_invites(
                 fi.expires_at, fi.created_at,
                 iu.display_name AS invitee_display_name,
                 nu.display_name AS inviter_display_name,
-                nu.email AS inviter_email
+                nu.email AS inviter_email,
+                fi.token
          FROM forecast_invites fi
          LEFT JOIN users iu ON iu.user_id::text = fi.invitee_user_id
          LEFT JOIN users nu ON nu.user_id::text = fi.inviter_id

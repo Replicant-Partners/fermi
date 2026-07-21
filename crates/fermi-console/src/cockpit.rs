@@ -328,6 +328,13 @@ pub struct CockpitState {
     /// drain and display as toasts. Each entry is an agent display name.
     pub pending_toasts: Vec<String>,
 
+    /// Just-created invite pending display via the parent
+    /// FermiConsole's invite share modal. The tuple carries
+    /// `(invite_json, target_label, recipient)` — same shape the
+    /// parent's `open_invite_share_modal` consumes. Drained on the
+    /// same observe tick as `pending_toasts`.
+    pub pending_invite_share: Option<(JsonValue, String, String)>,
+
     // ── ABW Workspace Integration ─────────────────────────────────
     /// Workspace ID (UUID) backing this forecast in ABW.
     /// Spawned from the `fermi_forecast` app on first orchestration.
@@ -670,6 +677,7 @@ impl CockpitState {
             schedules: Vec::new(),
             schedules_loading: false,
             pending_toasts: Vec::new(),
+            pending_invite_share: None,
             workspace_id: None,
             workspace_params: serde_json::Map::new(),
             bayesops_pending: std::collections::HashMap::new(),
@@ -1450,6 +1458,14 @@ impl CockpitState {
                             .unwrap_or_default()
                     ),
                 });
+
+                // Persist to the server so this agent-driven base rate
+                // survives a panel-switch / re-open. Every mutation to
+                // q.base_rate MUST flow through persist_base_rate to
+                // maintain the invariant that the AST and metadata.base_rate
+                // stay in sync — otherwise the FPL template's initial
+                // anchor silently wins on the next open_forecast.
+                self.persist_base_rate(cx);
             }
 
             // ── Drivers from structured response ──────────────────
@@ -5048,24 +5064,175 @@ impl CockpitState {
 
         if let Some(q) = self.program.question_mut() {
             q.base_rate = Some(BaseRate {
-                reference_class,
+                reference_class: reference_class.clone(),
                 historical_frequency,
                 sample_size,
                 source: "fermi".into(),
-                reasoning: reasoning_text,
+                reasoning: reasoning_text.clone(),
                 generated_by: GeneratedBy::Agent("fermi".into()),
             });
         }
+
+        // Persist to the server. Uses `cx.spawn` (not raw `tokio::spawn`)
+        // so the completion handler can update UI state — which lets
+        // us surface *visible* success/failure feedback instead of just
+        // a log line the operator can't see. Failure to persist matters:
+        // it's the whole reason the previous silent-revert bug existed.
+        self.persist_base_rate(cx);
 
         self.messages.push(AssistantMessage {
             node: "question".into(),
             kind: MessageKind::Info,
             text: format!(
-                "✓ Base rate updated: {:.1}% (drivers untouched).",
+                "✓ Base rate updated locally: {:.1}%. Saving to server…",
                 historical_frequency * 100.0
             ),
         });
         cx.notify();
+    }
+
+    /// PATCH the current `program.question.base_rate` to the server.
+    ///
+    /// Two channels for durability:
+    ///   1. `metadata.base_rate` (JSONB merge, non-destructive w.r.t.
+    ///      `metadata.polymarket`) — the primary source of truth for
+    ///      hydrating a fresh cockpit session even when FPL contains
+    ///      constructs the emitter can't round-trip.
+    ///   2. `fpl_source` (when the emitter can safely regenerate it) —
+    ///      belt-and-braces so an FPL-first reader path still sees
+    ///      the update.
+    ///
+    /// Called by both `apply_base_rate_only` (agent-driven refresh)
+    /// and any manual anchoring path (Polymarket anchor button, future
+    /// hand-edited base-rate widgets). Idempotent: no-op if the AST
+    /// carries no `base_rate` or there's no `forecast_id` yet.
+    ///
+    /// Surfaces success/failure via a message row + toast so the
+    /// operator has confirmation the write landed — the previous
+    /// silent "log-only" version made it easy to think the persist
+    /// worked when it hadn't.
+    pub fn persist_base_rate(&mut self, cx: &mut Context<Self>) {
+        let Some(fid) = self.forecast_id.clone() else {
+            log::warn!("[base-rate-persist] no forecast_id — draft, cannot persist");
+            self.messages.push(AssistantMessage {
+                node: "question".into(),
+                kind: MessageKind::Warning,
+                text: "Base rate updated locally, but this forecast is a draft — \
+                       publish (Ctrl+P) to persist future edits."
+                    .into(),
+            });
+            cx.notify();
+            return;
+        };
+        let Some(br) = self
+            .program
+            .question()
+            .and_then(|q| q.base_rate.as_ref())
+            .cloned()
+        else {
+            log::warn!("[base-rate-persist] no base_rate in AST — nothing to persist");
+            return;
+        };
+        log::info!(
+            "[base-rate-persist] starting PATCH for forecast {} → {:.4} ({})",
+            fid,
+            br.historical_frequency,
+            br.reference_class
+        );
+
+        // Refresh FPL so its `question { base_rate { … } }` block
+        // reflects the update. Safe path only — never overwrite an
+        // FPL that carries constructs the emitter can't round-trip.
+        self.regenerate_cached_fpl_if_safe();
+
+        let br_json = serde_json::json!({
+            "reference_class": br.reference_class,
+            "historical_frequency": br.historical_frequency,
+            "sample_size": br.sample_size,
+            "reasoning": br.reasoning,
+            "source": br.source,
+            "generated_by": match &br.generated_by {
+                fermi::ast::GeneratedBy::Human => "human".to_string(),
+                fermi::ast::GeneratedBy::Agent(name) => name.clone(),
+            },
+            "updated_at": chrono::Utc::now().to_rfc3339(),
+        });
+        let mut body = serde_json::Map::new();
+        body.insert(
+            "metadata".into(),
+            serde_json::json!({ "base_rate": br_json }),
+        );
+        if !self.cached_fpl.is_empty() {
+            body.insert(
+                "fpl_source".into(),
+                serde_json::json!(self.cached_fpl.clone()),
+            );
+        }
+        let body = serde_json::Value::Object(body);
+        let api = self.api.clone();
+        let fid_log = fid.clone();
+        let pct = br.historical_frequency * 100.0;
+
+        // `cx.spawn` — GPUI async context, drives the tokio reactor
+        // via `tokio::spawn` internally like `push_research_state_to_server`
+        // does. We use `cx.spawn` here (rather than raw `tokio::spawn`)
+        // so we can call `this.update(cx, ...)` on the response and
+        // push a visible success/failure indicator to the operator.
+        cx.spawn(async move |this, cx| {
+            let handle =
+                tokio::spawn(async move { api.update_forecast(&fid_log, &body).await });
+            let result = handle.await;
+            this.update(cx, |state, cx| {
+                match result {
+                    Ok(Ok(_)) => {
+                        log::info!(
+                            "[base-rate-persist] forecast {} → metadata.base_rate={:.1}% persisted",
+                            fid, pct
+                        );
+                        state.messages.push(AssistantMessage {
+                            node: "question".into(),
+                            kind: MessageKind::Info,
+                            text: format!("✓ Base rate {:.1}% saved to server.", pct),
+                        });
+                        state
+                            .pending_toasts
+                            .push(format!("Base rate saved: {:.1}%", pct));
+                    }
+                    Ok(Err(e)) => {
+                        log::warn!(
+                            "[base-rate-persist] update_forecast {} failed: {} — \
+                             local AST updated but server still has old value",
+                            fid, e
+                        );
+                        state.messages.push(AssistantMessage {
+                            node: "question".into(),
+                            kind: MessageKind::Warning,
+                            text: format!(
+                                "⚠ Base rate NOT saved to server: {}. Local change may revert on reload.",
+                                e
+                            ),
+                        });
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "[base-rate-persist] task panicked for {}: {}",
+                            fid, e
+                        );
+                        state.messages.push(AssistantMessage {
+                            node: "question".into(),
+                            kind: MessageKind::Error,
+                            text: format!(
+                                "⚠ Base rate persist task crashed: {}. See logs.",
+                                e
+                            ),
+                        });
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Flip the `learnable` flag on a driver. When ON, the driver's static
@@ -7206,7 +7373,11 @@ impl CockpitState {
                 Some(raw.clone())
             };
 
-            let result: Result<String, String> = match resolved_user {
+            enum ShareOk {
+                Shared,
+                Invited(JsonValue),
+            }
+            let result: Result<ShareOk, String> = match resolved_user {
                 Some(user_id) => {
                     // Known principal → direct user share.
                     let body = ShareRequest {
@@ -7216,7 +7387,7 @@ impl CockpitState {
                     };
                     api.add_forecast_share(&fid, &body)
                         .await
-                        .map(|_| "Shared".to_string())
+                        .map(|_| ShareOk::Shared)
                         .map_err(|e| e.to_string())
                 }
                 None => {
@@ -7229,7 +7400,7 @@ impl CockpitState {
                     };
                     api.invite_to_forecast(&fid, &body)
                         .await
-                        .map(|_| "Invite sent".to_string())
+                        .map(ShareOk::Invited)
                         .map_err(|e| e.to_string())
                 }
             };
@@ -7237,9 +7408,29 @@ impl CockpitState {
             this.update(cx, |state, cx| {
                 state.share_add_loading = false;
                 match result {
-                    Ok(_) => {
+                    Ok(ShareOk::Shared) => {
                         share_input.update(cx, |inp, cx| inp.set_text("", cx));
                         state.load_shares(cx);
+                    }
+                    Ok(ShareOk::Invited(invite_json)) => {
+                        share_input.update(cx, |inp, cx| inp.set_text("", cx));
+                        state.load_shares(cx);
+                        // Build a target label from the question text.
+                        // The parent FermiConsole drains
+                        // `pending_invite_share` in its observe callback
+                        // and pops the modal.
+                        let q = state
+                            .program
+                            .question()
+                            .map(|q| q.text.clone())
+                            .unwrap_or_else(|| "Untitled forecast".into());
+                        let short = if q.chars().count() > 48 {
+                            format!("{}…", q.chars().take(47).collect::<String>())
+                        } else {
+                            q
+                        };
+                        let label = format!("forecast ‘{}’", short);
+                        state.pending_invite_share = Some((invite_json, label, raw.clone()));
                     }
                     Err(e) => state.share_error = Some(e),
                 }
@@ -9160,6 +9351,12 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                                                 this.predicted_probability * 100.0,
                                             ),
                                         });
+                                        // Persist to the server so the anchor survives
+                                        // a panel-switch / cockpit-reopen. Previous
+                                        // version mutated the AST in-memory only and
+                                        // silently reverted the next time the forecast
+                                        // was reloaded from server state.
+                                        this.persist_base_rate(cx);
                                         cx.notify();
                                     }))
                                     .child("Anchor base rate"),
@@ -13416,17 +13613,20 @@ fn render_forecast_invites_section(
                     .text_color(status_color)
                     .child(inv.status.clone()),
             );
-        // Copy-link affordance for pending email/link invites. Email
-        // delivery isn't wired yet (no SendGrid/Resend integration), so
-        // the operator's fastest path to sharing is copying the invite
-        // URL and sending it via any channel (Slack, WhatsApp, email
+        // Copy-link affordance for pending email/link invites. When
+        // `RESEND_API_KEY` isn't configured on the server the invite
+        // row is created but no email is dispatched — the operator's
+        // fastest path to sharing is copying the invite URL and
+        // sending it via any channel (Slack, WhatsApp, email
         // manually). Only rendered when the invite carries a token —
         // direct user-id invites don't need a link since they show up
-        // in the recipient's Inbox automatically.
+        // in the recipient's Inbox automatically. The base URL is
+        // read from the live ApiClient config so localhost / staging
+        // deployments produce a link that actually resolves.
         if is_pending {
             if let Some(token) = inv.token.clone() {
-                let base_url = "https://agent-bestiary.world";
-                let invite_url = format!("{}/invites/{}", base_url, token);
+                let base_url = state.api.base_url_sync();
+                let invite_url = format!("{}/invites/{}", base_url.trim_end_matches('/'), token);
                 let url_for_copy = invite_url.clone();
                 row = row.child(
                     div()
@@ -13438,17 +13638,31 @@ fn render_forecast_invites_section(
                         .text_color(rgb(theme::CYAN))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(theme::BG_HOVER)))
-                        .on_click(cx.listener(move |_this, _, _w, cx| {
+                        .on_click(cx.listener(move |state, _, _w, cx| {
                             cx.write_to_clipboard(gpui::ClipboardItem::new_string(
                                 url_for_copy.clone(),
                             ));
+                            // Toast so the operator has visible
+                            // confirmation the click did something —
+                            // clipboard writes are otherwise silent.
+                            state.messages.push(AssistantMessage {
+                                node: "share".into(),
+                                kind: MessageKind::Info,
+                                text: "Invite link copied to clipboard.".into(),
+                            });
+                            cx.notify();
                         }))
                         .child("🔗 Copy link"),
                 );
-                // Also render the URL itself so the operator has
-                // visual confirmation of what they just copied — tiny
-                // monospace text under the row.
-                let _ = invite_url; // kept for future "show URL below" UI
+                // Show the URL in tiny monospace beneath the row so
+                // the operator sees exactly what they're sharing.
+                let url_display = invite_url.clone();
+                row = row.child(
+                    div()
+                        .text_size(px(9.0))
+                        .text_color(rgb(theme::FG_FAINT))
+                        .child(url_display),
+                );
             }
             row = row.child(
                 div()
@@ -14665,8 +14879,22 @@ fn render_trajectory_body(
                 .child(legend_chip("●", theme::FG_DIM, "Agent run")),
         );
 
-    // Event list — each row carries its index so we can highlight the
-    // one matching state.hovered_trajectory_event.
+    // Event list — HistoryFlow-style narrative bands. Rather than a
+    // flat wall of cards, group events into *phases* delimited by
+    // rate revisions (the moments the operator's model actually
+    // moved). Each phase renders as:
+    //
+    //   ── Phase header (the rate revision, bold, dated) ───────────
+    //   Auto-summary of what happened between the previous revision
+    //   and this one (agent-run counts, BayesOps fits, market ticks).
+    //   Individual event cards, indented under the header.
+    //
+    // The first phase is the leading run of non-revision events
+    // ("Pre-revision activity") that happened before the first rate
+    // revision was applied.
+    //
+    // Each card keeps its ORIGINAL index in events_arr, so hover parity
+    // with the chart's dot-highlight still works.
     let hovered = state.hovered_trajectory_event;
     let event_list = if events_arr.is_empty() {
         div()
@@ -14678,22 +14906,7 @@ fn render_trajectory_body(
             .child("No events yet — resolve an upstream workspace or run an agent to start the trajectory.")
             .into_any_element()
     } else {
-        div()
-            .id("trajectory-event-list")
-            .flex()
-            .flex_col()
-            .flex_grow()
-            .overflow_y_scroll()
-            .px(px(16.0))
-            .py(px(8.0))
-            .gap(px(6.0))
-            .children(
-                events_arr
-                    .iter()
-                    .enumerate()
-                    .map(|(i, ev)| render_trajectory_event_with_hover(ev, i, hovered)),
-            )
-            .into_any_element()
+        render_trajectory_history_flow(&events_arr, hovered).into_any_element()
     };
 
     div()
@@ -14739,6 +14952,357 @@ fn render_trajectory_event_with_hover(
         .rounded(px(6.0))
         .child(base)
         .into_any_element()
+}
+
+/// HistoryFlow-style renderer for the trajectory event list. Segments
+/// the event stream into *phases* (a phase = the run of activity
+/// between two rate revisions, capped by the revision itself) and
+/// renders each phase as a narrative band: chapter header (the
+/// revision), auto-summary paragraph, and the underlying events
+/// indented beneath.
+///
+/// Preserves the original event index inside `events_arr` for each
+/// card so hover-highlight parity with the worm chart survives.
+fn render_trajectory_history_flow(
+    events_arr: &[JsonValue],
+    hovered: Option<usize>,
+) -> impl IntoElement {
+    // Bucket events into phases. Iterate once; open a fresh phase
+    // buffer, dump each non-revision into it, and on hitting a
+    // rate_revision close the phase with that revision as its
+    // "chapter marker". Any trailing non-revision events become a
+    // final open-ended phase ("Since last revision").
+    struct Phase<'a> {
+        // Trailing revision that closes this phase, if any. `None`
+        // means this is the open-ended pre-first-revision phase or
+        // the tail phase after the latest revision.
+        revision: Option<(usize, &'a JsonValue)>,
+        // (original_idx, event) pairs in chronological order.
+        events: Vec<(usize, &'a JsonValue)>,
+    }
+
+    let mut phases: Vec<Phase> = Vec::new();
+    let mut cur: Vec<(usize, &JsonValue)> = Vec::new();
+    for (idx, ev) in events_arr.iter().enumerate() {
+        let kind = ev.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+        if kind == "rate_revision" {
+            phases.push(Phase {
+                revision: Some((idx, ev)),
+                events: std::mem::take(&mut cur),
+            });
+        } else {
+            cur.push((idx, ev));
+        }
+    }
+    if !cur.is_empty() {
+        phases.push(Phase {
+            revision: None,
+            events: cur,
+        });
+    }
+
+    // Render each phase. The chapter-marker revision goes at the TOP
+    // of its phase (i.e. reads "the story arriving at this revision").
+    // Reverse the order so newest phase renders first — matches the
+    // operator's mental model of "scroll down through history".
+    phases.reverse();
+
+    div()
+        .id("trajectory-event-list")
+        .flex()
+        .flex_col()
+        .flex_grow()
+        .overflow_y_scroll()
+        .px(px(16.0))
+        .py(px(8.0))
+        .gap(px(14.0))
+        .children(phases.into_iter().enumerate().map(|(pi, phase)| {
+            render_trajectory_phase(phase.revision, &phase.events, pi, hovered).into_any_element()
+        }))
+}
+
+/// Render one phase: chapter header (revision) + auto-summary +
+/// individual events. `pi` is the phase index (0 = newest), used only
+/// for unique element IDs.
+fn render_trajectory_phase(
+    revision: Option<(usize, &JsonValue)>,
+    events: &[(usize, &JsonValue)],
+    pi: usize,
+    hovered: Option<usize>,
+) -> impl IntoElement {
+    // Chapter header — either the rate revision that closed the
+    // phase, or a neutral "since last revision" band for the
+    // open-tail phase.
+    let header: AnyElement = match revision {
+        Some((idx, ev)) => {
+            let is_highlighted = hovered == Some(idx);
+            let prob = ev
+                .get("predicted_probability")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let prev = ev.get("previous_probability").and_then(|v| v.as_f64());
+            let trigger = ev
+                .get("revision_trigger")
+                .and_then(|v| v.as_str())
+                .unwrap_or("update");
+            let ts = ev.get("ts").and_then(|v| v.as_str()).unwrap_or("");
+            let ts_rel = if ts.is_empty() {
+                String::new()
+            } else {
+                crate::format_relative_time(ts)
+            };
+            let ts_abs = ts.split('T').next().unwrap_or("").to_string();
+
+            let sentence = match prev {
+                Some(p) => format!(
+                    "Rate moved {:.1}% → {:.1}% ({:+.1}pp) via {}",
+                    p * 100.0,
+                    prob * 100.0,
+                    (prob - p) * 100.0,
+                    trigger
+                ),
+                None => format!("Rate initialised at {:.1}%", prob * 100.0),
+            };
+            let reason = ev
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let ts_line = if ts_abs.is_empty() {
+                ts_rel.clone()
+            } else {
+                format!("{} · {}", ts_rel, ts_abs)
+            };
+
+            let border_color = if is_highlighted {
+                theme::GOLD
+            } else {
+                theme::CYAN
+            };
+
+            let mut header_div = div()
+                .flex()
+                .flex_col()
+                .gap(px(3.0))
+                .px(px(12.0))
+                .py(px(8.0))
+                .rounded(px(6.0))
+                .border_l_2()
+                .border_color(rgb(border_color))
+                .bg(rgb(theme::BG_ACTIVE))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(
+                            div()
+                                .text_size(px(13.0))
+                                .text_color(rgb(theme::CYAN))
+                                .font_weight(FontWeight::BOLD)
+                                .child(format!("◉ {}", sentence)),
+                        )
+                        .child(
+                            div()
+                                .flex_grow()
+                                .text_size(px(9.0))
+                                .text_color(rgb(theme::FG_DIM))
+                                .child(ts_line),
+                        ),
+                );
+            if !reason.is_empty() {
+                header_div = header_div.child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .child(reason),
+                );
+            }
+            header_div.into_any_element()
+        }
+        None => div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .px(px(12.0))
+            .py(px(6.0))
+            .rounded(px(6.0))
+            .border_l_2()
+            .border_color(rgb(theme::FG_FAINT))
+            .bg(rgb(theme::BG))
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(rgb(theme::FG_DIM))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("◌ Since last revision"),
+            )
+            .into_any_element(),
+    };
+
+    // Auto-summary: count events by kind, string them together into
+    // one narrative sentence. Rule-based, no LLM.
+    let summary_line = build_phase_summary(events);
+
+    // Individual event cards, indented under the header via left
+    // padding + a thin vertical guide line (via left border on the
+    // container).
+    let cards = div()
+        .flex()
+        .flex_col()
+        .gap(px(4.0))
+        .pl(px(20.0))
+        .ml(px(6.0))
+        .border_l_1()
+        .border_color(rgb(theme::FG_FAINT))
+        .children(
+            events
+                .iter()
+                .map(|(idx, ev)| render_trajectory_event_with_hover(ev, *idx, hovered)),
+        );
+
+    div()
+        .id(SharedString::from(format!("traj-phase-{}", pi)))
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .child(header)
+        .when(!summary_line.is_empty(), |el| {
+            el.child(
+                div()
+                    .px(px(14.0))
+                    .text_size(px(10.0))
+                    .text_color(rgb(theme::FG_DIM))
+                    .child(summary_line),
+            )
+        })
+        .when(!events.is_empty(), |el| el.child(cards))
+}
+
+/// Build a one-line human summary of a phase's non-revision events.
+/// Rule-based: counts events by kind and stitches them into an English
+/// sentence. Empty string when there are no events (e.g. two rate
+/// revisions back-to-back with nothing between them).
+fn build_phase_summary(events: &[(usize, &JsonValue)]) -> String {
+    if events.is_empty() {
+        return String::new();
+    }
+    let mut agent_runs: usize = 0;
+    let mut bayesops_fits: usize = 0;
+    let mut market_obs: usize = 0;
+    let mut upstream_resolves: usize = 0;
+    let mut other: usize = 0;
+
+    // Track the agent names that ran, up to 3, so the summary can
+    // read "...5 agent runs (fermi, macro_forecaster, market_research)..."
+    // instead of an anonymous count.
+    let mut agent_names: Vec<String> = Vec::new();
+
+    // Track cumulative price movement observed in market ticks so we
+    // can say "crowd drifted +2.4pp".
+    let mut market_start: Option<f64> = None;
+    let mut market_end: Option<f64> = None;
+
+    for (_idx, ev) in events {
+        let kind = ev.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+        match kind {
+            "agent_run" => {
+                agent_runs += 1;
+                if agent_names.len() < 3 {
+                    let name = ev
+                        .get("sender_name")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| ev.get("sender_id").and_then(|v| v.as_str()))
+                        .unwrap_or("agent")
+                        .to_string();
+                    if !agent_names.iter().any(|n| n == &name) {
+                        agent_names.push(name);
+                    }
+                }
+            }
+            "bayesops_fit"
+            | "bayesops_fit_accepted"
+            | "bayesops_fit_pending"
+            | "bayesops_fit_failed"
+            | "bayesops_fit_decision" => {
+                bayesops_fits += 1;
+            }
+            "market_observation" => {
+                market_obs += 1;
+                if let Some(p) = ev.get("market_price").and_then(|v| v.as_f64()) {
+                    if market_start.is_none() {
+                        market_start = Some(p);
+                    }
+                    market_end = Some(p);
+                }
+            }
+            "upstream_resolved" => {
+                upstream_resolves += 1;
+            }
+            _ => {
+                other += 1;
+            }
+        }
+    }
+
+    let mut fragments: Vec<String> = Vec::new();
+    if agent_runs > 0 {
+        let word = if agent_runs == 1 {
+            "agent run"
+        } else {
+            "agent runs"
+        };
+        if agent_names.is_empty() {
+            fragments.push(format!("{} {}", agent_runs, word));
+        } else {
+            fragments.push(format!(
+                "{} {} ({})",
+                agent_runs,
+                word,
+                agent_names.join(", ")
+            ));
+        }
+    }
+    if bayesops_fits > 0 {
+        let word = if bayesops_fits == 1 {
+            "BayesOps fit"
+        } else {
+            "BayesOps fits"
+        };
+        fragments.push(format!("{} {}", bayesops_fits, word));
+    }
+    if market_obs > 0 {
+        let word = if market_obs == 1 {
+            "market tick"
+        } else {
+            "market ticks"
+        };
+        let drift = match (market_start, market_end) {
+            (Some(a), Some(b)) if (b - a).abs() >= 0.005 => {
+                format!(" (crowd {:+.1}pp)", (b - a) * 100.0)
+            }
+            _ => String::new(),
+        };
+        fragments.push(format!("{} {}{}", market_obs, word, drift));
+    }
+    if upstream_resolves > 0 {
+        let word = if upstream_resolves == 1 {
+            "upstream resolve"
+        } else {
+            "upstream resolves"
+        };
+        fragments.push(format!("{} {}", upstream_resolves, word));
+    }
+    if other > 0 {
+        fragments.push(format!("{} other", other));
+    }
+
+    if fragments.is_empty() {
+        String::new()
+    } else {
+        format!("During this phase: {}.", fragments.join(", "))
+    }
 }
 
 fn render_trajectory_event(ev: &JsonValue) -> AnyElement {
@@ -16465,10 +17029,52 @@ fn generate_fpl_text(program: &Program) -> String {
     // Question
     if let Some(q) = program.question() {
         let escaped = q.text.replace('"', r#"\""#);
-        lines.push(format!("question \"{}\"", escaped));
-        // Note: base_rate is stored in the AST and shown in the UI
-        // but not output in the FPL text to avoid parser issues
-        // with the simplified question syntax
+        if let Some(ref br) = q.base_rate {
+            // The parser accepts `question "text" { base_rate { … } }`
+            // — see fermi/src/parser.rs `parse_question` / `parse_base_rate`.
+            // Earlier revisions dropped this block on emit, which meant
+            // "Update base rate" mutations vanished the next time the
+            // FPL was reparsed on open. Emitting the block closes that
+            // round-trip gap (companion to `metadata.base_rate` on the
+            // server).
+            lines.push(format!("question \"{}\" {{", escaped));
+            lines.push("    base_rate {".into());
+            lines.push(format!(
+                "        reference_class: \"{}\"",
+                br.reference_class.replace('"', r#"\""#)
+            ));
+            lines.push(format!(
+                "        historical_frequency: {}",
+                br.historical_frequency
+            ));
+            if let Some(n) = br.sample_size {
+                lines.push(format!("        sample_size: {}", n));
+            }
+            lines.push(format!(
+                "        source: \"{}\"",
+                br.source.replace('"', r#"\""#)
+            ));
+            if let Some(ref r) = br.reasoning {
+                lines.push(format!(
+                    "        reasoning: \"{}\"",
+                    r.replace('"', r#"\""#)
+                ));
+            }
+            match &br.generated_by {
+                GeneratedBy::Human => {
+                    lines.push("        generated_by: human".into());
+                }
+                GeneratedBy::Agent(name) => {
+                    // Sanitize to a bare identifier the parser will accept.
+                    let ident = sanitize_name(name);
+                    lines.push(format!("        generated_by: {}", ident));
+                }
+            }
+            lines.push("    }".into());
+            lines.push("}".into());
+        } else {
+            lines.push(format!("question \"{}\"", escaped));
+        }
         lines.push(String::new());
     }
 

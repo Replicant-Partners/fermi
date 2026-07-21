@@ -317,6 +317,32 @@ struct LocalForecast {
     brier_score: Option<f64>,
 }
 
+/// Modal state for the "just-created invite" affordance. Populated
+/// when an invite POST returns; cleared when the operator dismisses.
+///
+/// The modal is the operator's one-click path to share an invite
+/// externally. It's especially important when the server doesn't have
+/// `RESEND_API_KEY` configured (the invite row exists but no email
+/// went out) — the operator NEEDS to see and copy the link
+/// immediately, or the invitee will never know they were invited.
+#[derive(Clone)]
+struct InviteShareModal {
+    /// Absolute URL the invitee should visit. Constructed from
+    /// `api.base_url_sync() + "/invites/" + token`.
+    invite_url: String,
+    /// Human-readable target label, e.g. "team ‘WC-analysts’",
+    /// "portfolio ‘Q1 macro watch’", or "forecast ‘Will …’".
+    target_label: String,
+    /// Recipient string (email or user_id) as sent to the server.
+    recipient: String,
+    /// The permission granted ("view", "edit", "admin", team roles).
+    permission: String,
+    /// True when the server had `RESEND_API_KEY` configured and the
+    /// email dispatch was spawned. Drives the copy "emailed to …" vs
+    /// "email delivery not configured" affordance in the modal.
+    email_sent: bool,
+}
+
 #[derive(Clone)]
 struct WorkspaceForecast {
     workspace_id: String,
@@ -436,6 +462,28 @@ struct FermiConsole {
     /// `portfolio_filter_input.read(cx).text()`. Matches case-insensitively
     /// against question_text + tags.
     portfolio_filter_input: Entity<TextInput>,
+    /// Forecast IDs whose Constellation row is expanded to show the
+    /// drill-down panel (full question text, tags, brier, resolution
+    /// notes, deep actions). Empty by default — the compact row keeps
+    /// the table scannable, and the operator opts in per-row.
+    portfolio_expanded_rows: std::collections::HashSet<String>,
+    /// Quick-filter chips active on the Constellation table. Each chip
+    /// is a mutually-inclusive predicate on `PortfolioForecast` — e.g.
+    /// `"hot"` keeps only rows with `n_recent_updates > 0`, `"linked"`
+    /// keeps only rows with a Polymarket link, etc. Combined with AND
+    /// with the free-text filter.
+    portfolio_quick_filters: std::collections::HashSet<String>,
+
+    /// "Just-created invite" modal state (Sprint A). When an invite is
+    /// created (from team, portfolio, or forecast), the response's
+    /// `token` is stashed here along with target metadata so we can
+    /// pop a modal offering an immediate one-click Copy Link. Cleared
+    /// when the operator dismisses. Also used to communicate the
+    /// email-delivery status: when the server has RESEND_API_KEY the
+    /// modal reads "invite emailed — you can also copy this link",
+    /// otherwise it reads "email delivery not configured — share this
+    /// link directly."
+    invite_share_modal: Option<InviteShareModal>,
 
     // Commit sheet (shown on ⌘P before publishing)
     commit_sheet_showing: bool,
@@ -661,6 +709,9 @@ impl FermiConsole {
             portfolio_shares_loaded_for: None,
             portfolio_sort_mode: PortfolioSortMode::RecentActivity,
             portfolio_filter_input,
+            portfolio_expanded_rows: std::collections::HashSet::new(),
+            portfolio_quick_filters: std::collections::HashSet::new(),
+            invite_share_modal: None,
             commit_sheet_showing: false,
             commit_sheet_visibility: "private".into(),
             commit_sheet_question: String::new(),
@@ -875,6 +926,64 @@ impl FermiConsole {
             .ok();
         })
         .detach();
+    }
+
+    /// Populate `invite_share_modal` from a POST /invites response so
+    /// the operator sees a one-click Copy Link affordance immediately
+    /// after creating an invite. Idempotent w.r.t. previous modal
+    /// content — replaces cleanly on repeat.
+    ///
+    /// `target_label` is a human-readable string like "forecast
+    /// 'Will Spain win…'" or "team 'WC-analysts'". Callers own this
+    /// because only they know the display name of the target.
+    ///
+    /// No-op when the invite lacks a shareable token — that means it
+    /// was created against a known user_id (surfaces in their inbox
+    /// automatically, no link needed).
+    fn open_invite_share_modal(
+        &mut self,
+        invite_json: &JsonValue,
+        target_label: String,
+        recipient: String,
+        cx: &mut Context<Self>,
+    ) {
+        let token = match invite_json.get("token").and_then(|v| v.as_str()) {
+            Some(t) if !t.is_empty() => t.to_string(),
+            _ => {
+                // Direct user-id invite — no link required. Just toast
+                // and move on; the recipient sees it in their inbox.
+                self.show_toast("Invite sent to inbox", "✓", theme::GREEN, cx);
+                return;
+            }
+        };
+        let permission = invite_json
+            .get("permission")
+            .and_then(|v| v.as_str())
+            .unwrap_or("view")
+            .to_string();
+        // Server tells us whether Resend dispatch was spawned.
+        let email_sent = invite_json
+            .get("email_sent")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        // Prefer server-provided invite_url (uses APP_BASE_URL), fall
+        // back to constructing locally.
+        let invite_url = invite_json
+            .get("invite_url")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                let base = self.api.base_url_sync();
+                format!("{}/invites/{}", base.trim_end_matches('/'), token)
+            });
+        self.invite_share_modal = Some(InviteShareModal {
+            invite_url,
+            target_label,
+            recipient,
+            permission,
+            email_sent,
+        });
+        cx.notify();
     }
 
     fn try_connect(&mut self, cx: &mut Context<Self>) {
@@ -1320,10 +1429,19 @@ impl FermiConsole {
             this.update(cx, |this, cx| {
                 this.team_invite_loading = false;
                 match result {
-                    Ok(_) => {
+                    Ok(invite_json) => {
                         this.team_invite_showing = false;
                         invite_input.update(cx, |inp, cx| inp.set_text("", cx));
-                        this.show_toast("Invite sent", "✓", theme::GREEN, cx);
+                        // Look up the team label for the modal so the
+                        // operator sees "team ‘WC-analysts’" rather than
+                        // a raw UUID.
+                        let team_label = this
+                            .teams
+                            .iter()
+                            .find(|t| t.id == team_id)
+                            .map(|t| format!("team ‘{}’", t.name))
+                            .unwrap_or_else(|| format!("team {}", team_id));
+                        this.open_invite_share_modal(&invite_json, team_label, raw.clone(), cx);
                         // Refresh both the roster (in case the invitee
                         // was already a member and it degenerated to
                         // an idempotent noop) AND the invite list so
@@ -1596,7 +1714,14 @@ impl FermiConsole {
             } else {
                 Some(raw.clone())
             };
-            let result: Result<String, String> = match resolved {
+            // Two shapes of Ok: direct share (nothing to copy) vs.
+            // email-invite (returns full invite json with token — pop
+            // the share modal). Err carries the failure string.
+            enum ShareResult {
+                Shared,
+                Invited(JsonValue),
+            }
+            let result: Result<ShareResult, String> = match resolved {
                 Some(user_id) => {
                     let body = ShareRequest {
                         share_type: "user".into(),
@@ -1605,7 +1730,7 @@ impl FermiConsole {
                     };
                     api.add_portfolio_share(&pid, &body)
                         .await
-                        .map(|_| "Shared".into())
+                        .map(|_| ShareResult::Shared)
                         .map_err(|e| e.to_string())
                 }
                 None => {
@@ -1617,16 +1742,31 @@ impl FermiConsole {
                     };
                     api.invite_to_portfolio(&pid, &body)
                         .await
-                        .map(|_| "Invite sent".into())
+                        .map(ShareResult::Invited)
                         .map_err(|e| e.to_string())
                 }
             };
             this.update(cx, |this, cx| {
                 match result {
-                    Ok(_) => {
+                    Ok(ShareResult::Shared) => {
                         input.update(cx, |inp, cx| inp.set_text("", cx));
                         this.portfolio_shares_loaded_for = None;
                         this.load_portfolio_shares(&pid, cx);
+                        this.show_toast("Shared with existing user", "✓", theme::GREEN, cx);
+                    }
+                    Ok(ShareResult::Invited(invite_json)) => {
+                        input.update(cx, |inp, cx| inp.set_text("", cx));
+                        this.portfolio_shares_loaded_for = None;
+                        this.load_portfolio_shares(&pid, cx);
+                        // Portfolio label for the modal — look up the
+                        // display title from the current list.
+                        let pf_label = this
+                            .portfolios
+                            .iter()
+                            .find(|p| p.id == pid)
+                            .map(|p| format!("portfolio ‘{}’", p.title))
+                            .unwrap_or_else(|| format!("portfolio {}", pid));
+                        this.open_invite_share_modal(&invite_json, pf_label, raw.clone(), cx);
                     }
                     Err(e) => this.portfolio_share_error = Some(e),
                 }
@@ -2479,12 +2619,24 @@ impl FermiConsole {
         if panel == Panel::Composer && self.cockpit.is_none() {
             let api = self.api.clone();
             let cockpit_entity = cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx));
-            // Observe cockpit changes to drain toast notifications.
+            // Observe cockpit changes to drain queued cross-tab events
+            // (toast notifications, invite-share modal requests). These
+            // fields must live on FermiConsole (the parent), so the
+            // cockpit stashes intent here and the observe callback picks
+            // it up on the next tick.
             cx.observe(&cockpit_entity, |this, cockpit_ref, cx| {
-                let toasts: Vec<String> =
-                    cockpit_ref.update(cx, |state, _| std::mem::take(&mut state.pending_toasts));
+                let (toasts, invite_share): (Vec<String>, Option<(JsonValue, String, String)>) =
+                    cockpit_ref.update(cx, |state, _| {
+                        (
+                            std::mem::take(&mut state.pending_toasts),
+                            state.pending_invite_share.take(),
+                        )
+                    });
                 for msg in toasts {
                     this.show_toast(msg, "✓", theme::GREEN, cx);
+                }
+                if let Some((invite_json, target_label, recipient)) = invite_share {
+                    this.open_invite_share_modal(&invite_json, target_label, recipient, cx);
                 }
             })
             .detach();
@@ -3124,6 +3276,45 @@ impl FermiConsole {
                 (0.0, 0, 0, 0, 0, 0)
             };
 
+        // Polymarket sync chip: shows count of PM-linked active
+        // forecasts and a click-to-refresh affordance. Duplicated from
+        // the Portfolio panel so the operator can trigger a resolution
+        // check from the Dashboard as well — both are places where
+        // "is anything I forecasted resolved yet?" is a natural
+        // question.
+        let n_pm_linked = self
+            .active_forecasts
+            .iter()
+            .filter(|f| {
+                f.metadata
+                    .as_ref()
+                    .and_then(|m| m.get("polymarket"))
+                    .is_some()
+            })
+            .count();
+        let pm_loading = self.pm_resolutions_loading;
+        let pm_result = self.pm_resolutions_last_result.clone();
+        let pm_label = if pm_loading {
+            "⚡ Syncing…".to_string()
+        } else if let Some(ref r) = pm_result {
+            r.clone()
+        } else if n_pm_linked > 0 {
+            format!("⚡ Sync {} PM markets", n_pm_linked)
+        } else {
+            "⚡ PM sync".to_string()
+        };
+        let pm_accent = if pm_result
+            .as_deref()
+            .map(|r| r.starts_with("✓"))
+            .unwrap_or(false)
+        {
+            theme::GREEN
+        } else if n_pm_linked > 0 {
+            theme::GOLD
+        } else {
+            theme::FG_DIM
+        };
+
         div()
             .flex()
             .flex_col()
@@ -3145,9 +3336,40 @@ impl FermiConsole {
                     )
                     .child(if self.connected {
                         div()
-                            .text_size(px(12.0))
-                            .text_color(theme::fg_dim())
-                            .child(format!("🔥 {} active days (30d)", days_30d))
+                            .flex()
+                            .items_center()
+                            .gap(px(12.0))
+                            // PM sync chip — same handler as the Portfolio
+                            // panel's Check Resolutions button so muscle
+                            // memory carries over.
+                            .child(
+                                div()
+                                    .id("dashboard-pm-sync-btn")
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(4.0))
+                                    .px(px(10.0))
+                                    .py(px(4.0))
+                                    .rounded(px(6.0))
+                                    .bg(rgb(0x1A1A1A))
+                                    .border_1()
+                                    .border_color(rgb(pm_accent))
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(pm_accent))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .when(!pm_loading, |s| s.cursor_pointer())
+                                    .when(!pm_loading, |s| s.hover(|s| s.bg(rgb(theme::BG_HOVER))))
+                                    .on_click(cx.listener(|this, _event, _window, cx| {
+                                        this.check_pm_resolutions(cx);
+                                    }))
+                                    .child(pm_label),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(theme::fg_dim())
+                                    .child(format!("🔥 {} active days (30d)", days_30d)),
+                            )
                             .into_any_element()
                     } else {
                         div()
@@ -4176,6 +4398,18 @@ impl FermiConsole {
                             .ok()
                             .and_then(|tokens| ::fermi::parser::Parser::new(tokens).parse().ok());
 
+                        // Metadata-level base_rate override. Mirrors
+                        // `open_forecast`: metadata.base_rate is the
+                        // durable channel that survives FPL-round-trip
+                        // limits (factor blocks etc), so a persisted
+                        // "Update base rate" doesn't silently revert to
+                        // the template's initial anchor when re-opened
+                        // via the workspace path.
+                        let meta_base_rate = forecast
+                            .metadata
+                            .as_ref()
+                            .and_then(|m| m.get("base_rate").cloned());
+
                         cockpit_handle
                             .update(cx, |cockpit, cx| {
                                 cockpit.cached_fpl = fpl_text.clone();
@@ -4206,6 +4440,57 @@ impl FermiConsole {
                                             kind: crate::cockpit::MessageKind::Warning,
                                             text: "FPL parse failed — showing raw source only."
                                                 .into(),
+                                        });
+                                    }
+                                }
+                                // Override the parsed base_rate with the
+                                // authoritative metadata copy when present.
+                                if let Some(br) = meta_base_rate {
+                                    let reference_class = br
+                                        .get("reference_class")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let historical_frequency = br
+                                        .get("historical_frequency")
+                                        .and_then(|v| v.as_f64())
+                                        .unwrap_or(0.0)
+                                        .clamp(0.0, 1.0);
+                                    let sample_size = br
+                                        .get("sample_size")
+                                        .and_then(|v| v.as_u64())
+                                        .map(|n| n as usize);
+                                    let source = br
+                                        .get("source")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("fermi")
+                                        .to_string();
+                                    let reasoning = br
+                                        .get("reasoning")
+                                        .and_then(|v| v.as_str())
+                                        .map(str::to_string);
+                                    let generated_by = br
+                                        .get("generated_by")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("fermi")
+                                        .to_string();
+                                    if let Some(q) = cockpit.program.question_mut() {
+                                        let prev = q.base_rate.as_ref().map(|b| b.historical_frequency);
+                                        log::info!(
+                                            "[base-rate-hydrate/workspace] applying metadata.base_rate: prev_from_fpl={:?}, new_from_metadata={:.4} ({})",
+                                            prev, historical_frequency, reference_class
+                                        );
+                                        q.base_rate = Some(fermi::ast::BaseRate {
+                                            reference_class,
+                                            historical_frequency,
+                                            sample_size,
+                                            source,
+                                            reasoning,
+                                            generated_by: if generated_by == "human" {
+                                                fermi::ast::GeneratedBy::Human
+                                            } else {
+                                                fermi::ast::GeneratedBy::Agent(generated_by)
+                                            },
                                         });
                                     }
                                 }
@@ -4289,6 +4574,19 @@ impl FermiConsole {
                         .metadata
                         .as_ref()
                         .and_then(|m| m.get("polymarket").cloned());
+                    // metadata.base_rate is the durable-anchor channel for
+                    // "Update base rate" persistence (see
+                    // cockpit.rs `apply_base_rate_only`). We prefer the FPL
+                    // path when it round-trips (the emitter now writes
+                    // `question { base_rate { … } }`), but this metadata
+                    // copy is the belt-and-braces fallback — e.g. when
+                    // the FPL contains factor blocks the emitter can't
+                    // round-trip and `regenerate_cached_fpl_if_safe` had
+                    // to skip.
+                    let meta_base_rate = forecast
+                        .metadata
+                        .as_ref()
+                        .and_then(|m| m.get("base_rate").cloned());
 
                     cockpit_handle.update(cx, |cockpit, cx| {
                         // Wire the question text — even if FPL parse fails
@@ -4352,6 +4650,80 @@ impl FermiConsole {
                         if let Some(fpl) = fpl_text.as_ref() {
                             cockpit.cached_fpl = fpl.clone();
                         }
+
+                        // Apply metadata.base_rate. Runs after the FPL
+                        // parse arm below and *unconditionally overrides*
+                        // any base_rate the FPL carried. Rationale:
+                        //
+                        // `metadata.base_rate` is written by every
+                        // "Update base rate" / "Anchor base rate" click,
+                        // whereas `fpl_source` may still carry the
+                        // original template's embedded base_rate when the
+                        // FPL contains constructs the cockpit AST can't
+                        // round-trip (factor blocks, custom estimates —
+                        // very common on WC team_prior templates).
+                        //
+                        // Bug this fixes: user clicks Update base rate
+                        // → 52% → leaves cockpit → returns → sees 2.08%
+                        // because open_forecast reparsed the FPL and
+                        // the template's equal-prior baseline won over
+                        // the actual persisted metadata value.
+                        //
+                        // If both channels have a base_rate, metadata
+                        // wins. If only FPL has one, keep it (it's the
+                        // template's initial anchor, no user has
+                        // overridden it yet). If only metadata has one,
+                        // hydrate it into the AST.
+                        let apply_meta_base_rate = |cockpit: &mut crate::cockpit::CockpitState| {
+                            let Some(ref br) = meta_base_rate else { return };
+                            let reference_class = br
+                                .get("reference_class")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let historical_frequency = br
+                                .get("historical_frequency")
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or(0.0)
+                                .clamp(0.0, 1.0);
+                            let sample_size = br
+                                .get("sample_size")
+                                .and_then(|v| v.as_u64())
+                                .map(|n| n as usize);
+                            let source = br
+                                .get("source")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("fermi")
+                                .to_string();
+                            let reasoning = br
+                                .get("reasoning")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string);
+                            let generated_by = br
+                                .get("generated_by")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("fermi")
+                                .to_string();
+                            if let Some(q) = cockpit.program.question_mut() {
+                                let prev = q.base_rate.as_ref().map(|b| b.historical_frequency);
+                                log::info!(
+                                    "[base-rate-hydrate] applying metadata.base_rate: prev_from_fpl={:?}, new_from_metadata={:.4} ({})",
+                                    prev, historical_frequency, reference_class
+                                );
+                                q.base_rate = Some(fermi::ast::BaseRate {
+                                    reference_class,
+                                    historical_frequency,
+                                    sample_size,
+                                    source,
+                                    reasoning,
+                                    generated_by: if generated_by == "human" {
+                                        fermi::ast::GeneratedBy::Human
+                                    } else {
+                                        fermi::ast::GeneratedBy::Agent(generated_by)
+                                    },
+                                });
+                            }
+                        };
 
                         match parsed {
                             Some(program) => {
@@ -4466,6 +4838,30 @@ impl FermiConsole {
                                     text: "Forecast has no FPL — starting empty cockpit.".into(),
                                 });
                             }
+                        }
+                        // Fallback: if the AST doesn't already carry a
+                        // base_rate (FPL didn't have one, or parse
+                        // failed), pick it up from metadata.
+                        apply_meta_base_rate(cockpit);
+                        // Opportunistic backfill: if the AST now has a
+                        // base_rate but the server's metadata.base_rate
+                        // is empty, PATCH it up so a future re-open
+                        // sees the value even after the FPL is
+                        // regenerated/edited. This closes the migration
+                        // gap for forecasts whose base_rate was set in
+                        // memory before the Stage 1 persist wiring
+                        // landed.
+                        let server_had_meta_br = meta_base_rate.is_some();
+                        let ast_has_br = cockpit
+                            .program
+                            .question()
+                            .and_then(|q| q.base_rate.as_ref())
+                            .is_some();
+                        if ast_has_br && !server_had_meta_br {
+                            log::info!(
+                                "[base-rate-backfill] AST carries base_rate but server metadata is empty — persisting"
+                            );
+                            cockpit.persist_base_rate(cx);
                         }
                         cx.notify();
                     }).ok();
@@ -5031,6 +5427,23 @@ impl FermiConsole {
                                         let stats = self.portfolio_stats_cache.get(&pid).unwrap().clone();
                                         el.child(render_portfolio_stats_panel(&stats))
                                     })
+                                    // ---- Portfolio HUD (Stage 3) ----
+                                    // Six live KPI tiles derived from the currently
+                                    // loaded portfolio_forecasts. Rendered unconditionally
+                                    // once the list is loaded so the operator sees the
+                                    // book at a glance even before opening any row.
+                                    .when(!forecasts.is_empty(), {
+                                        let forecasts_for_hud = forecasts.clone();
+                                        move |el| el.child(render_portfolio_hud(&forecasts_for_hud))
+                                    })
+                                    // ---- Rollup strip: BIGGEST EDGES (Stage 3) ----
+                                    // Top six active forecasts by |Delta-vs-crowd|, each
+                                    // rendered as a one-line mini-worm with a probability
+                                    // bar + crowd tick + divergence chip.
+                                    .when(!forecasts.is_empty(), {
+                                        let forecasts_for_rollup = forecasts.clone();
+                                        move |el| el.child(render_portfolio_rollup_strip(&forecasts_for_rollup))
+                                    })
                                     // Loading spinner
                                     .when(is_loading, |el| {
                                         el.child(
@@ -5068,17 +5481,41 @@ impl FermiConsole {
 
                                         // Filter by free-text (question + tags).
                                         let lc_filter = filter_text.to_lowercase();
+                                        // Snapshot the quick-filter set so the sort closure
+                                        // below doesn't borrow &self across the move boundary.
+                                        let quick_filters = self.portfolio_quick_filters.clone();
                                         let mut filtered: Vec<PortfolioForecast> = forecasts
                                             .into_iter()
                                             .filter(|f| {
-                                                if lc_filter.is_empty() { return true; }
-                                                let q_match = f.question_text.to_lowercase().contains(&lc_filter);
-                                                let tag_match = f
-                                                    .tags
-                                                    .as_ref()
-                                                    .map(|t| t.iter().any(|tag| tag.to_lowercase().contains(&lc_filter)))
-                                                    .unwrap_or(false);
-                                                q_match || tag_match
+                                                if !lc_filter.is_empty() {
+                                                    let q_match = f.question_text.to_lowercase().contains(&lc_filter);
+                                                    let tag_match = f
+                                                        .tags
+                                                        .as_ref()
+                                                        .map(|t| t.iter().any(|tag| tag.to_lowercase().contains(&lc_filter)))
+                                                        .unwrap_or(false);
+                                                    if !(q_match || tag_match) { return false; }
+                                                }
+                                                // Quick-filter chips: AND across all active
+                                                // chips (an operator with both `hot` and `linked`
+                                                // selected wants the intersection, not the union).
+                                                for chip in quick_filters.iter() {
+                                                    let keep = match chip.as_str() {
+                                                        "active" => f.status == "active",
+                                                        "resolved" => f.status == "resolved",
+                                                        "hot" => f.n_recent_updates.unwrap_or(0) > 0,
+                                                        "linked" => f.pm_market_price.is_some(),
+                                                        "edge" => f.pm_divergence_pp.map(|d| d.abs() >= 5.0).unwrap_or(false),
+                                                        "shared" => {
+                                                            f.team_id.as_deref().map(|s| !s.is_empty()).unwrap_or(false)
+                                                                || f.share_count.unwrap_or(0) > 0
+                                                                || f.visibility.as_deref() == Some("public")
+                                                        }
+                                                        _ => true,
+                                                    };
+                                                    if !keep { return false; }
+                                                }
+                                                true
                                             })
                                             .collect();
 
@@ -5188,187 +5625,462 @@ impl FermiConsole {
                                                 )),
                                         );
 
-                                        let el = el.child(toolbar);
+                                        // Quick-filter chip row (Stage 3). One-click drilldowns
+                                        // that toggle a predicate on the row set. Compose with
+                                        // free-text and sort mode. Distinct visual style from
+                                        // sort chips (rounded, filled when active) so the operator
+                                        // reads them as "what am I looking at" rather than "how is
+                                        // it ordered".
+                                        let chip_defs: &[(&str, &str)] = &[
+                                            ("active", "● active"),
+                                            ("hot", "🔥 hot"),
+                                            ("linked", "⛓ linked"),
+                                            ("edge", "⚡ has edge"),
+                                            ("shared", "👥 shared"),
+                                            ("resolved", "✓ resolved"),
+                                        ];
+                                        let mut chip_row = div()
+                                            .px(px(14.0))
+                                            .py(px(6.0))
+                                            .border_b_1()
+                                            .border_color(theme::fg_faint())
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(6.0))
+                                            .child(
+                                                div()
+                                                    .text_size(px(9.0))
+                                                    .text_color(theme::fg_faint())
+                                                    .child("FILTER:"),
+                                            );
+                                        for (key, label) in chip_defs {
+                                            let is_on = self.portfolio_quick_filters.contains(*key);
+                                            let key_owned = (*key).to_string();
+                                            chip_row = chip_row.child(
+                                                div()
+                                                    .id(SharedString::from(format!("pf-chip-{}", key)))
+                                                    .px(px(8.0))
+                                                    .py(px(2.0))
+                                                    .rounded(px(10.0))
+                                                    .border_1()
+                                                    .border_color(if is_on { theme::cyan() } else { theme::fg_faint() })
+                                                    .bg(if is_on { theme::bg_active() } else { theme::bg_elevated() })
+                                                    .text_size(px(10.0))
+                                                    .text_color(if is_on { theme::cyan() } else { theme::fg_dim() })
+                                                    .cursor_pointer()
+                                                    .hover(|s| s.bg(theme::bg_hover()))
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        if this.portfolio_quick_filters.contains(&key_owned) {
+                                                            this.portfolio_quick_filters.remove(&key_owned);
+                                                        } else {
+                                                            this.portfolio_quick_filters.insert(key_owned.clone());
+                                                        }
+                                                        cx.notify();
+                                                    }))
+                                                    .child(label.to_string()),
+                                            );
+                                        }
+                                        // Clear-all affordance — only rendered when at least
+                                        // one chip is active, so it doesn't compete for
+                                        // attention when the row is quiet.
+                                        if !self.portfolio_quick_filters.is_empty() {
+                                            chip_row = chip_row.child(
+                                                div()
+                                                    .id(SharedString::from("pf-chip-clear"))
+                                                    .px(px(6.0))
+                                                    .py(px(2.0))
+                                                    .text_size(px(9.0))
+                                                    .text_color(theme::fg_dim())
+                                                    .cursor_pointer()
+                                                    .hover(|s| s.text_color(theme::red()))
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.portfolio_quick_filters.clear();
+                                                        cx.notify();
+                                                    }))
+                                                    .child("clear"),
+                                            );
+                                        }
 
+                                        let el = el.child(toolbar).child(chip_row);
+
+                                        // Stage 3 row rendering: compact row with a
+                                        // space-time-mini-worm + chips, plus an
+                                        // optional expanded drill-down when the
+                                        // row is in `portfolio_expanded_rows`.
                                         el.children(filtered.into_iter().map(|f| {
-                                            let fid = f.id.clone();
-                                            let pid_rm = pid.clone();
-                                            let prob_val = f.predicted_probability.unwrap_or(0.0);
-                                            let prob_pct = (prob_val * 100.0).round() as u32;
-                                            let prob_color = if prob_pct >= 70 { theme::CYAN }
-                                                else if prob_pct >= 40 { theme::BLUE }
-                                                else { theme::FG_DIM };
-                                            let status_color = match f.status.as_str() {
-                                                "active" => theme::CYAN,
-                                                "resolved" => theme::GREEN,
-                                                _ => theme::FG_DIM,
-                                            };
-                                            let brier_str = f.brier_score
-                                                .map(|b| format!("{:.3}", b))
-                                                .unwrap_or_default();
-
-                                            let recent_str = f
-                                                .updated_at
-                                                .as_deref()
-                                                .map(|t| format_relative_time(t))
-                                                .unwrap_or_else(|| "—".into());
-                                            let pm_str = f
-                                                .pm_market_price
-                                                .map(|p| format!("crowd {:.0}%", p * 100.0));
-                                            let delta_str = f.pm_divergence_pp.map(|d| {
-                                                let sign = if d >= 0.0 { "+" } else { "" };
-                                                format!("Δ {}{:.1}pp", sign, d)
-                                            });
-                                            // Hsla (not the u32 const) so it slots straight
-                                                // into .text_color without another rgb() hop.
-                                                let delta_color = match f.pm_divergence_pp {
-                                                Some(d) if d.abs() >= 10.0 => theme::gold(),
-                                                Some(d) if d.abs() >= 3.0 => theme::cyan(),
-                                                Some(_) => theme::fg_dim(),
-                                                None => theme::fg_faint(),
-                                            };
-                                            let movement_str = f.n_recent_updates.and_then(|n| {
-                                                if n > 0 { Some(format!("{}× 7d", n)) } else { None }
-                                            });
-
-                                            // Sharing badge (Spec 24 §3.5.6): public > team > shared > private.
-                                            let pf_vis = f.visibility.as_deref().unwrap_or("private");
-                                            let pf_has_team = f
-                                                .team_id
-                                                .as_deref()
-                                                .map(|s| !s.is_empty())
-                                                .unwrap_or(false);
-                                            let pf_shares = f.share_count.unwrap_or(0);
-                                            let share_badge: Option<(&'static str, gpui::Hsla)> =
-                                                if pf_vis == "public" {
-                                                    Some(("🌐", theme::cyan()))
-                                                } else if pf_has_team {
-                                                    Some(("👥", theme::blue()))
-                                                } else if pf_shares > 0 {
-                                                    Some(("🔗", theme::gold()))
-                                                } else {
-                                                    None
-                                                };
-
-                                            let fid_click = fid.clone();
-                                            div()
-                                                .id(SharedString::from(format!("pf-row-{}", fid)))
-                                                .px(px(14.0))
-                                                .py(px(7.0))
-                                                .border_b_1()
-                                                .border_color(theme::fg_faint())
-                                                .flex()
-                                                .items_center()
-                                                .gap(px(8.0))
-                                                .cursor_pointer()
-                                                .hover(|s| s.bg(theme::bg_hover()))
-                                                .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                    this.open_forecast(&fid_click, cx);
-                                                }))
-                                                // Question text (wider truncate so team prior
-                                                // names fit comfortably alongside the new
-                                                // status fields).
-                                                .child(
-                                                    div()
-                                                        .flex_grow()
-                                                        .overflow_hidden()
-                                                        .text_size(px(11.0))
-                                                        .text_color(theme::fg())
-                                                        .child(truncate(&f.question_text, 60)),
-                                                )
-                                                // Recent activity (relative time)
-                                                .child(
-                                                    div()
-                                                        .text_size(px(10.0))
-                                                        .text_color(theme::fg_faint())
-                                                        .child(recent_str),
-                                                )
-                                                // Movement chip (count in last 7 days)
-                                                .when(movement_str.is_some(), move |el| {
-                                                    el.child(
-                                                        div()
-                                                            .text_size(px(10.0))
-                                                            .text_color(rgb(theme::BLUE))
-                                                            .child(movement_str.unwrap()),
-                                                    )
-                                                })
-                                                // Fermi probability pill
-                                                .child(
-                                                    div()
-                                                        .px(px(6.0))
-                                                        .py(px(2.0))
-                                                        .rounded(px(4.0))
-                                                        .bg(theme::bg_hover())
-                                                        .text_size(px(10.0))
-                                                        .text_color(rgb(prob_color))
-                                                        .font_weight(FontWeight::SEMIBOLD)
-                                                        .child(format!("{}%", prob_pct)),
-                                                )
-                                                // Polymarket crowd pill (when linked)
-                                                .when(pm_str.is_some(), move |el| {
-                                                    el.child(
-                                                        div()
-                                                            .text_size(px(10.0))
-                                                            .text_color(theme::fg_dim())
-                                                            .child(pm_str.unwrap()),
-                                                    )
-                                                })
-                                                // PM delta (color-graded: gold for big gaps)
-                                                .when(delta_str.is_some(), move |el| {
-                                                    el.child(
-                                                        div()
-                                                            .text_size(px(10.0))
-                                                            .text_color(delta_color)
-                                                            .font_weight(FontWeight::SEMIBOLD)
-                                                            .child(delta_str.unwrap()),
-                                                    )
-                                                })
-                                                // Sharing badge (icon-only; tooltip-free for density)
-                                                .when(share_badge.is_some(), move |el| {
-                                                    let (icon, color) = share_badge.unwrap();
-                                                    el.child(
-                                                        div()
-                                                            .text_size(px(10.0))
-                                                            .text_color(color)
-                                                            .child(icon),
-                                                    )
-                                                })
-                                                // Status badge (compact)
-                                                .child(
-                                                    div()
-                                                        .text_size(px(10.0))
-                                                        .text_color(rgb(status_color))
-                                                        .child(f.status.clone()),
-                                                )
-                                                // Brier score (resolved only)
-                                                .when(!brier_str.is_empty(), move |el| {
-                                                    el.child(
-                                                        div()
-                                                            .text_size(px(10.0))
-                                                            .text_color(theme::fg_dim())
-                                                            .child(brier_str),
-                                                    )
-                                                })
-                                                // Remove button — explicit ✕ stays at the
-                                                // far right with its own click handler so the
-                                                // row's whole-row click can drill into the cockpit.
-                                                .child(
-                                                    div()
-                                                        .id(SharedString::from(format!("rm-pf-{}", fid)))
-                                                        .text_size(px(11.0))
-                                                        .text_color(theme::fg_faint())
-                                                        .cursor_pointer()
-                                                        .hover(|s| s.text_color(theme::red()))
-                                                        .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                            this.remove_from_portfolio(pid_rm.clone(), fid.clone(), cx);
-                                                        }))
-                                                        .child("×"),
-                                                )
+                                            self.render_constellation_row(&f, &pid, cx)
                                         }))
                                     })
                             }),
                     ),
             )
+    }
+
+    /// Render one row in the portfolio Constellation table (Stage 3).
+    ///
+    /// Two layers:
+    ///   * Compact row — always visible. Chevron + title + mini-worm +
+    ///     chip stack (probability, crowd, divergence, activity, status,
+    ///     sharing badge). Click the chevron to toggle drill-down;
+    ///     clicking anywhere else opens the forecast in the cockpit.
+    ///   * Drill-down panel — only visible when `fid` is in
+    ///     `portfolio_expanded_rows`. Shows the full question text,
+    ///     tag chips, Brier + resolution note (if resolved), and
+    ///     explicit action buttons (Open in cockpit, Refresh, Remove).
+    fn render_constellation_row(
+        &self,
+        f: &PortfolioForecast,
+        pid: &str,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let fid = f.id.clone();
+        let pid_owned = pid.to_string();
+        let is_expanded = self.portfolio_expanded_rows.contains(&fid);
+
+        let prob_val = f.predicted_probability.unwrap_or(0.0);
+        let prob_pct = (prob_val * 100.0).round() as u32;
+        let prob_color = if prob_pct >= 70 {
+            theme::CYAN
+        } else if prob_pct >= 40 {
+            theme::BLUE
+        } else {
+            theme::FG_DIM
+        };
+        let status_color = match f.status.as_str() {
+            "active" => theme::CYAN,
+            "resolved" => theme::GREEN,
+            _ => theme::FG_DIM,
+        };
+
+        let recent_str = f
+            .updated_at
+            .as_deref()
+            .map(|t| format_relative_time(t))
+            .unwrap_or_else(|| "—".into());
+
+        // Δ vs crowd chip — color-graded so an operator scanning the
+        // list can spot the big edges without reading numbers.
+        let delta_str = f.pm_divergence_pp.map(|d| {
+            let sign = if d >= 0.0 { "+" } else { "" };
+            format!("{}{:.1}pp", sign, d)
+        });
+        let delta_color: gpui::Hsla = match f.pm_divergence_pp {
+            Some(d) if d.abs() >= 10.0 => theme::gold(),
+            Some(d) if d.abs() >= 3.0 => theme::cyan(),
+            Some(_) => theme::fg_dim(),
+            None => theme::fg_faint(),
+        };
+        let movement_n = f.n_recent_updates.unwrap_or(0);
+
+        // Sharing badge (Spec 24 §3.5.6): public > team > shared > private.
+        let pf_vis = f.visibility.as_deref().unwrap_or("private");
+        let pf_has_team = f.team_id.as_deref().map(|s| !s.is_empty()).unwrap_or(false);
+        let pf_shares = f.share_count.unwrap_or(0);
+        let share_badge: Option<(&'static str, gpui::Hsla)> = if pf_vis == "public" {
+            Some(("🌐", theme::cyan()))
+        } else if pf_has_team {
+            Some(("👥", theme::blue()))
+        } else if pf_shares > 0 {
+            Some(("🔗", theme::gold()))
+        } else {
+            None
+        };
+
+        let brier_str = f.brier_score.map(|b| format!("{:.3}", b));
+
+        // ── Compact row ──────────────────────────────────────────────────
+        let fid_chevron = fid.clone();
+        let fid_click = fid.clone();
+        let chevron_glyph = if is_expanded { "▾" } else { "▸" };
+
+        let mut compact = div()
+            .id(SharedString::from(format!("pf-row-{}", fid)))
+            .px(px(10.0))
+            .py(px(7.0))
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .cursor_pointer()
+            .hover(|s| s.bg(theme::bg_hover()))
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                this.open_forecast(&fid_click, cx);
+            }))
+            // Chevron — own click handler, doesn't propagate to row.
+            .child(
+                div()
+                    .id(SharedString::from(format!("pf-chev-{}", fid)))
+                    .w(px(16.0))
+                    .text_size(px(10.0))
+                    .text_color(if is_expanded {
+                        theme::cyan()
+                    } else {
+                        theme::fg_dim()
+                    })
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(theme::cyan()))
+                    .on_click(cx.listener(move |this, _ev, _w, cx| {
+                        // GPUI's on_click delivers a `ClickEvent`, but
+                        // click events do not bubble through the parent
+                        // row's own on_click here — they're routed by
+                        // ID. So we just toggle; no stop_propagation needed.
+                        if this.portfolio_expanded_rows.contains(&fid_chevron) {
+                            this.portfolio_expanded_rows.remove(&fid_chevron);
+                        } else {
+                            this.portfolio_expanded_rows.insert(fid_chevron.clone());
+                        }
+                        cx.notify();
+                    }))
+                    .child(chevron_glyph),
+            )
+            // Title — truncated for scan-ability.
+            .child(
+                div()
+                    .w(px(280.0))
+                    .overflow_hidden()
+                    .text_size(px(11.0))
+                    .text_color(theme::fg())
+                    .child(truncate(&f.question_text, 44)),
+            )
+            // Mini space-time worm — the visual heart of the row.
+            // Same grammar as the trajectory worm: cyan bar = model,
+            // purple tick = crowd, gold tick = base rate (elided here
+            // since PortfolioForecast doesn't carry it; keep the visual
+            // grammar consistent so operators recognise the widget).
+            .child(render_mini_worm(prob_val, f.pm_market_price, None, 72.0))
+            // Probability numeric.
+            .child(
+                div()
+                    .w(px(38.0))
+                    .text_size(px(10.0))
+                    .text_color(rgb(prob_color))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(format!("{}%", prob_pct)),
+            )
+            // Δ vs crowd chip — anchored to a fixed width so rows align.
+            .child({
+                let mut chip = div()
+                    .w(px(58.0))
+                    .text_size(px(10.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(delta_color);
+                if let Some(s) = delta_str.clone() {
+                    chip = chip.child(s);
+                } else {
+                    chip = chip.child(div().text_color(theme::fg_faint()).child("no crowd"));
+                }
+                chip
+            })
+            // Activity chip — present only when the forecast moved.
+            .child({
+                let mut cell = div().w(px(48.0)).text_size(px(10.0));
+                if movement_n > 0 {
+                    cell = cell
+                        .text_color(rgb(theme::BLUE))
+                        .child(format!("↑ {}× 7d", movement_n));
+                } else {
+                    cell = cell.text_color(theme::fg_faint()).child("quiet");
+                }
+                cell
+            })
+            // Recent activity (relative time).
+            .child(
+                div()
+                    .w(px(42.0))
+                    .text_size(px(10.0))
+                    .text_color(theme::fg_faint())
+                    .child(recent_str),
+            )
+            // Sharing badge — fixed slot so rows align even when absent.
+            .child({
+                let mut cell = div().w(px(16.0)).text_size(px(10.0));
+                if let Some((icon, color)) = share_badge {
+                    cell = cell.text_color(color).child(icon);
+                }
+                cell
+            })
+            // Status.
+            .child(
+                div()
+                    .w(px(52.0))
+                    .text_size(px(10.0))
+                    .text_color(rgb(status_color))
+                    .child(f.status.clone()),
+            );
+
+        // Brier only when resolved.
+        if let Some(bs) = brier_str.clone() {
+            compact = compact.child(
+                div()
+                    .w(px(48.0))
+                    .text_size(px(10.0))
+                    .text_color(theme::fg_dim())
+                    .child(format!("B {}", bs)),
+            );
+        }
+
+        // ── Drill-down panel ────────────────────────────────────────────────
+        let mut drill: Option<gpui::AnyElement> = None;
+        if is_expanded {
+            let fid_open = fid.clone();
+            let fid_remove = fid.clone();
+            let pid_remove = pid_owned.clone();
+            let tags = f.tags.clone().unwrap_or_default();
+            let resolution_note: Option<String> = None; // Not carried on
+                                                        // PortfolioForecast; drill-down for
+                                                        // resolution notes would need a
+                                                        // /forecast/:id fetch. Reserved.
+
+            let mut panel = div()
+                .px(px(38.0)) // indent past the chevron + title column
+                .py(px(8.0))
+                .bg(theme::bg_active())
+                .border_l_2()
+                .border_color(rgb(theme::CYAN))
+                .flex()
+                .flex_col()
+                .gap(px(6.0))
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(theme::fg())
+                        .child(f.question_text.clone()),
+                );
+
+            // Tag chips.
+            if !tags.is_empty() {
+                let mut tag_row = div().flex().flex_wrap().gap(px(4.0)).child(
+                    div()
+                        .text_size(px(9.0))
+                        .text_color(theme::fg_faint())
+                        .child("TAGS:"),
+                );
+                for t in tags {
+                    tag_row = tag_row.child(
+                        div()
+                            .px(px(6.0))
+                            .py(px(1.0))
+                            .rounded(px(3.0))
+                            .bg(theme::bg_elevated())
+                            .text_size(px(9.0))
+                            .text_color(theme::fg_dim())
+                            .child(t),
+                    );
+                }
+                panel = panel.child(tag_row);
+            }
+
+            // Metrics summary row inside the drill-down.
+            let mut metrics = div()
+                .flex()
+                .flex_wrap()
+                .gap(px(14.0))
+                .child(render_detail_kv(
+                    "Model",
+                    &format!("{:.1}%", prob_val * 100.0),
+                ));
+            if let Some(c) = f.pm_market_price {
+                metrics = metrics.child(render_detail_kv("Crowd", &format!("{:.1}%", c * 100.0)));
+            }
+            if let Some(d) = f.pm_divergence_pp {
+                metrics = metrics.child(render_detail_kv(
+                    "Δ",
+                    &format!("{}{:.1}pp", if d >= 0.0 { "+" } else { "" }, d),
+                ));
+            }
+            if let Some(bs) = brier_str.clone() {
+                metrics = metrics.child(render_detail_kv("Brier", &bs));
+            }
+            if let Some(outcome) = f.actual_outcome {
+                metrics = metrics.child(render_detail_kv(
+                    "Resolved",
+                    if outcome { "Yes" } else { "No" },
+                ));
+            }
+            if movement_n > 0 {
+                metrics = metrics.child(render_detail_kv("Updates 7d", &format!("{}", movement_n)));
+            }
+            if let Some(url) = f.pm_url.as_deref() {
+                let url_str = url.to_string();
+                metrics = metrics.child(
+                    div()
+                        .id(SharedString::from(format!("pf-pm-open-{}", fid)))
+                        .text_size(px(10.0))
+                        .text_color(theme::purple())
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(theme::cyan()))
+                        .on_click(cx.listener(move |_this, _, _, _cx| {
+                            let _ = open::that(&url_str);
+                        }))
+                        .child("Open Polymarket ↗"),
+                );
+            }
+            panel = panel.child(metrics);
+
+            if let Some(rn) = resolution_note {
+                panel = panel.child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(theme::fg_dim())
+                        .child(rn),
+                );
+            }
+
+            // Action row — explicit buttons for the operations the
+            // compact row's whole-row click can't disambiguate.
+            panel = panel.child(
+                div()
+                    .flex()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("pf-open-{}", fid)))
+                            .px(px(10.0))
+                            .py(px(3.0))
+                            .rounded(px(4.0))
+                            .border_1()
+                            .border_color(rgb(theme::CYAN))
+                            .text_size(px(10.0))
+                            .text_color(rgb(theme::CYAN))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::bg_hover()))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.open_forecast(&fid_open, cx);
+                            }))
+                            .child("Open in cockpit →"),
+                    )
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("pf-remove-{}", fid)))
+                            .px(px(10.0))
+                            .py(px(3.0))
+                            .rounded(px(4.0))
+                            .border_1()
+                            .border_color(theme::fg_faint())
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_dim())
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::bg_hover()).text_color(theme::red()))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.remove_from_portfolio(
+                                    pid_remove.clone(),
+                                    fid_remove.clone(),
+                                    cx,
+                                );
+                            }))
+                            .child("Remove from portfolio"),
+                    ),
+            );
+
+            drill = Some(panel.into_any_element());
+        }
+
+        // Container: row + optional drill-down, with a bottom border so
+        // rows visually separate whether or not one is expanded.
+        div()
+            .border_b_1()
+            .border_color(theme::fg_faint())
+            .child(compact)
+            .when_some(drill, |el, d| el.child(d))
     }
 
     fn render_forecast_portfolio_row(
@@ -7442,6 +8154,53 @@ impl FermiConsole {
                         .child(inv.status.clone()),
                 );
             if is_pending {
+                // Copy-link affordance. Mirrors the forecast-invite
+                // pattern in cockpit.rs `render_forecast_invites_section`.
+                // The token is populated only for email/link invites
+                // (see fermi/src/handlers/invites.rs `create_invite_row`);
+                // direct user-id invites surface in the recipient's
+                // Inbox and don't need a link. This is the operator's
+                // fallback when `RESEND_API_KEY` isn't configured on
+                // the server — the invite row is written and the URL
+                // can be sent via any channel.
+                if let Some(token) = inv.token.clone() {
+                    let base_url = self.api.base_url_sync();
+                    let invite_url =
+                        format!("{}/invites/{}", base_url.trim_end_matches('/'), token);
+                    let url_for_copy = invite_url.clone();
+                    row = row.child(
+                        div()
+                            .id(SharedString::from(format!("tinv-copy-{}", iid)))
+                            .px(px(6.0))
+                            .py(px(2.0))
+                            .rounded(px(4.0))
+                            .text_size(px(11.0))
+                            .text_color(theme::cyan())
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::bg_hover()))
+                            .on_click(cx.listener(move |this, _, _w, cx| {
+                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                    url_for_copy.clone(),
+                                ));
+                                this.show_toast(
+                                    "Invite link copied to clipboard",
+                                    "🔗",
+                                    theme::CYAN,
+                                    cx,
+                                );
+                            }))
+                            .child("🔗 Copy link"),
+                    );
+                    // Show the URL beneath in tiny text so the operator
+                    // has visual confirmation of exactly what will be
+                    // shared before hitting Copy.
+                    row = row.child(
+                        div()
+                            .text_size(px(9.0))
+                            .text_color(theme::fg_faint())
+                            .child(invite_url),
+                    );
+                }
                 row = row.child(
                     div()
                         .id(SharedString::from(format!("tinv-revoke-{}", iid)))
@@ -7549,7 +8308,157 @@ impl FermiConsole {
             )
     }
 
-    // ── Inbox sheet (Spec 24 §3.5.5) ───────────────────────────────────
+    // ── Invite share modal (Sprint A) ─────────────────────────────────────────
+    //
+    // Pops immediately after creating an invite so the operator has a
+    // one-click Copy Link affordance. This is the primary path when
+    // the server doesn't have `RESEND_API_KEY` configured (email is a
+    // no-op then), but it's also useful when email IS configured —
+    // some testers prefer a link they can send via Slack / WhatsApp
+    // rather than an email that might land in spam.
+
+    fn render_invite_share_modal(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        // Only rendered when `self.invite_share_modal.is_some()`; caller
+        // is responsible for gating.
+        let modal = self
+            .invite_share_modal
+            .as_ref()
+            .expect("render_invite_share_modal called with no modal state");
+        let invite_url = modal.invite_url.clone();
+        let url_for_copy = modal.invite_url.clone();
+        let email_line = if modal.email_sent {
+            format!(
+                "✉ Emailed to {}. You can also share this link directly.",
+                modal.recipient
+            )
+        } else {
+            format!(
+                "⚠ Email delivery not configured on the server. Share this link with {} directly.",
+                modal.recipient
+            )
+        };
+        let email_color = if modal.email_sent {
+            theme::green()
+        } else {
+            theme::gold()
+        };
+
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::rgba(0x0A0E14CC))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(14.0))
+                    .w(px(520.0))
+                    .p(px(24.0))
+                    .rounded(px(12.0))
+                    .bg(rgb(theme::BG_ELEVATED))
+                    .border_1()
+                    .border_color(rgb(theme::CYAN))
+                    // Header
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(div().text_size(px(18.0)).child("🔗"))
+                            .child(
+                                div()
+                                    .text_size(px(16.0))
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(theme::fg())
+                                    .child("Invite ready to share"),
+                            ),
+                    )
+                    // Subtitle: target label + permission.
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(theme::fg_dim())
+                            .child(format!(
+                                "{} • {} access",
+                                modal.target_label, modal.permission
+                            )),
+                    )
+                    // Email status line — green when Resend fired,
+                    // gold otherwise ("share this link directly").
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(email_color)
+                            .child(email_line),
+                    )
+                    // The link itself, in a bordered read-only field.
+                    .child(
+                        div()
+                            .px(px(12.0))
+                            .py(px(10.0))
+                            .rounded(px(6.0))
+                            .bg(rgb(theme::BG))
+                            .border_1()
+                            .border_color(theme::fg_faint())
+                            .text_size(px(10.0))
+                            .text_color(theme::cyan())
+                            .child(invite_url.clone()),
+                    )
+                    // Action row: Copy link + Dismiss.
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(8.0))
+                            .justify_end()
+                            .child(
+                                div()
+                                    .id("invite-modal-dismiss")
+                                    .px(px(14.0))
+                                    .py(px(7.0))
+                                    .rounded(px(6.0))
+                                    .text_size(px(12.0))
+                                    .text_color(theme::fg_dim())
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme::bg_hover()))
+                                    .on_click(cx.listener(|this, _, _w, cx| {
+                                        this.invite_share_modal = None;
+                                        cx.notify();
+                                    }))
+                                    .child("Done"),
+                            )
+                            .child(
+                                div()
+                                    .id("invite-modal-copy")
+                                    .px(px(16.0))
+                                    .py(px(7.0))
+                                    .rounded(px(6.0))
+                                    .bg(rgb(theme::CYAN))
+                                    .text_size(px(12.0))
+                                    .text_color(rgb(theme::BG))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.85))
+                                    .on_click(cx.listener(move |this, _, _w, cx| {
+                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                            url_for_copy.clone(),
+                                        ));
+                                        this.show_toast(
+                                            "Invite link copied to clipboard",
+                                            "🔗",
+                                            theme::CYAN,
+                                            cx,
+                                        );
+                                    }))
+                                    .child("Copy link"),
+                            ),
+                    ),
+            )
+    }
+
+    // ── Inbox sheet (Spec 24 §3.5.5) ───────────────────────────────────────────
 
     fn render_inbox_sheet(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
@@ -9150,6 +10059,13 @@ impl Render for FermiConsole {
         let inbox_overlay = self
             .inbox_sheet_showing
             .then(|| self.render_inbox_sheet(cx).into_any_element());
+        // Sprint A: just-created invite share modal. Only rendered
+        // when `invite_share_modal` is Some — the child gates on its
+        // own presence to unwrap safely.
+        let invite_share_overlay = self
+            .invite_share_modal
+            .is_some()
+            .then(|| self.render_invite_share_modal(cx).into_any_element());
 
         div()
             .key_context("FermiConsole")
@@ -9205,6 +10121,9 @@ impl Render for FermiConsole {
             .children(team_create_overlay)
             // Inbox sheet overlay (pending invites)
             .children(inbox_overlay)
+            // Just-created invite share modal (Sprint A) — immediate
+            // Copy Link affordance after any /invites POST succeeds.
+            .children(invite_share_overlay)
             // Commit sheet overlay (⌘P)
             .children(commit_overlay)
             // Resolve sheet overlay
@@ -9362,7 +10281,7 @@ fn is_collaboration_team(t: &Team) -> bool {
 /// Render an RFC3339 timestamp as a compact "now / 5m / 3h / 2d / 4w / 8mo / 2y"
 /// relative string for portfolio rows. Falls back to "—" on parse failure
 /// rather than poisoning the whole list with a panic.
-fn format_relative_time(rfc3339: &str) -> String {
+pub(crate) fn format_relative_time(rfc3339: &str) -> String {
     let parsed = chrono::DateTime::parse_from_rfc3339(rfc3339);
     let Ok(t) = parsed else {
         return "—".into();
@@ -9853,6 +10772,401 @@ fn render_local_agent_card(card: &AgentCard) -> impl IntoElement {
                 .child(card.capabilities.model.clone())
                 .child(format!("{} runs", card.usage.total_executions)),
         )
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Portfolio HUD — the top-of-panel "gaming console" strip
+//
+// Six KPI tiles computed directly from the currently-loaded
+// `portfolio_forecasts` list. Rendered as a horizontal row of chips
+// with a big value + label + small trend/context line.
+//
+// KPIs (left to right):
+//   1. Book size       — total forecasts loaded (n)
+//   2. Avg conviction  — mean of predicted_probability across active
+//   3. “Hot”           — count of forecasts with n_recent_updates > 0
+//   4. Edge vs crowd   — avg |pm_divergence_pp| across linked forecasts
+//   5. Book Brier      — mean brier over resolved rows (higher tier)
+//   6. Resolution rate — resolved / total (progress toward mature book)
+//
+// Data source is the `Vec<PortfolioForecast>` the client already has
+// in `portfolio_forecasts[pid]` — no additional API round-trip. When a
+// KPI can't be computed (empty book / no linked markets / no resolved
+// rows yet) we render — as the value so the operator can tell "we don't
+// know yet" from "we know and the value is zero".
+// ═══════════════════════════════════════════════════════════════════
+fn render_portfolio_hud(forecasts: &[PortfolioForecast]) -> impl IntoElement {
+    let n_total = forecasts.len();
+    let active: Vec<&PortfolioForecast> =
+        forecasts.iter().filter(|f| f.status == "active").collect();
+    let resolved: Vec<&PortfolioForecast> = forecasts
+        .iter()
+        .filter(|f| f.status == "resolved")
+        .collect();
+
+    // Mean conviction across ACTIVE forecasts — resolved values drift
+    // toward 0/1 by definition, so including them distorts the number.
+    let avg_prob = if active.is_empty() {
+        None
+    } else {
+        let sum: f64 = active.iter().filter_map(|f| f.predicted_probability).sum();
+        let n = active
+            .iter()
+            .filter(|f| f.predicted_probability.is_some())
+            .count();
+        if n == 0 {
+            None
+        } else {
+            Some(sum / n as f64)
+        }
+    };
+
+    // "Hot" — forecasts that moved in the last 7 days. A book's action
+    // concentrates on a handful of files at any given time; this KPI
+    // lets the operator jump straight to "where's the work happening".
+    let n_hot = forecasts
+        .iter()
+        .filter(|f| f.n_recent_updates.unwrap_or(0) > 0)
+        .count();
+
+    // Mean |edge vs crowd| across markets that have a linked crowd
+    // price. Absolute value is what matters — the sign averages out
+    // and a book with a lot of two-sided divergence is more
+    // interesting than a book uniformly in one direction.
+    let (avg_abs_divergence, n_linked) = {
+        let deltas: Vec<f64> = forecasts
+            .iter()
+            .filter_map(|f| f.pm_divergence_pp)
+            .map(f64::abs)
+            .collect();
+        if deltas.is_empty() {
+            (None, 0)
+        } else {
+            let n = deltas.len();
+            (Some(deltas.iter().sum::<f64>() / n as f64), n)
+        }
+    };
+
+    // Book Brier — average across resolved rows only. Same shape as
+    // the per-user Brier on the Dashboard, but scoped to this book.
+    let avg_brier = {
+        let bs: Vec<f64> = resolved.iter().filter_map(|f| f.brier_score).collect();
+        if bs.is_empty() {
+            None
+        } else {
+            let n = bs.len();
+            Some(bs.iter().sum::<f64>() / n as f64)
+        }
+    };
+
+    let resolution_rate = if n_total == 0 {
+        None
+    } else {
+        Some(resolved.len() as f64 / n_total as f64)
+    };
+
+    // Individual tile renderer. Big value on top, small label+context
+    // below. Border + subtle bg gives the “read-out card” feel.
+    let tile = |value: String, label: &'static str, sub: String, color: u32| {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
+            .px(px(12.0))
+            .py(px(8.0))
+            .min_w(px(110.0))
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(theme::fg_faint())
+            .bg(theme::bg_elevated())
+            .child(
+                div()
+                    .text_size(px(18.0))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(rgb(color))
+                    .child(value),
+            )
+            .child(
+                div()
+                    .text_size(px(9.0))
+                    .text_color(theme::fg_faint())
+                    .child(label.to_string()),
+            )
+            .child(
+                div()
+                    .text_size(px(9.0))
+                    .text_color(theme::fg_dim())
+                    .child(sub),
+            )
+    };
+
+    let dash = || "—".to_string();
+
+    div()
+        .flex()
+        .flex_wrap()
+        .gap(px(8.0))
+        .px(px(14.0))
+        .py(px(10.0))
+        .border_b_1()
+        .border_color(theme::fg_faint())
+        .child(tile(
+            n_total.to_string(),
+            "BOOK SIZE",
+            format!("{} active · {} resolved", active.len(), resolved.len()),
+            theme::CYAN,
+        ))
+        .child(tile(
+            avg_prob
+                .map(|p| format!("{:.0}%", p * 100.0))
+                .unwrap_or_else(dash),
+            "AVG CONVICTION",
+            format!("across {} live", active.len()),
+            theme::BLUE,
+        ))
+        .child(tile(
+            n_hot.to_string(),
+            "HOT (7d)",
+            if n_hot == 0 {
+                "quiet book".into()
+            } else {
+                format!("of {} live", active.len().max(1))
+            },
+            if n_hot == 0 {
+                theme::FG_DIM
+            } else {
+                theme::GOLD
+            },
+        ))
+        .child(tile(
+            avg_abs_divergence
+                .map(|d| format!("{:.1}pp", d))
+                .unwrap_or_else(dash),
+            "|EDGE vs CROWD|",
+            if n_linked == 0 {
+                "no linked markets".into()
+            } else {
+                format!("across {} linked", n_linked)
+            },
+            if avg_abs_divergence.map(|d| d >= 5.0).unwrap_or(false) {
+                theme::GOLD
+            } else {
+                theme::PURPLE
+            },
+        ))
+        .child(tile(
+            avg_brier.map(|b| format!("{:.3}", b)).unwrap_or_else(dash),
+            "BOOK BRIER",
+            if resolved.is_empty() {
+                "nothing resolved yet".into()
+            } else {
+                format!("n={}", resolved.len())
+            },
+            match avg_brier {
+                Some(b) if b <= 0.10 => theme::GREEN,
+                Some(b) if b <= 0.20 => theme::CYAN,
+                Some(b) if b <= 0.30 => theme::GOLD,
+                Some(_) => theme::ORANGE,
+                None => theme::FG_DIM,
+            },
+        ))
+        .child(tile(
+            resolution_rate
+                .map(|r| format!("{:.0}%", r * 100.0))
+                .unwrap_or_else(dash),
+            "RESOLVED",
+            format!("{} of {}", resolved.len(), n_total),
+            theme::GREEN,
+        ))
+}
+
+/// Shared mini-worm renderer used by BOTH the rollup strip and the
+/// Constellation table rows.
+///
+/// Renders a compact horizontal bar showing the model probability (cyan
+/// fill from left), a purple tick at the crowd price, and an optional
+/// gold tick at the outside-view base rate. Reads as a Tufte-style
+/// space-time-worm-in-miniature: at 90px wide you can eyeball
+/// (a) how confident the model is, (b) how far off the crowd sits, and
+/// (c) how far off the base rate sits — all without a numeric.
+///
+/// Width is a parameter so this can shrink for dense Constellation
+/// rows (60–80px) or expand for the rollup strip (90–110px).
+fn render_mini_worm(
+    prob: f64,
+    crowd: Option<f64>,
+    base_rate: Option<f64>,
+    width_px: f32,
+) -> impl IntoElement {
+    let clamp = |v: f64| v.clamp(0.0, 1.0) as f32;
+    let model_w = width_px * clamp(prob);
+    div()
+        .relative()
+        .w(px(width_px))
+        .h(px(6.0))
+        .rounded(px(3.0))
+        .bg(theme::bg_active())
+        // Filled model portion (cyan bar left-aligned).
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .h(px(6.0))
+                .w(px(model_w))
+                .rounded(px(3.0))
+                .bg(rgb(theme::CYAN)),
+        )
+        // Crowd tick (purple, tall) at the crowd's x-coord — lets the
+        // eye see the divergence pixel-for-pixel.
+        .when(crowd.is_some(), |el| {
+            let x = width_px * clamp(crowd.unwrap()) - 1.0;
+            el.child(
+                div()
+                    .absolute()
+                    .top(px(-2.0))
+                    .left(px(x))
+                    .w(px(2.0))
+                    .h(px(10.0))
+                    .bg(rgb(theme::PURPLE)),
+            )
+        })
+        // Base-rate tick (gold, thinner) at the outside view. Same
+        // visual grammar as the trajectory-worm's gold dashed line.
+        .when(base_rate.is_some(), |el| {
+            let x = width_px * clamp(base_rate.unwrap()) - 0.5;
+            el.child(
+                div()
+                    .absolute()
+                    .top(px(-2.0))
+                    .left(px(x))
+                    .w(px(1.0))
+                    .h(px(10.0))
+                    .bg(rgb(theme::GOLD)),
+            )
+        })
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Portfolio Rollup Strip — the "constellation at a glance" band
+//
+// A vertical stack of one-line rows, one per forecast, showing the
+// probability bar, current probability, and crowd-divergence chip.
+// Ordered by pm_divergence_pp descending (biggest edges up top),
+// falling back to alphabetical. Capped at 6 rows so the strip stays
+// compact; the full list still lives in the Constellation table.
+// ═══════════════════════════════════════════════════════════════════
+fn render_portfolio_rollup_strip(forecasts: &[PortfolioForecast]) -> impl IntoElement {
+    // Sort by |divergence| desc, then n_recent_updates desc, then
+    // probability desc. Filter out resolved rows since they no longer
+    // carry live divergence signal.
+    let mut ranked: Vec<&PortfolioForecast> =
+        forecasts.iter().filter(|f| f.status == "active").collect();
+    ranked.sort_by(|a, b| {
+        let ad = a.pm_divergence_pp.map(f64::abs).unwrap_or(-1.0);
+        let bd = b.pm_divergence_pp.map(f64::abs).unwrap_or(-1.0);
+        bd.partial_cmp(&ad)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                b.n_recent_updates
+                    .unwrap_or(0)
+                    .cmp(&a.n_recent_updates.unwrap_or(0))
+            })
+            .then_with(|| {
+                let ap = a.predicted_probability.unwrap_or(0.0);
+                let bp = b.predicted_probability.unwrap_or(0.0);
+                bp.partial_cmp(&ap).unwrap_or(std::cmp::Ordering::Equal)
+            })
+    });
+    let top: Vec<&PortfolioForecast> = ranked.into_iter().take(6).collect();
+
+    // Empty state: nothing active or nothing linked yet. Skip the
+    // strip entirely rather than render an awkward placeholder — the
+    // Constellation table below already handles empty gracefully.
+    if top.is_empty() {
+        return div().into_any_element();
+    }
+
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(2.0))
+        .px(px(14.0))
+        .py(px(8.0))
+        .border_b_1()
+        .border_color(theme::fg_faint())
+        .child(
+            div()
+                .text_size(px(10.0))
+                .text_color(theme::fg_faint())
+                .font_weight(FontWeight::SEMIBOLD)
+                .child("BIGGEST EDGES"),
+        )
+        .children(top.iter().map(|f| {
+            let prob = f.predicted_probability.unwrap_or(0.0);
+            let prob_pct = (prob * 100.0).round() as u32;
+            let crowd_str = f
+                .pm_market_price
+                .map(|p| format!("crowd {:.0}%", p * 100.0));
+            let (delta_str, delta_color) = match f.pm_divergence_pp {
+                Some(d) if d.abs() >= 10.0 => (
+                    Some(format!("{}{:.1}pp", if d >= 0.0 { "+" } else { "" }, d)),
+                    theme::GOLD,
+                ),
+                Some(d) if d.abs() >= 3.0 => (
+                    Some(format!("{}{:.1}pp", if d >= 0.0 { "+" } else { "" }, d)),
+                    theme::CYAN,
+                ),
+                Some(d) => (
+                    Some(format!("{}{:.1}pp", if d >= 0.0 { "+" } else { "" }, d)),
+                    theme::FG_DIM,
+                ),
+                None => (None, theme::FG_FAINT),
+            };
+            let title = truncate(&f.question_text, 44);
+            let bar = render_mini_worm(prob, f.pm_market_price, None, 90.0);
+
+            div()
+                .flex()
+                .items_center()
+                .gap(px(10.0))
+                .py(px(2.0))
+                .child(
+                    div()
+                        .w(px(180.0))
+                        .text_size(px(11.0))
+                        .text_color(theme::fg())
+                        .child(title),
+                )
+                .child(bar)
+                .child(
+                    div()
+                        .w(px(38.0))
+                        .text_size(px(11.0))
+                        .text_color(theme::cyan())
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(format!("{}%", prob_pct)),
+                )
+                .when(crowd_str.is_some(), |el| {
+                    el.child(
+                        div()
+                            .w(px(70.0))
+                            .text_size(px(10.0))
+                            .text_color(theme::purple())
+                            .child(crowd_str.clone().unwrap_or_default()),
+                    )
+                })
+                .when(delta_str.is_some(), |el| {
+                    el.child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(rgb(delta_color))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(delta_str.clone().unwrap_or_default()),
+                    )
+                })
+        }))
+        .into_any_element()
 }
 
 fn render_portfolio_stats_panel(stats: &PortfolioStats) -> impl IntoElement {
