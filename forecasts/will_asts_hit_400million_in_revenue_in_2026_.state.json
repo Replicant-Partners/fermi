@@ -1,9 +1,9 @@
 {
   "forecast_id": null,
-  "current_version": 8,
-  "predicted_probability": 0.9778518144346643,
-  "inside_view_explanation": "Inside view: model evaluates to 97.8% (p5=52.9%, p95=157.1%). Outside view (base rate): 15.0%. Key drivers: satellite_deployment_execution, carrier_partnership_monetization, market_demand_adoption. Most influential: carrier_partnership_monetization (28%), capital_availability_execution (27%), satellite_deployment_execution (26%).",
-  "forecast_confidence": 0.13999999999999999,
+  "current_version": 9,
+  "predicted_probability": 0.698959747579244,
+  "inside_view_explanation": "Inside view: model evaluates to 69.9% (p5=34.4%, p95=116.8%). Outside view (base rate): 15.0%. Key drivers: satellite_deployment_execution, carrier_partnership_monetization, market_demand_adoption. Most influential: capital_availability_execution (43%), carrier_partnership_monetization (21%), satellite_deployment_execution (20%).",
+  "forecast_confidence": 0.27999999999999997,
   "versions": [
     {
       "version": 1,
@@ -52,14 +52,20 @@
       "timestamp": "2026-07-22 15:58",
       "probability": 0.9778518144346643,
       "change_summary": "97.8% (+83pp), 5 drivers, 1 evidence, 1 agents"
+    },
+    {
+      "version": 9,
+      "timestamp": "2026-07-22 16:05",
+      "probability": 0.698959747579244,
+      "change_summary": "69.9% (-28pp), 5 drivers, 3 evidence, 3 agents"
     }
   ],
   "sim_results": {
-    "mean": 0.9778518144346643,
-    "median": 0.934029521315161,
-    "p5": 0.5290262039063166,
-    "p95": 1.5707007891153246,
-    "std_dev": 0.3201706794102517,
+    "mean": 0.698959747579244,
+    "median": 0.6654465525466513,
+    "p5": 0.34351671076631346,
+    "p95": 1.1678754266239868,
+    "std_dev": 0.2570784868626756,
     "iterations": 10000
   },
   "base_rate": {
@@ -73,6 +79,38 @@
     {
       "id": "fermi_evidence_1784735808",
       "source": "Agent: fermi (Claude API)",
+      "summary": "",
+      "relevance": 0.5,
+      "date": "2026-07-22",
+      "key_findings": []
+    },
+    {
+      "id": "equity_analyst_capital_availability_execution_0",
+      "source": "Agent: equity_analyst",
+      "summary": "# AST SPACEMOBILE (ASTS) FINANCIAL HEALTH & CAPITAL RUNWAY ANALYSIS\n\n## COMPANY SNAPSHOT\n**Current Position (July 2026):**\n- Market Cap: $25.7B\n- Current Price: $63.25 (Range: $36.08-$133.86)\n- Beta: 2.677 (highly volatile)\n- Sector: Communication Services / Telecommunications\n- Stage: Pre-commercial revenue (satellite deployment phase)\n\n## CAPITAL POSITION DASHBOARD\n\n```\nMETRIC                          Q1 2026    POST-FINANCING   TREND\nCash & Equivalents              $3.5B      $3.8B+          ↑ Strong\nQuarterly Revenue               $14.7M     —               Early stage\nQ1 Operating Expenses           $164.1M    —               ↑ Scaling\nQ1 Adjusted OpEx (ex-COGS)      $79.8M     —               ↑ 19% QoQ\nQ1 Net Loss                     ($191M)    —               High burn\nQuarterly Cash Burn (implied)   ~$175M+    —               Accelerating\n```\n\n## KEY FINDINGS\n\n**[BASE RATE]** Pre-revenue space infrastructure companies completing capital-intensive deployment phases: historical success rate ~40-50% reaching commercial scale without significant delays or additional dilution (SpaceX, Iridium precedents; OneWeb bankruptcy/restructure as counter-example).\n\n**[CAPITAL POSITION]** Pro forma cash position $3.8B as of June 30, 2026 following $1.15B convertible notes offering (1.625% interest, $149.20 conversion price = 20% premium). Previous position was $3.5B at March 31, 2026. This represents substantial liquidity cushion (BusinessWire July 21, 2026).\n\n**[BURN RATE]** Q1 2026 operating expenses $164.1M with adjusted OpEx (excluding cost of revenue) $79.8M, up 19% from Q4 2025's $66.8M. Net loss $191M in Q1 2026. Implied quarterly burn rate $175-200M and accelerating as satellite production scales. At current burn, $3.8B provides ~5-6 quarters of runway without revenue growth (TipRanks Q1 2026 earnings; MerlinTrader July 2026).\n\n**[DEPLOYMENT STATUS]** BlueBirds 8-10 launched and activated June 2026; BlueBirds 11-33 in advanced production with assembly lines processing through BlueBird 37. Target: ~45 satellites in orbit by end of 2026, scaling to 6 satellites/month manufacturing capacity. However, **commercial service launch delayed from late 2026 to early 2027** per regulatory filing (OuterSpaceToday July 17, 2026).\n\n**[REVENUE TRAJECTORY]** Q1 2026 revenue only $14.7M (primarily U.S. government contracts, not commercial). Management guidance: $150-200M total 2026 revenue, with potential $1B revenue run rate in 2027. Consensus projects $170M (2026) → $2.84B (2029). However, commercial launch delay pushes meaningful revenue 6+ months further out (Yahoo Finance, Simply Wall St July 2026).\n\n**[DILUTION RISK]** Recent $1.15B convertible notes offering triggered 11-13% stock decline on dilution concerns. Conversion price $149.20 vs current $63.25 = significant underwater position, but capped call transactions provide some protection. Share count already elevated; further equity raises likely needed if commercial ramp slower than projected or if satellite costs exceed estimates (Simply Wall St, TIKR July 2026).\n\n**[CAPITAL ADEQUACY ASSESSMENT]** \n- **Positive factors:** $3.8B cash provides multi-quarter runway; 95% vertically integrated manufacturing (500K+ sq ft Texas facilities) controls costs; $1.2B+ in contracted revenue commitments from 60 global carriers; successful satellite activations demonstrate technical viability.\n- **Negative factors:** Commercial launch delayed 6+ months to early 2027; burn rate accelerating ($175-200M/quarter and rising); no meaningful commercial revenue yet; Q1 loss included $155-160M BlueBird 7 write-off (insurance offset); capital intensity requires ~$2-3B more to reach full Block 1 deployment based on current trajectory.\n\n**[EXECUTION RISK]** Timeline slippage already evident (commercial launch pushed to early 2027). At $200M/quarter burn scaling to $250M+ as production ramps, company burns through ~$800M-1B annually. With $3.8B cash, this provides ~3-4 years runway IF no further delays and IF revenue ramps as projected. However, space infrastructure projects historically experience 12-24 month delays and 30-50% cost overruns. Additional capital raise likely needed in 2027-2028 timeframe.\n\n**[DEBT OBLIGATIONS]** $1.15B convertible notes at 1.625% interest = ~$19M annual interest expense (manageable). However, conversion at $149.20 vs current $63.25 means debt likely stays as debt unless stock more than doubles, adding refinancing risk at 2034 maturity.\n\n## FORECAST IMPACT ASSESSMENT\n\n**Capital Runway Adequacy:** Current $3.8B position provides 15-19 months of runway at current/projected burn rates before requiring additional capital. Commercial launch delay to early 2027 means revenue ramp pushed 6+ months, compressing the timeline between cash depletion and revenue inflection.\n\n**Probability Assessment:**\n- **Adequate capital scenario (1.0x):** Company completes Block 1 deployment on revised timeline, achieves $150-200M 2026 revenue, scales to $1B run rate by late 2027, requires one more capital raise in 2027 but from position of strength with commercial traction.\n- **Constraint scenario (<1.0x):** Further delays push commercial launch to mid-2027 or later, burn rate exceeds $250M/quarter, revenue ramp slower than projected, requires emergency capital raise from weakened position causing significant dilution, operational constraints delay full deployment.\n- **Upside scenario (>1.0x):** Commercial launch accelerates back to late 2026, early revenue traction exceeds guidance, manufacturing efficiencies reduce burn rate, strategic partnerships provide non-dilutive capital.\n\n**Relevance Score:** 0.95 — Financial health and capital runway directly determine ability to complete deployment and reach commercial operations.\n\n**Confidence:** 0.75 — High-quality data on cash position and recent financing, but uncertainty around actual deployment costs, revenue ramp timing, and execution risk in novel space infrastructure.\n\n**[MULTIPLIER]** Suggested p50: 0.65 (p5: 0.35, p95: 1.10) — Commercial launch delay to early 2027, accelerating burn rate, and 15-19 month runway before next capital raise create 35% below-base probability that capital constraints delay revenue ramp versus adequate execution scenario.",
+      "relevance": 0.5,
+      "date": "2026-07-22",
+      "key_findings": [
+        "Current Position (July 2026):**",
+        "Market Cap: $25.7B",
+        "Current Price: $63.25 (Range: $36.08-$133.86)",
+        "Beta: 2.677 (highly volatile)",
+        "Sector: Communication Services / Telecommunications",
+        "Stage: Pre-commercial revenue (satellite deployment phase)",
+        "Cash & Equivalents              $3.5B      $3.8B+          ↑ Strong",
+        "Quarterly Revenue               $14.7M     —               Early stage",
+        "Q1 Operating Expenses           $164.1M    —               ↑ Scaling",
+        "Q1 Adjusted OpEx (ex-COGS)      $79.8M     —               ↑ 19% QoQ",
+        "Q1 Net Loss                     ($191M)    —               High burn",
+        "Quarterly Cash Burn (implied)   ~$175M+    —               Accelerating",
+        "[BASE RATE]** Pre-revenue space infrastructure companies completing capital-intensive deployment phases: historical success rate ~40-50% reaching commercial scale without significant delays or additional dilution (SpaceX, Iridium precedents; OneWeb bankruptcy/restructure as counter-example).",
+        "[CAPITAL POSITION]** Pro forma cash position $3.8B as of June 30, 2026 following $1.15B convertible notes offering (1.625% interest, $149.20 conversion price = 20% premium). Previous position was $3.5B at March 31, 2026. This represents substantial liquidity cushion (BusinessWire July 21, 2026).",
+        "[BURN RATE]** Q1 2026 operating expenses $164.1M with adjusted OpEx (excluding cost of revenue) $79.8M, up 19% from Q4 2025's $66.8M. Net loss $191M in Q1 2026. Implied quarterly burn rate $175-200M and accelerating as satellite production scales. At current burn, $3.8B provides ~5-6 quarters of runway without revenue growth (TipRanks Q1 2026 earnings; MerlinTrader July 2026)."
+      ]
+    },
+    {
+      "id": "entity_investigator_satellite_deployment_execution_0",
+      "source": "Agent: entity_investigator",
       "summary": "",
       "relevance": 0.5,
       "date": "2026-07-22",

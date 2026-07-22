@@ -1,20 +1,20 @@
 # Will ASTS hit 400Million in revenue in 2026?
 
-**Probability:** 97.8% · **Version:** v8 · **Updated:** 2026-07-22 15:58 UTC
+**Probability:** 69.9% · **Version:** v9 · **Updated:** 2026-07-22 16:05 UTC
 
-**Confidence:** Low (14%) · **Drivers:** 5 · **Evidence:** 1 · **Agents:** 5
+**Confidence:** Low (28%) · **Drivers:** 5 · **Evidence:** 3 · **Agents:** 5
 
 ---
 
 ## Inside View
 
-**Probability: 97.8%**
+**Probability: 69.9%**
 
-Inside view: model evaluates to 97.8% (p5=52.9%, p95=157.1%). Outside view (base rate): 15.0%. Key drivers: satellite_deployment_execution, carrier_partnership_monetization, market_demand_adoption. Most influential: carrier_partnership_monetization (28%), capital_availability_execution (27%), satellite_deployment_execution (26%).
+Inside view: model evaluates to 69.9% (p5=34.4%, p95=116.8%). Outside view (base rate): 15.0%. Key drivers: satellite_deployment_execution, carrier_partnership_monetization, market_demand_adoption. Most influential: capital_availability_execution (43%), carrier_partnership_monetization (21%), satellite_deployment_execution (20%).
 
-**Forecast Confidence:** Low (14%)
+**Forecast Confidence:** Low (28%)
 
-**Divergence from base rate:** 83pp above (97.8% vs 15.0%)
+**Divergence from base rate:** 55pp above (69.9% vs 15.0%)
 
 ---
 
@@ -31,34 +31,34 @@ AST SpaceMobile (ASTS) is attempting to build a space-based cellular broadband n
 
 ## Simulation Distribution
 
-**10000 iterations** · p5 = 52.9% · median = 93.4% · p95 = 157.1% · σ = 0.320
+**10000 iterations** · p5 = 34.4% · median = 66.5% · p95 = 116.8% · σ = 0.257
 
 ```
-▁▂▄▇██▇▆▅▄▃▂▂▁▁▁▁▁▁▁
+▁▃▅▇██▇▆▅▃▃▂▂▁▁▁▁▁▁▁
 ```
 
 | Bin center | Count | % of sims |
 |---|---|---|
-| 31.4% | 25 | 0.2% |
-| 42.9% | 253 | 2.5% |
-| 54.4% | 702 | 7.0% |
-| 65.9% | 1190 | 11.9% |
-| 77.3% | 1473 | 14.7% |
-| 88.8% | 1498 | 15.0% |
-| 100.3% | 1359 | 13.6% |
-| 111.8% | 1051 | 10.5% |
-| 123.3% | 809 | 8.1% |
-| 134.8% | 635 | 6.3% |
-| 146.3% | 384 | 3.8% |
-| 157.7% | 259 | 2.6% |
-| 169.2% | 154 | 1.5% |
-| 180.7% | 96 | 1.0% |
-| 192.2% | 56 | 0.6% |
-| 203.7% | 26 | 0.3% |
-| 215.2% | 16 | 0.2% |
-| 226.7% | 7 | 0.1% |
-| 238.1% | 3 | 0.0% |
-| 249.6% | 4 | 0.0% |
+| 18.3% | 49 | 0.5% |
+| 27.7% | 338 | 3.4% |
+| 37.1% | 853 | 8.5% |
+| 46.5% | 1339 | 13.4% |
+| 55.9% | 1500 | 15.0% |
+| 65.3% | 1450 | 14.5% |
+| 74.7% | 1276 | 12.8% |
+| 84.1% | 1021 | 10.2% |
+| 93.5% | 773 | 7.7% |
+| 102.9% | 533 | 5.3% |
+| 112.3% | 375 | 3.8% |
+| 121.7% | 201 | 2.0% |
+| 131.1% | 134 | 1.3% |
+| 140.5% | 74 | 0.7% |
+| 149.9% | 48 | 0.5% |
+| 159.2% | 19 | 0.2% |
+| 168.6% | 10 | 0.1% |
+| 178.0% | 4 | 0.0% |
+| 187.4% | 1 | 0.0% |
+| 196.8% | 2 | 0.0% |
 
 ---
 
@@ -74,8 +74,9 @@ AST SpaceMobile (ASTS) is attempting to build a space-based cellular broadband n
 | v6 | 2026-07-22 15:58 | 15.0% | 15.0% | +0.0pp | 15.0% (→), 5 drivers, 1 evidence, 1 agents |
 | v7 | 2026-07-22 15:58 | 15.0% | 15.0% | +0.0pp | 15.0% (→), 5 drivers, 1 evidence, 1 agents |
 | v8 | 2026-07-22 15:58 | 97.8% | 15.0% | +82.8pp | 97.8% (+83pp), 5 drivers, 1 evidence, 1 agents |
+| v9 | 2026-07-22 16:05 | 69.9% | 15.0% | +54.9pp | 69.9% (-28pp), 5 drivers, 3 evidence, 3 agents |
 
-**Model line:** ```▁▁▁▁▁▁▁█``` (range 15.0% – 97.8%)
+**Model line:** ```▁▁▁▁▁▁▁█▆``` (range 15.0% – 97.8%)
 
 ---
 
@@ -92,7 +93,11 @@ AST SpaceMobile (ASTS) is attempting to build a space-based cellular broadband n
 - **entity_investigator** (schedule: once)  
   Query: _AST SpaceMobile (ASTS ticker) satellite deployment track record and risk factors: analyze Block 1 BlueBird launch schedule adherence, technical readiness of phased array technology, manufacturing capacity at MDA Space, historical on-time delivery rate for comparable first-generation satellite constellations. Return probability distribution of deployment timeline as multiplier (1.0 = on schedule, <1.0 = delays reduce 2026 revenue, >1.0 = early deployment accelerates)._
 
-_No evidence collected yet. Assign an agent to research this driver._
+### Evidence (1) — Weak quality (25%)
+
+#### Agent: entity_investigator — relevance 50% · quality ●○○ Low (25%) · 2026-07-22
+
+
 
 ---
 
@@ -134,7 +139,7 @@ _No evidence collected yet. Assign an agent to research this driver._
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.50 | 0.90 | 1.20 | multiplier |
+| 0.25 | 0.65 | 0.95 | multiplier |
 
 > ASTS is pre-revenue and capital-intensive. Company has raised ~$500M+ but will need additional funding to complete Block 1 and scale to Block 2 constellation. Equity dilution, debt financing, or strategic investment required. Execution risk includes manufacturing scale-up, ground infrastructure deployment, and operational burn rate management. Comparable space ventures (OneWeb bankruptcy 2020, Virgin Orbit failure 2023) show capital constraints can halt operations. Median multiplier <1.0 reflects elevated execution risk for cash-burning pre-revenue space company.
 
@@ -143,7 +148,86 @@ _No evidence collected yet. Assign an agent to research this driver._
 - **equity_analyst** (schedule: once)  
   Query: _AST SpaceMobile (ticker ASTS) financial health and capital runway: analyze current cash position, quarterly burn rate, debt obligations, and equity dilution risk. Compare to capital requirements for completing Block 1 satellite deployment and scaling to commercial operations by 2026. Assess probability of successful capital raise vs operational constraints impacting revenue ramp. Return as multiplier where 1.0 = adequate capital and execution, <1.0 = capital/execution constraints delay revenue, >1.0 = better-than-expected funding or cost efficiency._
 
-_No evidence collected yet. Assign an agent to research this driver._
+### Evidence (1) — Strong quality (75%)
+
+#### Agent: equity_analyst — relevance 50% · quality ●●● High (75%) · 2026-07-22
+
+# AST SPACEMOBILE (ASTS) FINANCIAL HEALTH & CAPITAL RUNWAY ANALYSIS
+
+## COMPANY SNAPSHOT
+**Current Position (July 2026):**
+- Market Cap: $25.7B
+- Current Price: $63.25 (Range: $36.08-$133.86)
+- Beta: 2.677 (highly volatile)
+- Sector: Communication Services / Telecommunications
+- Stage: Pre-commercial revenue (satellite deployment phase)
+
+## CAPITAL POSITION DASHBOARD
+
+```
+METRIC                          Q1 2026    POST-FINANCING   TREND
+Cash & Equivalents              $3.5B      $3.8B+          ↑ Strong
+Quarterly Revenue               $14.7M     —               Early stage
+Q1 Operating Expenses           $164.1M    —               ↑ Scaling
+Q1 Adjusted OpEx (ex-COGS)      $79.8M     —               ↑ 19% QoQ
+Q1 Net Loss                     ($191M)    —               High burn
+Quarterly Cash Burn (implied)   ~$175M+    —               Accelerating
+```
+
+## KEY FINDINGS
+
+**[BASE RATE]** Pre-revenue space infrastructure companies completing capital-intensive deployment phases: historical success rate ~40-50% reaching commercial scale without significant delays or additional dilution (SpaceX, Iridium precedents; OneWeb bankruptcy/restructure as counter-example).
+
+**[CAPITAL POSITION]** Pro forma cash position $3.8B as of June 30, 2026 following $1.15B convertible notes offering (1.625% interest, $149.20 conversion price = 20% premium). Previous position was $3.5B at March 31, 2026. This represents substantial liquidity cushion (BusinessWire July 21, 2026).
+
+**[BURN RATE]** Q1 2026 operating expenses $164.1M with adjusted OpEx (excluding cost of revenue) $79.8M, up 19% from Q4 2025's $66.8M. Net loss $191M in Q1 2026. Implied quarterly burn rate $175-200M and accelerating as satellite production scales. At current burn, $3.8B provides ~5-6 quarters of runway without revenue growth (TipRanks Q1 2026 earnings; MerlinTrader July 2026).
+
+**[DEPLOYMENT STATUS]** BlueBirds 8-10 launched and activated June 2026; BlueBirds 11-33 in advanced production with assembly lines processing through BlueBird 37. Target: ~45 satellites in orbit by end of 2026, scaling to 6 satellites/month manufacturing capacity. However, **commercial service launch delayed from late 2026 to early 2027** per regulatory filing (OuterSpaceToday July 17, 2026).
+
+**[REVENUE TRAJECTORY]** Q1 2026 revenue only $14.7M (primarily U.S. government contracts, not commercial). Management guidance: $150-200M total 2026 revenue, with potential $1B revenue run rate in 2027. Consensus projects $170M (2026) → $2.84B (2029). However, commercial launch delay pushes meaningful revenue 6+ months further out (Yahoo Finance, Simply Wall St July 2026).
+
+**[DILUTION RISK]** Recent $1.15B convertible notes offering triggered 11-13% stock decline on dilution concerns. Conversion price $149.20 vs current $63.25 = significant underwater position, but capped call transactions provide some protection. Share count already elevated; further equity raises likely needed if commercial ramp slower than projected or if satellite costs exceed estimates (Simply Wall St, TIKR July 2026).
+
+**[CAPITAL ADEQUACY ASSESSMENT]** 
+- **Positive factors:** $3.8B cash provides multi-quarter runway; 95% vertically integrated manufacturing (500K+ sq ft Texas facilities) controls costs; $1.2B+ in contracted revenue commitments from 60 global carriers; successful satellite activations demonstrate technical viability.
+- **Negative factors:** Commercial launch delayed 6+ months to early 2027; burn rate accelerating ($175-200M/quarter and rising); no meaningful commercial revenue yet; Q1 loss included $155-160M BlueBird 7 write-off (insurance offset); capital intensity requires ~$2-3B more to reach full Block 1 deployment based on current trajectory.
+
+**[EXECUTION RISK]** Timeline slippage already evident (commercial launch pushed to early 2027). At $200M/quarter burn scaling to $250M+ as production ramps, company burns through ~$800M-1B annually. With $3.8B cash, this provides ~3-4 years runway IF no further delays and IF revenue ramps as projected. However, space infrastructure projects historically experience 12-24 month delays and 30-50% cost overruns. Additional capital raise likely needed in 2027-2028 timeframe.
+
+**[DEBT OBLIGATIONS]** $1.15B convertible notes at 1.625% interest = ~$19M annual interest expense (manageable). However, conversion at $149.20 vs current $63.25 means debt likely stays as debt unless stock more than doubles, adding refinancing risk at 2034 maturity.
+
+## FORECAST IMPACT ASSESSMENT
+
+**Capital Runway Adequacy:** Current $3.8B position provides 15-19 months of runway at current/projected burn rates before requiring additional capital. Commercial launch delay to early 2027 means revenue ramp pushed 6+ months, compressing the timeline between cash depletion and revenue inflection.
+
+**Probability Assessment:**
+- **Adequate capital scenario (1.0x):** Company completes Block 1 deployment on revised timeline, achieves $150-200M 2026 revenue, scales to $1B run rate by late 2027, requires one more capital raise in 2027 but from position of strength with commercial traction.
+- **Constraint scenario (<1.0x):** Further delays push commercial launch to mid-2027 or later, burn rate exceeds $250M/quarter, revenue ramp slower than projected, requires emergency capital raise from weakened position causing significant dilution, operational constraints delay full deployment.
+- **Upside scenario (>1.0x):** Commercial launch accelerates back to late 2026, early revenue traction exceeds guidance, manufacturing efficiencies reduce burn rate, strategic partnerships provide non-dilutive capital.
+
+**Relevance Score:** 0.95 — Financial health and capital runway directly determine ability to complete deployment and reach commercial operations.
+
+**Confidence:** 0.75 — High-quality data on cash position and recent financing, but uncertainty around actual deployment costs, revenue ramp timing, and execution risk in novel space infrastructure.
+
+**[MULTIPLIER]** Suggested p50: 0.65 (p5: 0.35, p95: 1.10) — Commercial launch delay to early 2027, accelerating burn rate, and 15-19 month runway before next capital raise create 35% below-base probability that capital constraints delay revenue ramp versus adequate execution scenario.
+
+**Key findings:**
+
+- Current Position (July 2026):**
+- Market Cap: $25.7B
+- Current Price: $63.25 (Range: $36.08-$133.86)
+- Beta: 2.677 (highly volatile)
+- Sector: Communication Services / Telecommunications
+- Stage: Pre-commercial revenue (satellite deployment phase)
+- Cash & Equivalents              $3.5B      $3.8B+          ↑ Strong
+- Quarterly Revenue               $14.7M     —               Early stage
+- Q1 Operating Expenses           $164.1M    —               ↑ Scaling
+- Q1 Adjusted OpEx (ex-COGS)      $79.8M     —               ↑ 19% QoQ
+- Q1 Net Loss                     ($191M)    —               High burn
+- Quarterly Cash Burn (implied)   ~$175M+    —               Accelerating
+- [BASE RATE]** Pre-revenue space infrastructure companies completing capital-intensive deployment phases: historical success rate ~40-50% reaching commercial scale without significant delays or additional dilution (SpaceX, Iridium precedents; OneWeb bankruptcy/restructure as counter-example).
+- [CAPITAL POSITION]** Pro forma cash position $3.8B as of June 30, 2026 following $1.15B convertible notes offering (1.625% interest, $149.20 conversion price = 20% premium). Previous position was $3.5B at March 31, 2026. This represents substantial liquidity cushion (BusinessWire July 21, 2026).
+- [BURN RATE]** Q1 2026 operating expenses $164.1M with adjusted OpEx (excluding cost of revenue) $79.8M, up 19% from Q4 2025's $66.8M. Net loss $191M in Q1 2026. Implied quarterly burn rate $175-200M and accelerating as satellite production scales. At current burn, $3.8B provides ~5-6 quarters of runway without revenue growth (TipRanks Q1 2026 earnings; MerlinTrader July 2026).
 
 ---
 
@@ -202,4 +286,4 @@ model: satellite_deployment_execution * carrier_partnership_monetization * marke
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v8 · 2026-07-22 15:58 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v9 · 2026-07-22 16:05 UTC_
