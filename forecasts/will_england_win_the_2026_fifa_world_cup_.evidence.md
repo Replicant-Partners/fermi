@@ -1,6 +1,6 @@
 # Will England win the 2026 FIFA World Cup?
 
-**Probability:** 32.7% · **Version:** v1 · **Updated:** 2026-07-15 07:01 UTC
+**Probability:** 0.1% · **Version:** v0 · **Updated:** 2026-07-22 14:41 UTC
 
 **Confidence:** Medium (50%) · **Drivers:** 6 · **Evidence:** 4 · **Agents:** 4
 
@@ -10,70 +10,25 @@
 
 | Metric | Value |
 |---|---|
-| Crowd price | **22.8%** |
-| Fermi estimate | **32.7%** |
-| Divergence | +9.9pp above crowd (Moderate divergence — potential edge) |
-| 24h volume | $3.5M |
-| Market confidence | Very High |
-| 1-week trend | ↑ +7.2pp |
+| Crowd price | **0.0%** |
+| Fermi estimate | **0.1%** |
+| Divergence | +0.1pp above crowd (Consensus) |
+| 24h volume | $0 |
+| Market confidence | Low |
+| 1-week trend | ↓ -15.8pp |
 
 [View on Polymarket](https://polymarket.com/event/world-cup-winner)
 
 ---
 
-## Inside View
-
-**Probability: 32.7%**
-
-Inside view: model evaluates to 10.6% (p5=7.7%, p95=13.9%). Outside view (base rate): 52.0%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.
-
-**Forecast Confidence:** Medium (50%)
-
-**Divergence from base rate:** 19pp below (32.7% vs 52.0%)
-
----
-
 ## Outside View (Base Rate)
 
-**52.0%** — European teams winning FIFA World Cup tournaments (1930-2022)
+**2.1%** — FIFA World Cup winners 1930–2022
 
-- **Sample size:** n=23
-- **Source:** fermi
+- **Sample size:** n=22
+- **Source:** FIFA tournament archive — 22 prior World Cups
 
-Of 23 World Cup tournaments held through 2022, European teams have won 12 times (Italy 4, Germany 4, Spain 1, France 2, England 1). This gives a 52% base rate for any European team. England specifically has won 1 of 23 tournaments (4.3%), but the question asks about England's probability, so we use the European team rate as the appropriate reference class since England is a top-tier European football nation. England has reached 2 finals (1966 win, 2020 Euro final loss, 2024 Euro final loss) and 1 World Cup semifinal (2018) in recent tournaments, indicating they are among the elite European contenders. For a specific strong European team in a future tournament, the base rate should be anchored to the European win rate divided by the number of elite European contenders (~8-10 teams), yielding approximately 5-6% per tournament for a top European side.
-
----
-
-## Simulation Distribution
-
-**10000 iterations** · p5 = 7.7% · median = 10.5% · p95 = 13.9% · σ = 0.019
-
-```
-▁▁▂▄▅▇██▇▇▅▄▃▂▂▁▁▁▁▁
-```
-
-| Bin center | Count | % of sims |
-|---|---|---|
-| 5.9% | 17 | 0.2% |
-| 6.5% | 87 | 0.9% |
-| 7.2% | 262 | 2.6% |
-| 7.8% | 514 | 5.1% |
-| 8.5% | 855 | 8.6% |
-| 9.1% | 1214 | 12.1% |
-| 9.8% | 1305 | 13.1% |
-| 10.4% | 1349 | 13.5% |
-| 11.1% | 1233 | 12.3% |
-| 11.7% | 1080 | 10.8% |
-| 12.4% | 736 | 7.4% |
-| 13.0% | 522 | 5.2% |
-| 13.7% | 350 | 3.5% |
-| 14.3% | 215 | 2.1% |
-| 15.0% | 143 | 1.4% |
-| 15.6% | 62 | 0.6% |
-| 16.3% | 34 | 0.3% |
-| 16.9% | 11 | 0.1% |
-| 17.6% | 8 | 0.1% |
-| 18.2% | 3 | 0.0% |
+Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via the six factor-derived drivers.
 
 ---
 
@@ -81,7 +36,7 @@ Of 23 World Cup tournaments held through 2022, European teams have won 12 times 
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 1.39 | 1.59 | 1.79 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Macro capacity for footballing investment: GDP, population, HDI.
 
@@ -167,7 +122,7 @@ UK sits **+0.92 SD above WC field median** on socioeconomic capital — 82nd per
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Federation strength, league development, player pipeline depth.
 
@@ -215,7 +170,7 @@ Based on the data gathered, here is the institutional capacity analysis for Engl
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Recent form and Elo trajectory — refits as match outcomes accumulate.
 
@@ -226,111 +181,153 @@ Based on the data gathered, here is the institutional capacity analysis for Engl
 
 ### Evidence (1) — Strong quality (70%)
 
-#### Agent: football_analyst — relevance 50% · quality ●●● High (70%) · 2026-06-24
+#### Agent: football_analyst — relevance 50% · quality ●●● High (70%) · 2026-07-15
 
-# DYNAMIC PERFORMANCE EVIDENCE FOR ENGLAND AT 2026 WORLD CUP
+# ENGLAND NATIONAL TEAM — COMPREHENSIVE ANALYSIS (July 2026)
 
-Based on live data from API-Football and web sources, here is the Factor X3 (Dynamic Performance Signal) analysis for England ahead of the 2026 FIFA World Cup:
+## ELO RATING & POWER RANKING
+
+[BASE RATE] England currently ranked 4th in FIFA World Rankings (June 2026 update). Historical Elo rating approximately **1950** based on World Cup 2026 performance trajectory and top-4 global standing. This places England ~250 points above the international field mean (1700) and ~0.83 standard deviations above average tournament-quality teams.
+
+[ELO] England Elo ~1950 represents elite-tier national team strength. For context: Argentina (World Cup holders) ~2100, Spain ~2050, France ~2080. England's rating reflects sustained top-4 performance and strong World Cup 2026 run. Elo trend over last 12 months: **+85 points** (strong positive momentum under Thomas Tuchel, who started January 2025).
+
+## LAST 5 MATCHES FORM
+
+[MATCH STATS] England's World Cup 2026 record (last 5 competitive matches):
+1. **England 4-2 Croatia** (Group L, June 15) — Kane 2 goals (12' pen, 42'), Bellingham 47', Rashford 85'
+2. **England 3-0 Panama** (Group L, June 21) — Dominant group stage win
+3. **England 2-1 Ghana** (Group L, June 27) — Secured group winners position
+4. **England 3-1 Slovakia** (Round of 16, July 5) — Knockout stage progression
+5. **England 2-1 Norway** (Quarter-final, July 12, AET) — Bellingham 2 goals (90+3', 93'), tense extra-time victory
+
+**Form: 5W-0D-0L (100% win rate)** — 14 goals scored, 5 conceded over 5 matches. Goal difference: **+9**
+
+[MATCH STATS] Advanced metrics from World Cup 2026 run:
+- **xG per game: ~2.1** (strong attacking output)
+- **xGA per game: ~0.9** (solid defensive structure under Tuchel)
+- **xGD: +1.2/game** (elite differential, top-3 in tournament)
+- Possession average: 58% (controlled, possession-based approach)
+- Shots on target %: 42% (clinical finishing, especially Bellingham with 6 tournament goals)
+- Set-piece goals: 3 of 14 (21% — slightly below tournament average of ~25%)
+
+## KEY PLAYER AVAILABILITY
+
+[INJURY IMPACT] **Current squad health status (as of July 14, 2026 semi-final preparation):**
+
+**AVAILABLE:**
+- **Jude Bellingham** (Real Madrid, €130m) — Tournament star with 6 goals, 100% fit, no injury concerns. Elite form.
+- **Harry Kane** (Bayern Munich, €90m) — 4 World Cup goals, fully fit. Captain and primary striker.
+- **Bukayo Saka** (Arsenal, €110m) — Managed carefully through tournament due to pre-tournament fitness concerns, but now "feeling great and ready to go" per player quotes. Available.
+- **Marc Guehi** (Manchester City, €75m) — Recovered from hamstring issue, trained fully before quarter-final. Available.
+- **Reece James** (Real Madrid, €70m) — Trained fully, no concerns.
+
+**DOUBTFUL/LATE FITNESS TEST:**
+- **Declan Rice** (Arsenal, €120m) — Suffered illness before quarter-final, trained but medics making "late call" for semi-final availability. **~80% probability of starting** given severity of occasion. If unavailable: estimated **-0.15 xG/90 impact** (reduced midfield control and defensive stability).
+
+**SUSPENDED:**
+- None. Rice, Bellingham, Nico O'Reilly, and Guehi all avoided yellow cards in quarter-final despite being one booking away from suspension.
+
+**KEY ABSENCES:**
+- No major injuries. Squad depth excellent with 26-man roster.
+
+## MARKET VALUE DISTRIBUTION
+
+[X4 SIGNAL] **England squad market value: €1.36 billion** (Transfermarkt, June 2026) — **2nd highest in World Cup 2026** behind France (€1.52bn), ahead of Spain (€1.31bn).
+
+**Top-5 most valuable players:**
+1. **Jude Bellingham** — €130m (9.6% of squad value)
+2. **Declan Rice** — €120m (8.8%)
+3. **Bukayo Saka** — €110m (8.1%)
+4. **Harry Kane** — €90m (6.6%)
+5. **Marc Guehi** — €75m (5.5%)
+
+**Market value concentration:** Top-5 players = **€525m = 38.6% of total squad value**. This indicates strong star power but also reasonable depth (not over-reliant on 1-2 players like some squads).
+
+**Big-5 league representation:** Estimated **~85-88%** of squad plays in Premier League, La Liga, Bundesliga, Serie A, or Ligue 1. Heavy Premier League concentration (~60% of squad), with key players at Real Madrid (Bellingham, James), Bayern Munich (Kane), Barcelona (Gordon), Manchester City (Guehi, Anderson).
+
+**Squad depth score:** Excellent. 26-man roster with quality replacements in all positions. Backup striker Ivan Toney (Al-Ahli, highest weekly wage £423k), backup midfielders Elliot Anderson, Morgan Rogers both contributing.
+
+**Average age:** Estimated **26.8 years** — optimal age profile. Core players in prime (Bellingham 22, Rice 27, Kane 32, Saka 24). Mix of experience and peak athleticism.
+
+## TACTICAL EFFICIENCY & FORM TRENDS
+
+[X5 SIGNAL] **Tactical metrics under Thomas Tuchel (January 2025 onwards):**
+- **Shot conversion rate:** 15.6% at World Cup 2026 (14 goals from 90 shots) — above tournament average of ~12%
+- **Defensive duel win %:** Estimated 54-56% based on solid defensive performances (0.9 xGA/game)
+- **Pressing intensity (PPDA):** Moderate-to-high, estimated **9-10 PPDA** — Tuchel's system emphasizes organized pressing in attacking third
+- **Set-piece efficiency:** 3 goals from set pieces in 5 matches (0.6/game) — solid but not elite
+- **Big-game mentality:** 5/5 wins in knockout-stage-quality matches. Bellingham emerging as clutch performer (2 goals vs Norway in extra time, 6 tournament goals total).
+
+**Tactical identity:** Possession-based (58% average), patient build-up, exploiting wide areas through Saka/Gordon, central creativity from Bellingham, clinical finishing from Kane. Defensively organized with Guehi-Stones partnership excelling.
+
+## FACTOR MODEL ASSESSMENT (X3/X4/X5)
+
+[X3 SIGNAL] **Dynamic Performance Signal:**
+- Elo current: **~1950** (0.83 SD above tournament mean of 1700)
+- Elo trend: **+85 points** over last 12 months (strong upward trajectory under Tuchel)
+- Goal difference: **+9 in last 5 matches** (+1.8/game)
+- Pass completion: **~86%** (controlled possession style)
+- xG delta: **+1.2/game** (xG 2.1, xGA 0.9)
+
+**X3 deterministic component:** 0.50 × (1950-1700)/300 + 0.10 × (+85/100) + 0.15 × (+1.8) + 0.10 × (0.86) + 0.15 × (+1.2) = 0.50 × 0.83 + 0.085 + 0.27 + 0.086 + 0.18 = **1.036** (strong positive signal, ~1.04 SD above mean)
+
+[X4 SIGNAL] **Squad Quality Index:**
+- Market value: **€1.36bn** (2nd in tournament, 89% of France's €1.52bn)
+- Market value concentration: Top-5 = 38.6% (balanced star power + depth)
+- Big-5 league %: **~87%** (elite club football exposure)
+- Squad depth: **Excellent** — quality replacements across all positions
+- Average age: **26.8 years** (optimal prime window)
+
+**X4 assessment:** Elite squad quality, 2nd-best talent pool in World Cup 2026. Depth advantage over most opponents except France.
+
+[X5 SIGNAL] **Tactical Efficiency:**
+- Shot conversion: **15.6%** (above tournament average)
+- Defensive duels: **~55%** (solid)
+- Pressing intensity: **PPDA ~9.5** (organized high press)
+- Set-piece efficiency: **0.6 goals/game** (good, not elite)
+- Clutch performance: **100% win rate in 5 matches**, including extra-time resilience vs Norway
+
+**X5 assessment:** Strong tactical execution under Tuchel. Bellingham's form (6 goals) is exceptional individual signal. Team shows big-game mentality and ability to win tight matches.
+
+## KEY FINDINGS SUMMARY
+
+[BASE RATE] England ranked 4th globally (FIFA), Elo ~1950 places them in elite tier (~0.83 SD above tournament mean). Historical top-4 finish rate at World Cups: ~40% for teams of this caliber.
+
+[MATCH STATS] Perfect 5W-0D-0L record at WC2026, +9 goal difference, xGD +1.2/game. Bellingham in exceptional form (6 goals, 0 penalties). Controlled possession style (58%) with clinical finishing (15.6% conversion).
+
+[ELO] England Elo ~1950 with +85 point trend over 12 months. Strong momentum under Tuchel (started Jan 2025). Elo places England as 3rd-4th strongest team in tournament behind Argentina (~2100), France (~2080), Spain (~2050).
+
+[INJURY IMPACT] Squad nearly fully fit. Only concern: Declan Rice illness (80% probability of availability for semi-final). If Rice unavailable: estimated -0.15 xG/90 impact. No suspensions. Bellingham, Kane, Saka all 100% fit and in form.
+
+[X4 SIGNAL] Squad market value €1.36bn (2nd in WC2026). Top-5 players (Bellingham €130m, Rice €120m, Saka €110m, Kane €90m, Guehi €75m) = 38.6% of squad value. Big-5 league representation ~87%. Optimal age profile (26.8 years). Elite depth.
+
+[X5 SIGNAL] Tactical efficiency strong: 15.6% shot conversion, ~55% defensive duels, PPDA ~9.5 (organized press). Set-pieces 0.6 goals/game. Clutch mentality: 5/5 wins including extra-time victory. Tuchel's system maximizing talent.
+
+[MULTIPLIER] **Suggested p50: 1.20 (p5: 0.85, p95: 1.65)** — Elo edge (1950 vs field mean 1700), perfect WC2026 form (5W-0L, +9 GD), elite squad depth (€1.36bn, 2nd-best), Bellingham's exceptional tournament (6 goals), and Tuchel tactical organization support 20% above base-rate expectations for England outcomes. Downside risk from potential Rice absence (p5: 0.85) if illness worsens; upside from momentum and big-game mentality (p95: 1.65).
 
 ---
 
-## KEY FINDINGS
+**Relevance: 0.95** — Comprehensive live data on England's current state across all requested dimensions.
 
-**[BASE RATE]** Historical World Cup winner base rate: ~6-8 teams realistically contend each tournament. England's historical win rate: 1/21 tournaments (4.8%). Top-4 FIFA-ranked teams win ~60% of World Cups since 1998.
-
-**[X3 SIGNAL — ELO CURRENT]** England FIFA ranking: 4th globally (June 2026). Polymarket Elo-implied probability: 11% to win tournament (5th-highest behind Spain 17%, France 16%, Portugal 10%). England's current Elo estimated ~1980-2000 range based on FIFA #4 position and Goldman Sachs model (which gave England 5% win probability, below Argentina 14%, Spain/France 19%). This places England approximately +0.93 to +1.00 standard deviations above the WC field mean (assuming field mean Elo ~1700, sd ~300).
-
-**[X3 SIGNAL — ELO TREND]** England's 12-month Elo trajectory: **strongly positive**. Under Thomas Tuchel (appointed January 2025), England achieved:
-- **Perfect World Cup qualifying record: 8W-0D-0L** (first European nation to qualify)
-- **22 goals scored, 0 goals conceded** across 8 qualifiers — unprecedented clean sheet streak
-- **xG dominance: 20.8 xG generated** (5th-most in UEFA qualifying), 63 shots on target (3rd-most)
-- **354 touches in opposition box** (4th in UEFA qualifying) — elite attacking positioning
-
-This represents an estimated **+80 to +100 Elo gain** from pre-Tuchel baseline (~1900 in mid-2024 to ~1980-2000 now). Elo trend component: **+0.27 to +0.33** (assuming 12-month drift of +80-100 points).
-
-**[X3 SIGNAL — GOAL DIFFERENCE]** England's recent goal difference in competitive matches:
-- **WC Qualifying: +22 (22 GF, 0 GA)** over 8 matches = **+2.75 per game**
-- **Opening WC match vs Croatia: +2 (4-2 win)**, though xG was +2.09 (2.80 xG vs 0.71 xGA)
-- Normalized goal difference over last 10 competitive internationals: estimated **+1.8 to +2.2 per game**
-
-This is **elite-tier performance** (top 3-5 teams globally). Goal difference component: **+0.30 to +0.37** (assuming normalization around 0 for average WC participant).
-
-**[X3 SIGNAL — XG DELTA]** England's expected goals differential:
-- **WC Qualifying xG: +20.8 xG generated** (exact xGA not disclosed, but 0 actual goals conceded suggests xGA likely <4.0)
-- **Estimated xGD: +16 to +18 over 8 qualifiers** = **+2.0 to +2.25 xGD per game**
-- **England vs Croatia (WC opener): +2.09 xGD** (2.80 xG vs 0.71 xGA) — dominant performance despite 4-2 scoreline
-- **xG fairness: 91%** in Croatia match (slightly unlucky to concede 2 from 0.71 xGA)
-
-Recent xG delta component: **+0.30 to +0.34** (elite attacking creation + defensive solidity).
-
-**[X3 SIGNAL — PASS COMPLETION]** England ranked **3rd in shots on target** and **4th in opposition box touches** during WC qualifying, indicating high possession quality in dangerous areas. Tuchel's system emphasizes "Premier League intensity" with high pressing (estimated PPDA ~9-10 based on tactical descriptions). Pass completion in final third estimated **78-82%** based on elite-team benchmarks. Component: **+0.12 to +0.15**.
-
-**[FACTOR X3 COMPOSITE]** Deterministic X3 formula:
-```
-X3 = 0.50 × (elo_current − 1700)/300 + 0.10 × elo_trend
-     + 0.15 × goal_difference + 0.10 × pass_completion + 0.15 × xg_delta
-```
-
-Plugging in England's values (using midpoint estimates):
-```
-X3 = 0.50 × (1990 − 1700)/300 + 0.10 × 0.30
-     + 0.15 × 0.34 + 0.10 × 0.14 + 0.15 × 0.32
-   = 0.50 × 0.97 + 0.030 + 0.051 + 0.014 + 0.048
-   = 0.485 + 0.143
-   = **+0.63**
-```
-
-This places England **+0.63 standard deviations above the WC field mean** on dynamic performance — solidly in the **top-6 contenders** tier, but behind Spain (~+0.90), Argentina (~+0.75), and France (~+0.70).
-
-**[CONTEXT — TACTICAL SHIFT]** Tuchel's appointment represents a **structural regime change**. His system emphasizes:
-- High defensive organization (0 goals conceded in 8 qualifiers is historically unprecedented)
-- Tactical flexibility (4-3-3 and 4-2-3-1 formations used)
-- Elite set-piece execution (England's historical weakness now addressed)
-- Squad rotation management (critical for deep tournament runs)
-
-However, **quality of opposition caveat**: England's qualifying group (Albania, Serbia, Latvia, Andorra) was weak. The Croatia match (first vs top-20 opponent) showed vulnerability: conceded 2 goals from 0.71 xGA (poor defensive execution despite xG dominance).
-
-**[HISTORICAL COMPARISON]** England's current Elo (~1990) compares to:
-- **1966 World Cup win: Elo ~1970** (home tournament advantage)
-- **1990 semifinal run: Elo ~1950**
-- **2018 semifinal run: Elo ~1960**
-- **Euro 2020 final: Elo ~1980**
-
-Current rating is England's **highest entering a major tournament since 1970**, but still below the all-time peak of ~2050 (post-Euro 2000 win vs Germany).
-
-**[UNCERTAINTY FACTORS]** 
-- **Tournament knockout variance**: High. England's xG dominance in qualifiers may not translate vs elite opposition (Spain, France, Argentina).
-- **Tuchel's tournament debut**: No prior international tournament experience as manager.
-- **Squad depth concerns**: Injuries to Kane (30% of goals) or Bellingham would significantly impact X3.
-- **Penalty shootout record**: England historically poor (lost Euro 2020 final on penalties despite xG dominance).
-
----
-
-## FACTOR-MODE MULTIPLIER
-
-**[MULTIPLIER]** Suggested p50: **1.15** (p5: 0.85, p95: 1.55) — England's X3 composite (+0.63 sd above field mean) places them in top-6 contender tier with 12-month Elo surge under Tuchel, but Spain/Argentina/France have stronger X3 signals and tournament pedigree.
-
-**Relevance:** 0.92 — X3 is the primary discriminator for tournament winner forecasts.
-
-**Confidence:** 0.78 — High confidence in Elo/xG data; moderate uncertainty on knockout-stage translation and Tuchel's tournament management.
+**Confidence: 0.88** — High confidence in form, squad value, and availability data. Moderate uncertainty on exact Elo (estimated ~1950 based on ranking/performance) and Rice's fitness for semi-final.
 
 **Key findings:**
 
-- [BASE RATE]** Historical World Cup winner base rate: ~6-8 teams realistically contend each tournament. England's historical win rate: 1/21 tournaments (4.8%). Top-4 FIFA-ranked teams win ~60% of World Cups since 1998.
-- [X3 SIGNAL — ELO CURRENT]** England FIFA ranking: 4th globally (June 2026). Polymarket Elo-implied probability: 11% to win tournament (5th-highest behind Spain 17%, France 16%, Portugal 10%). England's current Elo estimated ~1980-2000 range based on FIFA #4 position and Goldman Sachs model (which gave England 5% win probability, below Argentina 14%, Spain/France 19%). This places England approximately +0.93 to +1.00 standard deviations above the WC field mean (assuming field mean Elo ~1700, sd ~300).
-- [X3 SIGNAL — ELO TREND]** England's 12-month Elo trajectory: **strongly positive**. Under Thomas Tuchel (appointed January 2025), England achieved:
-- **Perfect World Cup qualifying record: 8W-0D-0L** (first European nation to qualify)
-- **22 goals scored, 0 goals conceded** across 8 qualifiers — unprecedented clean sheet streak
-- **xG dominance: 20.8 xG generated** (5th-most in UEFA qualifying), 63 shots on target (3rd-most)
-- **354 touches in opposition box** (4th in UEFA qualifying) — elite attacking positioning
-- [X3 SIGNAL — GOAL DIFFERENCE]** England's recent goal difference in competitive matches:
-- **WC Qualifying: +22 (22 GF, 0 GA)** over 8 matches = **+2.75 per game**
-- **Opening WC match vs Croatia: +2 (4-2 win)**, though xG was +2.09 (2.80 xG vs 0.71 xGA)
-- Normalized goal difference over last 10 competitive internationals: estimated **+1.8 to +2.2 per game**
-- [X3 SIGNAL — XG DELTA]** England's expected goals differential:
-- **WC Qualifying xG: +20.8 xG generated** (exact xGA not disclosed, but 0 actual goals conceded suggests xGA likely <4.0)
-- **Estimated xGD: +16 to +18 over 8 qualifiers** = **+2.0 to +2.25 xGD per game**
-- **England vs Croatia (WC opener): +2.09 xGD** (2.80 xG vs 0.71 xGA) — dominant performance despite 4-2 scoreline
+- 1. **England 4-2 Croatia** (Group L, June 15) — Kane 2 goals (12' pen, 42'), Bellingham 47', Rashford 85'
+- 2. **England 3-0 Panama** (Group L, June 21) — Dominant group stage win
+- 3. **England 2-1 Ghana** (Group L, June 27) — Secured group winners position
+- 4. **England 3-1 Slovakia** (Round of 16, July 5) — Knockout stage progression
+- 5. **England 2-1 Norway** (Quarter-final, July 12, AET) — Bellingham 2 goals (90+3', 93'), tense extra-time victory
+- Form: 5W-0D-0L (100% win rate)** — 14 goals scored, 5 conceded over 5 matches. Goal difference: **+9**
+- **xG per game: ~2.1** (strong attacking output)
+- **xGA per game: ~0.9** (solid defensive structure under Tuchel)
+- **xGD: +1.2/game** (elite differential, top-3 in tournament)
+- Possession average: 58% (controlled, possession-based approach)
+- Shots on target %: 42% (clinical finishing, especially Bellingham with 6 tournament goals)
+- Set-piece goals: 3 of 14 (21% — slightly below tournament average of ~25%)
+- **Jude Bellingham** (Real Madrid, €130m) — Tournament star with 6 goals, 100% fit, no injury concerns. Elite form.
+- **Harry Kane** (Bayern Munich, €90m) — 4 World Cup goals, fully fit. Captain and primary striker.
+- **Bukayo Saka** (Arsenal, €110m) — Managed carefully through tournament due to pre-tournament fitness concerns, but now "feeling great and ready to go" per player quotes. Available.
 
 ---
 
@@ -338,7 +335,7 @@ Current rating is England's **highest entering a major tournament since 1970**, 
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Top-flight league penetration + market value concentration.
 
@@ -349,111 +346,153 @@ Current rating is England's **highest entering a major tournament since 1970**, 
 
 ### Evidence (1) — Strong quality (70%)
 
-#### Agent: football_analyst — relevance 50% · quality ●●● High (70%) · 2026-06-24
+#### Agent: football_analyst — relevance 50% · quality ●●● High (70%) · 2026-07-15
 
-# DYNAMIC PERFORMANCE EVIDENCE FOR ENGLAND AT 2026 WORLD CUP
+# ENGLAND NATIONAL TEAM — COMPREHENSIVE ANALYSIS (July 2026)
 
-Based on live data from API-Football and web sources, here is the Factor X3 (Dynamic Performance Signal) analysis for England ahead of the 2026 FIFA World Cup:
+## ELO RATING & POWER RANKING
+
+[BASE RATE] England currently ranked 4th in FIFA World Rankings (June 2026 update). Historical Elo rating approximately **1950** based on World Cup 2026 performance trajectory and top-4 global standing. This places England ~250 points above the international field mean (1700) and ~0.83 standard deviations above average tournament-quality teams.
+
+[ELO] England Elo ~1950 represents elite-tier national team strength. For context: Argentina (World Cup holders) ~2100, Spain ~2050, France ~2080. England's rating reflects sustained top-4 performance and strong World Cup 2026 run. Elo trend over last 12 months: **+85 points** (strong positive momentum under Thomas Tuchel, who started January 2025).
+
+## LAST 5 MATCHES FORM
+
+[MATCH STATS] England's World Cup 2026 record (last 5 competitive matches):
+1. **England 4-2 Croatia** (Group L, June 15) — Kane 2 goals (12' pen, 42'), Bellingham 47', Rashford 85'
+2. **England 3-0 Panama** (Group L, June 21) — Dominant group stage win
+3. **England 2-1 Ghana** (Group L, June 27) — Secured group winners position
+4. **England 3-1 Slovakia** (Round of 16, July 5) — Knockout stage progression
+5. **England 2-1 Norway** (Quarter-final, July 12, AET) — Bellingham 2 goals (90+3', 93'), tense extra-time victory
+
+**Form: 5W-0D-0L (100% win rate)** — 14 goals scored, 5 conceded over 5 matches. Goal difference: **+9**
+
+[MATCH STATS] Advanced metrics from World Cup 2026 run:
+- **xG per game: ~2.1** (strong attacking output)
+- **xGA per game: ~0.9** (solid defensive structure under Tuchel)
+- **xGD: +1.2/game** (elite differential, top-3 in tournament)
+- Possession average: 58% (controlled, possession-based approach)
+- Shots on target %: 42% (clinical finishing, especially Bellingham with 6 tournament goals)
+- Set-piece goals: 3 of 14 (21% — slightly below tournament average of ~25%)
+
+## KEY PLAYER AVAILABILITY
+
+[INJURY IMPACT] **Current squad health status (as of July 14, 2026 semi-final preparation):**
+
+**AVAILABLE:**
+- **Jude Bellingham** (Real Madrid, €130m) — Tournament star with 6 goals, 100% fit, no injury concerns. Elite form.
+- **Harry Kane** (Bayern Munich, €90m) — 4 World Cup goals, fully fit. Captain and primary striker.
+- **Bukayo Saka** (Arsenal, €110m) — Managed carefully through tournament due to pre-tournament fitness concerns, but now "feeling great and ready to go" per player quotes. Available.
+- **Marc Guehi** (Manchester City, €75m) — Recovered from hamstring issue, trained fully before quarter-final. Available.
+- **Reece James** (Real Madrid, €70m) — Trained fully, no concerns.
+
+**DOUBTFUL/LATE FITNESS TEST:**
+- **Declan Rice** (Arsenal, €120m) — Suffered illness before quarter-final, trained but medics making "late call" for semi-final availability. **~80% probability of starting** given severity of occasion. If unavailable: estimated **-0.15 xG/90 impact** (reduced midfield control and defensive stability).
+
+**SUSPENDED:**
+- None. Rice, Bellingham, Nico O'Reilly, and Guehi all avoided yellow cards in quarter-final despite being one booking away from suspension.
+
+**KEY ABSENCES:**
+- No major injuries. Squad depth excellent with 26-man roster.
+
+## MARKET VALUE DISTRIBUTION
+
+[X4 SIGNAL] **England squad market value: €1.36 billion** (Transfermarkt, June 2026) — **2nd highest in World Cup 2026** behind France (€1.52bn), ahead of Spain (€1.31bn).
+
+**Top-5 most valuable players:**
+1. **Jude Bellingham** — €130m (9.6% of squad value)
+2. **Declan Rice** — €120m (8.8%)
+3. **Bukayo Saka** — €110m (8.1%)
+4. **Harry Kane** — €90m (6.6%)
+5. **Marc Guehi** — €75m (5.5%)
+
+**Market value concentration:** Top-5 players = **€525m = 38.6% of total squad value**. This indicates strong star power but also reasonable depth (not over-reliant on 1-2 players like some squads).
+
+**Big-5 league representation:** Estimated **~85-88%** of squad plays in Premier League, La Liga, Bundesliga, Serie A, or Ligue 1. Heavy Premier League concentration (~60% of squad), with key players at Real Madrid (Bellingham, James), Bayern Munich (Kane), Barcelona (Gordon), Manchester City (Guehi, Anderson).
+
+**Squad depth score:** Excellent. 26-man roster with quality replacements in all positions. Backup striker Ivan Toney (Al-Ahli, highest weekly wage £423k), backup midfielders Elliot Anderson, Morgan Rogers both contributing.
+
+**Average age:** Estimated **26.8 years** — optimal age profile. Core players in prime (Bellingham 22, Rice 27, Kane 32, Saka 24). Mix of experience and peak athleticism.
+
+## TACTICAL EFFICIENCY & FORM TRENDS
+
+[X5 SIGNAL] **Tactical metrics under Thomas Tuchel (January 2025 onwards):**
+- **Shot conversion rate:** 15.6% at World Cup 2026 (14 goals from 90 shots) — above tournament average of ~12%
+- **Defensive duel win %:** Estimated 54-56% based on solid defensive performances (0.9 xGA/game)
+- **Pressing intensity (PPDA):** Moderate-to-high, estimated **9-10 PPDA** — Tuchel's system emphasizes organized pressing in attacking third
+- **Set-piece efficiency:** 3 goals from set pieces in 5 matches (0.6/game) — solid but not elite
+- **Big-game mentality:** 5/5 wins in knockout-stage-quality matches. Bellingham emerging as clutch performer (2 goals vs Norway in extra time, 6 tournament goals total).
+
+**Tactical identity:** Possession-based (58% average), patient build-up, exploiting wide areas through Saka/Gordon, central creativity from Bellingham, clinical finishing from Kane. Defensively organized with Guehi-Stones partnership excelling.
+
+## FACTOR MODEL ASSESSMENT (X3/X4/X5)
+
+[X3 SIGNAL] **Dynamic Performance Signal:**
+- Elo current: **~1950** (0.83 SD above tournament mean of 1700)
+- Elo trend: **+85 points** over last 12 months (strong upward trajectory under Tuchel)
+- Goal difference: **+9 in last 5 matches** (+1.8/game)
+- Pass completion: **~86%** (controlled possession style)
+- xG delta: **+1.2/game** (xG 2.1, xGA 0.9)
+
+**X3 deterministic component:** 0.50 × (1950-1700)/300 + 0.10 × (+85/100) + 0.15 × (+1.8) + 0.10 × (0.86) + 0.15 × (+1.2) = 0.50 × 0.83 + 0.085 + 0.27 + 0.086 + 0.18 = **1.036** (strong positive signal, ~1.04 SD above mean)
+
+[X4 SIGNAL] **Squad Quality Index:**
+- Market value: **€1.36bn** (2nd in tournament, 89% of France's €1.52bn)
+- Market value concentration: Top-5 = 38.6% (balanced star power + depth)
+- Big-5 league %: **~87%** (elite club football exposure)
+- Squad depth: **Excellent** — quality replacements across all positions
+- Average age: **26.8 years** (optimal prime window)
+
+**X4 assessment:** Elite squad quality, 2nd-best talent pool in World Cup 2026. Depth advantage over most opponents except France.
+
+[X5 SIGNAL] **Tactical Efficiency:**
+- Shot conversion: **15.6%** (above tournament average)
+- Defensive duels: **~55%** (solid)
+- Pressing intensity: **PPDA ~9.5** (organized high press)
+- Set-piece efficiency: **0.6 goals/game** (good, not elite)
+- Clutch performance: **100% win rate in 5 matches**, including extra-time resilience vs Norway
+
+**X5 assessment:** Strong tactical execution under Tuchel. Bellingham's form (6 goals) is exceptional individual signal. Team shows big-game mentality and ability to win tight matches.
+
+## KEY FINDINGS SUMMARY
+
+[BASE RATE] England ranked 4th globally (FIFA), Elo ~1950 places them in elite tier (~0.83 SD above tournament mean). Historical top-4 finish rate at World Cups: ~40% for teams of this caliber.
+
+[MATCH STATS] Perfect 5W-0D-0L record at WC2026, +9 goal difference, xGD +1.2/game. Bellingham in exceptional form (6 goals, 0 penalties). Controlled possession style (58%) with clinical finishing (15.6% conversion).
+
+[ELO] England Elo ~1950 with +85 point trend over 12 months. Strong momentum under Tuchel (started Jan 2025). Elo places England as 3rd-4th strongest team in tournament behind Argentina (~2100), France (~2080), Spain (~2050).
+
+[INJURY IMPACT] Squad nearly fully fit. Only concern: Declan Rice illness (80% probability of availability for semi-final). If Rice unavailable: estimated -0.15 xG/90 impact. No suspensions. Bellingham, Kane, Saka all 100% fit and in form.
+
+[X4 SIGNAL] Squad market value €1.36bn (2nd in WC2026). Top-5 players (Bellingham €130m, Rice €120m, Saka €110m, Kane €90m, Guehi €75m) = 38.6% of squad value. Big-5 league representation ~87%. Optimal age profile (26.8 years). Elite depth.
+
+[X5 SIGNAL] Tactical efficiency strong: 15.6% shot conversion, ~55% defensive duels, PPDA ~9.5 (organized press). Set-pieces 0.6 goals/game. Clutch mentality: 5/5 wins including extra-time victory. Tuchel's system maximizing talent.
+
+[MULTIPLIER] **Suggested p50: 1.20 (p5: 0.85, p95: 1.65)** — Elo edge (1950 vs field mean 1700), perfect WC2026 form (5W-0L, +9 GD), elite squad depth (€1.36bn, 2nd-best), Bellingham's exceptional tournament (6 goals), and Tuchel tactical organization support 20% above base-rate expectations for England outcomes. Downside risk from potential Rice absence (p5: 0.85) if illness worsens; upside from momentum and big-game mentality (p95: 1.65).
 
 ---
 
-## KEY FINDINGS
+**Relevance: 0.95** — Comprehensive live data on England's current state across all requested dimensions.
 
-**[BASE RATE]** Historical World Cup winner base rate: ~6-8 teams realistically contend each tournament. England's historical win rate: 1/21 tournaments (4.8%). Top-4 FIFA-ranked teams win ~60% of World Cups since 1998.
-
-**[X3 SIGNAL — ELO CURRENT]** England FIFA ranking: 4th globally (June 2026). Polymarket Elo-implied probability: 11% to win tournament (5th-highest behind Spain 17%, France 16%, Portugal 10%). England's current Elo estimated ~1980-2000 range based on FIFA #4 position and Goldman Sachs model (which gave England 5% win probability, below Argentina 14%, Spain/France 19%). This places England approximately +0.93 to +1.00 standard deviations above the WC field mean (assuming field mean Elo ~1700, sd ~300).
-
-**[X3 SIGNAL — ELO TREND]** England's 12-month Elo trajectory: **strongly positive**. Under Thomas Tuchel (appointed January 2025), England achieved:
-- **Perfect World Cup qualifying record: 8W-0D-0L** (first European nation to qualify)
-- **22 goals scored, 0 goals conceded** across 8 qualifiers — unprecedented clean sheet streak
-- **xG dominance: 20.8 xG generated** (5th-most in UEFA qualifying), 63 shots on target (3rd-most)
-- **354 touches in opposition box** (4th in UEFA qualifying) — elite attacking positioning
-
-This represents an estimated **+80 to +100 Elo gain** from pre-Tuchel baseline (~1900 in mid-2024 to ~1980-2000 now). Elo trend component: **+0.27 to +0.33** (assuming 12-month drift of +80-100 points).
-
-**[X3 SIGNAL — GOAL DIFFERENCE]** England's recent goal difference in competitive matches:
-- **WC Qualifying: +22 (22 GF, 0 GA)** over 8 matches = **+2.75 per game**
-- **Opening WC match vs Croatia: +2 (4-2 win)**, though xG was +2.09 (2.80 xG vs 0.71 xGA)
-- Normalized goal difference over last 10 competitive internationals: estimated **+1.8 to +2.2 per game**
-
-This is **elite-tier performance** (top 3-5 teams globally). Goal difference component: **+0.30 to +0.37** (assuming normalization around 0 for average WC participant).
-
-**[X3 SIGNAL — XG DELTA]** England's expected goals differential:
-- **WC Qualifying xG: +20.8 xG generated** (exact xGA not disclosed, but 0 actual goals conceded suggests xGA likely <4.0)
-- **Estimated xGD: +16 to +18 over 8 qualifiers** = **+2.0 to +2.25 xGD per game**
-- **England vs Croatia (WC opener): +2.09 xGD** (2.80 xG vs 0.71 xGA) — dominant performance despite 4-2 scoreline
-- **xG fairness: 91%** in Croatia match (slightly unlucky to concede 2 from 0.71 xGA)
-
-Recent xG delta component: **+0.30 to +0.34** (elite attacking creation + defensive solidity).
-
-**[X3 SIGNAL — PASS COMPLETION]** England ranked **3rd in shots on target** and **4th in opposition box touches** during WC qualifying, indicating high possession quality in dangerous areas. Tuchel's system emphasizes "Premier League intensity" with high pressing (estimated PPDA ~9-10 based on tactical descriptions). Pass completion in final third estimated **78-82%** based on elite-team benchmarks. Component: **+0.12 to +0.15**.
-
-**[FACTOR X3 COMPOSITE]** Deterministic X3 formula:
-```
-X3 = 0.50 × (elo_current − 1700)/300 + 0.10 × elo_trend
-     + 0.15 × goal_difference + 0.10 × pass_completion + 0.15 × xg_delta
-```
-
-Plugging in England's values (using midpoint estimates):
-```
-X3 = 0.50 × (1990 − 1700)/300 + 0.10 × 0.30
-     + 0.15 × 0.34 + 0.10 × 0.14 + 0.15 × 0.32
-   = 0.50 × 0.97 + 0.030 + 0.051 + 0.014 + 0.048
-   = 0.485 + 0.143
-   = **+0.63**
-```
-
-This places England **+0.63 standard deviations above the WC field mean** on dynamic performance — solidly in the **top-6 contenders** tier, but behind Spain (~+0.90), Argentina (~+0.75), and France (~+0.70).
-
-**[CONTEXT — TACTICAL SHIFT]** Tuchel's appointment represents a **structural regime change**. His system emphasizes:
-- High defensive organization (0 goals conceded in 8 qualifiers is historically unprecedented)
-- Tactical flexibility (4-3-3 and 4-2-3-1 formations used)
-- Elite set-piece execution (England's historical weakness now addressed)
-- Squad rotation management (critical for deep tournament runs)
-
-However, **quality of opposition caveat**: England's qualifying group (Albania, Serbia, Latvia, Andorra) was weak. The Croatia match (first vs top-20 opponent) showed vulnerability: conceded 2 goals from 0.71 xGA (poor defensive execution despite xG dominance).
-
-**[HISTORICAL COMPARISON]** England's current Elo (~1990) compares to:
-- **1966 World Cup win: Elo ~1970** (home tournament advantage)
-- **1990 semifinal run: Elo ~1950**
-- **2018 semifinal run: Elo ~1960**
-- **Euro 2020 final: Elo ~1980**
-
-Current rating is England's **highest entering a major tournament since 1970**, but still below the all-time peak of ~2050 (post-Euro 2000 win vs Germany).
-
-**[UNCERTAINTY FACTORS]** 
-- **Tournament knockout variance**: High. England's xG dominance in qualifiers may not translate vs elite opposition (Spain, France, Argentina).
-- **Tuchel's tournament debut**: No prior international tournament experience as manager.
-- **Squad depth concerns**: Injuries to Kane (30% of goals) or Bellingham would significantly impact X3.
-- **Penalty shootout record**: England historically poor (lost Euro 2020 final on penalties despite xG dominance).
-
----
-
-## FACTOR-MODE MULTIPLIER
-
-**[MULTIPLIER]** Suggested p50: **1.15** (p5: 0.85, p95: 1.55) — England's X3 composite (+0.63 sd above field mean) places them in top-6 contender tier with 12-month Elo surge under Tuchel, but Spain/Argentina/France have stronger X3 signals and tournament pedigree.
-
-**Relevance:** 0.92 — X3 is the primary discriminator for tournament winner forecasts.
-
-**Confidence:** 0.78 — High confidence in Elo/xG data; moderate uncertainty on knockout-stage translation and Tuchel's tournament management.
+**Confidence: 0.88** — High confidence in form, squad value, and availability data. Moderate uncertainty on exact Elo (estimated ~1950 based on ranking/performance) and Rice's fitness for semi-final.
 
 **Key findings:**
 
-- [BASE RATE]** Historical World Cup winner base rate: ~6-8 teams realistically contend each tournament. England's historical win rate: 1/21 tournaments (4.8%). Top-4 FIFA-ranked teams win ~60% of World Cups since 1998.
-- [X3 SIGNAL — ELO CURRENT]** England FIFA ranking: 4th globally (June 2026). Polymarket Elo-implied probability: 11% to win tournament (5th-highest behind Spain 17%, France 16%, Portugal 10%). England's current Elo estimated ~1980-2000 range based on FIFA #4 position and Goldman Sachs model (which gave England 5% win probability, below Argentina 14%, Spain/France 19%). This places England approximately +0.93 to +1.00 standard deviations above the WC field mean (assuming field mean Elo ~1700, sd ~300).
-- [X3 SIGNAL — ELO TREND]** England's 12-month Elo trajectory: **strongly positive**. Under Thomas Tuchel (appointed January 2025), England achieved:
-- **Perfect World Cup qualifying record: 8W-0D-0L** (first European nation to qualify)
-- **22 goals scored, 0 goals conceded** across 8 qualifiers — unprecedented clean sheet streak
-- **xG dominance: 20.8 xG generated** (5th-most in UEFA qualifying), 63 shots on target (3rd-most)
-- **354 touches in opposition box** (4th in UEFA qualifying) — elite attacking positioning
-- [X3 SIGNAL — GOAL DIFFERENCE]** England's recent goal difference in competitive matches:
-- **WC Qualifying: +22 (22 GF, 0 GA)** over 8 matches = **+2.75 per game**
-- **Opening WC match vs Croatia: +2 (4-2 win)**, though xG was +2.09 (2.80 xG vs 0.71 xGA)
-- Normalized goal difference over last 10 competitive internationals: estimated **+1.8 to +2.2 per game**
-- [X3 SIGNAL — XG DELTA]** England's expected goals differential:
-- **WC Qualifying xG: +20.8 xG generated** (exact xGA not disclosed, but 0 actual goals conceded suggests xGA likely <4.0)
-- **Estimated xGD: +16 to +18 over 8 qualifiers** = **+2.0 to +2.25 xGD per game**
-- **England vs Croatia (WC opener): +2.09 xGD** (2.80 xG vs 0.71 xGA) — dominant performance despite 4-2 scoreline
+- 1. **England 4-2 Croatia** (Group L, June 15) — Kane 2 goals (12' pen, 42'), Bellingham 47', Rashford 85'
+- 2. **England 3-0 Panama** (Group L, June 21) — Dominant group stage win
+- 3. **England 2-1 Ghana** (Group L, June 27) — Secured group winners position
+- 4. **England 3-1 Slovakia** (Round of 16, July 5) — Knockout stage progression
+- 5. **England 2-1 Norway** (Quarter-final, July 12, AET) — Bellingham 2 goals (90+3', 93'), tense extra-time victory
+- Form: 5W-0D-0L (100% win rate)** — 14 goals scored, 5 conceded over 5 matches. Goal difference: **+9**
+- **xG per game: ~2.1** (strong attacking output)
+- **xGA per game: ~0.9** (solid defensive structure under Tuchel)
+- **xGD: +1.2/game** (elite differential, top-3 in tournament)
+- Possession average: 58% (controlled, possession-based approach)
+- Shots on target %: 42% (clinical finishing, especially Bellingham with 6 tournament goals)
+- Set-piece goals: 3 of 14 (21% — slightly below tournament average of ~25%)
+- **Jude Bellingham** (Real Madrid, €130m) — Tournament star with 6 goals, 100% fit, no injury concerns. Elite form.
+- **Harry Kane** (Bayern Munich, €90m) — 4 World Cup goals, fully fit. Captain and primary striker.
+- **Bukayo Saka** (Arsenal, €110m) — Managed carefully through tournament due to pre-tournament fitness concerns, but now "feeling great and ready to go" per player quotes. Available.
 
 ---
 
@@ -461,7 +500,7 @@ Current rating is England's **highest entering a major tournament since 1970**, 
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Shot conversion, defensive duels, pressing intensity.
 
@@ -472,111 +511,153 @@ Current rating is England's **highest entering a major tournament since 1970**, 
 
 ### Evidence (1) — Strong quality (70%)
 
-#### Agent: football_analyst — relevance 50% · quality ●●● High (70%) · 2026-06-24
+#### Agent: football_analyst — relevance 50% · quality ●●● High (70%) · 2026-07-15
 
-# DYNAMIC PERFORMANCE EVIDENCE FOR ENGLAND AT 2026 WORLD CUP
+# ENGLAND NATIONAL TEAM — COMPREHENSIVE ANALYSIS (July 2026)
 
-Based on live data from API-Football and web sources, here is the Factor X3 (Dynamic Performance Signal) analysis for England ahead of the 2026 FIFA World Cup:
+## ELO RATING & POWER RANKING
+
+[BASE RATE] England currently ranked 4th in FIFA World Rankings (June 2026 update). Historical Elo rating approximately **1950** based on World Cup 2026 performance trajectory and top-4 global standing. This places England ~250 points above the international field mean (1700) and ~0.83 standard deviations above average tournament-quality teams.
+
+[ELO] England Elo ~1950 represents elite-tier national team strength. For context: Argentina (World Cup holders) ~2100, Spain ~2050, France ~2080. England's rating reflects sustained top-4 performance and strong World Cup 2026 run. Elo trend over last 12 months: **+85 points** (strong positive momentum under Thomas Tuchel, who started January 2025).
+
+## LAST 5 MATCHES FORM
+
+[MATCH STATS] England's World Cup 2026 record (last 5 competitive matches):
+1. **England 4-2 Croatia** (Group L, June 15) — Kane 2 goals (12' pen, 42'), Bellingham 47', Rashford 85'
+2. **England 3-0 Panama** (Group L, June 21) — Dominant group stage win
+3. **England 2-1 Ghana** (Group L, June 27) — Secured group winners position
+4. **England 3-1 Slovakia** (Round of 16, July 5) — Knockout stage progression
+5. **England 2-1 Norway** (Quarter-final, July 12, AET) — Bellingham 2 goals (90+3', 93'), tense extra-time victory
+
+**Form: 5W-0D-0L (100% win rate)** — 14 goals scored, 5 conceded over 5 matches. Goal difference: **+9**
+
+[MATCH STATS] Advanced metrics from World Cup 2026 run:
+- **xG per game: ~2.1** (strong attacking output)
+- **xGA per game: ~0.9** (solid defensive structure under Tuchel)
+- **xGD: +1.2/game** (elite differential, top-3 in tournament)
+- Possession average: 58% (controlled, possession-based approach)
+- Shots on target %: 42% (clinical finishing, especially Bellingham with 6 tournament goals)
+- Set-piece goals: 3 of 14 (21% — slightly below tournament average of ~25%)
+
+## KEY PLAYER AVAILABILITY
+
+[INJURY IMPACT] **Current squad health status (as of July 14, 2026 semi-final preparation):**
+
+**AVAILABLE:**
+- **Jude Bellingham** (Real Madrid, €130m) — Tournament star with 6 goals, 100% fit, no injury concerns. Elite form.
+- **Harry Kane** (Bayern Munich, €90m) — 4 World Cup goals, fully fit. Captain and primary striker.
+- **Bukayo Saka** (Arsenal, €110m) — Managed carefully through tournament due to pre-tournament fitness concerns, but now "feeling great and ready to go" per player quotes. Available.
+- **Marc Guehi** (Manchester City, €75m) — Recovered from hamstring issue, trained fully before quarter-final. Available.
+- **Reece James** (Real Madrid, €70m) — Trained fully, no concerns.
+
+**DOUBTFUL/LATE FITNESS TEST:**
+- **Declan Rice** (Arsenal, €120m) — Suffered illness before quarter-final, trained but medics making "late call" for semi-final availability. **~80% probability of starting** given severity of occasion. If unavailable: estimated **-0.15 xG/90 impact** (reduced midfield control and defensive stability).
+
+**SUSPENDED:**
+- None. Rice, Bellingham, Nico O'Reilly, and Guehi all avoided yellow cards in quarter-final despite being one booking away from suspension.
+
+**KEY ABSENCES:**
+- No major injuries. Squad depth excellent with 26-man roster.
+
+## MARKET VALUE DISTRIBUTION
+
+[X4 SIGNAL] **England squad market value: €1.36 billion** (Transfermarkt, June 2026) — **2nd highest in World Cup 2026** behind France (€1.52bn), ahead of Spain (€1.31bn).
+
+**Top-5 most valuable players:**
+1. **Jude Bellingham** — €130m (9.6% of squad value)
+2. **Declan Rice** — €120m (8.8%)
+3. **Bukayo Saka** — €110m (8.1%)
+4. **Harry Kane** — €90m (6.6%)
+5. **Marc Guehi** — €75m (5.5%)
+
+**Market value concentration:** Top-5 players = **€525m = 38.6% of total squad value**. This indicates strong star power but also reasonable depth (not over-reliant on 1-2 players like some squads).
+
+**Big-5 league representation:** Estimated **~85-88%** of squad plays in Premier League, La Liga, Bundesliga, Serie A, or Ligue 1. Heavy Premier League concentration (~60% of squad), with key players at Real Madrid (Bellingham, James), Bayern Munich (Kane), Barcelona (Gordon), Manchester City (Guehi, Anderson).
+
+**Squad depth score:** Excellent. 26-man roster with quality replacements in all positions. Backup striker Ivan Toney (Al-Ahli, highest weekly wage £423k), backup midfielders Elliot Anderson, Morgan Rogers both contributing.
+
+**Average age:** Estimated **26.8 years** — optimal age profile. Core players in prime (Bellingham 22, Rice 27, Kane 32, Saka 24). Mix of experience and peak athleticism.
+
+## TACTICAL EFFICIENCY & FORM TRENDS
+
+[X5 SIGNAL] **Tactical metrics under Thomas Tuchel (January 2025 onwards):**
+- **Shot conversion rate:** 15.6% at World Cup 2026 (14 goals from 90 shots) — above tournament average of ~12%
+- **Defensive duel win %:** Estimated 54-56% based on solid defensive performances (0.9 xGA/game)
+- **Pressing intensity (PPDA):** Moderate-to-high, estimated **9-10 PPDA** — Tuchel's system emphasizes organized pressing in attacking third
+- **Set-piece efficiency:** 3 goals from set pieces in 5 matches (0.6/game) — solid but not elite
+- **Big-game mentality:** 5/5 wins in knockout-stage-quality matches. Bellingham emerging as clutch performer (2 goals vs Norway in extra time, 6 tournament goals total).
+
+**Tactical identity:** Possession-based (58% average), patient build-up, exploiting wide areas through Saka/Gordon, central creativity from Bellingham, clinical finishing from Kane. Defensively organized with Guehi-Stones partnership excelling.
+
+## FACTOR MODEL ASSESSMENT (X3/X4/X5)
+
+[X3 SIGNAL] **Dynamic Performance Signal:**
+- Elo current: **~1950** (0.83 SD above tournament mean of 1700)
+- Elo trend: **+85 points** over last 12 months (strong upward trajectory under Tuchel)
+- Goal difference: **+9 in last 5 matches** (+1.8/game)
+- Pass completion: **~86%** (controlled possession style)
+- xG delta: **+1.2/game** (xG 2.1, xGA 0.9)
+
+**X3 deterministic component:** 0.50 × (1950-1700)/300 + 0.10 × (+85/100) + 0.15 × (+1.8) + 0.10 × (0.86) + 0.15 × (+1.2) = 0.50 × 0.83 + 0.085 + 0.27 + 0.086 + 0.18 = **1.036** (strong positive signal, ~1.04 SD above mean)
+
+[X4 SIGNAL] **Squad Quality Index:**
+- Market value: **€1.36bn** (2nd in tournament, 89% of France's €1.52bn)
+- Market value concentration: Top-5 = 38.6% (balanced star power + depth)
+- Big-5 league %: **~87%** (elite club football exposure)
+- Squad depth: **Excellent** — quality replacements across all positions
+- Average age: **26.8 years** (optimal prime window)
+
+**X4 assessment:** Elite squad quality, 2nd-best talent pool in World Cup 2026. Depth advantage over most opponents except France.
+
+[X5 SIGNAL] **Tactical Efficiency:**
+- Shot conversion: **15.6%** (above tournament average)
+- Defensive duels: **~55%** (solid)
+- Pressing intensity: **PPDA ~9.5** (organized high press)
+- Set-piece efficiency: **0.6 goals/game** (good, not elite)
+- Clutch performance: **100% win rate in 5 matches**, including extra-time resilience vs Norway
+
+**X5 assessment:** Strong tactical execution under Tuchel. Bellingham's form (6 goals) is exceptional individual signal. Team shows big-game mentality and ability to win tight matches.
+
+## KEY FINDINGS SUMMARY
+
+[BASE RATE] England ranked 4th globally (FIFA), Elo ~1950 places them in elite tier (~0.83 SD above tournament mean). Historical top-4 finish rate at World Cups: ~40% for teams of this caliber.
+
+[MATCH STATS] Perfect 5W-0D-0L record at WC2026, +9 goal difference, xGD +1.2/game. Bellingham in exceptional form (6 goals, 0 penalties). Controlled possession style (58%) with clinical finishing (15.6% conversion).
+
+[ELO] England Elo ~1950 with +85 point trend over 12 months. Strong momentum under Tuchel (started Jan 2025). Elo places England as 3rd-4th strongest team in tournament behind Argentina (~2100), France (~2080), Spain (~2050).
+
+[INJURY IMPACT] Squad nearly fully fit. Only concern: Declan Rice illness (80% probability of availability for semi-final). If Rice unavailable: estimated -0.15 xG/90 impact. No suspensions. Bellingham, Kane, Saka all 100% fit and in form.
+
+[X4 SIGNAL] Squad market value €1.36bn (2nd in WC2026). Top-5 players (Bellingham €130m, Rice €120m, Saka €110m, Kane €90m, Guehi €75m) = 38.6% of squad value. Big-5 league representation ~87%. Optimal age profile (26.8 years). Elite depth.
+
+[X5 SIGNAL] Tactical efficiency strong: 15.6% shot conversion, ~55% defensive duels, PPDA ~9.5 (organized press). Set-pieces 0.6 goals/game. Clutch mentality: 5/5 wins including extra-time victory. Tuchel's system maximizing talent.
+
+[MULTIPLIER] **Suggested p50: 1.20 (p5: 0.85, p95: 1.65)** — Elo edge (1950 vs field mean 1700), perfect WC2026 form (5W-0L, +9 GD), elite squad depth (€1.36bn, 2nd-best), Bellingham's exceptional tournament (6 goals), and Tuchel tactical organization support 20% above base-rate expectations for England outcomes. Downside risk from potential Rice absence (p5: 0.85) if illness worsens; upside from momentum and big-game mentality (p95: 1.65).
 
 ---
 
-## KEY FINDINGS
+**Relevance: 0.95** — Comprehensive live data on England's current state across all requested dimensions.
 
-**[BASE RATE]** Historical World Cup winner base rate: ~6-8 teams realistically contend each tournament. England's historical win rate: 1/21 tournaments (4.8%). Top-4 FIFA-ranked teams win ~60% of World Cups since 1998.
-
-**[X3 SIGNAL — ELO CURRENT]** England FIFA ranking: 4th globally (June 2026). Polymarket Elo-implied probability: 11% to win tournament (5th-highest behind Spain 17%, France 16%, Portugal 10%). England's current Elo estimated ~1980-2000 range based on FIFA #4 position and Goldman Sachs model (which gave England 5% win probability, below Argentina 14%, Spain/France 19%). This places England approximately +0.93 to +1.00 standard deviations above the WC field mean (assuming field mean Elo ~1700, sd ~300).
-
-**[X3 SIGNAL — ELO TREND]** England's 12-month Elo trajectory: **strongly positive**. Under Thomas Tuchel (appointed January 2025), England achieved:
-- **Perfect World Cup qualifying record: 8W-0D-0L** (first European nation to qualify)
-- **22 goals scored, 0 goals conceded** across 8 qualifiers — unprecedented clean sheet streak
-- **xG dominance: 20.8 xG generated** (5th-most in UEFA qualifying), 63 shots on target (3rd-most)
-- **354 touches in opposition box** (4th in UEFA qualifying) — elite attacking positioning
-
-This represents an estimated **+80 to +100 Elo gain** from pre-Tuchel baseline (~1900 in mid-2024 to ~1980-2000 now). Elo trend component: **+0.27 to +0.33** (assuming 12-month drift of +80-100 points).
-
-**[X3 SIGNAL — GOAL DIFFERENCE]** England's recent goal difference in competitive matches:
-- **WC Qualifying: +22 (22 GF, 0 GA)** over 8 matches = **+2.75 per game**
-- **Opening WC match vs Croatia: +2 (4-2 win)**, though xG was +2.09 (2.80 xG vs 0.71 xGA)
-- Normalized goal difference over last 10 competitive internationals: estimated **+1.8 to +2.2 per game**
-
-This is **elite-tier performance** (top 3-5 teams globally). Goal difference component: **+0.30 to +0.37** (assuming normalization around 0 for average WC participant).
-
-**[X3 SIGNAL — XG DELTA]** England's expected goals differential:
-- **WC Qualifying xG: +20.8 xG generated** (exact xGA not disclosed, but 0 actual goals conceded suggests xGA likely <4.0)
-- **Estimated xGD: +16 to +18 over 8 qualifiers** = **+2.0 to +2.25 xGD per game**
-- **England vs Croatia (WC opener): +2.09 xGD** (2.80 xG vs 0.71 xGA) — dominant performance despite 4-2 scoreline
-- **xG fairness: 91%** in Croatia match (slightly unlucky to concede 2 from 0.71 xGA)
-
-Recent xG delta component: **+0.30 to +0.34** (elite attacking creation + defensive solidity).
-
-**[X3 SIGNAL — PASS COMPLETION]** England ranked **3rd in shots on target** and **4th in opposition box touches** during WC qualifying, indicating high possession quality in dangerous areas. Tuchel's system emphasizes "Premier League intensity" with high pressing (estimated PPDA ~9-10 based on tactical descriptions). Pass completion in final third estimated **78-82%** based on elite-team benchmarks. Component: **+0.12 to +0.15**.
-
-**[FACTOR X3 COMPOSITE]** Deterministic X3 formula:
-```
-X3 = 0.50 × (elo_current − 1700)/300 + 0.10 × elo_trend
-     + 0.15 × goal_difference + 0.10 × pass_completion + 0.15 × xg_delta
-```
-
-Plugging in England's values (using midpoint estimates):
-```
-X3 = 0.50 × (1990 − 1700)/300 + 0.10 × 0.30
-     + 0.15 × 0.34 + 0.10 × 0.14 + 0.15 × 0.32
-   = 0.50 × 0.97 + 0.030 + 0.051 + 0.014 + 0.048
-   = 0.485 + 0.143
-   = **+0.63**
-```
-
-This places England **+0.63 standard deviations above the WC field mean** on dynamic performance — solidly in the **top-6 contenders** tier, but behind Spain (~+0.90), Argentina (~+0.75), and France (~+0.70).
-
-**[CONTEXT — TACTICAL SHIFT]** Tuchel's appointment represents a **structural regime change**. His system emphasizes:
-- High defensive organization (0 goals conceded in 8 qualifiers is historically unprecedented)
-- Tactical flexibility (4-3-3 and 4-2-3-1 formations used)
-- Elite set-piece execution (England's historical weakness now addressed)
-- Squad rotation management (critical for deep tournament runs)
-
-However, **quality of opposition caveat**: England's qualifying group (Albania, Serbia, Latvia, Andorra) was weak. The Croatia match (first vs top-20 opponent) showed vulnerability: conceded 2 goals from 0.71 xGA (poor defensive execution despite xG dominance).
-
-**[HISTORICAL COMPARISON]** England's current Elo (~1990) compares to:
-- **1966 World Cup win: Elo ~1970** (home tournament advantage)
-- **1990 semifinal run: Elo ~1950**
-- **2018 semifinal run: Elo ~1960**
-- **Euro 2020 final: Elo ~1980**
-
-Current rating is England's **highest entering a major tournament since 1970**, but still below the all-time peak of ~2050 (post-Euro 2000 win vs Germany).
-
-**[UNCERTAINTY FACTORS]** 
-- **Tournament knockout variance**: High. England's xG dominance in qualifiers may not translate vs elite opposition (Spain, France, Argentina).
-- **Tuchel's tournament debut**: No prior international tournament experience as manager.
-- **Squad depth concerns**: Injuries to Kane (30% of goals) or Bellingham would significantly impact X3.
-- **Penalty shootout record**: England historically poor (lost Euro 2020 final on penalties despite xG dominance).
-
----
-
-## FACTOR-MODE MULTIPLIER
-
-**[MULTIPLIER]** Suggested p50: **1.15** (p5: 0.85, p95: 1.55) — England's X3 composite (+0.63 sd above field mean) places them in top-6 contender tier with 12-month Elo surge under Tuchel, but Spain/Argentina/France have stronger X3 signals and tournament pedigree.
-
-**Relevance:** 0.92 — X3 is the primary discriminator for tournament winner forecasts.
-
-**Confidence:** 0.78 — High confidence in Elo/xG data; moderate uncertainty on knockout-stage translation and Tuchel's tournament management.
+**Confidence: 0.88** — High confidence in form, squad value, and availability data. Moderate uncertainty on exact Elo (estimated ~1950 based on ranking/performance) and Rice's fitness for semi-final.
 
 **Key findings:**
 
-- [BASE RATE]** Historical World Cup winner base rate: ~6-8 teams realistically contend each tournament. England's historical win rate: 1/21 tournaments (4.8%). Top-4 FIFA-ranked teams win ~60% of World Cups since 1998.
-- [X3 SIGNAL — ELO CURRENT]** England FIFA ranking: 4th globally (June 2026). Polymarket Elo-implied probability: 11% to win tournament (5th-highest behind Spain 17%, France 16%, Portugal 10%). England's current Elo estimated ~1980-2000 range based on FIFA #4 position and Goldman Sachs model (which gave England 5% win probability, below Argentina 14%, Spain/France 19%). This places England approximately +0.93 to +1.00 standard deviations above the WC field mean (assuming field mean Elo ~1700, sd ~300).
-- [X3 SIGNAL — ELO TREND]** England's 12-month Elo trajectory: **strongly positive**. Under Thomas Tuchel (appointed January 2025), England achieved:
-- **Perfect World Cup qualifying record: 8W-0D-0L** (first European nation to qualify)
-- **22 goals scored, 0 goals conceded** across 8 qualifiers — unprecedented clean sheet streak
-- **xG dominance: 20.8 xG generated** (5th-most in UEFA qualifying), 63 shots on target (3rd-most)
-- **354 touches in opposition box** (4th in UEFA qualifying) — elite attacking positioning
-- [X3 SIGNAL — GOAL DIFFERENCE]** England's recent goal difference in competitive matches:
-- **WC Qualifying: +22 (22 GF, 0 GA)** over 8 matches = **+2.75 per game**
-- **Opening WC match vs Croatia: +2 (4-2 win)**, though xG was +2.09 (2.80 xG vs 0.71 xGA)
-- Normalized goal difference over last 10 competitive internationals: estimated **+1.8 to +2.2 per game**
-- [X3 SIGNAL — XG DELTA]** England's expected goals differential:
-- **WC Qualifying xG: +20.8 xG generated** (exact xGA not disclosed, but 0 actual goals conceded suggests xGA likely <4.0)
-- **Estimated xGD: +16 to +18 over 8 qualifiers** = **+2.0 to +2.25 xGD per game**
-- **England vs Croatia (WC opener): +2.09 xGD** (2.80 xG vs 0.71 xGA) — dominant performance despite 4-2 scoreline
+- 1. **England 4-2 Croatia** (Group L, June 15) — Kane 2 goals (12' pen, 42'), Bellingham 47', Rashford 85'
+- 2. **England 3-0 Panama** (Group L, June 21) — Dominant group stage win
+- 3. **England 2-1 Ghana** (Group L, June 27) — Secured group winners position
+- 4. **England 3-1 Slovakia** (Round of 16, July 5) — Knockout stage progression
+- 5. **England 2-1 Norway** (Quarter-final, July 12, AET) — Bellingham 2 goals (90+3', 93'), tense extra-time victory
+- Form: 5W-0D-0L (100% win rate)** — 14 goals scored, 5 conceded over 5 matches. Goal difference: **+9**
+- **xG per game: ~2.1** (strong attacking output)
+- **xGA per game: ~0.9** (solid defensive structure under Tuchel)
+- **xGD: +1.2/game** (elite differential, top-3 in tournament)
+- Possession average: 58% (controlled, possession-based approach)
+- Shots on target %: 42% (clinical finishing, especially Bellingham with 6 tournament goals)
+- Set-piece goals: 3 of 14 (21% — slightly below tournament average of ~25%)
+- **Jude Bellingham** (Real Madrid, €130m) — Tournament star with 6 goals, 100% fit, no injury concerns. Elite form.
+- **Harry Kane** (Bayern Munich, €90m) — 4 World Cup goals, fully fit. Captain and primary striker.
+- **Bukayo Saka** (Arsenal, €110m) — Managed carefully through tournament due to pre-tournament fitness concerns, but now "feeling great and ready to go" per player quotes. Available.
 
 ---
 
@@ -584,7 +665,7 @@ Current rating is England's **highest entering a major tournament since 1970**, 
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
-| 0.80 | 1.00 | 1.20 |  |
+| 0.00 | 0.00 | 0.00 |  |
 
 > Per-fixture context: venue, climate, rest, altitude.
 
@@ -740,4 +821,4 @@ model: socio_capital * institutional_capacity * dynamic_performance * squad_qual
 
 ---
 
-_Generated by [Fermi Console](https://agent-bestiary.world) · v1 · 2026-07-15 07:01 UTC_
+_Generated by [Fermi Console](https://agent-bestiary.world) · v0 · 2026-07-22 14:41 UTC_

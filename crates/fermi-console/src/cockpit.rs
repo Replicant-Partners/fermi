@@ -226,6 +226,32 @@ pub struct CockpitState {
     /// Whether PM data is currently being fetched.
     pub pm_loading: bool,
 
+    // ── Zero-friction Polymarket type-ahead (composer inline search) ──
+    //
+    // Runs on the question_input as the operator types. Debounced
+    // (500ms) so we don't hammer the search endpoint on every
+    // keystroke; suggestions surface as chips directly under the
+    // question field, click-to-import.
+    /// Latest suggestions returned by pm_search. Each entry is the
+    /// raw server JSON shape (id / question / market_price / volume).
+    pub pm_suggestions: Vec<JsonValue>,
+    /// True while a debounced search is in flight.
+    pub pm_suggestions_loading: bool,
+    /// Monotonic counter incremented on every keystroke that triggers
+    /// a search. Async search tasks capture the current value on
+    /// dispatch and check it against the live counter on completion —
+    /// stale results (older typing) are discarded so the visible
+    /// suggestions always match the latest query.
+    pub pm_suggest_seq: u64,
+    /// The query the LAST completed search ran against. Used to
+    /// suppress the "no results" hint on an empty field.
+    pub pm_suggest_last_query: String,
+    /// True when the operator has explicitly dismissed the type-ahead
+    /// strip for this session. Prevents the strip from re-appearing
+    /// after every keystroke once they've closed it. Reset when the
+    /// question field is fully cleared.
+    pub pm_suggest_dismissed: bool,
+
     // ── Agent Execution State (runtime, not in AST) ───────────────
     pub agent_runs: Vec<AgentExecution>,
     pub orchestration_running: bool,
@@ -306,6 +332,10 @@ pub struct CockpitState {
     /// Share targets collected in the commit sheet (target, permission),
     /// applied right after the forecast row is created/updated on publish.
     pub pending_publish_shares: Vec<(String, String)>,
+    /// Team share targets collected in the commit sheet (team_id, permission),
+    /// applied alongside `pending_publish_shares` post-publish as
+    /// `share_type='team'` object_shares.
+    pub pending_publish_team_shares: Vec<(String, String)>,
     pub registry: Arc<AgentRegistry>,
     pub cached_fpl: String,
     pub inside_view_explanation: String,
@@ -601,7 +631,11 @@ impl CockpitState {
         let s = Self {
             program: Program::empty(),
             focused_node: FocusedNode::Question,
-            right_tab: RightTab::Edit,
+            // Default the right panel to Trajectory so it reads as the
+            // "live view" of the forecast alongside the composer. Edit
+            // is now opt-in via the ✎ chip on driver cards (or the
+            // Edit tab).
+            right_tab: RightTab::Trajectory,
             predicted_probability: 0.5,
             question_input,
             editor_name,
@@ -629,6 +663,11 @@ impl CockpitState {
             pm_price_change_1w: None,
             pm_url: None,
             pm_loading: false,
+            pm_suggestions: Vec::new(),
+            pm_suggestions_loading: false,
+            pm_suggest_seq: 0,
+            pm_suggest_last_query: String::new(),
+            pm_suggest_dismissed: false,
             agent_runs: Vec::new(),
             orchestration_running: false,
             session_cost: 0.0,
@@ -666,6 +705,7 @@ impl CockpitState {
             share_teams_loading: false,
             share_team_in_flight: HashSet::new(),
             pending_publish_shares: Vec::new(),
+            pending_publish_team_shares: Vec::new(),
             registry,
             cached_fpl: String::new(),
             inside_view_explanation: String::new(),
@@ -879,7 +919,222 @@ impl CockpitState {
         })
         .detach();
 
+        // Observe the question_input entity so every keystroke (via
+        // TextInput's internal `cx.notify()`) triggers the PM
+        // type-ahead. The search itself is debounced inside
+        // `pm_typeahead_search` so the observe firing 5–10 times per
+        // burst of typing doesn't slam the endpoint. We also skip
+        // firing entirely when a PM link is already established on
+        // this forecast (the operator's committed — no need to
+        // keep offering alternates).
+        cx.observe(&s.question_input, |state, input, cx| {
+            if state.pm_event_id.is_some() {
+                return; // already linked, don't offer suggestions
+            }
+            let text = input.read(cx).text().to_string();
+            state.pm_typeahead_search(&text, cx);
+        })
+        .detach();
+
         s
+    }
+
+    // ── Polymarket type-ahead (composer inline search) ─────────────────────
+    //
+    // Fires on every meaningful edit to the question field. Fully
+    // debounced: the caller stamps `pm_suggest_seq` and the async
+    // task compares its captured seq against the live value before
+    // rendering, so racy typing ("World Cu" → "World Cup" → "World")
+    // never leaves the older query's results visible.
+
+    /// Debounced Polymarket type-ahead search. `query` is the current
+    /// question-field content; short/empty queries clear suggestions
+    /// without hitting the network. If the query looks like a
+    /// Polymarket event URL, we hand it straight to the search
+    /// endpoint (server-side handler already unpacks slug).
+    pub fn pm_typeahead_search(&mut self, query: &str, cx: &mut Context<Self>) {
+        let raw = query.trim();
+        // Reset the dismissed flag when the field is fully cleared so
+        // the operator can re-open the strip by typing again.
+        if raw.is_empty() {
+            self.pm_suggestions.clear();
+            self.pm_suggestions_loading = false;
+            self.pm_suggest_last_query.clear();
+            self.pm_suggest_dismissed = false;
+            cx.notify();
+            return;
+        }
+        // URL-paste shortcut: if the operator pasted a full
+        // polymarket.com/event/... URL, strip it down to just the
+        // slug — the server's search handler resolves slugs directly
+        // to a single result, so paste-to-import is essentially
+        // instantaneous.
+        let trimmed = if let Some(rest) = raw
+            .strip_prefix("https://polymarket.com/event/")
+            .or_else(|| raw.strip_prefix("http://polymarket.com/event/"))
+            .or_else(|| raw.strip_prefix("polymarket.com/event/"))
+        {
+            // Take up to the first '/' or '?' (drop market-slug or
+            // query params).
+            rest.split(|c: char| c == '/' || c == '?')
+                .next()
+                .unwrap_or(rest)
+                .to_string()
+        } else {
+            raw.to_string()
+        };
+        // Skip micro-queries — 3 chars is the minimum where PM's fuzzy
+        // search returns anything useful. Also skip if the operator
+        // dismissed the strip earlier in this session.
+        if trimmed.chars().count() < 3 || self.pm_suggest_dismissed {
+            return;
+        }
+        // If the query didn't change since the last completed search,
+        // don't fire a duplicate request.
+        if trimmed == self.pm_suggest_last_query && !self.pm_suggestions.is_empty() {
+            return;
+        }
+
+        self.pm_suggest_seq = self.pm_suggest_seq.wrapping_add(1);
+        let captured_seq = self.pm_suggest_seq;
+        self.pm_suggestions_loading = true;
+        cx.notify();
+
+        let api = self.api.clone();
+        let q = trimmed.clone();
+        cx.spawn(async move |this, cx| {
+            // 500ms debounce — typing typically produces 5–10 keystrokes
+            // in a burst; wait until the operator pauses to fire.
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(500))
+                .await;
+
+            // Bail if a newer keystroke has invalidated us.
+            let still_current = this
+                .update(cx, |state, _| state.pm_suggest_seq == captured_seq)
+                .unwrap_or(false);
+            if !still_current {
+                return;
+            }
+
+            let result = tokio::spawn(async move { api.pm_search(&q).await }).await;
+            this.update(cx, |state, cx| {
+                // Second staleness check — request could have flown
+                // while newer keystrokes arrived.
+                if state.pm_suggest_seq != captured_seq {
+                    return;
+                }
+                state.pm_suggestions_loading = false;
+                match result {
+                    Ok(Ok(resp)) => {
+                        let arr = resp
+                            .get("results")
+                            .and_then(|v| v.as_array())
+                            .or_else(|| resp.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                        state.pm_suggestions = arr.into_iter().take(5).collect();
+                        state.pm_suggest_last_query = trimmed.clone();
+                    }
+                    Ok(Err(e)) => {
+                        log::warn!("[pm-typeahead] search failed: {}", e);
+                        state.pm_suggestions.clear();
+                        state.pm_suggest_last_query = trimmed.clone();
+                    }
+                    Err(e) => {
+                        log::warn!("[pm-typeahead] task join error: {}", e);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Attach a Polymarket market to the current forecast. Sets all
+    /// PM link fields, overwrites the question text with the market's
+    /// canonical phrasing (only when the operator's field is empty or
+    /// looks like an obvious placeholder), and starts the 5-minute
+    /// price poll. Idempotent — re-attaching the same market is a
+    /// no-op except for the polling reset.
+    pub fn link_polymarket_market(
+        &mut self,
+        pm_event_id: String,
+        pm_market_id: String,
+        question: String,
+        market_price: f64,
+        volume_24h: Option<f64>,
+        liquidity: Option<f64>,
+        confidence: Option<String>,
+        price_change_1w: Option<f64>,
+        cx: &mut Context<Self>,
+    ) {
+        // Overwrite the question ONLY when it's empty or the operator
+        // hasn't yet meaningfully diverged from the market question.
+        // Otherwise their custom phrasing wins.
+        let current_q = self.question_input.read(cx).text().trim().to_string();
+        let should_replace_question =
+            current_q.is_empty() || current_q.eq_ignore_ascii_case(&question);
+        if should_replace_question {
+            self.question_input.update(cx, |input, cx| {
+                input.set_text(&question, cx);
+            });
+        }
+
+        // Persist to program.question if it exists so the FPL emit
+        // path picks it up.
+        if let Some(q) = self.program.question_mut() {
+            if q.text.is_empty() || q.text.eq_ignore_ascii_case(&question) {
+                q.text = question.clone();
+            }
+        } else {
+            self.program.set_question(fermi::ast::QuestionStmt {
+                text: question.clone(),
+                base_rate: None,
+                target_date: None,
+                resolution_criteria: None,
+            });
+        }
+
+        self.pm_event_id = Some(pm_event_id.clone());
+        self.pm_market_id = Some(pm_market_id);
+        self.pm_question = Some(question.clone());
+        self.pm_market_price = Some(market_price);
+        self.pm_url = Some(format!("https://polymarket.com/event/{}", pm_event_id));
+        self.pm_volume_24h = volume_24h;
+        self.pm_liquidity = liquidity;
+        self.pm_confidence = confidence;
+        self.pm_price_change_1w = price_change_1w;
+        // Seed the inside view to the crowd price so the operator has
+        // a sensible starting anchor (they'll refine via Fermi
+        // decomposition or manual driver adjustments).
+        self.predicted_probability = market_price.clamp(0.01, 0.99);
+        // Clear the type-ahead so the strip collapses once linked.
+        self.pm_suggestions.clear();
+        self.pm_suggest_dismissed = true;
+
+        // 5-minute background poll for live crowd tracking.
+        self.set_pm_poll_interval(std::time::Duration::from_secs(5 * 60), cx);
+
+        self.messages.push(AssistantMessage {
+            node: "question".into(),
+            kind: MessageKind::Info,
+            text: format!(
+                "🔮 Linked Polymarket: \"{}\" · crowd {:.1}%. Press Ctrl+Enter to decompose.",
+                question,
+                market_price * 100.0
+            ),
+        });
+        cx.notify();
+    }
+
+    /// Dismiss the type-ahead strip for the current session. The strip
+    /// reappears when the operator clears the question field entirely.
+    pub fn dismiss_pm_typeahead(&mut self, cx: &mut Context<Self>) {
+        self.pm_suggest_dismissed = true;
+        self.pm_suggestions.clear();
+        cx.notify();
     }
 
     /// Set the PM polling interval. Call after linking a Polymarket market.
@@ -4302,18 +4557,24 @@ impl CockpitState {
 
         self.populate_editor_from_driver(name, cx);
 
-        // Auto-switch to the Edit tab. The previous behaviour required an
-        // extra click to see the populated p5/p50/p95 + suggestions + agent
-        // controls, which made driver-clicks feel half-wired. The Edit tab
-        // is the canonical destination for "I picked a driver, show me what
-        // matters about it" — auto-routing here matches operator intent.
-        //
-        // Exception: if the user is mid-trajectory or mid-Wiki review, we
-        // still switch — they explicitly clicked a driver, which is a stronger
-        // signal than "stay on the current tab." The prior tab is one click
-        // away if they want it back.
-        self.right_tab = RightTab::Edit;
+        // We used to force `right_tab = Edit` here, which was jarring:
+        // clicking a driver to *look* at it (its color, its evidence
+        // count, its worm) always yanked the right panel away from
+        // whatever the operator was reading. Now selecting a driver
+        // just populates the editor buffers — opening the Edit tab is
+        // an explicit intent, surfaced by the ✎ chip on the driver
+        // card. If the user is already on Edit, they'll see the update
+        // immediately; if they're on Trajectory/Wiki/etc., the panel
+        // stays put and they get to compare in place.
 
+        cx.notify();
+    }
+
+    /// Focus a driver *and* jump to the Edit tab. Wired to the explicit
+    /// ✎ chip on driver cards and to Ctrl+E when a driver is focused.
+    pub fn focus_driver_and_edit(&mut self, name: &str, cx: &mut Context<Self>) {
+        self.focus_driver(name, cx);
+        self.right_tab = RightTab::Edit;
         cx.notify();
     }
 
@@ -6830,7 +7091,13 @@ impl CockpitState {
         }
 
         self.focused_node = FocusedNode::Question;
-        self.right_tab = RightTab::Wiki;
+        // Land on Trajectory so opening a forecast shows its live time-
+        // series alongside the composer. The Wiki default was fine
+        // when Edit was the alternative, but Trajectory is a better
+        // "what is this forecast right now" first-glance view. Wiki is
+        // one click away in the tab bar.
+        self.right_tab = RightTab::Trajectory;
+        self.load_timeline(cx);
         // Load persisted schedules if this forecast was previously published
         self.load_schedules(cx);
         cx.notify();
@@ -7545,6 +7812,64 @@ impl CockpitState {
         .detach();
     }
 
+    /// Apply commit-sheet *team* share targets to a freshly-published
+    /// forecast. Each entry is `(team_id, permission)`; we POST an
+    /// object_share with `share_type='team'` for each. No email/lookup
+    /// dance — team_ids are already resolved server-side.
+    pub fn apply_publish_team_shares(
+        &mut self,
+        fid: String,
+        targets: Vec<(String, String)>,
+        cx: &mut Context<Self>,
+    ) {
+        if targets.is_empty() {
+            return;
+        }
+        let api = self.api.clone();
+        let total = targets.len();
+        cx.spawn(async move |this, cx| {
+            let mut ok = 0usize;
+            let mut failures: Vec<String> = Vec::new();
+            for (team_id, permission) in targets {
+                let body = ShareRequest {
+                    share_type: "team".into(),
+                    share_target: team_id.clone(),
+                    permission: Some(permission),
+                };
+                match api.add_forecast_share(&fid, &body).await {
+                    Ok(_) => ok += 1,
+                    Err(e) => {
+                        log::error!("[publish-team-share] {} failed: {}", team_id, e);
+                        failures.push(format!("team {} ({})", team_id, e));
+                    }
+                }
+            }
+            this.update(cx, |state, cx| {
+                if !failures.is_empty() {
+                    state.publish_status = Some(format!(
+                        "Published, but {}/{} team share(s) failed: {}",
+                        failures.len(),
+                        total,
+                        failures.join("; ")
+                    ));
+                    state.pending_toasts.push(format!(
+                        "{} team share(s) failed — see publish status",
+                        failures.len()
+                    ));
+                } else if ok > 0 {
+                    state
+                        .pending_toasts
+                        .push(format!("Shared with {} team(s)", ok));
+                }
+                state.shares_loaded_for = None;
+                state.load_shares(cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     pub fn publish_forecast(&mut self, visibility: String, cx: &mut Context<Self>) {
         // Reconcile-derived lock: the server has settled this forecast, so a
         // new snapshot would be rejected (409) anyway. Block locally with the
@@ -7727,6 +8052,10 @@ impl CockpitState {
                             let targets = std::mem::take(&mut state.pending_publish_shares);
                             state.apply_publish_shares(fid.clone(), targets, cx);
                         }
+                        if !state.pending_publish_team_shares.is_empty() {
+                            let targets = std::mem::take(&mut state.pending_publish_team_shares);
+                            state.apply_publish_team_shares(fid.clone(), targets, cx);
+                        }
                         cx.notify();
                     })
                     .ok();
@@ -7814,7 +8143,7 @@ impl Render for CockpitState {
                     .h_full()
                     .overflow_y_scroll()
                     // Question + Outside View section
-                    .child(render_question_section(self))
+                    .child(render_question_section(self, cx))
                     .child(render_outside_view(self, cx))
                     // Orchestration loading banner
                     .when(self.orchestration_running, |el| {
@@ -8225,7 +8554,10 @@ pub fn render_cockpit(cockpit: &Entity<CockpitState>) -> impl IntoElement {
 // Section Renderers
 // ═══════════════════════════════════════════════════════════════════
 
-fn render_question_section(state: &CockpitState) -> impl IntoElement {
+fn render_question_section(
+    state: &CockpitState,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
     let prob_pct = format!("{:.2}%", state.predicted_probability * 100.0);
 
     div()
@@ -8238,6 +8570,11 @@ fn render_question_section(state: &CockpitState) -> impl IntoElement {
         .flex_col()
         .gap(px(8.0))
         .child(state.question_input.clone())
+        // Polymarket type-ahead strip (zero-friction integration).
+        // Only rendered when the operator is composing a fresh forecast
+        // (no PM link yet) and there are suggestions or a search is
+        // in flight. Collapses silently otherwise.
+        .child(render_pm_typeahead_strip(state, cx))
         .child(
             // Header row: probability + inside-view explainer + confidence
             // + (researching badge) + (publish status). flex_wrap() lets a
@@ -9689,6 +10026,43 @@ fn render_driver_card(
                         .flex_shrink_0()
                         .child(type_label),
                 )
+                // ✎ Edit chip — the *explicit* way to open the Edit tab
+                // for this driver. The card body's on_click only focuses
+                // (which populates the editor buffers without stealing
+                // the right panel); this chip additionally routes to
+                // Edit. Stops mouse-down propagation so the parent's
+                // focus-only handler doesn't fire twice.
+                .child({
+                    let name_edit = name.to_string();
+                    div()
+                        .id(ElementId::Name(format!("driver-edit-{}", name).into()))
+                        .text_size(px(9.0))
+                        .text_color(rgb(if is_focused {
+                            theme::CYAN
+                        } else {
+                            theme::FG_DIM
+                        }))
+                        .px(px(5.0))
+                        .py(px(1.0))
+                        .rounded(px(3.0))
+                        .bg(rgb(theme::BG))
+                        .border_1()
+                        .border_color(rgb(theme::FG_FAINT))
+                        .flex_shrink_0()
+                        .cursor_pointer()
+                        .hover(|s| {
+                            s.bg(rgb(theme::BG_HOVER))
+                                .border_color(rgb(theme::CYAN))
+                                .text_color(rgb(theme::CYAN))
+                        })
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                            this.focus_driver_and_edit(&name_edit, cx);
+                        }))
+                        .child("✎ edit")
+                })
                 // BayesOps learnable badge — visible only when the driver
                 // opted in via `learnable: true`. Four states:
                 //   • PendingReview (server-side staged fit): orange chip
@@ -13034,6 +13408,209 @@ fn render_histogram(bins: &[u32]) -> impl IntoElement {
         .h(gpui::px(chart_h as f32))
 }
 
+/// Polymarket type-ahead strip — the zero-friction PM integration.
+///
+/// Appears directly under the question field as the operator types.
+/// Fires a debounced search inside `pm_typeahead_search`, then
+/// renders up to 5 matches as click-to-import chips.
+///
+/// Collapse rules:
+///   * Hidden entirely when the forecast is already linked to PM
+///     (`state.pm_event_id.is_some()`) — no need to keep offering
+///     alternates once committed.
+///   * Hidden when the operator dismissed the strip this session.
+///   * Hidden when there's nothing to show and no search in flight.
+fn render_pm_typeahead_strip(
+    state: &CockpitState,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    // Gate: already linked or dismissed — render an empty div (GPUI
+    // lets us return that so the parent's `.child(…)` doesn't have
+    // to conditionalise).
+    let already_linked = state.pm_event_id.is_some();
+    let has_content = !state.pm_suggestions.is_empty() || state.pm_suggestions_loading;
+    if already_linked || state.pm_suggest_dismissed || !has_content {
+        return div().into_any_element();
+    }
+
+    // Header row: label + dismiss X
+    let mut container = div()
+        .flex()
+        .flex_col()
+        .gap(px(4.0))
+        .px(px(8.0))
+        .py(px(6.0))
+        .rounded(px(6.0))
+        .bg(rgb(theme::BG))
+        .border_1()
+        .border_color(rgb(theme::PURPLE))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .child(
+                    div()
+                        .text_size(px(9.0))
+                        .text_color(rgb(theme::PURPLE))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(if state.pm_suggestions_loading {
+                            "🔮 SEARCHING POLYMARKET…"
+                        } else {
+                            "🔮 POLYMARKET MATCHES"
+                        }),
+                )
+                .child(div().flex_grow())
+                .child(
+                    div()
+                        .id("pm-typeahead-dismiss")
+                        .px(px(4.0))
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(rgb(theme::RED)))
+                        .on_click(cx.listener(|state, _, _, cx| {
+                            state.dismiss_pm_typeahead(cx);
+                        }))
+                        .child("✕"),
+                ),
+        );
+
+    // Chip rows — one clickable pill per match. Layout is flex-wrap so
+    // long titles break to a second line cleanly.
+    let mut chips = div().flex().flex_wrap().gap(px(6.0));
+    for (i, result) in state.pm_suggestions.iter().enumerate() {
+        let event_id = result
+            .get("pm_event_id")
+            .or_else(|| result.get("event_id"))
+            .or_else(|| result.get("slug"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let market_id = result
+            .get("pm_market_id")
+            .or_else(|| result.get("market_id"))
+            .or_else(|| result.get("condition_id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        // "question" fallbacks: the PM search endpoint has shipped
+        // multiple shapes over time. Prefer the market title if we have
+        // one; otherwise use the event title.
+        let question_text = result
+            .get("question")
+            .or_else(|| result.get("title"))
+            .or_else(|| result.get("market_question"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("(untitled market)")
+            .to_string();
+        let price = result
+            .get("market_price")
+            .or_else(|| result.get("price"))
+            .and_then(|v| v.as_f64());
+        let volume = result
+            .get("volume_24h")
+            .or_else(|| result.get("volume"))
+            .and_then(|v| v.as_f64());
+        let liquidity = result.get("liquidity").and_then(|v| v.as_f64());
+        let confidence = result
+            .get("confidence")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let price_change_1w = result
+            .get("price_change_1w")
+            .or_else(|| result.get("change_1w"))
+            .and_then(|v| v.as_f64());
+
+        // Skip malformed rows (no event id — can't link them).
+        if event_id.is_empty() {
+            continue;
+        }
+
+        let title_display = if question_text.chars().count() > 42 {
+            format!("{}…", question_text.chars().take(41).collect::<String>())
+        } else {
+            question_text.clone()
+        };
+        let price_display = price
+            .map(|p| format!("{:.0}%", p * 100.0))
+            .unwrap_or_else(|| "?".to_string());
+
+        // Clone captures for the click handler.
+        let eid_click = event_id.clone();
+        let mid_click = market_id.clone();
+        let q_click = question_text.clone();
+        let price_click = price.unwrap_or(0.5);
+        let vol_click = volume;
+        let liq_click = liquidity;
+        let conf_click = confidence.clone();
+        let chg_click = price_change_1w;
+
+        chips = chips.child(
+            div()
+                .id(SharedString::from(format!("pm-sugg-{}", i)))
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .px(px(8.0))
+                .py(px(3.0))
+                .rounded(px(4.0))
+                .bg(rgb(theme::BG_ELEVATED))
+                .border_1()
+                .border_color(rgb(theme::FG_FAINT))
+                .cursor_pointer()
+                .hover(|s| s.border_color(rgb(theme::PURPLE)).bg(rgb(theme::BG_HOVER)))
+                .on_click(cx.listener(move |state, _, _, cx| {
+                    state.link_polymarket_market(
+                        eid_click.clone(),
+                        mid_click.clone(),
+                        q_click.clone(),
+                        price_click,
+                        vol_click,
+                        liq_click,
+                        conf_click.clone(),
+                        chg_click,
+                        cx,
+                    );
+                }))
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(theme::FG))
+                        .child(title_display),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::PURPLE))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(price_display),
+                ),
+        );
+    }
+    container = container.child(chips);
+
+    // "No matches" state when the search settled empty (last_query
+    // is set, suggestions empty, not loading). Keeps the operator
+    // from wondering why nothing appears.
+    if !state.pm_suggestions_loading
+        && state.pm_suggestions.is_empty()
+        && !state.pm_suggest_last_query.is_empty()
+    {
+        container = container.child(
+            div()
+                .text_size(px(10.0))
+                .text_color(rgb(theme::FG_DIM))
+                .child(
+                    "No Polymarket matches for that phrasing. Compose without a market, \
+                     or edit the question and we'll try again.",
+                ),
+        );
+    }
+
+    container.into_any_element()
+}
+
 fn render_status_bar(state: &CockpitState) -> impl IntoElement {
     let total_drivers = state.program.drivers().len();
     let total_evidence = state.program.evidence_items().len();
@@ -13134,13 +13711,20 @@ fn render_status_bar(state: &CockpitState) -> impl IntoElement {
 }
 
 fn render_tab_bar(active: RightTab, cx: &mut Context<CockpitState>) -> impl IntoElement {
+    // Order matches the operator's reading flow: what is the forecast
+    // *doing* right now (Trajectory) → what does it *mean* (Wiki) →
+    // when will it *change* (Schedules) → who else can *see* it
+    // (Access) → what does the *source* say (FPL) → how do I *tweak*
+    // it (Edit). Edit is the last tab because it's the destination for
+    // an explicit intent (“i want to change something”), not the
+    // default landing pad.
     let tabs = [
-        (RightTab::Edit, "Edit"),
-        (RightTab::Fpl, "FPL"),
+        (RightTab::Trajectory, "Trajectory"),
         (RightTab::Wiki, "Wiki"),
         (RightTab::Schedules, "Schedules"),
-        (RightTab::Trajectory, "Trajectory"),
         (RightTab::Access, "Access"),
+        (RightTab::Fpl, "FPL"),
+        (RightTab::Edit, "Edit"),
     ];
 
     div()
@@ -14243,14 +14827,46 @@ fn render_trajectory_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -
             .into_any_element()
     } else if state.timeline_data.is_some() {
         render_trajectory_body(state, cx).into_any_element()
+    } else if state.forecast_id.is_none() {
+        // Trajectory is now the default right-panel tab, so this state
+        // is what the operator sees when they open the Composer without
+        // an existing forecast loaded. Tell them what will fill this
+        // space rather than "click Trajectory".
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(px(8.0))
+            .size_full()
+            .text_color(rgb(theme::FG_DIM))
+            .child(
+                div()
+                    .text_size(px(13.0))
+                    .text_color(rgb(theme::FG_DIM))
+                    .child("Trajectory will appear here."),
+            )
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(rgb(theme::FG_FAINT))
+                    .child(
+                    "Publish this forecast (Ctrl+P) to start recording its rate + market history.",
+                ),
+            )
+            .into_any_element()
     } else {
+        // Have a forecast_id but no data loaded yet — kick a load,
+        // and in the meantime show the same hint. `load_timeline` is
+        // idempotent-safe: it flips `timeline_loading` and returns
+        // early on subsequent calls.
         div()
             .flex()
             .items_center()
             .justify_center()
             .size_full()
             .text_color(rgb(theme::FG_DIM))
-            .child("Click Trajectory to load this forecast's event history.")
+            .child("Loading trajectory…")
             .into_any_element()
     };
 

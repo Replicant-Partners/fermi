@@ -518,6 +518,10 @@ struct FermiConsole {
     portfolio_share_error: Option<String>,
     /// Which portfolio the loaded `portfolio_shares` belong to.
     portfolio_shares_loaded_for: Option<String>,
+    /// Team IDs currently being shared with a portfolio (button disabled
+    /// until the API call returns). Mirrors `share_team_in_flight` in the
+    /// cockpit Access tab — same UX, same guardrail against dupe posts.
+    portfolio_team_share_in_flight: std::collections::HashSet<String>,
     /// Sort mode for the portfolio detail's forecast rows.
     portfolio_sort_mode: PortfolioSortMode,
     /// Free-text filter for the portfolio detail. The entity owns the
@@ -596,6 +600,10 @@ struct FermiConsole {
     /// (target, permission); target is an email or user_id. Applied after
     /// the forecast row is written, so one Commit click is one logical op.
     commit_share_targets: Vec<(String, String)>,
+    /// Teams selected for post-publish sharing. Parallel to
+    /// `commit_share_targets` but keyed by team_id, applied server-side
+    /// as `share_type='team'`. Same permission chip drives both.
+    commit_share_team_targets: Vec<(String, String)>,
     commit_share_input: Entity<TextInput>,
     /// Permission for the next "add" — view | edit | admin (cycle chip).
     commit_share_permission: String,
@@ -850,6 +858,7 @@ impl FermiConsole {
             portfolio_share_permission: "view".into(),
             portfolio_share_error: None,
             portfolio_shares_loaded_for: None,
+            portfolio_team_share_in_flight: std::collections::HashSet::new(),
             portfolio_sort_mode: PortfolioSortMode::RecentActivity,
             portfolio_filter_input,
             portfolio_expanded_rows: std::collections::HashSet::new(),
@@ -872,6 +881,7 @@ impl FermiConsole {
             commit_sheet_question: String::new(),
             commit_sheet_probability: 0.5,
             commit_share_targets: Vec::new(),
+            commit_share_team_targets: Vec::new(),
             commit_share_input,
             commit_share_permission: "view".into(),
             resolve_sheet_showing: false,
@@ -2058,8 +2068,58 @@ impl FermiConsole {
                     self.load_portfolio_shares(&pid, cx);
                 }
             }
+            // Team-pill picker in the Access panel needs the user's
+            // collaboration teams. `fetch_teams` is idempotent-ish (it
+            // just re-hits /api/teams); skip when we already have some
+            // to avoid a redundant round-trip on every toggle.
+            if self.teams.is_empty() && !self.teams_loading {
+                self.fetch_teams(cx);
+            }
         }
         cx.notify();
+    }
+
+    /// Share the currently-selected portfolio with a team. Mirrors the
+    /// forecast-level `share_with_team` in the cockpit — same server
+    /// endpoint family (object_shares with share_type='team'), same
+    /// in-flight guardrail against double-clicks.
+    fn share_portfolio_with_team(&mut self, team_id: String, cx: &mut Context<Self>) {
+        let Some(pid) = self.selected_portfolio_id.clone() else {
+            return;
+        };
+        if !self.portfolio_team_share_in_flight.insert(team_id.clone()) {
+            return;
+        }
+        self.portfolio_share_error = None;
+        cx.notify();
+        let api = self.api.clone();
+        let permission = self.portfolio_share_permission.clone();
+        cx.spawn(async move |this, cx| {
+            let body = ShareRequest {
+                share_type: "team".into(),
+                share_target: team_id.clone(),
+                permission: Some(permission),
+            };
+            let result = api.add_portfolio_share(&pid, &body).await;
+            this.update(cx, |this, cx| {
+                this.portfolio_team_share_in_flight.remove(&team_id);
+                match result {
+                    Ok(_) => {
+                        // Refresh so the new team-share row appears with
+                        // its resolved display name.
+                        this.portfolio_shares_loaded_for = None;
+                        this.load_portfolio_shares(&pid, cx);
+                        this.show_toast("Shared with team", "✓", theme::GREEN, cx);
+                    }
+                    Err(e) => {
+                        this.portfolio_share_error = Some(e.to_string());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn load_portfolio_shares(&mut self, portfolio_id: &str, cx: &mut Context<Self>) {
@@ -2914,6 +2974,176 @@ impl FermiConsole {
                             .child("✕"),
                     )
             }))
+            // Team-pill picker — same shape as the forecast Access tab's
+            // team share section so portfolio-level and forecast-level
+            // sharing feel identical to the operator.
+            .child(self.render_portfolio_team_share_pills(cx))
+    }
+
+    /// Render the “Share with a team” pill row for the commit sheet.
+    /// Unlike the portfolio/cockpit versions, this one is *toggle*-based
+    /// (nothing is server-side yet, the share only applies on Commit),
+    /// so pills flip between selected (cyan check) and unselected.
+    fn render_commit_team_share_pills(&self, cx: &Context<Self>) -> AnyElement {
+        let selected_team_ids: std::collections::HashSet<String> = self
+            .commit_share_team_targets
+            .iter()
+            .map(|(t, _)| t.clone())
+            .collect();
+
+        let mut container = div().flex().flex_col().gap(px(6.0)).mt(px(8.0)).child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(theme::fg_faint())
+                        .child(format!("OR SHARE WITH A TEAM ({})", self.teams.len())),
+                )
+                .when(self.teams_loading, |el| {
+                    el.child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_faint())
+                            .child("loading…"),
+                    )
+                }),
+        );
+
+        if self.teams.is_empty() && !self.teams_loading {
+            container = container.child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(theme::fg_faint())
+                    .child(
+                        "No collaboration teams yet. Create one in the Teams panel to share with a group.",
+                    ),
+            );
+            return container.into_any_element();
+        }
+
+        let pills = self.teams.iter().map(|t| {
+            let tid = t.id.clone();
+            let selected = selected_team_ids.contains(&t.id);
+            let (label, color) = if selected {
+                (format!("✓ {}", t.name), rgb(theme::CYAN))
+            } else {
+                (t.name.clone(), rgb(theme::FG_DIM))
+            };
+            div()
+                .id(SharedString::from(format!("commit-team-share-{}", tid)))
+                .px(px(10.0))
+                .py(px(4.0))
+                .rounded(px(12.0))
+                .bg(if selected {
+                    theme::bg_active()
+                } else {
+                    theme::bg_elevated()
+                })
+                .text_size(px(11.0))
+                .text_color(color)
+                .cursor_pointer()
+                .hover(|s| s.bg(theme::bg_hover()))
+                .on_click(cx.listener({
+                    let tid = tid.clone();
+                    move |this, _, _w, cx| {
+                        this.toggle_commit_team_share_target(tid.clone(), cx);
+                    }
+                }))
+                .child(label)
+        });
+
+        container
+            .child(div().flex().flex_wrap().gap(px(6.0)).children(pills))
+            .into_any_element()
+    }
+
+    /// Render the “Share with a team” pill row for the portfolio Access
+    /// panel. Mirrors `render_team_share_section` in the cockpit: skip
+    /// already-shared teams, show in-flight state, respect the current
+    /// permission chip.
+    fn render_portfolio_team_share_pills(&self, cx: &Context<Self>) -> AnyElement {
+        let already_shared_team_ids: std::collections::HashSet<String> = self
+            .portfolio_shares
+            .iter()
+            .filter(|s| s.share_type == "team")
+            .map(|s| s.share_target.clone())
+            .collect();
+
+        let mut container = div().flex().flex_col().gap(px(6.0)).mt(px(8.0)).child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme::fg_dim())
+                        .child(format!("Share with a team ({})", self.teams.len())),
+                )
+                .when(self.teams_loading, |el| {
+                    el.child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_faint())
+                            .child("loading…"),
+                    )
+                }),
+        );
+
+        if self.teams.is_empty() && !self.teams_loading {
+            container = container.child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(theme::fg_faint())
+                    .child(
+                        "No collaboration teams yet. Create one in the Teams panel to share with a group.",
+                    ),
+            );
+            return container.into_any_element();
+        }
+
+        let pills = self.teams.iter().map(|t| {
+            let tid = t.id.clone();
+            let already_shared = already_shared_team_ids.contains(&t.id);
+            let in_flight = self.portfolio_team_share_in_flight.contains(&t.id);
+            let interactive = !already_shared && !in_flight;
+            let (label, color) = if already_shared {
+                (format!("✓ {}", t.name), rgb(theme::GREEN))
+            } else if in_flight {
+                (format!("… {}", t.name), rgb(theme::FG_FAINT))
+            } else {
+                (t.name.clone(), rgb(theme::CYAN))
+            };
+            let pill = div()
+                .id(SharedString::from(format!("pf-team-share-{}", tid)))
+                .px(px(10.0))
+                .py(px(4.0))
+                .rounded(px(12.0))
+                .bg(theme::bg_elevated())
+                .text_size(px(11.0))
+                .text_color(color)
+                .child(label);
+            if interactive {
+                pill.cursor_pointer()
+                    .hover(|s| s.bg(theme::bg_hover()))
+                    .on_click(cx.listener({
+                        let tid = tid.clone();
+                        move |this, _, _w, cx| {
+                            this.share_portfolio_with_team(tid.clone(), cx);
+                        }
+                    }))
+            } else {
+                pill
+            }
+        });
+
+        container
+            .child(div().flex().flex_wrap().gap(px(6.0)).children(pills))
+            .into_any_element()
     }
 
     fn load_local_forecasts(&mut self) {
@@ -3887,9 +4117,15 @@ impl FermiConsole {
                 self.commit_sheet_visibility = "private".into();
             }
             self.commit_share_targets.clear();
+            self.commit_share_team_targets.clear();
             self.commit_share_input
                 .update(cx, |inp, cx| inp.set_text("", cx));
             self.commit_share_permission = "view".into();
+            // Warm the team-pill picker in the commit sheet. Same
+            // idempotent-ish guard as the portfolio Access panel.
+            if self.teams.is_empty() && !self.teams_loading {
+                self.fetch_teams(cx);
+            }
             self.commit_sheet_showing = true;
             cx.notify();
         }
@@ -3910,11 +4146,29 @@ impl FermiConsole {
         cx.notify();
     }
 
+    /// Toggle a team in the commit-sheet team-share pending list.
+    /// Selection is on/off (rather than three-state per-row like the
+    /// user shares), and the current permission chip drives the grant.
+    fn toggle_commit_team_share_target(&mut self, team_id: String, cx: &mut Context<Self>) {
+        if let Some(pos) = self
+            .commit_share_team_targets
+            .iter()
+            .position(|(t, _)| t == &team_id)
+        {
+            self.commit_share_team_targets.remove(pos);
+        } else {
+            let perm = self.commit_share_permission.clone();
+            self.commit_share_team_targets.push((team_id, perm));
+        }
+        cx.notify();
+    }
+
     /// Called when the user confirms in the commit sheet.
     fn do_commit_forecast(&mut self, cx: &mut Context<Self>) {
         self.commit_sheet_showing = false;
         let visibility = self.commit_sheet_visibility.clone();
         let shares = std::mem::take(&mut self.commit_share_targets);
+        let team_shares = std::mem::take(&mut self.commit_share_team_targets);
 
         if let Some(ref cockpit) = self.cockpit {
             let cockpit = cockpit.clone();
@@ -3922,6 +4176,7 @@ impl FermiConsole {
                 // Hand the share list to the cockpit so it can apply the
                 // grants once the forecast row (and its id) exists.
                 cockpit.pending_publish_shares = shares;
+                cockpit.pending_publish_team_shares = team_shares;
                 cockpit.publish_forecast(visibility, cx);
             });
 
@@ -3952,13 +4207,16 @@ impl FermiConsole {
         if let Some(ref cockpit) = self.cockpit {
             let cockpit = cockpit.clone();
             cockpit.update(cx, |cockpit, cx| {
+                // Cycle order matches the tab bar's left→right reading
+                // flow: Trajectory → Wiki → Schedules → Access → Fpl →
+                // Edit → (back to Trajectory).
                 cockpit.right_tab = match cockpit.right_tab {
-                    crate::cockpit::RightTab::Edit => crate::cockpit::RightTab::Fpl,
-                    crate::cockpit::RightTab::Fpl => crate::cockpit::RightTab::Wiki,
+                    crate::cockpit::RightTab::Trajectory => crate::cockpit::RightTab::Wiki,
                     crate::cockpit::RightTab::Wiki => crate::cockpit::RightTab::Schedules,
-                    crate::cockpit::RightTab::Schedules => crate::cockpit::RightTab::Trajectory,
-                    crate::cockpit::RightTab::Trajectory => crate::cockpit::RightTab::Access,
-                    crate::cockpit::RightTab::Access => crate::cockpit::RightTab::Edit,
+                    crate::cockpit::RightTab::Schedules => crate::cockpit::RightTab::Access,
+                    crate::cockpit::RightTab::Access => crate::cockpit::RightTab::Fpl,
+                    crate::cockpit::RightTab::Fpl => crate::cockpit::RightTab::Edit,
+                    crate::cockpit::RightTab::Edit => crate::cockpit::RightTab::Trajectory,
                 };
                 if cockpit.right_tab == crate::cockpit::RightTab::Trajectory {
                     cockpit.load_timeline(cx);
@@ -5567,6 +5825,9 @@ impl FermiConsole {
             // tab shows '6 schedule drafts declared by FPL' + Save
             // buttons even though the server has them.
             cockpit.load_schedules(cx);
+            // Trajectory is the default right-panel tab; pre-warm it so
+            // the worm renders alongside the composer on first open.
+            cockpit.load_timeline(cx);
 
             // Set question and data from workspace params
             if let Some(ref wf) = wf {
@@ -5847,6 +6108,10 @@ impl FermiConsole {
                         // of the open_workspace_forecast path.
                         if cockpit.forecast_id.is_some() {
                             cockpit.load_schedules(cx);
+                            // Trajectory is the default right-panel tab
+                            // now, so pre-warm the timeline so operators
+                            // see the worm the moment the cockpit lands.
+                            cockpit.load_timeline(cx);
                         }
 
                         // ── Polymarket hydration ────────────────────────────
@@ -7552,18 +7817,14 @@ impl FermiConsole {
                                         .child(label),
                                 )
                             }),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.0))
-                            .text_color(theme::fg_dim())
-                            .child(format!(
-                                "{} active · {} resolved · {} drafts",
-                                self.active_forecasts.len(),
-                                self.resolved_forecasts.len(),
-                                self.draft_forecasts.len(),
-                            )),
                     ),
+                // The old "N active · M resolved · K drafts" strip that
+                // used to live on the right side of this header was
+                // aggregating counts across every forecast the user
+                // owned — which is misleading here: the Portfolio panel
+                // is scoped to named portfolios, and each portfolio's
+                // HUD already renders its own counts. Global live/draft
+                // counts stay on the Dashboard.
             )
             // ── Polymarket Search Panel ───────────────────────────────
             .when(self.pm_show_search, |el| {
@@ -7902,492 +8163,26 @@ impl FermiConsole {
                         ),
                 )
             })
-            // ── Named Portfolios ──────────────────────────────────────
+            // ── Named Portfolios ──────────────────────────────
+            //
+            // The Portfolio panel is now scoped entirely to *named*
+            // portfolios. The previous incarnation also stacked Drafts,
+            // Resolved, Workspaces, and Lab sections underneath — four
+            // orthogonal lists that duplicated the Dashboard's Live view
+            // and the Composer's Lab pane, and buried the actual
+            // portfolio content under a mile of scrolling. Those were
+            // removed; the surviving section owns the whole panel below
+            // the header.
             .when(self.connected, |el| {
                 el.child(self.render_portfolios_section(cx))
             })
-            .when(self.connected && !self.forecasts_loading, |el| {
-                el
-                    // Note: the Live (active) section is now rendered
-                    // in render_dashboard — the Portfolio panel is
-                    // specifically for organising forecasts into named
-                    // portfolios, not for the raw active list.
-                    // Draft forecasts (saved, not committed)
-                    .when(!self.draft_forecasts.is_empty(), |el| {
-                        el.child(self.render_forecast_section(
-                            "Drafts",
-                            "saved · not committed",
-                            &self.draft_forecasts,
-                            theme::FG_DIM,
-                            cx,
-                        ))
-                    })
-                    // Resolved forecasts
-                    .when(!self.resolved_forecasts.is_empty(), |el| {
-                        el.child(self.render_forecast_section(
-                            "Resolved",
-                            "",
-                            &self.resolved_forecasts,
-                            theme::GREEN,
-                            cx,
-                        ))
-                    })
-                    // Workspace forecasts (from ABW fermi_forecast app)
-                    .when(self.connected, |el| {
-                        let count = self.workspace_forecasts.len();
-                        let collapsed = self.workspace_section_collapsed;
-
-                        // Group by program type
-                        let team_priors: Vec<&WorkspaceForecast> = self.workspace_forecasts.iter()
-                            .filter(|wf| wf.program_type.as_deref() == Some("TEAM_PRIOR"))
-                            .collect();
-                        let tournament_paths: Vec<&WorkspaceForecast> = self.workspace_forecasts.iter()
-                            .filter(|wf| wf.program_type.as_deref() == Some("TOURNAMENT_PATH"))
-                            .collect();
-                        let other: Vec<&WorkspaceForecast> = self.workspace_forecasts.iter()
-                            .filter(|wf| wf.program_type.as_deref() != Some("TEAM_PRIOR")
-                                && wf.program_type.as_deref() != Some("TOURNAMENT_PATH"))
-                            .collect();
-
-                        el.child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .bg(theme::bg_elevated())
-                                .rounded(px(8.0))
-                                .border_1()
-                                .border_color(theme::fg_faint())
-                                // Collapsible header
-                                .child(
-                                    div()
-                                        .id("ws-section-header")
-                                        .px(px(16.0))
-                                        .py(px(10.0))
-                                        .border_b_1()
-                                        .border_color(theme::fg_faint())
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(8.0))
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(theme::bg_hover()))
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.workspace_section_collapsed = !this.workspace_section_collapsed;
-                                            cx.notify();
-                                        }))
-                                        .child(
-                                            div()
-                                                .text_size(px(10.0))
-                                                .text_color(theme::fg_faint())
-                                                .child(if collapsed { "▶" } else { "▼" }),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_size(px(14.0))
-                                                .text_color(theme::fg())
-                                                .font_weight(FontWeight::BOLD)
-                                                .child(if self.workspace_forecasts_loading {
-                                                    "Workspaces (loading…)".to_string()
-                                                } else {
-                                                    format!("Workspaces ({})", count)
-                                                }),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_size(px(10.0))
-                                                .text_color(theme::fg_faint())
-                                                .child(format!(
-                                                    "{} teams · {} groups",
-                                                    team_priors.len(),
-                                                    tournament_paths.len(),
-                                                )),
-                                        ),
-                                )
-                                // Content (hidden when collapsed)
-                                .when(!collapsed && !team_priors.is_empty(), |el| {
-                                    el.child(
-                                        div()
-                                            .px(px(16.0))
-                                            .py(px(4.0))
-                                            .text_size(px(9.0))
-                                            .text_color(theme::fg_faint())
-                                            .child(format!("Team Priors ({})", team_priors.len())),
-                                    )
-                                })
-                                .when(!collapsed, |el| {
-                                    el.children(team_priors.iter().chain(tournament_paths.iter()).chain(other.iter()).map(|wf| {
-                                    let ws_id = wf.workspace_id.clone();
-                                    let display_name = wf.team_name.as_deref()
-                                        .unwrap_or(&wf.workspace_name);
-                                    let group_label = wf.group.as_ref()
-                                        .map(|g| format!("Group {}", g))
-                                        .unwrap_or_default();
-                                    let prob_label = wf.probability
-                                        .map(|p| format!("{:.1}%", p * 100.0))
-                                        .unwrap_or_else(|| "—".to_string());
-                                    let elo_label = wf.elo
-                                        .map(|e| format!("Elo {:.0}", e))
-                                        .unwrap_or_default();
-                                    let ptype = wf.program_type.as_deref().unwrap_or("FORECAST");
-
-                                    div()
-                                        .id(ElementId::Name(format!("ws-{}", ws_id).into()))
-                                        .px(px(16.0))
-                                        .py(px(8.0))
-                                        .border_b_1()
-                                        .border_color(theme::bg_hover())
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(theme::bg_hover()))
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.open_workspace_forecast(&ws_id, cx);
-                                        }))
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(12.0))
-                                        // Probability
-                                        .child(
-                                            div()
-                                                .w(px(55.0))
-                                                .text_size(px(14.0))
-                                                .text_color(theme::cyan())
-                                                .font_weight(FontWeight::BOLD)
-                                                .child(prob_label),
-                                        )
-                                        // Team name
-                                        .child(
-                                            div()
-                                                .flex_grow()
-                                                .min_w(px(0.0))
-                                                .text_size(px(12.0))
-                                                .text_color(theme::fg())
-                                                .child(display_name.to_string()),
-                                        )
-                                        // Group + Elo
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .gap(px(8.0))
-                                                .text_size(px(9.0))
-                                                .text_color(theme::fg_dim())
-                                                .when(!group_label.is_empty(), |el| {
-                                                    el.child(group_label)
-                                                })
-                                                .when(!elo_label.is_empty(), |el| {
-                                                    el.child(elo_label)
-                                                }),
-                                        )
-                                        // Type badge
-                                        .child(
-                                            div()
-                                                .text_size(px(8.0))
-                                                .text_color(theme::fg_faint())
-                                                .px(px(4.0))
-                                                .py(px(1.0))
-                                                .rounded(px(2.0))
-                                                .bg(theme::bg())
-                                                .child(ptype.to_string()),
-                                        )
-                                }))
-                                })  // close .when(!collapsed)
-                        )   // close el.child (the section div)
-                    })  // close .when(self.connected)
-                    // Local forecasts (saved to disk)
-                    .when(!self.local_forecasts.is_empty(), |el| {
-                        el.child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .bg(theme::bg_elevated())
-                                .rounded(px(8.0))
-                                .border_1()
-                                .border_color(theme::fg_faint())
-                                .child(
-                                    div()
-                                        .px(px(16.0))
-                                        .py(px(10.0))
-                                        .border_b_1()
-                                        .border_color(theme::fg_faint())
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(10.0))
-                                        .child(
-                                            div()
-                                                .text_size(px(13.0))
-                                                .text_color(rgb(theme::GOLD))
-                                                .font_weight(FontWeight::SEMIBOLD)
-                                                .child(format!(
-                                                    "Lab ({})",
-                                                    self.local_forecasts.len()
-                                                )),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_size(px(10.0))
-                                                .text_color(theme::fg_faint())
-                                                .child("on disk · not synced"),
-                                        ),
-                                )
-                                .child(div().flex().flex_col().children(
-                                    self.local_forecasts.iter().map(|forecast| {
-                                        {
-                                            let path =
-                                                format!("forecasts/{}.fpl", forecast.filename);
-                                            div()
-                                                .id(SharedString::from(format!(
-                                                    "local-forecast-{}",
-                                                    forecast.filename
-                                                )))
-                                                .cursor_pointer()
-                                                .on_click(cx.listener(
-                                                    move |this, _event, _window, cx| {
-                                                        // Load forecast and switch to composer
-                                                        if this.cockpit.is_none() {
-                                                            let api = this.api.clone();
-                                                            this.cockpit = Some(cx.new(|cx| {
-                                                                CockpitState::new(
-                                                                    api,
-                                                                    this.registry.clone(),
-                                                                    cx,
-                                                                )
-                                                            }));
-                                                        }
-                                                        if let Some(ref cockpit) = this.cockpit {
-                                                            let cockpit = cockpit.clone();
-                                                            let p = path.clone();
-                                                            cockpit.update(cx, |cockpit, cx| {
-                                                                cockpit.load_forecast(&p, cx);
-                                                            });
-                                                        }
-                                                        this.active_panel = Panel::Composer;
-                                                        cx.notify();
-                                                    },
-                                                ))
-                                                .flex()
-                                                .items_center()
-                                                .gap(px(12.0))
-                                                .px(px(16.0))
-                                                .py(px(10.0))
-                                                .border_b_1()
-                                                .border_color(theme::fg_faint())
-                                                .hover(|s| s.bg(theme::bg_hover()))
-                                                // Inside view probability
-                                                .child(
-                                                    div()
-                                                        .flex()
-                                                        .flex_col()
-                                                        .items_center()
-                                                        .w(px(70.0))
-                                                        .child(
-                                                            div()
-                                                                .text_size(px(16.0))
-                                                                .text_color(rgb(theme::CYAN))
-                                                                .font_weight(FontWeight::BOLD)
-                                                                .child(format!(
-                                                                    "{:.2}%",
-                                                                    forecast.probability * 100.0
-                                                                )),
-                                                        )
-                                                        .when(forecast.base_rate > 0.0, |el| {
-                                                            let div_pp = (forecast.probability
-                                                                - forecast.base_rate)
-                                                                * 100.0;
-                                                            let div_color = if div_pp > 0.0 {
-                                                                theme::GREEN
-                                                            } else {
-                                                                theme::RED
-                                                            };
-                                                            el.child(
-                                                                div()
-                                                                    .text_size(px(9.0))
-                                                                    .text_color(rgb(div_color))
-                                                                    .child(format!(
-                                                                        "vs {:.1}%",
-                                                                        forecast.base_rate * 100.0
-                                                                    )),
-                                                            )
-                                                        }),
-                                                )
-                                                // Question + metadata
-                                                .child(
-                                                    div()
-                                                        .flex_grow()
-                                                        .min_w(px(0.0))
-                                                        .flex()
-                                                        .flex_col()
-                                                        .gap(px(2.0))
-                                                        .child(
-                                                            div()
-                                                                .text_size(px(13.0))
-                                                                .text_color(theme::fg())
-                                                                .child(forecast.question.clone()),
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .flex()
-                                                                .gap(px(8.0))
-                                                                .text_size(px(10.0))
-                                                                .text_color(theme::fg_faint())
-                                                                .child(format!(
-                                                                    "v{}",
-                                                                    forecast.version
-                                                                ))
-                                                                .child(format!(
-                                                                    "{} drivers",
-                                                                    forecast.driver_count
-                                                                ))
-                                                                .child(format!(
-                                                                    "{} evidence",
-                                                                    forecast.evidence_count
-                                                                ))
-                                                                .child(forecast.timestamp.clone()),
-                                                        ),
-                                                )
-                                                // Confidence badge
-                                                .when(forecast.confidence > 0.0, |el| {
-                                                    let (label, color) =
-                                                        if forecast.confidence > 0.7 {
-                                                            ("High", theme::GREEN)
-                                                        } else if forecast.confidence > 0.4 {
-                                                            ("Med", theme::GOLD)
-                                                        } else {
-                                                            ("Low", theme::RED)
-                                                        };
-                                                    el.child(
-                                                        div()
-                                                            .text_size(px(9.0))
-                                                            .text_color(rgb(color))
-                                                            .px(px(5.0))
-                                                            .py(px(2.0))
-                                                            .rounded(px(3.0))
-                                                            .bg(theme::bg())
-                                                            .child(label),
-                                                    )
-                                                })
-                                                 // Mini inside/outside view comparison sparkline
-                                                .when(forecast.version_probs.len() > 1, |el| {
-                                                    let history: Vec<crate::charts::IndexPoint> =
-                                                        forecast
-                                                            .version_probs
-                                                            .iter()
-                                                            .enumerate()
-                                                            .map(|(i, &p)| {
-                                                                crate::charts::IndexPoint {
-                                                                    label: format!("v{}", i + 1),
-                                                                    inside_view: p * 100.0,
-                                                                    outside_view: forecast
-                                                                        .base_rate
-                                                                        * 100.0,
-                                                                    crowd_price: None,
-                                                                }
-                                                            })
-                                                            .collect();
-                                                    let chart_w = 100u32;
-                                                    let chart_h = 28u32;
-                                                    let rgb_buf = crate::charts::render_index_chart(
-                                                        &history,
-                                                        history.len() - 1,
-                                                        chart_w,
-                                                        chart_h,
-                                                    );
-                                                    let render_img =
-                                                        crate::charts::rgb_to_render_image(
-                                                            &rgb_buf, chart_w, chart_h,
-                                                        );
-                                                    // Divergence label: show how far inside is from outside
-                                                    let latest = forecast.version_probs.last().copied().unwrap_or(0.0);
-                                                    let base = forecast.base_rate;
-                                                    let divergence_pp = ((latest - base) * 100.0).round() as i32;
-                                                    let div_label = if divergence_pp.abs() < 2 {
-                                                        "≈ base rate".to_string()
-                                                    } else if divergence_pp > 0 {
-                                                        format!("+{}pp vs base", divergence_pp)
-                                                    } else {
-                                                        format!("{}pp vs base", divergence_pp)
-                                                    };
-                                                    let div_color = if divergence_pp.abs() < 5 {
-                                                        theme::FG_FAINT
-                                                    } else if divergence_pp.abs() < 15 {
-                                                        theme::GOLD
-                                                    } else {
-                                                        theme::RED
-                                                    };
-                                                    el.child(
-                                                        div()
-                                                            .flex()
-                                                            .flex_col()
-                                                            .gap(px(2.0))
-                                                            .child(
-                                                                gpui::img(gpui::ImageSource::Render(render_img))
-                                                                    .w(gpui::px(chart_w as f32))
-                                                                    .h(gpui::px(chart_h as f32)),
-                                                            )
-                                                            .child(
-                                                                div()
-                                                                    .flex()
-                                                                    .items_center()
-                                                                    .gap(px(4.0))
-                                                                    .child(
-                                                                        div()
-                                                                            .text_size(px(8.0))
-                                                                            .text_color(theme::cyan())
-                                                                            .child("in"),
-                                                                    )
-                                                                    .child(
-                                                                        div()
-                                                                            .text_size(px(8.0))
-                                                                            .text_color(rgb(theme::FG_FAINT))
-                                                                            .child("↔"),
-                                                                    )
-                                                                    .child(
-                                                                        div()
-                                                                            .text_size(px(8.0))
-                                                                            .text_color(theme::gold())
-                                                                            .child("out"),
-                                                                    )
-                                                                    .child(
-                                                                        div()
-                                                                            .text_size(px(8.0))
-                                                                            .text_color(rgb(div_color))
-                                                                            .min_w(px(0.0))
-                                                                            .child(div_label),
-                                                                    ),
-                                                            )
-                                                    )
-                                                })
-                                        }
-                                    }),
-                                )),
-                        )
-                    })
-                    // Empty state
-                    .when(
-                        self.active_forecasts.is_empty()
-                            && self.draft_forecasts.is_empty()
-                            && self.resolved_forecasts.is_empty(),
-                        |el| {
-                            el.child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .items_center()
-                                    .justify_center()
-                                    .flex_grow()
-                                    .gap(px(12.0))
-                                    .child(
-                                        div()
-                                            .text_size(px(16.0))
-                                            .text_color(theme::fg_dim())
-                                            .child("No forecasts yet"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(12.0))
-                                            .text_color(theme::fg_faint())
-                                            .child("Create your first forecast with ⌘N"),
-                                    ),
-                            )
-                        },
-                    )
-            })
+        // Historically this method continued with four more stacked
+        // sections (Drafts / Resolved / Workspaces / Lab). Those
+        // were removed once the panel was rescoped to *named*
+        // portfolios: the Dashboard owns the Live (active) view,
+        // each portfolio's HUD owns its per-portfolio counts, the
+        // Composer owns Lab, and Workspaces have their own home.
+        // The old block is gone — `git log` has it if we need it.
     }
 
     fn render_forecast_section(
@@ -8791,56 +8586,71 @@ impl FermiConsole {
             // ── Marketplace (Sprint C) ────────────────────────────────────────────
             .child(self.render_agent_marketplace(&fermi_agents, &agent_runs, cx))
             // ── Session agent cards (per-forecast run status) ────────────
+            //
+            // Only render one card per agent that actually has a run
+            // in the currently-open cockpit session. Rendering every
+            // fermi-orchestra agent here was a pure duplicate of the
+            // marketplace list above and made the Agent Fleet panel
+            // scroll forever with the same names.
             .when(!agent_runs.is_empty(), |el| {
+                let mut session_rows: Vec<gpui::AnyElement> = Vec::new();
+                for card in fermi_agents.iter() {
+                    let agent_id = &card.agent_id;
+                    if let Some(run) = agent_runs.iter().find(|r| r.agent_name == *agent_id) {
+                        let drivers = assigned_map.get(agent_id).cloned().unwrap_or_default();
+                        session_rows.push(
+                            render_fleet_agent_row(card, Some(run), &drivers).into_any_element(),
+                        );
+                    }
+                }
+                if session_rows.is_empty() {
+                    el
+                } else {
+                    el.child(
+                        div()
+                            .px(px(16.0))
+                            .py(px(8.0))
+                            .border_t_1()
+                            .border_color(theme::fg_faint())
+                            .text_size(px(11.0))
+                            .text_color(theme::fg_faint())
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("THIS SESSION"),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.0))
+                            .p(px(16.0))
+                            .children(session_rows),
+                    )
+                }
+            })
+            .when(fermi_agents.is_empty(), |el| {
                 el.child(
                     div()
-                        .px(px(16.0))
-                        .py(px(8.0))
-                        .border_t_1()
-                        .border_color(theme::fg_faint())
-                        .text_size(px(11.0))
-                        .text_color(theme::fg_faint())
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child("THIS SESSION"),
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .justify_center()
+                        .py(px(48.0))
+                        .w_full()
+                        .child(
+                            div()
+                                .text_size(px(14.0))
+                                .text_color(theme::fg_dim())
+                                .child("No fermi-orchestra agents found"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(theme::fg_faint())
+                                .mt(px(4.0))
+                                .child("Open a forecast in the Composer to assign agents"),
+                        ),
                 )
             })
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.0))
-                    .p(px(16.0))
-                    .children(fermi_agents.iter().map(|card| {
-                        let agent_id = &card.agent_id;
-                        let run = agent_runs.iter().find(|r| r.agent_name == *agent_id);
-                        let drivers = assigned_map.get(agent_id).cloned().unwrap_or_default();
-                        render_fleet_agent_row(card, run, &drivers)
-                    }))
-                    .when(fermi_agents.is_empty(), |el| {
-                        el.child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .items_center()
-                                .justify_center()
-                                .py(px(48.0))
-                                .w_full()
-                                .child(
-                                    div()
-                                        .text_size(px(14.0))
-                                        .text_color(theme::fg_dim())
-                                        .child("No fermi-orchestra agents found"),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(12.0))
-                                        .text_color(theme::fg_faint())
-                                        .mt(px(4.0))
-                                        .child("Open a forecast in the Composer to assign agents"),
-                                ),
-                        )
-                    }),
-            )
     }
 
     // ── Agent marketplace (Sprint C) ──────────────────────────────────────
@@ -9192,7 +9002,9 @@ impl FermiConsole {
                             .px(px(6.0))
                             .py(px(1.0))
                             .rounded(px(4.0))
-                            .bg(theme::bg_hover())
+                            .border_1()
+                            .border_color(rgb(e.tier_color))
+                            .bg(theme::bg())
                             .text_size(px(9.0))
                             .text_color(rgb(e.tier_color))
                             .font_weight(FontWeight::SEMIBOLD)
@@ -9337,54 +9149,97 @@ impl FermiConsole {
         // Version + author.
         let version_row = row("VERSION", format!("v{} · {}", e.version, e.author));
 
-        // Sample queries (up to 3, each truncated).
-        let sample_queries_section = if e.sample_queries.is_empty() {
+        // Sample queries (up to 3, each truncated). Rendered as a
+        // label + column-of-bullets pair so the bullets stack under
+        // one another instead of sitting on a single wrapped line —
+        // matches the CONTRACT / MODEL / VERSION row layout above.
+        let sample_queries_section: Option<AnyElement> = if e.sample_queries.is_empty() {
             None
         } else {
-            let mut container = div().flex().flex_col().gap(px(2.0));
+            let mut bullets = div().flex().flex_col().gap(px(3.0)).flex_grow();
             for q in e.sample_queries.iter().take(3) {
-                container = container.child(
+                bullets = bullets.child(
                     div()
                         .text_size(px(10.0))
                         .text_color(theme::fg_dim())
                         .child(format!("• {}", truncate(q, 120))),
                 );
             }
-            Some(container)
+            Some(
+                div()
+                    .flex()
+                    .items_start()
+                    .gap(px(8.0))
+                    .py(px(2.0))
+                    .child(
+                        div()
+                            .w(px(88.0))
+                            .flex_shrink_0()
+                            .text_size(px(9.0))
+                            .text_color(theme::fg_faint())
+                            .child("SAMPLE"),
+                    )
+                    .child(bullets)
+                    .into_any_element(),
+            )
         };
 
-        // MCP tools + skills as pill rows.
+        // MCP tools + skills as pill rows. Structured as label +
+        // flex-wrap pill container so the label stays anchored on the
+        // left edge while the pills wrap on their own line — the old
+        // layout let pills wrap *around* the label, breaking column
+        // alignment with the other drill rows.
         let make_pill_row = |title: &'static str, items: &[String]| -> Option<AnyElement> {
             if items.is_empty() {
                 return None;
             }
-            let mut container = div().flex().flex_wrap().items_center().gap(px(4.0)).child(
-                div()
-                    .w(px(88.0))
-                    .text_size(px(9.0))
-                    .text_color(theme::fg_faint())
-                    .child(title),
-            );
+            let mut pills = div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(px(4.0))
+                .flex_grow();
             for item in items {
-                container = container.child(
+                pills = pills.child(
                     div()
-                        .px(px(5.0))
+                        .px(px(6.0))
                         .py(px(1.0))
                         .rounded(px(3.0))
-                        .bg(theme::bg_hover())
+                        .bg(theme::bg_elevated())
+                        .border_1()
+                        .border_color(theme::fg_faint())
                         .text_size(px(9.0))
-                        .text_color(theme::fg_dim())
+                        .text_color(theme::fg())
                         .child(item.clone()),
                 );
             }
-            Some(container.into_any_element())
+            Some(
+                div()
+                    .flex()
+                    .items_start()
+                    .gap(px(8.0))
+                    .py(px(2.0))
+                    .child(
+                        div()
+                            .w(px(88.0))
+                            .flex_shrink_0()
+                            .text_size(px(9.0))
+                            .text_color(theme::fg_faint())
+                            .child(title),
+                    )
+                    .child(pills)
+                    .into_any_element(),
+            )
         };
         let tools_row = make_pill_row("TOOLS", &e.mcp_tools);
         let skills_row = make_pill_row("SKILLS", &e.skills);
 
         // ABW agent page (open in browser) + secrets warning.
+        // NB: the ABW page route is `/agent/:id` (singular) — the
+        // plural `/agents/...` prefix belongs to the JSON API only, so
+        // pointing the browser at it lands on a 404.
         let base_url = self.api.base_url_sync();
-        let agent_url = format!("{}/agents/{}", base_url.trim_end_matches('/'), e.agent_id);
+        let agent_url = format!("{}/agent/{}", base_url.trim_end_matches('/'), e.agent_id);
         let agent_url_for_open = agent_url.clone();
 
         div()
@@ -9399,11 +9254,9 @@ impl FermiConsole {
             .child(contract)
             .child(model_row)
             .child(version_row)
-            .when(sample_queries_section.is_some(), |el| {
-                el.child(row("SAMPLE", String::new()).child(sample_queries_section.unwrap()))
-            })
-            .when(tools_row.is_some(), |el| el.child(tools_row.unwrap()))
-            .when(skills_row.is_some(), |el| el.child(skills_row.unwrap()))
+            .when_some(sample_queries_section, |el, s| el.child(s))
+            .when_some(tools_row, |el, s| el.child(s))
+            .when_some(skills_row, |el, s| el.child(s))
             .when(e.needs_secrets, |el| {
                 el.child(
                     div()
@@ -12021,7 +11874,13 @@ impl FermiConsole {
                                                 .child("✕"),
                                         )
                                 },
-                            )),
+                            ))
+                            // Team-pill row — same shape as the portfolio
+                            // Access panel and the cockpit forecast Access
+                            // tab. Clicking toggles the team in the pending
+                            // list; selected pills render in CYAN with a
+                            // check, unselected in FG_DIM.
+                            .child(self.render_commit_team_share_pills(cx)),
                     )
                     // Action buttons
                     .child(
@@ -14072,15 +13931,24 @@ fn render_portfolio_hud(forecasts: &[PortfolioForecast]) -> impl IntoElement {
                 theme::GOLD
             },
         ))
+        // Divergence tile. Historically labeled just "|EDGE vs CROWD|"
+        // with the raw number — which readers understandably confused
+        // for a realised gain/loss. This is neither realised nor a P&L:
+        // it's the mean absolute gap between our current model
+        // probability and the crowd's current price on *open* linked
+        // markets, in percentage points. It measures "how far off the
+        // crowd we sit right now", not "how much we've won or lost".
+        // Book Brier + Resolution rate are the actually-realised score
+        // tiles beside it.
         .child(tile(
             avg_abs_divergence
-                .map(|d| format!("{:.1}pp", d))
+                .map(|d| format!("±{:.1}pp", d))
                 .unwrap_or_else(dash),
-            "|EDGE vs CROWD|",
+            "MODEL vs CROWD",
             if n_linked == 0 {
                 "no linked markets".into()
             } else {
-                format!("across {} linked", n_linked)
+                format!("mean |gap| on {} live", n_linked)
             },
             if avg_abs_divergence.map(|d| d >= 5.0).unwrap_or(false) {
                 theme::GOLD
