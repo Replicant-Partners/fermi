@@ -10,7 +10,7 @@ question "Will Chelsea win the 2026-27 English Premier League (EPL) Championship
 }
 
 driver squad_quality_trajectory continuous {
-    distribution: triangular(0.55, 1, 1.35)
+    distribution: triangular(0.55, 1, 1.1)
     unit: "multiplier"
     rationale: "Chelsea's 2025-26 squad strength, transfer spending, youth development pipeline, and managerial stability by 2026-27 season start. New ownership (Boehly-Clearlake) has invested heavily but results mixed. Squad age profile, key player retention (Palmer, James, Enzo), and tactical coherence under current/future manager will determine title competitiveness. Upside if investments mature; downside if continued instability."
 }
