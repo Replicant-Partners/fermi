@@ -30,6 +30,9 @@
     "ZITADEL_ISSUER": "@zitadel_issuer",
     "ZITADEL_CLIENT_ID": "@zitadel_client_id",
     "ZITADEL_CLIENT_SECRET": "@zitadel_client_secret",
-    "ZITADEL_REDIRECT_URI": "@zitadel_redirect_uri"
+    "ZITADEL_REDIRECT_URI": "@zitadel_redirect_uri",
+    "RESEND_API_KEY": "@resend_api_key",
+    "RESEND_FROM_EMAIL": "@resend_from_email",
+    "APP_BASE_URL": "@app_base_url"
   }
 }

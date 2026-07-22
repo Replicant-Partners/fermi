@@ -51,8 +51,15 @@ pub async fn auth_google(
     })?;
     let csrf_state = generate_state();
     let mobile_flag = if q.mobile.is_some() { ":mobile" } else { "" };
+    // URL-encode the redirect target before folding into the state.
+    // The state uses `:` as a field delimiter, so a redirect URL with
+    // a port (`http://127.0.0.1:PORT/callback`) would otherwise get
+    // truncated at the first colon on the callback side — which is
+    // the exact regression that broke the desktop console's automatic
+    // browser sign-in flow. `url_encode` turns colons into `%3A` so
+    // the delimiter parser stops only at real state boundaries.
     let redirect_flag = match &q.redirect {
-        Some(r) => format!(":redirect={}", r),
+        Some(r) => format!(":redirect={}", url_encode(r)),
         None => String::new(),
     };
     // App slug is passed through the OAuth `state` param — same
@@ -100,8 +107,10 @@ pub async fn auth_github(
     })?;
     let csrf_state = generate_state();
     let mobile_flag = if q.mobile.is_some() { ":mobile" } else { "" };
+    // See `auth_google` above for why the redirect target is
+    // URL-encoded before folding into the state param.
     let redirect_flag = match &q.redirect {
-        Some(r) => format!(":redirect={}", r),
+        Some(r) => format!(":redirect={}", url_encode(r)),
         None => String::new(),
     };
     let app_flag = match q.app.as_deref().filter(|a| is_valid_app_slug(a)) {
@@ -154,10 +163,15 @@ pub async fn auth_callback_inner(
     // end-of-string. Trailing values (e.g. `:app=fermi_console` at the
     // tail) are supported by taking the first segment after the
     // marker; anything appended after another `:` is stripped.
+    //
+    // The redirect value is URL-encoded on the outbound side
+    // (`auth_google` / `auth_github`), so colons inside the redirect
+    // URL survive the delimiter split as `%3A`. Decode after splitting.
     let redirect_to = rest
         .split(":redirect=")
         .nth(1)
-        .map(|s| s.split(':').next().unwrap_or(s).to_string());
+        .map(|s| s.split(':').next().unwrap_or(s).to_string())
+        .map(|encoded| url_decode(&encoded));
     let signup_app = rest
         .split(":app=")
         .nth(1)
@@ -537,6 +551,34 @@ fn url_encode(s: &str) -> String {
         }
     }
     out
+}
+
+/// Inverse of `url_encode`. Decodes percent-escapes (`%XX`) back to
+/// their byte values; non-percent characters pass through verbatim.
+/// Used on the OAuth callback path to un-escape a redirect target that
+/// was folded into the `state` param (needed because URL hosts contain
+/// colons which would otherwise collide with the state's `:` delimiters).
+///
+/// Failing to decode a `%XX` sequence keeps the literal `%XX` in the
+/// output rather than dropping it — an operator-facing garbled URL is
+/// easier to debug than a silent truncation.
+fn url_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex_str = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("");
+            if let Ok(byte) = u8::from_str_radix(hex_str, 16) {
+                out.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn render_cli_login_page(google_url: &str, github_url: &str) -> String {
