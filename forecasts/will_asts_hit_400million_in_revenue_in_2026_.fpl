@@ -1,0 +1,51 @@
+question "Will ASTS hit 400Million in revenue in 2026?" {
+    base_rate {
+        reference_class: "High-growth satellite/space infrastructure companies reaching $400M revenue within 3-4 years of commercial service launch"
+        historical_frequency: 0.15
+        sample_size: 20
+        source: "macro_forecaster"
+        reasoning: "AST SpaceMobile (ASTS) is attempting to build a space-based cellular broadband network. Reference class includes companies like Iridium (took 6+ years post-bankruptcy restructuring), Globalstar (never reached $400M in comparable timeframe), OneWeb (still ramping), and high-growth space/telecom infrastructure plays. Of ~20 comparable satellite/space infrastructure ventures in the past 25 years, only ~3 (15%) hit $400M revenue within their first 3-4 years of commercial operations. ASTS reported ~$1.8M revenue in 2023, projects commercial service starting 2024-2025. Reaching $400M by end of 2026 requires ~200x growth in 2-3 years - exceptionally rare even for successful space ventures."
+        generated_by: macro_forecaster
+    }
+}
+
+driver satellite_deployment_execution continuous {
+    distribution: triangular(0.6, 1, 1.4)
+    unit: "multiplier"
+    rationale: "ASTS must successfully launch and operationalize its Block 1 BlueBird satellites (5 planned for 2024-2025) to enable commercial service. Historical satellite deployment has 70-80% on-time success rate for new constellations. Delays of 6-12 months are common (Starlink, OneWeb both experienced). Early deployment accelerates revenue ramp; delays compress the 2026 revenue window. Technical risk includes in-orbit performance validation of novel large-aperture phased array technology - no direct precedent at this scale."
+}
+
+driver carrier_partnership_monetization continuous {
+    distribution: triangular(0.7, 1.1, 1.6)
+    unit: "multiplier"
+    rationale: "ASTS has announced partnerships with AT&T, Verizon, Vodafone, Rakuten, and others covering ~1.8B subscribers. Revenue depends on converting these MOUs into binding commercial agreements with meaningful revenue share or capacity payments. Comparable wholesale satellite-to-telco deals (Ligado, Globalstar-Apple) took 2-4 years to monetize and often at lower-than-projected rates. Upside if ASTS captures premium pricing for unique direct-to-device capability; downside if carriers delay commercial deployment or negotiate lower rates."
+}
+
+driver market_demand_adoption continuous {
+    distribution: triangular(0.8, 1, 1.3)
+    unit: "multiplier"
+    rationale: "Revenue depends on end-user adoption of space-based cellular service for coverage gaps, IoT, and emergency connectivity. Market sizing estimates vary widely ($10B-$100B TAM by 2030). Adoption drivers include pricing relative to terrestrial alternatives, device compatibility (ASTS claims standard smartphones work), and use case validation. Starlink, Apple Emergency SOS, and Lynk Global are competing. Faster-than-expected enterprise IoT adoption or regulatory mandates (e.g., FirstNet requirements) could accelerate; consumer price sensitivity or technical limitations could dampen."
+}
+
+driver capital_availability_execution continuous {
+    distribution: triangular(0.5, 0.9, 1.2)
+    unit: "multiplier"
+    rationale: "ASTS is pre-revenue and capital-intensive. Company has raised ~$500M+ but will need additional funding to complete Block 1 and scale to Block 2 constellation. Equity dilution, debt financing, or strategic investment required. Execution risk includes manufacturing scale-up, ground infrastructure deployment, and operational burn rate management. Comparable space ventures (OneWeb bankruptcy 2020, Virgin Orbit failure 2023) show capital constraints can halt operations. Median multiplier <1.0 reflects elevated execution risk for cash-burning pre-revenue space company."
+}
+
+driver regulatory_spectrum_clearance continuous {
+    distribution: triangular(0.7, 1, 1.2)
+    unit: "multiplier"
+    rationale: "ASTS requires FCC approval in the US and regulatory clearance in international markets (EU, Japan, etc.) to operate commercially. FCC granted initial authorization but full commercial license and spectrum coordination with terrestrial operators is ongoing. International approvals vary by jurisdiction - some fast (UK), others slow (EU fragmentation). Delays in key markets (US, EU represent ~40% of revenue potential) would compress 2026 revenue. Faster-than-expected approvals or spectrum allocation priority could accelerate. Median 1.0 assumes on-track regulatory path per company guidance."
+}
+
+evidence fermi_evidence_1784735808 {
+    source: "Agent: fermi (Claude API)"
+    summary: ""
+    relevance: 0.5p
+    date: 2026-07-22
+}
+
+model: satellite_deployment_execution * carrier_partnership_monetization * market_demand_adoption * capital_availability_execution * regulatory_spectrum_clearance
+
+simulate 10000 iterations

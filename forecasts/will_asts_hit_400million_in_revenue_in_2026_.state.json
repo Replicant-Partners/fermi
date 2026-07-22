@@ -1,0 +1,94 @@
+{
+  "forecast_id": null,
+  "current_version": 1,
+  "predicted_probability": 0.15,
+  "inside_view_explanation": "",
+  "forecast_confidence": 0.5,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-07-22 15:57",
+      "probability": 0.15,
+      "change_summary": "Initial: 15.0% base=15%, 5 drivers, 1 evidence"
+    }
+  ],
+  "sim_results": null,
+  "base_rate": {
+    "reference_class": "High-growth satellite/space infrastructure companies reaching $400M revenue within 3-4 years of commercial service launch",
+    "historical_frequency": 0.15,
+    "sample_size": 20,
+    "source": "macro_forecaster",
+    "reasoning": "AST SpaceMobile (ASTS) is attempting to build a space-based cellular broadband network. Reference class includes companies like Iridium (took 6+ years post-bankruptcy restructuring), Globalstar (never reached $400M in comparable timeframe), OneWeb (still ramping), and high-growth space/telecom infrastructure plays. Of ~20 comparable satellite/space infrastructure ventures in the past 25 years, only ~3 (15%) hit $400M revenue within their first 3-4 years of commercial operations. ASTS reported ~$1.8M revenue in 2023, projects commercial service starting 2024-2025. Reaching $400M by end of 2026 requires ~200x growth in 2-3 years - exceptionally rare even for successful space ventures."
+  },
+  "evidence": [
+    {
+      "id": "fermi_evidence_1784735808",
+      "source": "Agent: fermi (Claude API)",
+      "summary": "",
+      "relevance": 0.5,
+      "date": "2026-07-22",
+      "key_findings": []
+    }
+  ],
+  "agents": [
+    {
+      "name": "entity_investigator_satellite_deployment_execution",
+      "agent_type": "research",
+      "query": "AST SpaceMobile (ASTS ticker) satellite deployment track record and risk factors: analyze Block 1 BlueBird launch schedule adherence, technical readiness of phased array technology, manufacturing capacity at MDA Space, historical on-time delivery rate for comparable first-generation satellite constellations. Return probability distribution of deployment timeline as multiplier (1.0 = on schedule, <1.0 = delays reduce 2026 revenue, >1.0 = early deployment accelerates).",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "satellite_deployment_execution"
+      ]
+    },
+    {
+      "name": "market_research_carrier_partnership_monetization",
+      "agent_type": "research",
+      "query": "Satellite-to-mobile network operator partnership monetization: analyze historical revenue conversion rates and timelines for wholesale satellite capacity agreements (Ligado, Globalstar, Iridium carrier deals). For ASTS with partnerships covering 1.8B subscribers targeting $400M revenue by 2026, estimate probability distribution of revenue per subscriber and partnership activation rate as multiplier relative to management guidance. Include competitive pressure from Starlink direct-to-cell and Apple satellite services.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "carrier_partnership_monetization"
+      ]
+    },
+    {
+      "name": "market_research_market_demand_adoption",
+      "agent_type": "research",
+      "query": "Direct-to-device satellite connectivity market adoption 2024-2026: estimate market size growth, enterprise vs consumer split, pricing elasticity, and competitive positioning of AST SpaceMobile vs Starlink direct-to-cell and Apple satellite services. For a target of $400M revenue by end 2026, return probability distribution of market penetration rate and ARPU as multiplier. Include regulatory tailwinds (FirstNet, rural broadband mandates) and technology substitution risk.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "market_demand_adoption"
+      ]
+    },
+    {
+      "name": "equity_analyst_capital_availability_execution",
+      "agent_type": "research",
+      "query": "AST SpaceMobile (ticker ASTS) financial health and capital runway: analyze current cash position, quarterly burn rate, debt obligations, and equity dilution risk. Compare to capital requirements for completing Block 1 satellite deployment and scaling to commercial operations by 2026. Assess probability of successful capital raise vs operational constraints impacting revenue ramp. Return as multiplier where 1.0 = adequate capital and execution, <1.0 = capital/execution constraints delay revenue, >1.0 = better-than-expected funding or cost efficiency.",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "capital_availability_execution"
+      ]
+    },
+    {
+      "name": "macro_forecaster_regulatory_spectrum_clearance",
+      "agent_type": "research",
+      "query": "Satellite spectrum regulatory approval timeline and risk for AST SpaceMobile: analyze FCC commercial license process for space-based cellular (S-band coordination with terrestrial operators), international regulatory approval timelines in EU, Japan, and other key markets. Historical base rate for spectrum approval delays in satellite-to-mobile services. Return probability distribution of regulatory clearance timing as multiplier (1.0 = on schedule for 2025-2026 commercial service, <1.0 = delays, >1.0 = expedited approvals).",
+      "schedule": "Some(Once)",
+      "driver_refs": [
+        "regulatory_spectrum_clearance"
+      ]
+    }
+  ],
+  "driver_confidence": {},
+  "polymarket": {
+    "event_id": null,
+    "market_id": null,
+    "question": null,
+    "market_price": null,
+    "volume_24h": null,
+    "liquidity": null,
+    "confidence": null,
+    "price_change_1w": null,
+    "url": null,
+    "price_history": []
+  },
+  "workspace_id": "84c1e3e8-a49e-4d12-973d-09255dafdc1c"
+}
