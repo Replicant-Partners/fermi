@@ -1,61 +1,24 @@
 {
   "forecast_id": "4084aecc-9f12-4649-a30a-a5d06e734541",
-  "current_version": 6,
-  "predicted_probability": 0.5591947522976081,
-  "inside_view_explanation": "Inside view: model evaluates to 11.9% (p5=8.8%, p95=15.4%). Outside view (base rate): 52.0%. Key drivers: socio_capital, institutional_capacity, dynamic_performance.",
+  "current_version": 1,
+  "predicted_probability": 0.9990000128746032,
+  "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-17 01:48",
-      "probability": 0.5591350197792053,
-      "change_summary": "Initial: 55.9% base=52%, 6 drivers, 4 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-07-17 01:50",
-      "probability": 0.11910619926197201,
-      "change_summary": "11.9% (-44pp), 6 drivers, 4 evidence, 1 agents"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-07-17 01:50",
-      "probability": 0.5591947522976081,
-      "change_summary": "55.9% (+44pp), 6 drivers, 4 evidence, 1 agents"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-07-17 01:50",
-      "probability": 0.5591947522976081,
-      "change_summary": "55.9% (→), 6 drivers, 4 evidence, 1 agents"
-    },
-    {
-      "version": 5,
-      "timestamp": "2026-07-17 01:50",
-      "probability": 0.5591947522976081,
-      "change_summary": "55.9% (→), 6 drivers, 4 evidence, 1 agents"
-    },
-    {
-      "version": 6,
-      "timestamp": "2026-07-17 01:50",
-      "probability": 0.5591947522976081,
-      "change_summary": "55.9% (→), 6 drivers, 4 evidence, 1 agents"
+      "timestamp": "2026-07-22 12:18",
+      "probability": 0.9990000128746032,
+      "change_summary": "Initial: 99.9% base=2%, 6 drivers, 4 evidence"
     }
   ],
-  "sim_results": {
-    "mean": 0.11910619926197201,
-    "median": 0.11780483529337919,
-    "p5": 0.08833881152467513,
-    "p95": 0.15424095606942267,
-    "std_dev": 0.020169679884877834,
-    "iterations": 10000
-  },
+  "sim_results": null,
   "base_rate": {
-    "reference_class": "European teams winning FIFA World Cup tournaments (1930-2022)",
-    "historical_frequency": 0.52,
-    "sample_size": 23,
-    "source": "fermi",
-    "reasoning": "Of 23 World Cup tournaments held through 2022, European teams have won 12 (Italy 4, Germany 4, Spain 1, France 2, England 1). This gives a 52% base rate for any European team winning. For Spain specifically as a single nation: 1 win in 23 tournaments = 4.3% base rate. However, Spain is not a random European team—they are a top-tier football nation. Among the 8 nations that have ever won a World Cup, the recurrence rate is higher. Since 1998 (modern era, 7 tournaments), winners have been: France (2), Brazil (1), Spain (1), Germany (1), Argentina (2). Spain's tier (elite European nation with recent success, strong league system, consistent tournament performance) suggests anchoring closer to the 'elite European contender' reference class of ~10-15% pre-tournament probability for top 3-4 favorites, rather than the naive 4.3% single-nation rate. Using the 8-team winner's club recurrence: 12 wins distributed among 8 nations over 23 tournaments, with unequal distribution favoring Brazil (5) and Germany/Italy (4 each). Spain's 1 win in the modern competitive era (post-1998) among 7 tournaments with their current strength profile suggests ~8-12% as the appropriate base rate for an elite European contender."
+    "reference_class": "FIFA World Cup winners 1930–2022",
+    "historical_frequency": 0.0208,
+    "sample_size": 22,
+    "source": "FIFA tournament archive — 22 prior World Cups",
+    "reasoning": "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via the six factor-derived drivers."
   },
   "evidence": [
     {
@@ -200,16 +163,16 @@
     "event_id": "30615",
     "market_id": "558934",
     "question": "Will Spain win the 2026 FIFA World Cup?",
-    "market_price": 0.5835,
-    "volume_24h": 1455784.303176999,
-    "liquidity": 8875611.68177,
-    "confidence": "Very High",
-    "price_change_1w": 0.411,
+    "market_price": 1.0,
+    "volume_24h": 0.0,
+    "liquidity": 0.0,
+    "confidence": "Low",
+    "price_change_1w": 0.793,
     "url": "https://polymarket.com/event/world-cup-winner",
     "price_history": [
       {
-        "t": 1784252888,
-        "p": 0.5835
+        "t": 1784722614,
+        "p": 1.0
       }
     ]
   },
