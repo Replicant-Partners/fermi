@@ -1,6 +1,6 @@
 {
   "forecast_id": "4084aecc-9f12-4649-a30a-a5d06e734541",
-  "current_version": 1,
+  "current_version": 2,
   "predicted_probability": 0.9990000128746032,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
@@ -10,6 +10,12 @@
       "timestamp": "2026-07-22 12:18",
       "probability": 0.9990000128746032,
       "change_summary": "Initial: 99.9% base=2%, 6 drivers, 4 evidence"
+    },
+    {
+      "version": 2,
+      "timestamp": "2026-07-22 12:18",
+      "probability": 0.9990000128746032,
+      "change_summary": "99.9% (→), 6 drivers, 4 evidence"
     }
   ],
   "sim_results": null,
