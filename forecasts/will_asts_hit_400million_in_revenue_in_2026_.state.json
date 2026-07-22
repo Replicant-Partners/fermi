@@ -1,6 +1,6 @@
 {
   "forecast_id": null,
-  "current_version": 4,
+  "current_version": 5,
   "predicted_probability": 0.15,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
@@ -25,6 +25,12 @@
     },
     {
       "version": 4,
+      "timestamp": "2026-07-22 15:58",
+      "probability": 0.15,
+      "change_summary": "15.0% (→), 5 drivers, 1 evidence, 1 agents"
+    },
+    {
+      "version": 5,
       "timestamp": "2026-07-22 15:58",
       "probability": 0.15,
       "change_summary": "15.0% (→), 5 drivers, 1 evidence, 1 agents"
