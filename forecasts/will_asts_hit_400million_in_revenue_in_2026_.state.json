@@ -1,9 +1,9 @@
 {
   "forecast_id": null,
-  "current_version": 7,
-  "predicted_probability": 0.15,
-  "inside_view_explanation": "",
-  "forecast_confidence": 0.5,
+  "current_version": 8,
+  "predicted_probability": 0.9778518144346643,
+  "inside_view_explanation": "Inside view: model evaluates to 97.8% (p5=52.9%, p95=157.1%). Outside view (base rate): 15.0%. Key drivers: satellite_deployment_execution, carrier_partnership_monetization, market_demand_adoption. Most influential: carrier_partnership_monetization (28%), capital_availability_execution (27%), satellite_deployment_execution (26%).",
+  "forecast_confidence": 0.13999999999999999,
   "versions": [
     {
       "version": 1,
@@ -46,9 +46,22 @@
       "timestamp": "2026-07-22 15:58",
       "probability": 0.15,
       "change_summary": "15.0% (→), 5 drivers, 1 evidence, 1 agents"
+    },
+    {
+      "version": 8,
+      "timestamp": "2026-07-22 15:58",
+      "probability": 0.9778518144346643,
+      "change_summary": "97.8% (+83pp), 5 drivers, 1 evidence, 1 agents"
     }
   ],
-  "sim_results": null,
+  "sim_results": {
+    "mean": 0.9778518144346643,
+    "median": 0.934029521315161,
+    "p5": 0.5290262039063166,
+    "p95": 1.5707007891153246,
+    "std_dev": 0.3201706794102517,
+    "iterations": 10000
+  },
   "base_rate": {
     "reference_class": "High-growth satellite/space infrastructure companies reaching $400M revenue within 3-4 years of commercial service launch",
     "historical_frequency": 0.15,
