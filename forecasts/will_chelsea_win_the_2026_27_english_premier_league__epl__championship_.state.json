@@ -1,9 +1,9 @@
 {
   "forecast_id": null,
-  "current_version": 2,
-  "predicted_probability": 0.3234494049547766,
-  "inside_view_explanation": "Inside view: model evaluates to 32.3% (p5=11.8%, p95=59.2%). Outside view (base rate): 6.7%. Key drivers: squad_quality_trajectory, man_city_dominance_persistence, big_six_competitive_balance. Most influential: managerial_stability_quality (73%), squad_quality_trajectory (21%), man_city_dominance_persistence (5%).",
-  "forecast_confidence": 0.595,
+  "current_version": 3,
+  "predicted_probability": 0.8849710994297486,
+  "inside_view_explanation": "Inside view: model evaluates to 88.5% (p5=57.8%, p95=126.6%). Outside view (base rate): 6.7%. Key drivers: squad_quality_trajectory, man_city_dominance_persistence, big_six_competitive_balance. Most influential: squad_quality_trajectory (67%), man_city_dominance_persistence (17%), injury_fixture_luck (15%).",
+  "forecast_confidence": 0.48999999999999994,
   "versions": [
     {
       "version": 1,
@@ -16,14 +16,20 @@
       "timestamp": "2026-07-22 16:36",
       "probability": 0.3234494049547766,
       "change_summary": "32.3% (+23pp), 4 drivers, 5 evidence, 5 agents"
+    },
+    {
+      "version": 3,
+      "timestamp": "2026-07-22 16:37",
+      "probability": 0.8849710994297486,
+      "change_summary": "88.5% (+56pp), 4 drivers, 5 evidence, 5 agents"
     }
   ],
   "sim_results": {
-    "mean": 0.3234494049547766,
-    "median": 0.3042885619106012,
-    "p5": 0.11774641064141947,
-    "p95": 0.5921780970304572,
-    "std_dev": 0.14381639523754502,
+    "mean": 0.8849710994297486,
+    "median": 0.8646110750513288,
+    "p5": 0.5781965709439774,
+    "p95": 1.26622726151691,
+    "std_dev": 0.21093325328534782,
     "iterations": 10000
   },
   "base_rate": {
