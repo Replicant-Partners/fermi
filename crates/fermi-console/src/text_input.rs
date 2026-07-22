@@ -721,8 +721,25 @@ impl Render for TextInput {
                 .flex_col()
                 .gap(px(4.0))
                 .w_full()
+                // min_w(0) so the outer wrapper can shrink below the
+                // label's intrinsic width without leaking that width
+                // requirement out to the flex parent (which would
+                // otherwise squeeze siblings and force this label to
+                // break per-character).
+                .min_w(px(0.0))
                 .child(
                     div()
+                        // flex_none + overflow_hidden on the label div so
+                        // when the column is narrower than the label's
+                        // ideal width, we truncate the label rather than
+                        // stacking its characters vertically. The label
+                        // is metadata — the field itself is what the
+                        // operator actually interacts with, so losing a
+                        // few characters of "p95 (high)" is a fine
+                        // trade-off for a legible row.
+                        .flex_none()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
                         .text_size(px(11.0))
                         .text_color(rgb(theme::FG_DIM))
                         .child(label.clone()),

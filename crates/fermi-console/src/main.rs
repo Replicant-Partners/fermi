@@ -734,6 +734,11 @@ struct ActivityItem {
     text: String,
     time: String,
     color: u32,
+    /// Forecast id the row represents. Non-optional because every
+    /// candidate we surface is derived from a real fermi_forecasts row
+    /// (active_forecasts / resolved_forecasts). Powers the click-to-open
+    /// behaviour on the Dashboard's Recent Activity feed.
+    forecast_id: String,
 }
 
 impl FermiConsole {
@@ -3555,6 +3560,7 @@ impl FermiConsole {
                         .unwrap_or("?")
                         .to_string(),
                     color,
+                    forecast_id: f.id.clone(),
                 },
             });
         }
@@ -3587,6 +3593,7 @@ impl FermiConsole {
                         .unwrap_or("?")
                         .to_string(),
                     color: theme::CYAN,
+                    forecast_id: f.id.clone(),
                 },
             });
         }
@@ -3942,24 +3949,45 @@ impl FermiConsole {
         if panel == Panel::Composer && self.cockpit.is_none() {
             let api = self.api.clone();
             let cockpit_entity = cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx));
+            // Kick off the portfolio list fetch so the composer's
+            // inline chip strip has options as soon as the operator
+            // publishes their first forecast in this session.
+            cockpit_entity.update(cx, |cockpit, cx| {
+                cockpit.load_portfolios_list(cx);
+            });
             // Observe cockpit changes to drain queued cross-tab events
             // (toast notifications, invite-share modal requests). These
             // fields must live on FermiConsole (the parent), so the
             // cockpit stashes intent here and the observe callback picks
             // it up on the next tick.
             cx.observe(&cockpit_entity, |this, cockpit_ref, cx| {
-                let (toasts, invite_share): (Vec<String>, Option<(JsonValue, String, String)>) =
-                    cockpit_ref.update(cx, |state, _| {
-                        (
-                            std::mem::take(&mut state.pending_toasts),
-                            state.pending_invite_share.take(),
-                        )
-                    });
+                let (toasts, invite_share, refresh_forecasts): (
+                    Vec<String>,
+                    Option<(JsonValue, String, String)>,
+                    bool,
+                ) = cockpit_ref.update(cx, |state, _| {
+                    let refresh = state.pending_forecasts_refresh;
+                    state.pending_forecasts_refresh = false;
+                    (
+                        std::mem::take(&mut state.pending_toasts),
+                        state.pending_invite_share.take(),
+                        refresh,
+                    )
+                });
                 for msg in toasts {
                     this.show_toast(msg, "✓", theme::GREEN, cx);
                 }
                 if let Some((invite_json, target_label, recipient)) = invite_share {
                     this.open_invite_share_modal(&invite_json, target_label, recipient, cx);
+                }
+                if refresh_forecasts {
+                    // Forecast list on the parent has drifted (publish
+                    // just added a new active row, or a resolution just
+                    // came in). Refetch so the Dashboard's Live section
+                    // and the Recent Activity feed reflect it without
+                    // waiting for the 30s background loop.
+                    this.fetch_forecasts(cx);
+                    this.fetch_stats(cx);
                 }
             })
             .detach();
@@ -4871,7 +4899,7 @@ impl FermiConsole {
                         div().flex().flex_col().p(px(8.0)).gap(px(2.0)).children(
                             self.recent_activity
                                 .iter()
-                                .map(|item| self.render_activity_item(item)),
+                                .map(|item| self.render_activity_item(item, cx)),
                         ),
                     ),
             )
@@ -4916,15 +4944,21 @@ impl FermiConsole {
             )
     }
 
-    fn render_activity_item(&self, item: &ActivityItem) -> impl IntoElement {
+    fn render_activity_item(&self, item: &ActivityItem, cx: &Context<Self>) -> impl IntoElement {
+        let fid = item.forecast_id.clone();
         div()
+            .id(SharedString::from(format!("activity-{}", item.forecast_id)))
             .flex()
             .items_center()
             .gap(px(12.0))
             .px(px(12.0))
             .py(px(8.0))
             .rounded(px(4.0))
+            .cursor_pointer()
             .hover(|style| style.bg(theme::bg_hover()))
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                this.open_forecast(&fid, cx);
+            }))
             .child(
                 div()
                     .text_size(px(14.0))
@@ -6113,6 +6147,17 @@ impl FermiConsole {
                             // see the worm the moment the cockpit lands.
                             cockpit.load_timeline(cx);
                         }
+                        // Populate the composer's inline portfolio chips.
+                        // These come from the operator's portfolios list;
+                        // membership starts empty and gets hydrated below
+                        // from the freshly-loaded Forecast's `portfolios`.
+                        cockpit.load_portfolios_list(cx);
+                        cockpit.current_portfolio_ids = forecast
+                            .portfolios
+                            .clone()
+                            .unwrap_or_default()
+                            .into_iter()
+                            .collect();
 
                         // ── Polymarket hydration ────────────────────────────
                         // metadata.polymarket shape is what

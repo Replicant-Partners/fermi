@@ -365,6 +365,28 @@ pub struct CockpitState {
     /// same observe tick as `pending_toasts`.
     pub pending_invite_share: Option<(JsonValue, String, String)>,
 
+    /// Signal to the parent FermiConsole that it should refetch
+    /// active/resolved/draft forecast lists on the next observe tick.
+    /// Set after publish so the operator sees their new forecast on
+    /// the Dashboard immediately rather than waiting for the 30-second
+    /// background refresh loop. Cleared by the observe handler.
+    pub pending_forecasts_refresh: bool,
+
+    /// Portfolios the operator owns — fetched by the cockpit itself
+    /// (not piped from the parent). Powers the inline portfolio
+    /// membership chip strip in the question section. Each entry is
+    /// `(portfolio_id, title)` so the render doesn't have to import
+    /// the full Portfolio struct across module boundaries.
+    pub cockpit_portfolios: Vec<(String, String)>,
+    pub cockpit_portfolios_loading: bool,
+    /// Portfolio IDs this forecast is currently a member of. Populated
+    /// from `Forecast.portfolios` on load and mutated by
+    /// `toggle_portfolio_membership` calls.
+    pub current_portfolio_ids: std::collections::HashSet<String>,
+    /// Portfolio IDs with an add/remove request in flight; button
+    /// disabled until the response comes back.
+    pub portfolio_membership_in_flight: std::collections::HashSet<String>,
+
     // ── ABW Workspace Integration ─────────────────────────────────
     /// Workspace ID (UUID) backing this forecast in ABW.
     /// Spawned from the `fermi_forecast` app on first orchestration.
@@ -718,6 +740,11 @@ impl CockpitState {
             schedules_loading: false,
             pending_toasts: Vec::new(),
             pending_invite_share: None,
+            pending_forecasts_refresh: false,
+            cockpit_portfolios: Vec::new(),
+            cockpit_portfolios_loading: false,
+            current_portfolio_ids: std::collections::HashSet::new(),
+            portfolio_membership_in_flight: std::collections::HashSet::new(),
             workspace_id: None,
             workspace_params: serde_json::Map::new(),
             bayesops_pending: std::collections::HashMap::new(),
@@ -7435,6 +7462,112 @@ impl CockpitState {
     // ── Access / sharing (Spec 24 §3.5.2) ──────────────────────────────
 
     /// Fetch the current shares for this forecast into the Access tab.
+    /// Load the operator's portfolios into `cockpit_portfolios` so the
+    /// composer's inline portfolio chip strip has options to show.
+    /// Fires on cockpit boot (once) and after every publish (in case
+    /// the operator created a portfolio between sessions).
+    pub fn load_portfolios_list(&mut self, cx: &mut Context<Self>) {
+        if self.cockpit_portfolios_loading {
+            return;
+        }
+        self.cockpit_portfolios_loading = true;
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = tokio::spawn(async move { api.list_portfolios().await }).await;
+            this.update(cx, |state, cx| {
+                state.cockpit_portfolios_loading = false;
+                match result {
+                    Ok(Ok(resp)) => {
+                        state.cockpit_portfolios = resp
+                            .portfolios
+                            .into_iter()
+                            .map(|p| (p.id, p.title))
+                            .collect();
+                    }
+                    Ok(Err(e)) => log::warn!("[cockpit-portfolios] fetch failed: {}", e),
+                    Err(e) => log::warn!("[cockpit-portfolios] task join error: {}", e),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Toggle membership of the current forecast in the given portfolio.
+    /// Optimistically updates `current_portfolio_ids` for immediate UI
+    /// feedback; rolls back on API error.
+    pub fn toggle_portfolio_membership(&mut self, portfolio_id: String, cx: &mut Context<Self>) {
+        let Some(fid) = self.forecast_id.clone() else {
+            self.messages.push(AssistantMessage {
+                node: "portfolio".into(),
+                kind: MessageKind::Warning,
+                text: "Publish the forecast first (Ctrl+P) before adding it to portfolios.".into(),
+            });
+            cx.notify();
+            return;
+        };
+        if self.portfolio_membership_in_flight.contains(&portfolio_id) {
+            return; // guard against double-clicks
+        }
+        self.portfolio_membership_in_flight
+            .insert(portfolio_id.clone());
+
+        // Optimistic flip.
+        let currently_member = self.current_portfolio_ids.contains(&portfolio_id);
+        if currently_member {
+            self.current_portfolio_ids.remove(&portfolio_id);
+        } else {
+            self.current_portfolio_ids.insert(portfolio_id.clone());
+        }
+        cx.notify();
+
+        let api = self.api.clone();
+        let pid = portfolio_id.clone();
+        let was_member = currently_member;
+        cx.spawn(async move |this, cx| {
+            let result = if was_member {
+                tokio::spawn(async move { api.remove_from_portfolio(&pid, &fid).await })
+                    .await
+                    .map(|r| r.map(|_| ()))
+            } else {
+                tokio::spawn(async move { api.add_to_portfolio(&pid, &fid).await })
+                    .await
+                    .map(|r| r.map(|_| ()))
+            };
+            this.update(cx, |state, cx| {
+                state.portfolio_membership_in_flight.remove(&portfolio_id);
+                match result {
+                    Ok(Ok(())) => {
+                        // Success — optimistic state is already correct.
+                    }
+                    other => {
+                        // Roll back.
+                        if was_member {
+                            state.current_portfolio_ids.insert(portfolio_id.clone());
+                        } else {
+                            state.current_portfolio_ids.remove(&portfolio_id);
+                        }
+                        let err = match other {
+                            Ok(Err(e)) => e.to_string(),
+                            Err(e) => format!("task join error: {}", e),
+                            _ => "unknown error".to_string(),
+                        };
+                        log::warn!("[portfolio-toggle] failed: {}", err);
+                        state.messages.push(AssistantMessage {
+                            node: "portfolio".into(),
+                            kind: MessageKind::Warning,
+                            text: format!("Portfolio update failed: {}", err),
+                        });
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Also kicks off a parallel invite-list fetch so the operator sees
     /// outbound pending invitations alongside materialised shares.
     pub fn load_shares(&mut self, cx: &mut Context<Self>) {
@@ -8046,6 +8179,12 @@ impl CockpitState {
                         });
                         // Load any existing schedules now that we have a forecast_id
                         state.load_schedules(cx);
+                        // Signal the parent FermiConsole to refresh its
+                        // active/resolved/draft forecast lists so the newly
+                        // published forecast appears on the Dashboard
+                        // immediately (instead of after the 30s background
+                        // refresh cycle).
+                        state.pending_forecasts_refresh = true;
                         // Apply any share targets collected in the commit sheet
                         // now that the forecast row (and its id) exists.
                         if !state.pending_publish_shares.is_empty() {
@@ -8575,6 +8714,11 @@ fn render_question_section(
         // (no PM link yet) and there are suggestions or a search is
         // in flight. Collapses silently otherwise.
         .child(render_pm_typeahead_strip(state, cx))
+        // Portfolio membership chips — inline organiser so the
+        // operator can slot the current forecast into one or more
+        // portfolios without leaving the composer. Only meaningful
+        // after publish (needs a forecast_id to attach memberships to).
+        .child(render_portfolio_membership_strip(state, cx))
         .child(
             // Header row: probability + inside-view explainer + confidence
             // + (researching badge) + (publish status). flex_wrap() lets a
@@ -13420,6 +13564,109 @@ fn render_histogram(bins: &[u32]) -> impl IntoElement {
 ///     alternates once committed.
 ///   * Hidden when the operator dismissed the strip this session.
 ///   * Hidden when there's nothing to show and no search in flight.
+/// Inline portfolio membership chip strip. Rendered in the composer's
+/// question section so the operator can organise a forecast without
+/// context-switching to the Portfolio panel.
+///
+/// Layout: a compact row of pills. Each pill is a portfolio the
+/// operator owns; the pill is filled/cyan when the current forecast
+/// is a member, outlined/dim when it isn't. Click toggles membership
+/// via `toggle_portfolio_membership`.
+///
+/// Gates:
+///   * Silent when the operator hasn't published yet (no forecast_id
+///     to attach memberships to). Shows a tiny hint instead.
+///   * Silent when the operator has zero portfolios.
+fn render_portfolio_membership_strip(
+    state: &CockpitState,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    if state.cockpit_portfolios.is_empty() {
+        return div().into_any_element();
+    }
+    // Draft state: surface a hint so the operator understands why the
+    // chip row isn't interactive yet, but still shows their portfolios
+    // as context.
+    let is_draft = state.forecast_id.is_none();
+
+    let mut row = div()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .gap(px(4.0))
+        .px(px(8.0))
+        .py(px(4.0))
+        .rounded(px(6.0))
+        .bg(rgb(theme::BG))
+        .border_1()
+        .border_color(rgb(theme::FG_FAINT))
+        .child(
+            div()
+                .text_size(px(9.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child("IN PORTFOLIOS:"),
+        );
+
+    for (pid, title) in &state.cockpit_portfolios {
+        let is_member = state.current_portfolio_ids.contains(pid);
+        let in_flight = state.portfolio_membership_in_flight.contains(pid);
+        let pid_click = pid.clone();
+        let border_color = if is_member {
+            theme::CYAN
+        } else {
+            theme::FG_FAINT
+        };
+        let text_color = if is_member {
+            theme::CYAN
+        } else {
+            theme::FG_DIM
+        };
+        let label = if is_member {
+            format!("✓ {}", title)
+        } else if in_flight {
+            format!("… {}", title)
+        } else {
+            format!("+ {}", title)
+        };
+        let mut chip = div()
+            .id(SharedString::from(format!("pf-chip-{}", pid)))
+            .px(px(8.0))
+            .py(px(2.0))
+            .rounded(px(10.0))
+            .border_1()
+            .border_color(rgb(border_color))
+            .bg(if is_member {
+                rgb(theme::BG_ACTIVE)
+            } else {
+                rgb(theme::BG_ELEVATED)
+            })
+            .text_size(px(10.0))
+            .text_color(rgb(text_color))
+            .child(label);
+        if !is_draft && !in_flight {
+            chip = chip
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                .on_click(cx.listener(move |state, _, _, cx| {
+                    state.toggle_portfolio_membership(pid_click.clone(), cx);
+                }));
+        }
+        row = row.child(chip);
+    }
+
+    if is_draft {
+        row = row.child(
+            div()
+                .text_size(px(9.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .child("• publish (Ctrl+P) to enable"),
+        );
+    }
+
+    row.into_any_element()
+}
+
 fn render_pm_typeahead_strip(
     state: &CockpitState,
     cx: &mut Context<CockpitState>,
@@ -14272,6 +14519,201 @@ fn render_forecast_invites_section(
     container
 }
 
+/// Render the empty-state list of AST agents that are assigned to
+/// drivers but have no persisted schedule (Schedule::Once semantics).
+/// Each row shows the assignment and offers Daily / Weekly / Run Now
+/// buttons that upgrade the schedule via update_schedule_for_assigned_agent.
+///
+/// This is the answer to "I assigned an agent, why doesn't the
+/// Schedules tab show it?" — the tab used to only enumerate
+/// FPL-declared `Schedule::Every` blocks, which meant ambient
+/// assignments (the normal path for fresh forecasts) never appeared.
+fn render_on_demand_agents_list(
+    _state: &CockpitState,
+    on_demand: &[(String, String, String)],
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let n = on_demand.len();
+    let header = div()
+        .px(px(14.0))
+        .py(px(10.0))
+        .border_b_1()
+        .border_color(rgb(theme::FG_FAINT))
+        .flex()
+        .items_center()
+        .gap(px(10.0))
+        .child(
+            div()
+                .flex_grow()
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(rgb(theme::FG))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(format!(
+                            "{} on-demand agent assignment{}",
+                            n,
+                            if n == 1 { "" } else { "s" }
+                        )),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .child(
+                            "These agents are hired to drivers but only fire when you \
+                             click Run. Upgrade to Daily or Weekly to make them recur.",
+                        ),
+                ),
+        );
+
+    let rows: Vec<AnyElement> = on_demand
+        .iter()
+        .map(|(agent_name, driver_name, _query)| {
+            let a_daily = agent_name.clone();
+            let d_daily = driver_name.clone();
+            let a_weekly = agent_name.clone();
+            let d_weekly = driver_name.clone();
+            let a_now = agent_name.clone();
+            let d_now = driver_name.clone();
+
+            div()
+                .px(px(14.0))
+                .py(px(8.0))
+                .border_b_1()
+                .border_color(rgb(theme::FG_FAINT))
+                .flex()
+                .items_center()
+                .gap(px(10.0))
+                .child(
+                    div().flex_grow().flex().flex_col().gap(px(2.0)).child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(theme::CYAN))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(agent_name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(rgb(theme::FG_DIM))
+                                    .child(format!("→ {}", driver_name)),
+                            )
+                            .child(
+                                div()
+                                    .px(px(5.0))
+                                    .py(px(1.0))
+                                    .rounded(px(3.0))
+                                    .bg(rgb(theme::BG_HOVER))
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(theme::FG_DIM))
+                                    .child("on-demand"),
+                            ),
+                    ),
+                )
+                .child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "od-run-{}-{}",
+                            sanitize_name(agent_name),
+                            sanitize_name(driver_name)
+                        )))
+                        .px(px(8.0))
+                        .py(px(3.0))
+                        .rounded(px(4.0))
+                        .border_1()
+                        .border_color(rgb(theme::FG_FAINT))
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .cursor_pointer()
+                        .hover(|s| {
+                            s.bg(rgb(theme::BG_HOVER))
+                                .text_color(rgb(theme::CYAN))
+                                .border_color(rgb(theme::CYAN))
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.update_schedule_for_assigned_agent(
+                                &d_now,
+                                &a_now,
+                                Schedule::Once,
+                                cx,
+                            );
+                        }))
+                        .child("▶ Run now"),
+                )
+                .child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "od-daily-{}-{}",
+                            sanitize_name(agent_name),
+                            sanitize_name(driver_name)
+                        )))
+                        .px(px(8.0))
+                        .py(px(3.0))
+                        .rounded(px(4.0))
+                        .border_1()
+                        .border_color(rgb(theme::GOLD))
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::GOLD))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.update_schedule_for_assigned_agent(
+                                &d_daily,
+                                &a_daily,
+                                Schedule::Every {
+                                    interval: 1,
+                                    unit: fermi::ast::TimeUnit::Day,
+                                },
+                                cx,
+                            );
+                        }))
+                        .child("📅 Daily"),
+                )
+                .child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "od-weekly-{}-{}",
+                            sanitize_name(agent_name),
+                            sanitize_name(driver_name)
+                        )))
+                        .px(px(8.0))
+                        .py(px(3.0))
+                        .rounded(px(4.0))
+                        .border_1()
+                        .border_color(rgb(theme::GOLD))
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::GOLD))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.update_schedule_for_assigned_agent(
+                                &d_weekly,
+                                &a_weekly,
+                                Schedule::Every {
+                                    interval: 1,
+                                    unit: fermi::ast::TimeUnit::Week,
+                                },
+                                cx,
+                            );
+                        }))
+                        .child("📅 Weekly"),
+                )
+                .into_any_element()
+        })
+        .collect();
+
+    div().flex().flex_col().child(header).children(rows)
+}
+
 fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl IntoElement {
     let has_forecast_id = state.forecast_id.is_some();
     let schedules = state.schedules.clone();
@@ -14297,16 +14739,37 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
         // 48 workspaces costs serious clicks.
         let drafts = state.fpl_declared_schedule_drafts();
         if drafts.is_empty() {
-            div()
-                .p(px(20.0))
-                .text_size(px(11.0))
-                .text_color(rgb(theme::FG_DIM))
-                .child(
-                    "No scheduled agents yet.\n\n\
-                     Click a driver in the program tree, then 📅 Daily or 📅 Weekly to schedule \
-                     recurring research. Overdue schedules auto-fire when this forecast is reopened.",
-                )
-                .into_any_element()
+            // No FPL-declared recurring drafts. Enumerate the AST's
+            // on-demand (`Schedule::Once`) assignments so the operator
+            // sees the agents they've hired via +Assign Agent and can
+            // upgrade them to Daily/Weekly right here.
+            let on_demand: Vec<(String, String, String)> = state
+                .program
+                .agents()
+                .iter()
+                .filter(|a| matches!(a.schedule.as_ref(), Some(Schedule::Once) | None))
+                .flat_map(|a| {
+                    a.driver_refs
+                        .iter()
+                        .map(|d| (a.name.clone(), d.clone(), a.query.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            if on_demand.is_empty() {
+                div()
+                    .p(px(20.0))
+                    .text_size(px(11.0))
+                    .text_color(rgb(theme::FG_DIM))
+                    .child(
+                        "No scheduled agents yet.\n\n\
+                         Assign an agent to a driver from the marketplace or the driver \
+                         editor. Once agents are assigned, use 📅 Daily or 📅 Weekly here to \
+                         make them recur. Overdue schedules auto-fire when this forecast is reopened.",
+                    )
+                    .into_any_element()
+            } else {
+                render_on_demand_agents_list(state, &on_demand, cx).into_any_element()
+            }
         } else {
             let n = drafts.len();
             let header = div()
