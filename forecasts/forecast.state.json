@@ -1,0 +1,38 @@
+{
+  "forecast_id": null,
+  "current_version": 1,
+  "predicted_probability": 0.095,
+  "inside_view_explanation": "",
+  "forecast_confidence": 0.5,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-07-22 16:28",
+      "probability": 0.095,
+      "change_summary": "Initial: 9.5%, 0 drivers, 0 evidence"
+    }
+  ],
+  "sim_results": null,
+  "base_rate": null,
+  "evidence": [],
+  "agents": [],
+  "driver_confidence": {},
+  "polymarket": {
+    "event_id": "659518",
+    "market_id": "2771329",
+    "question": "Will Chelsea win the 2026-27 English Premier League (EPL) Championship?",
+    "market_price": 0.095,
+    "volume_24h": 7150.75,
+    "liquidity": 203143.4511,
+    "confidence": "Low",
+    "price_change_1w": 0.02,
+    "url": "https://polymarket.com/event/659518",
+    "price_history": [
+      {
+        "t": 1784737695,
+        "p": 0.095
+      }
+    ]
+  },
+  "workspace_id": null
+}
