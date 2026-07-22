@@ -14,7 +14,7 @@ use api::client::{
     ApiClient, ApiConfig, CalibrationData, CreatePortfolioRequest, CreateTeamRequest, Forecast,
     ForecastQuery, Invite, InviteRequest, LeaderboardEntry, LeaderboardQuery, MyStats,
     PatchPortfolioRequest, Portfolio, PortfolioForecast, PortfolioStats, ShareEntry, ShareRequest,
-    Team, TeamDetail,
+    Team, TeamDetail, Wallet,
 };
 use cockpit::CockpitState;
 use composer::ComposerState;
@@ -355,6 +355,41 @@ struct InviteShareModal {
     email_sent: bool,
 }
 
+/// Modal state for the three-tier agent hire flow (Sprint C polish).
+///
+/// Semantics: an agent is hired *into a forecast* and *bound to a driver*.
+/// The operator picks the forecast first (contract locus), then the
+/// driver within that forecast (research target), then reviews the
+/// terms placeholder and confirms.
+///
+/// The confirmation step is currently a placeholder that surfaces a
+/// hint into the cockpit and navigates the operator to the Composer
+/// with the target forecast open. Full "click Confirm → driver-agent
+/// binding is created and the agent fires" wiring is a follow-up
+/// that touches `assign_agent_to_driver` on the cockpit and needs a
+/// server-side per-forecast agent binding endpoint.
+#[derive(Clone)]
+struct HireModalState {
+    /// The agent being hired — identifier and human display name.
+    agent_id: String,
+    agent_display: String,
+    /// Current step: 1 = pick forecast, 2 = pick driver, 3 = review terms.
+    /// Advances on selection; back button decrements.
+    step: u8,
+    /// Selected forecast id (populated after step 1).
+    forecast_id: Option<String>,
+    /// Human display of the selected forecast (question text truncated).
+    forecast_label: Option<String>,
+    /// Selected driver name (populated after step 2). None allowed —
+    /// operator may hire an agent as an ambient research agent bound
+    /// to no specific driver (e.g. macro-context agents that populate
+    /// factors).
+    driver_name: Option<String>,
+    /// Free-text notes on the hire (contract addendum). Empty = default
+    /// terms accepted verbatim.
+    notes: Entity<TextInput>,
+}
+
 #[derive(Clone)]
 struct WorkspaceForecast {
     workspace_id: String,
@@ -428,9 +463,18 @@ struct FermiConsole {
     /// | "rising" | "fresh". Backs the Agent Fleet's tier chips.
     /// Sprint C.
     agent_marketplace_tier: String,
-    /// Marketplace sort mode. "score" (default) | "cost" | "executions"
-    /// | "success" | "contribution". Sprint C.
+    /// Marketplace sort mode. "score" (default) | "cost_asc" |
+    /// "cost_desc" | "executions" | "success" | "contribution".
+    /// Sprint C.
     agent_marketplace_sort: String,
+    /// Agent IDs whose marketplace card is expanded to show rich
+    /// detail (accepts / produces / sample queries / model config /
+    /// MCP tools). Collapsed by default so the list stays scannable.
+    agent_marketplace_expanded: std::collections::HashSet<String>,
+    /// Hire modal state — pops when the operator clicks Hire on a
+    /// marketplace card. Three-tier flow: pick forecast, pick driver,
+    /// review terms, confirm.
+    hire_modal: Option<HireModalState>,
 
     // Leaderboard data (from /api/leaderboard)
     leaderboard: Vec<LeaderboardEntry>,
@@ -645,6 +689,18 @@ struct FermiConsole {
     // (message, icon, color)
     toast: Option<(String, &'static str, u32)>,
 
+    // ── Wallet state ─────────────────────────────────────────────────────
+    //
+    // Cached wallet snapshot from `/api/wallet`. Fetched on connect
+    // and again by the background refresh loop. `None` = not fetched
+    // yet; renders as "…" in the sidebar chip.
+    wallet: Option<Wallet>,
+    /// True while the operator has never dismissed the first-run
+    /// welcome modal AND the wallet appears to be a fresh onboarding
+    /// (balance <= granted_balance and no spend yet). Cleared once
+    /// the user hits Continue.
+    welcome_modal_showing: bool,
+
     // ── Self-update state ─────────────────────────────────────────
     //
     // Populated by a background check fired at startup + every time
@@ -761,6 +817,8 @@ impl FermiConsole {
             agent_search: String::new(),
             agent_marketplace_tier: "all".into(),
             agent_marketplace_sort: "score".into(),
+            agent_marketplace_expanded: std::collections::HashSet::new(),
+            hire_modal: None,
             leaderboard: Vec::new(),
             leaderboard_loading: false,
             local_forecasts: Vec::new(),
@@ -857,6 +915,8 @@ impl FermiConsole {
             inbox_sheet_showing: false,
             inbox_action_in_flight: std::collections::HashSet::new(),
             toast: None,
+            wallet: None,
+            welcome_modal_showing: false,
             available_update: None,
             update_check_in_flight: false,
             update_modal_showing: false,
@@ -936,7 +996,13 @@ impl FermiConsole {
             // the ABW settings page and paste it into the manual token field.
             let base_url = api.base_url().await;
             let callback_url = format!("http://127.0.0.1:{}/callback", port);
-            let auth_url = format!("{}/auth/{}?redirect={}", base_url, provider, callback_url);
+            // `app=fermi_console` tags this signup on the ABW side so
+            // admins can see the Fermi Console cohort in isolation.
+            // Applies to NEW signups only — ignored for existing users.
+            let auth_url = format!(
+                "{}/auth/{}?redirect={}&app=fermi_console",
+                base_url, provider, callback_url
+            );
             log::info!("[oauth] Opening browser: {}", auth_url);
             let _ = open::that(&auth_url);
 
@@ -1346,6 +1412,38 @@ impl FermiConsole {
         self.fetch_all_relationships(cx);
         // Collaboration inbox — pending forecast/portfolio/team invites.
         self.fetch_my_invites(cx);
+        // Wallet snapshot for the sidebar chip + welcome modal.
+        self.fetch_wallet(cx);
+    }
+
+    /// Pull the current wallet snapshot. First fetch after sign-in
+    /// also decides whether to pop the welcome modal: if the balance
+    /// matches the granted amount and nothing has been spent, we treat
+    /// this as a brand-new account and celebrate. Idempotent — the
+    /// welcome modal only shows once per process because we clear the
+    /// dismissed flag but never re-arm it.
+    fn fetch_wallet(&mut self, cx: &mut Context<Self>) {
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| match api.get_wallet().await {
+            Ok(wallet) => {
+                this.update(cx, |this, cx| {
+                    let is_fresh = this.wallet.is_none()
+                        && wallet.total_spent == 0
+                        && wallet.granted_balance > 0
+                        && wallet.purchased_balance == 0;
+                    this.wallet = Some(wallet);
+                    if is_fresh {
+                        this.welcome_modal_showing = true;
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+            Err(e) => {
+                log::warn!("[wallet] fetch failed: {}", e);
+            }
+        })
+        .detach();
     }
 
     /// Kick off a background poll that keeps the dashboard live without
@@ -4205,6 +4303,36 @@ impl FermiConsole {
                             // between the cargo manifest and the footer label.
                             .child(format!("v{} — BayesOps", env!("CARGO_PKG_VERSION"))),
                     )
+                    // Wallet chip — keeps the current credit balance
+                    // visible so testers know they can still run
+                    // agents. Rendered only when authenticated because
+                    // the balance is only meaningful post-signin.
+                    .when(self.connected, |el| {
+                        let (label, color) = match &self.wallet {
+                            Some(w) if w.balance <= 0 => {
+                                ("0 credits — out".to_string(), theme::red())
+                            }
+                            Some(w) if w.balance < 10 => {
+                                (format!("{} credits — low", w.balance), theme::gold())
+                            }
+                            Some(w) => (format!("{} credits", w.balance), theme::green()),
+                            None => ("… credits".to_string(), theme::fg_dim()),
+                        };
+                        el.child(
+                            div()
+                                .id("sidebar-wallet-chip")
+                                .mt(px(6.0))
+                                .px(px(8.0))
+                                .py(px(4.0))
+                                .rounded(px(4.0))
+                                .bg(theme::bg_hover())
+                                .border_1()
+                                .border_color(theme::fg_faint())
+                                .text_size(px(10.0))
+                                .text_color(color)
+                                .child(label),
+                        )
+                    })
                     // ⬆ Update-available badge (Sprint distribution).
                     // Only rendered when the background check has
                     // returned a strictly-newer release. Clicking
@@ -4405,8 +4533,9 @@ impl FermiConsole {
                             .into_any_element()
                     }),
             )
-            // ── Sign-in card (when not connected) ─────────────────
-            .when(!self.connected, |el| el.child(self.render_sign_in_card(cx)))
+            // (Sign-in card removed — the auth gate splash shown by
+            // Render for FermiConsole handles the unauthenticated case
+            // for the entire window, not just this panel.)
             .child(
                 // Stats cards row
                 div()
@@ -4557,6 +4686,85 @@ impl FermiConsole {
                     .text_size(px(11.0))
                     .text_color(theme::fg_dim())
                     .child(item.time.clone()),
+            )
+    }
+
+    // ── Auth gate (splash) ────────────────────────────────────────────
+    //
+    // Full-window sign-in / sign-up splash rendered whenever the user
+    // is not authenticated. Blocks every other panel until they
+    // complete OAuth — no ad-hoc empty states scattered across each
+    // panel, no accidental use of endpoints that need a session.
+    //
+    // "Log in" and "Sign up" both call the same `start_oauth_flow`
+    // because Google/GitHub OAuth doesn't distinguish the two; the
+    // server auto-creates the user + wallet + onboarding grant on
+    // first callback. We render them as separate buttons anyway
+    // because that's the mental model non-technical testers expect,
+    // and the copy under "Sign up" tells them what they'll get.
+    fn render_auth_gate(&self, cx: &Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .size_full()
+            .bg(theme::bg())
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(28.0))
+                    .w(px(520.0))
+                    .child(
+                        // Wordmark + tagline block.
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .gap(px(10.0))
+                            .child(
+                                div()
+                                    .text_size(px(32.0))
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(theme::cyan())
+                                    .child("Fermi Console"),
+                            )
+                            .child(div().text_size(px(13.0)).text_color(theme::fg_dim()).child(
+                                "Probabilistic forecasting workspace \
+                                         with AI research agents.",
+                            ))
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(theme::fg_faint())
+                                    .child(format!("v{}  •  BETA", env!("CARGO_PKG_VERSION"))),
+                            ),
+                    )
+                    .child(self.render_sign_in_card(cx))
+                    .child(
+                        // Footer copy explaining what happens on sign-up.
+                        // Keep it short: three bullets, no marketing.
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.0))
+                            .items_center()
+                            .text_size(px(11.0))
+                            .text_color(theme::fg_dim())
+                            .child("New here? Signing in creates your account.")
+                            .child("Every new account gets 100 free credits to start.")
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(theme::fg_faint())
+                                    .child(
+                                        "Accounts are hosted by Agent Bestiary World, \
+                                         the shared backend that powers Fermi Console.",
+                                    ),
+                            ),
+                    ),
             )
     }
 
@@ -8710,7 +8918,8 @@ impl FermiConsole {
         let sort_defs: &[(&str, &str)] = &[
             ("score", "Ranked"),
             ("contribution", "Best contribution"),
-            ("cost", "Cheapest"),
+            ("cost_asc", "Cost low→high"),
+            ("cost_desc", "Cost high→low"),
             ("success", "Most reliable"),
             ("executions", "Most used"),
         ];
@@ -8756,6 +8965,14 @@ impl FermiConsole {
             );
         }
 
+        // Snapshot before the list moves out of `entries` — used
+        // for the "no usage data yet, listed alphabetically" hint
+        // that fires when NOTHING in the visible set has been run.
+        // Alphabetical fallback happens implicitly (sort_marketplace's
+        // secondary key), so this is a diagnostic, not a config knob.
+        let no_data_at_all = entries.iter().all(|e| !e.has_data);
+        let visible_count = entries.len();
+
         // Card list.
         let cards = div().flex().flex_col().gap(px(8.0)).children(
             entries
@@ -8791,6 +9008,33 @@ impl FermiConsole {
             )
             .child(tier_row)
             .child(sort_row)
+            .when(no_data_at_all && visible_count > 0, |el| {
+                el.child(
+                    div()
+                        .px(px(10.0))
+                        .py(px(6.0))
+                        .rounded(px(4.0))
+                        .bg(theme::bg())
+                        .border_1()
+                        .border_color(theme::fg_faint())
+                        .text_size(px(10.0))
+                        .text_color(theme::fg_dim())
+                        .child(
+                            "No usage data yet on these agents — listed alphabetically. \
+                             Sorting activates once agents have runs, cost, or success data.",
+                        ),
+                )
+            })
+            .when(visible_count == 0, |el| {
+                el.child(
+                    div()
+                        .px(px(10.0))
+                        .py(px(10.0))
+                        .text_size(px(11.0))
+                        .text_color(theme::fg_faint())
+                        .child("No agents match the current filter."),
+                )
+            })
             .child(cards)
     }
 
@@ -8800,33 +9044,46 @@ impl FermiConsole {
         e: &AgentMarketplaceEntry,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        // Cost tag.
-        let cost_str = e
-            .avg_cost_per_run
-            .map(|c| format!("${:.3}/run", c))
-            .unwrap_or_else(|| "cost n/a".into());
-        let cost_color = match e.avg_cost_per_run {
-            Some(c) if c <= 0.05 => theme::GREEN,
-            Some(c) if c <= 0.15 => theme::CYAN,
-            Some(c) if c <= 0.30 => theme::GOLD,
-            Some(_) => theme::ORANGE,
-            None => theme::FG_DIM,
-        };
-        let success_str = if e.total_executions == 0 {
-            "— no runs".to_string()
+        let is_expanded = self.agent_marketplace_expanded.contains(&e.agent_id);
+
+        // Cost cell — hide entirely when no data. "cost n/a" was
+        // confusing when every agent showed it; better to omit and let
+        // the eye go straight to real signals.
+        let cost_cell: Option<(String, u32)> = e.avg_cost_per_run.map(|c| {
+            let color = if c <= 0.05 {
+                theme::GREEN
+            } else if c <= 0.15 {
+                theme::CYAN
+            } else if c <= 0.30 {
+                theme::GOLD
+            } else {
+                theme::ORANGE
+            };
+            (format!("${:.3}/run", c), color)
+        });
+
+        // Success cell — hide when there are no runs (was reading as
+        // "— no runs" for every agent in a fresh install).
+        let success_cell: Option<(String, u32)> = if e.total_executions > 0 {
+            let color = if e.success_rate >= 0.9 {
+                theme::GREEN
+            } else if e.success_rate >= 0.75 {
+                theme::CYAN
+            } else {
+                theme::GOLD
+            };
+            Some((format!("{:.0}% success", e.success_rate * 100.0), color))
         } else {
-            format!("{:.0}% success", e.success_rate * 100.0)
+            None
         };
-        let success_color = if e.success_rate >= 0.9 {
-            theme::GREEN
-        } else if e.success_rate >= 0.75 {
-            theme::CYAN
-        } else if e.total_executions > 0 {
-            theme::GOLD
+
+        // Usage cell — skip when zero.
+        let usage_cell: Option<String> = if e.total_executions > 0 {
+            Some(format!("{} runs", e.total_executions))
         } else {
-            theme::FG_DIM
+            None
         };
-        let usage_str = format!("{} runs", e.total_executions);
+
         let contribution_str = e
             .avg_confidence_this_session
             .map(|c| format!("session confidence {:.0}%", c * 100.0));
@@ -8850,18 +9107,29 @@ impl FermiConsole {
         };
 
         let agent_id_for_hire = e.agent_id.clone();
-        let hire_label = if e.already_used {
-            "Assigned this session"
+        let agent_display_for_hire = e.display_name.clone();
+        let agent_id_for_toggle = e.agent_id.clone();
+
+        // Score chip: only render when there's usage data to score
+        // against. Otherwise show a subtle "unrated" pill so the
+        // operator can tell "we don't know yet" from "we know and it's
+        // bad".
+        let score_chip: AnyElement = if e.has_data {
+            div()
+                .text_size(px(10.0))
+                .text_color(theme::gold())
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(format!("score {:.0}", e.score))
+                .into_any_element()
         } else {
-            "Assign to a driver…"
-        };
-        let hire_color = if e.already_used {
-            theme::FG_DIM
-        } else {
-            theme::CYAN
+            div()
+                .text_size(px(9.0))
+                .text_color(theme::fg_faint())
+                .child("unrated")
+                .into_any_element()
         };
 
-        div()
+        let compact = div()
             .flex()
             .flex_col()
             .gap(px(6.0))
@@ -8871,12 +9139,38 @@ impl FermiConsole {
             .border_1()
             .border_color(theme::fg_faint())
             .bg(theme::bg_elevated())
-            // Header row: rank + name + tier + score
+            // Header row: chevron + rank + name + tier + score
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap(px(10.0))
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("mkt-chev-{}", e.agent_id)))
+                            .w(px(14.0))
+                            .text_size(px(11.0))
+                            .text_color(if is_expanded {
+                                theme::cyan()
+                            } else {
+                                theme::fg_dim()
+                            })
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(theme::cyan()))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if this
+                                    .agent_marketplace_expanded
+                                    .contains(&agent_id_for_toggle)
+                                {
+                                    this.agent_marketplace_expanded.remove(&agent_id_for_toggle);
+                                } else {
+                                    this.agent_marketplace_expanded
+                                        .insert(agent_id_for_toggle.clone());
+                                }
+                                cx.notify();
+                            }))
+                            .child(if is_expanded { "▾" } else { "▸" }),
+                    )
                     .child(
                         div()
                             .w(px(28.0))
@@ -8904,13 +9198,7 @@ impl FermiConsole {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(e.tier.to_uppercase()),
                     )
-                    .child(
-                        div()
-                            .text_size(px(10.0))
-                            .text_color(theme::gold())
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(format!("score {:.0}", e.score)),
-                    ),
+                    .child(score_chip),
             )
             // Description
             .child(
@@ -8919,41 +9207,35 @@ impl FermiConsole {
                     .text_color(theme::fg_dim())
                     .child(truncate(&e.description, 140)),
             )
-            // Stats row
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .flex_wrap()
-                    .gap(px(10.0))
-                    .child(
+            // Stats row — hidden entirely when the agent has no data,
+            // and each cell is Option so the row doesn't leave gaps.
+            .when(e.has_data, |el| {
+                let mut row = div().flex().items_center().flex_wrap().gap(px(10.0));
+                if let Some((str_, color)) = cost_cell.clone() {
+                    row = row.child(
                         div()
                             .text_size(px(10.0))
-                            .text_color(rgb(cost_color))
+                            .text_color(rgb(color))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(cost_str),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(10.0))
-                            .text_color(rgb(success_color))
-                            .child(success_str),
-                    )
-                    .child(
+                            .child(str_),
+                    );
+                }
+                if let Some((str_, color)) = success_cell.clone() {
+                    row = row.child(div().text_size(px(10.0)).text_color(rgb(color)).child(str_));
+                }
+                if let Some(u) = usage_cell.clone() {
+                    row = row.child(
                         div()
                             .text_size(px(10.0))
                             .text_color(theme::fg_dim())
-                            .child(usage_str),
-                    )
-                    .when(contribution_str.is_some(), |el| {
-                        el.child(
-                            div()
-                                .text_size(px(10.0))
-                                .text_color(theme::cyan())
-                                .child(contribution_str.clone().unwrap_or_default()),
-                        )
-                    }),
-            )
+                            .child(u),
+                    );
+                }
+                if let Some(c) = contribution_str.clone() {
+                    row = row.child(div().text_size(px(10.0)).text_color(theme::cyan()).child(c));
+                }
+                el.child(row)
+            })
             // Tags + hire button.
             .child(
                 div()
@@ -8969,45 +9251,260 @@ impl FermiConsole {
                             .py(px(4.0))
                             .rounded(px(6.0))
                             .border_1()
-                            .border_color(rgb(hire_color))
+                            .border_color(rgb(theme::CYAN))
+                            .bg(rgb(theme::CYAN))
                             .text_size(px(10.0))
-                            .text_color(rgb(hire_color))
+                            .text_color(rgb(theme::BG))
                             .font_weight(FontWeight::SEMIBOLD)
                             .cursor_pointer()
-                            .hover(|s| s.bg(theme::bg_hover()))
+                            .hover(|s| s.opacity(0.85))
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.hire_agent_from_marketplace(agent_id_for_hire.clone(), cx);
+                                this.open_hire_modal(
+                                    agent_id_for_hire.clone(),
+                                    agent_display_for_hire.clone(),
+                                    cx,
+                                );
                             }))
-                            .child(hire_label),
+                            .child("Hire"),
                     ),
+            );
+
+        // Drill-down panel — accepts/produces, model, sample queries,
+        // MCP tools, and the ABW agent page link.
+        let drill: Option<AnyElement> = if is_expanded {
+            Some(self.render_marketplace_card_drill(e, cx).into_any_element())
+        } else {
+            None
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .child(compact)
+            .when_some(drill, |el, d| el.child(d))
+    }
+
+    /// Expanded rich-detail panel for a marketplace card. Reads from
+    /// the AgentCard fields that ABW already exposes: accepts/produces
+    /// contract, sample queries, MCP tools, skills, model + temperature,
+    /// author + version, and secrets requirement.
+    fn render_marketplace_card_drill(
+        &self,
+        e: &AgentMarketplaceEntry,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        // Row helper — label + value pair.
+        let row = |label: &'static str, value: String| {
+            div()
+                .flex()
+                .items_start()
+                .gap(px(8.0))
+                .py(px(2.0))
+                .child(
+                    div()
+                        .w(px(88.0))
+                        .text_size(px(9.0))
+                        .text_color(theme::fg_faint())
+                        .child(label),
+                )
+                .child(
+                    div()
+                        .flex_grow()
+                        .text_size(px(10.0))
+                        .text_color(theme::fg())
+                        .child(value),
+                )
+        };
+
+        // Contract row: accepts → produces. Shows the agent's IO
+        // contract as a data-flow arrow. If either side is empty, we
+        // dash it so the shape stays legible.
+        let accepts_str = if e.accepts.is_empty() {
+            "—".to_string()
+        } else {
+            e.accepts.join(", ")
+        };
+        let produces_str = if e.produces.is_empty() {
+            "—".to_string()
+        } else {
+            e.produces.join(", ")
+        };
+        let contract = row("CONTRACT", format!("{}  →  {}", accepts_str, produces_str));
+
+        // Model + temperature.
+        let model_row = row("MODEL", format!("{} · temp {:.2}", e.model, e.temperature));
+
+        // Version + author.
+        let version_row = row("VERSION", format!("v{} · {}", e.version, e.author));
+
+        // Sample queries (up to 3, each truncated).
+        let sample_queries_section = if e.sample_queries.is_empty() {
+            None
+        } else {
+            let mut container = div().flex().flex_col().gap(px(2.0));
+            for q in e.sample_queries.iter().take(3) {
+                container = container.child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(theme::fg_dim())
+                        .child(format!("• {}", truncate(q, 120))),
+                );
+            }
+            Some(container)
+        };
+
+        // MCP tools + skills as pill rows.
+        let make_pill_row = |title: &'static str, items: &[String]| -> Option<AnyElement> {
+            if items.is_empty() {
+                return None;
+            }
+            let mut container = div().flex().flex_wrap().items_center().gap(px(4.0)).child(
+                div()
+                    .w(px(88.0))
+                    .text_size(px(9.0))
+                    .text_color(theme::fg_faint())
+                    .child(title),
+            );
+            for item in items {
+                container = container.child(
+                    div()
+                        .px(px(5.0))
+                        .py(px(1.0))
+                        .rounded(px(3.0))
+                        .bg(theme::bg_hover())
+                        .text_size(px(9.0))
+                        .text_color(theme::fg_dim())
+                        .child(item.clone()),
+                );
+            }
+            Some(container.into_any_element())
+        };
+        let tools_row = make_pill_row("TOOLS", &e.mcp_tools);
+        let skills_row = make_pill_row("SKILLS", &e.skills);
+
+        // ABW agent page (open in browser) + secrets warning.
+        let base_url = self.api.base_url_sync();
+        let agent_url = format!("{}/agents/{}", base_url.trim_end_matches('/'), e.agent_id);
+        let agent_url_for_open = agent_url.clone();
+
+        div()
+            .px(px(38.0)) // indent past chevron + rank
+            .py(px(8.0))
+            .bg(theme::bg_active())
+            .border_l_2()
+            .border_color(rgb(theme::CYAN))
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(contract)
+            .child(model_row)
+            .child(version_row)
+            .when(sample_queries_section.is_some(), |el| {
+                el.child(row("SAMPLE", String::new()).child(sample_queries_section.unwrap()))
+            })
+            .when(tools_row.is_some(), |el| el.child(tools_row.unwrap()))
+            .when(skills_row.is_some(), |el| el.child(skills_row.unwrap()))
+            .when(e.needs_secrets, |el| {
+                el.child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(theme::gold())
+                        .child("⚠ Requires secrets — configure in ABW before first run."),
+                )
+            })
+            .child(
+                div().flex().items_center().gap(px(8.0)).mt(px(4.0)).child(
+                    div()
+                        .id(SharedString::from(format!("mkt-abw-{}", e.agent_id)))
+                        .text_size(px(10.0))
+                        .text_color(theme::purple())
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(theme::cyan()))
+                        .on_click(cx.listener(move |_this, _, _, _cx| {
+                            let _ = open::that(&agent_url_for_open);
+                        }))
+                        .child("Open in ABW ↗"),
+                ),
             )
     }
 
-    /// Handle a marketplace "Hire" click. If a cockpit forecast is open,
-    /// route to the Composer with a hint pushed to the cockpit's
-    /// pending_toasts so the operator sees a next-step prompt. If no
-    /// forecast is open, navigate to the Composer so they can start
-    /// one and then wire the agent.
-    fn hire_agent_from_marketplace(&mut self, agent_id: String, cx: &mut Context<Self>) {
-        // If cockpit exists, drop a hint. The proper flow ("pick a
-        // driver to assign this agent to") would be a modal; for v1
-        // we surface a message and switch panels.
-        if let Some(ref cockpit) = self.cockpit {
-            let cockpit = cockpit.clone();
-            let agent_id_msg = agent_id.clone();
-            cockpit.update(cx, |state, cx| {
-                state.pending_toasts.push(format!(
-                    "Hire flow: assign {} via + Assign Agent on any driver.",
-                    agent_id_msg
-                ));
-                cx.notify();
-            });
-        }
-        self.active_panel = Panel::Composer;
+    /// Open the three-tier hire modal for the given agent. Step 1 lets
+    /// the operator pick the forecast; the modal advances through
+    /// steps 2 (driver) and 3 (terms) as selections are made.
+    fn open_hire_modal(&mut self, agent_id: String, agent_display: String, cx: &mut Context<Self>) {
+        let notes = cx.new(|cx| {
+            TextInput::new(cx).with_placeholder(
+                "Optional hire notes — e.g. focus on Q4 macro shocks, cap credits to $2…",
+            )
+        });
+        self.hire_modal = Some(HireModalState {
+            agent_id,
+            agent_display,
+            step: 1,
+            forecast_id: None,
+            forecast_label: None,
+            driver_name: None,
+            notes,
+        });
         cx.notify();
     }
 
-    // ── Leaderboard Panel ──────────────────────────────────────────────────────
+    /// Advance the hire modal to the next step, or (when confirming
+    /// from step 3) surface a hint into the cockpit and navigate to
+    /// the Composer. Full auto-assign wiring is a follow-up; today
+    /// this modal is the affordance + terms review + a clear
+    /// hand-off to the Composer's + Assign Agent flow.
+    fn advance_hire_modal(&mut self, cx: &mut Context<Self>) {
+        let Some(ref modal) = self.hire_modal.clone() else {
+            return;
+        };
+        match modal.step {
+            1 => {
+                // Forecast selection required.
+                if modal.forecast_id.is_none() {
+                    return;
+                }
+                if let Some(m) = self.hire_modal.as_mut() {
+                    m.step = 2;
+                }
+                cx.notify();
+            }
+            2 => {
+                // Driver optional — operator may hire ambient. Advance.
+                if let Some(m) = self.hire_modal.as_mut() {
+                    m.step = 3;
+                }
+                cx.notify();
+            }
+            _ => {
+                // Confirm. Route to Composer + hint.
+                let msg = match &modal.driver_name {
+                    Some(d) => format!(
+                        "Hire confirmed: assign {} to driver '{}' via + Assign Agent (wiring soon).",
+                        modal.agent_display, d
+                    ),
+                    None => format!(
+                        "Hire confirmed: {} bound as ambient research agent (wiring soon).",
+                        modal.agent_display
+                    ),
+                };
+                self.hire_modal = None;
+                self.show_toast(msg, "✓", theme::GREEN, cx);
+                self.active_panel = Panel::Composer;
+                cx.notify();
+            }
+        }
+    }
+
+    /// Legacy shim — preserved so any menu / keyboard action that
+    /// still calls the old "hire from marketplace" name compiles. The
+    /// current UX routes through `open_hire_modal` instead.
+    #[allow(dead_code)]
+    fn hire_agent_from_marketplace(&mut self, agent_id: String, cx: &mut Context<Self>) {
+        self.open_hire_modal(agent_id.clone(), agent_id, cx);
+    }
+
+    // ── Leaderboard Panel ───────────────────────────────────────────────────────
 
     // ── Teams panel (Spec 24 §3.5.4) ─────────────────────────────────
 
@@ -9759,6 +10256,107 @@ impl FermiConsole {
     // some testers prefer a link they can send via Slack / WhatsApp
     // rather than an email that might land in spam.
 
+    // ── Welcome modal (first-run, post-signup) ──────────────────────
+    //
+    // Shown once, immediately after a successful first sign-in when
+    // the wallet snapshot looks like a fresh onboarding grant (nothing
+    // spent, only granted credits). The point is to give testers a
+    // concrete anchor for what they can do: "you have N credits,
+    // here's roughly what that buys." Dismissed with any of the
+    // buttons; won't reappear during this process.
+    fn render_welcome_modal(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let credits = self.wallet.as_ref().map(|w| w.balance).unwrap_or(0);
+        let name = self
+            .user_display_name
+            .clone()
+            .unwrap_or_else(|| "forecaster".to_string());
+
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::rgba(0x0A0E14CC))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(16.0))
+                    .w(px(500.0))
+                    .p(px(28.0))
+                    .rounded(px(12.0))
+                    .bg(rgb(theme::BG_ELEVATED))
+                    .border_1()
+                    .border_color(rgb(theme::CYAN))
+                    .child(
+                        div()
+                            .text_size(px(22.0))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme::cyan())
+                            .child(format!("Welcome, {}!", name)),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.0))
+                            .text_color(theme::fg())
+                            .child(format!(
+                                "You have {} credits to get started. Credits are the \
+                                 fuel for AI research agents — every question you \
+                                 ask them costs a little.",
+                                credits
+                            )),
+                    )
+                    .child(
+                        div()
+                            .p(px(12.0))
+                            .rounded(px(6.0))
+                            .bg(rgb(theme::BG))
+                            .border_1()
+                            .border_color(theme::fg_faint())
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.0))
+                            .text_size(px(11.0))
+                            .text_color(theme::fg_dim())
+                            .child("Rough guide:")
+                            .child("  • A quick research question: ~2–5 credits")
+                            .child("  • A full 4-driver decomposition: ~10–20 credits")
+                            .child("  • Reserve budget for iteration — forecasting is")
+                            .child("    a conversation, not a one-shot."),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_faint())
+                            .child(
+                                "Your balance stays visible in the sidebar. Ask \
+                                 the maintainer for a top-up when you run low.",
+                            ),
+                    )
+                    .child(
+                        div().flex().justify_end().gap(px(8.0)).child(
+                            div()
+                                .id("welcome-dismiss")
+                                .px(px(18.0))
+                                .py(px(8.0))
+                                .rounded(px(6.0))
+                                .bg(rgb(theme::CYAN))
+                                .text_size(px(12.0))
+                                .text_color(rgb(theme::BG))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .cursor_pointer()
+                                .hover(|s| s.opacity(0.85))
+                                .on_click(cx.listener(|this, _, _w, cx| {
+                                    this.welcome_modal_showing = false;
+                                    cx.notify();
+                                }))
+                                .child("Let's go"),
+                        ),
+                    ),
+            )
+    }
+
     // ── Update modal ──────────────────────────────────────────────────────────
     //
     // Rendered only when `self.update_modal_showing && self.available_update.is_some()`.
@@ -10153,7 +10751,537 @@ impl FermiConsole {
             )
     }
 
-    // ── Inbox sheet (Spec 24 §3.5.5) ───────────────────────────────────────────
+    // ── Hire modal (Sprint C polish) ────────────────────────────────────────
+    //
+    // Three-tier modal for the agent hire flow. Step 1: pick a
+    // forecast (from the operator's active book). Step 2: pick a
+    // driver within that forecast (or none, for ambient agents).
+    // Step 3: review the terms placeholder and confirm.
+    //
+    // Confirm currently surfaces a hint and navigates to the Composer
+    // — full wiring (server-side agent-to-driver binding + auto-fire)
+    // is a follow-up that touches the cockpit's `assign_agent_to_driver`
+    // path.
+
+    fn render_hire_modal(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let modal = self.hire_modal.as_ref().expect("gated by caller");
+
+        // Stepper header.
+        let step_labels = ["1  Forecast", "2  Driver", "3  Terms"];
+        let mut stepper = div().flex().items_center().gap(px(8.0));
+        for (i, label) in step_labels.iter().enumerate() {
+            let n = (i + 1) as u8;
+            let is_active = modal.step == n;
+            let is_done = modal.step > n;
+            let color = if is_active {
+                theme::CYAN
+            } else if is_done {
+                theme::GREEN
+            } else {
+                theme::FG_FAINT
+            };
+            stepper = stepper.child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(rgb(color))
+                    .font_weight(if is_active {
+                        FontWeight::BOLD
+                    } else {
+                        FontWeight::MEDIUM
+                    })
+                    .child(label.to_string()),
+            );
+            if i < step_labels.len() - 1 {
+                stepper = stepper.child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(theme::fg_faint())
+                        .child("›"),
+                );
+            }
+        }
+
+        // Body per step.
+        let body: AnyElement = match modal.step {
+            1 => self.render_hire_step_forecast(cx).into_any_element(),
+            2 => self.render_hire_step_driver(cx).into_any_element(),
+            _ => self.render_hire_step_terms(cx).into_any_element(),
+        };
+
+        // Footer: Back / Cancel / Next|Confirm.
+        let can_advance = match modal.step {
+            1 => modal.forecast_id.is_some(),
+            _ => true,
+        };
+        let next_label = if modal.step == 3 {
+            "Confirm hire"
+        } else {
+            "Next →"
+        };
+        let back_visible = modal.step > 1;
+
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::rgba(0x0A0E14CC))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(14.0))
+                    .w(px(560.0))
+                    .max_h(px(600.0))
+                    .p(px(24.0))
+                    .rounded(px(12.0))
+                    .bg(rgb(theme::BG_ELEVATED))
+                    .border_1()
+                    .border_color(rgb(theme::CYAN))
+                    // Header
+                    .child(
+                        div().flex().items_center().gap(px(8.0)).child(
+                            div()
+                                .text_size(px(16.0))
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(theme::fg())
+                                .child(format!("Hire {}", modal.agent_display)),
+                        ),
+                    )
+                    .child(stepper)
+                    // Scrollable body — GPUI requires .id() on any element
+                    // using .overflow_y_scroll() (needs a stable identity
+                    // to persist scroll position across renders).
+                    .child(
+                        div()
+                            .id("hire-modal-body")
+                            .flex_grow()
+                            .overflow_y_scroll()
+                            .child(body),
+                    )
+                    // Footer
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(
+                                div()
+                                    .id("hire-cancel")
+                                    .px(px(14.0))
+                                    .py(px(6.0))
+                                    .rounded(px(6.0))
+                                    .text_size(px(11.0))
+                                    .text_color(theme::fg_dim())
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme::bg_hover()))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.hire_modal = None;
+                                        cx.notify();
+                                    }))
+                                    .child("Cancel"),
+                            )
+                            .child(div().flex_grow())
+                            .when(back_visible, |el| {
+                                el.child(
+                                    div()
+                                        .id("hire-back")
+                                        .px(px(12.0))
+                                        .py(px(6.0))
+                                        .rounded(px(6.0))
+                                        .border_1()
+                                        .border_color(theme::fg_faint())
+                                        .text_size(px(11.0))
+                                        .text_color(theme::fg_dim())
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(theme::bg_hover()))
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            if let Some(m) = this.hire_modal.as_mut() {
+                                                m.step = (m.step - 1).max(1);
+                                                cx.notify();
+                                            }
+                                        }))
+                                        .child("← Back"),
+                                )
+                            })
+                            .child(
+                                div()
+                                    .id("hire-next")
+                                    .px(px(16.0))
+                                    .py(px(6.0))
+                                    .rounded(px(6.0))
+                                    .bg(if can_advance {
+                                        rgb(theme::CYAN)
+                                    } else {
+                                        rgb(theme::BG_ACTIVE)
+                                    })
+                                    .text_size(px(11.0))
+                                    .text_color(if can_advance {
+                                        rgb(theme::BG)
+                                    } else {
+                                        rgb(theme::FG_FAINT)
+                                    })
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .when(can_advance, |s| {
+                                        s.cursor_pointer().hover(|s| s.opacity(0.85))
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.advance_hire_modal(cx);
+                                    }))
+                                    .child(next_label),
+                            ),
+                    ),
+            )
+    }
+
+    fn render_hire_step_forecast(&self, cx: &Context<Self>) -> impl IntoElement {
+        let modal = self.hire_modal.as_ref().expect("gated by caller");
+        // Forecast picker — from the operator's active book, sorted by
+        // most-recent-activity.
+        let mut forecasts: Vec<&Forecast> = self.active_forecasts.iter().collect();
+        forecasts.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
+        let mut container = div().flex().flex_col().gap(px(4.0)).child(
+            div()
+                .text_size(px(11.0))
+                .text_color(theme::fg_dim())
+                .child("Pick the forecast this agent should research for."),
+        );
+
+        if forecasts.is_empty() {
+            container = container.child(
+                div()
+                    .px(px(10.0))
+                    .py(px(10.0))
+                    .rounded(px(6.0))
+                    .bg(theme::bg())
+                    .border_1()
+                    .border_color(theme::fg_faint())
+                    .text_size(px(11.0))
+                    .text_color(theme::fg_faint())
+                    .child(
+                        "No active forecasts yet. Start a forecast in the Composer, \
+                         then come back to hire this agent.",
+                    ),
+            );
+            return container;
+        }
+
+        for f in forecasts {
+            let fid = f.id.clone();
+            let is_selected = modal.forecast_id.as_deref() == Some(&fid);
+            let label = truncate(&f.question_text, 76);
+            let fid_for_pick = fid.clone();
+            let label_for_pick = label.clone();
+            container = container.child(
+                div()
+                    .id(SharedString::from(format!("hire-fc-{}", fid)))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .px(px(10.0))
+                    .py(px(6.0))
+                    .rounded(px(6.0))
+                    .border_1()
+                    .border_color(if is_selected {
+                        theme::cyan()
+                    } else {
+                        theme::fg_faint()
+                    })
+                    .bg(if is_selected {
+                        theme::bg_active()
+                    } else {
+                        theme::bg_elevated()
+                    })
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::bg_hover()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(m) = this.hire_modal.as_mut() {
+                            m.forecast_id = Some(fid_for_pick.clone());
+                            m.forecast_label = Some(label_for_pick.clone());
+                            // Advance immediately — selection IS the
+                            // action, saves one click.
+                            m.step = 2;
+                        }
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(if is_selected {
+                                theme::cyan()
+                            } else {
+                                theme::fg_dim()
+                            })
+                            .child(if is_selected { "◉" } else { "○" }),
+                    )
+                    .child(
+                        div()
+                            .flex_grow()
+                            .text_size(px(12.0))
+                            .text_color(theme::fg())
+                            .child(label),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_faint())
+                            .child(format!("{:.0}%", f.predicted_probability * 100.0)),
+                    ),
+            );
+        }
+
+        container
+    }
+
+    fn render_hire_step_driver(&self, cx: &Context<Self>) -> impl IntoElement {
+        let modal = self.hire_modal.as_ref().expect("gated by caller");
+
+        // Read the drivers from the currently-open cockpit if the
+        // chosen forecast matches. If not, we can't enumerate drivers
+        // yet (server-side driver-list endpoint would be needed);
+        // fall back to allowing an ambient (no-driver) binding.
+        let cockpit_forecast_id = self
+            .cockpit
+            .as_ref()
+            .and_then(|c| c.read(cx).forecast_id.clone());
+        let same_forecast = cockpit_forecast_id.as_deref() == modal.forecast_id.as_deref();
+
+        let mut container = div().flex().flex_col().gap(px(4.0)).child(
+            div().text_size(px(11.0)).text_color(theme::fg_dim()).child(
+                "Bind the agent to a driver, or hire it as an ambient research \
+                     agent (no driver — the agent adds evidence to the forecast at large).",
+            ),
+        );
+
+        // Ambient option always present.
+        let ambient_selected = modal.driver_name.is_none();
+        container = container.child(
+            div()
+                .id("hire-drv-ambient")
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .px(px(10.0))
+                .py(px(6.0))
+                .rounded(px(6.0))
+                .border_1()
+                .border_color(if ambient_selected {
+                    theme::cyan()
+                } else {
+                    theme::fg_faint()
+                })
+                .bg(if ambient_selected {
+                    theme::bg_active()
+                } else {
+                    theme::bg_elevated()
+                })
+                .cursor_pointer()
+                .hover(|s| s.bg(theme::bg_hover()))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    if let Some(m) = this.hire_modal.as_mut() {
+                        m.driver_name = None;
+                    }
+                    cx.notify();
+                }))
+                .child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(if ambient_selected {
+                            theme::cyan()
+                        } else {
+                            theme::fg_dim()
+                        })
+                        .child(if ambient_selected { "◉" } else { "○" }),
+                )
+                .child(
+                    div()
+                        .flex_grow()
+                        .text_size(px(12.0))
+                        .text_color(theme::fg())
+                        .child("Ambient research agent (no specific driver)"),
+                ),
+        );
+
+        // Driver list from the cockpit (best-effort). If the operator
+        // picked a forecast that's not the one currently open, we
+        // surface an informational note and let them proceed via
+        // ambient. Wiring "switch cockpit to the picked forecast" is a
+        // follow-up.
+        if same_forecast {
+            if let Some(cockpit) = self.cockpit.as_ref() {
+                let drivers: Vec<String> = {
+                    let state = cockpit.read(cx);
+                    state
+                        .program
+                        .drivers()
+                        .iter()
+                        .map(|d| d.name.clone())
+                        .collect()
+                };
+                if drivers.is_empty() {
+                    container = container.child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_faint())
+                            .child(
+                                "This forecast has no drivers yet — hire ambient, \
+                                 then add drivers in the Composer.",
+                            ),
+                    );
+                } else {
+                    for driver in drivers {
+                        let is_selected = modal.driver_name.as_deref() == Some(&driver);
+                        let d_for_pick = driver.clone();
+                        container = container.child(
+                            div()
+                                .id(SharedString::from(format!("hire-drv-{}", driver)))
+                                .flex()
+                                .items_center()
+                                .gap(px(8.0))
+                                .px(px(10.0))
+                                .py(px(6.0))
+                                .rounded(px(6.0))
+                                .border_1()
+                                .border_color(if is_selected {
+                                    theme::cyan()
+                                } else {
+                                    theme::fg_faint()
+                                })
+                                .bg(if is_selected {
+                                    theme::bg_active()
+                                } else {
+                                    theme::bg_elevated()
+                                })
+                                .cursor_pointer()
+                                .hover(|s| s.bg(theme::bg_hover()))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if let Some(m) = this.hire_modal.as_mut() {
+                                        m.driver_name = Some(d_for_pick.clone());
+                                    }
+                                    cx.notify();
+                                }))
+                                .child(
+                                    div()
+                                        .text_size(px(10.0))
+                                        .text_color(if is_selected {
+                                            theme::cyan()
+                                        } else {
+                                            theme::fg_dim()
+                                        })
+                                        .child(if is_selected { "◉" } else { "○" }),
+                                )
+                                .child(
+                                    div()
+                                        .flex_grow()
+                                        .text_size(px(12.0))
+                                        .text_color(theme::fg())
+                                        .child(driver),
+                                ),
+                        );
+                    }
+                }
+            }
+        } else {
+            container = container.child(div().text_size(px(10.0)).text_color(theme::gold()).child(
+                "Driver list requires the picked forecast to be open in the \
+                         Composer. For now hire ambient, then open the forecast to \
+                         assign the driver via + Assign Agent.",
+            ));
+        }
+
+        container
+    }
+
+    fn render_hire_step_terms(&self, _cx: &Context<Self>) -> impl IntoElement {
+        let modal = self.hire_modal.as_ref().expect("gated by caller");
+        let forecast_label = modal
+            .forecast_label
+            .clone()
+            .unwrap_or_else(|| "(none)".into());
+        let driver_label = modal
+            .driver_name
+            .clone()
+            .unwrap_or_else(|| "(ambient — no driver)".into());
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(10.0))
+            // Contract summary.
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .px(px(12.0))
+                    .py(px(10.0))
+                    .rounded(px(6.0))
+                    .bg(theme::bg())
+                    .border_1()
+                    .border_color(theme::fg_faint())
+                    .child(
+                        div()
+                            .text_size(px(9.0))
+                            .text_color(theme::fg_faint())
+                            .child("HIRE SUMMARY"),
+                    )
+                    .child(render_detail_kv("Agent", &modal.agent_display))
+                    .child(render_detail_kv("Forecast", &forecast_label))
+                    .child(render_detail_kv("Driver", &driver_label)),
+            )
+            // Terms placeholder — will read from the agent's card in a
+            // follow-up (fork_pricing / requires_secrets / auto_collect_pct).
+            // For now surface the defaults so the tester sees the shape.
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .px(px(12.0))
+                    .py(px(10.0))
+                    .rounded(px(6.0))
+                    .bg(theme::bg())
+                    .border_1()
+                    .border_color(theme::fg_faint())
+                    .child(
+                        div()
+                            .text_size(px(9.0))
+                            .text_color(theme::fg_faint())
+                            .child("TERMS"),
+                    )
+                    .child(div().text_size(px(11.0)).text_color(theme::fg_dim()).child(
+                        "Placeholder. When ABW ships fork_pricing / royalty terms \
+                                 per agent, this section will surface them (per-run credit \
+                                 cost, royalty to author, cap per session). For now the \
+                                 default is: pay-per-run at the agent's model cost, no \
+                                 royalties, no cap.",
+                    ))
+                    .child(div().text_size(px(10.0)).text_color(theme::gold()).child(
+                        "⚠ This hire flow's binding step is scaffolded but the \
+                                 auto-assign wiring lands in a follow-up. Confirm below \
+                                 will drop a hint into the Composer so you can complete \
+                                 the assignment via + Assign Agent.",
+                    )),
+            )
+            // Notes textbox.
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .child(
+                        div()
+                            .text_size(px(9.0))
+                            .text_color(theme::fg_faint())
+                            .child("NOTES"),
+                    )
+                    .child(modal.notes.clone()),
+            )
+    }
+
+    // ── Inbox sheet (Spec 24 §3.5.5) ─────────────────────────────────────────
 
     fn render_inbox_sheet(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
@@ -11761,10 +12889,21 @@ impl Render for FermiConsole {
             .invite_share_modal
             .is_some()
             .then(|| self.render_invite_share_modal(cx).into_any_element());
+        // Sprint C polish: three-tier agent hire modal.
+        let hire_overlay = self
+            .hire_modal
+            .is_some()
+            .then(|| self.render_hire_modal(cx).into_any_element());
         // Self-update release-notes modal. Gated on both the flag and
         // presence of a ReleaseInfo so we can't render without data.
         let update_overlay = (self.update_modal_showing && self.available_update.is_some())
             .then(|| self.render_update_modal(cx).into_any_element());
+        // First-run welcome modal (fires once, when we detect a fresh
+        // onboarding grant on the wallet snapshot). Rendered on top of
+        // whatever panel is otherwise visible.
+        let welcome_overlay = self
+            .welcome_modal_showing
+            .then(|| self.render_welcome_modal(cx).into_any_element());
 
         div()
             .key_context("FermiConsole")
@@ -11800,24 +12939,39 @@ impl Render for FermiConsole {
                 self.render_sidebar(cx),
             )
             .child(
-                // Main content area
-                div().flex().flex_col().flex_grow().overflow_hidden().child(
-                    match self.active_panel {
-                        Panel::Dashboard => self.render_dashboard(cx).into_any_element(),
-                        Panel::Portfolio => self.render_portfolio(cx).into_any_element(),
-                        Panel::AgentFleet => self.render_agent_fleet_panel(cx).into_any_element(),
-                        Panel::Composer => {
-                            if let Some(ref cockpit_entity) = self.cockpit {
-                                cockpit::render_cockpit(cockpit_entity).into_any_element()
-                            } else {
-                                // Shouldn't happen — navigate() creates it
-                                composer::render_composer(&self.composer).into_any_element()
+                // Main content area. When the user isn't authenticated
+                // we replace the entire panel router with a full-window
+                // splash — no sidebar-visible nav that leads nowhere,
+                // no half-loaded stats, no bare Empty states. Post-auth,
+                // the normal panel router takes over.
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_grow()
+                    .overflow_hidden()
+                    .child(if !self.connected {
+                        self.render_auth_gate(cx).into_any_element()
+                    } else {
+                        match self.active_panel {
+                            Panel::Dashboard => self.render_dashboard(cx).into_any_element(),
+                            Panel::Portfolio => self.render_portfolio(cx).into_any_element(),
+                            Panel::AgentFleet => {
+                                self.render_agent_fleet_panel(cx).into_any_element()
                             }
+                            Panel::Composer => {
+                                if let Some(ref cockpit_entity) = self.cockpit {
+                                    cockpit::render_cockpit(cockpit_entity).into_any_element()
+                                } else {
+                                    // Shouldn't happen — navigate() creates it
+                                    composer::render_composer(&self.composer).into_any_element()
+                                }
+                            }
+                            Panel::Leaderboard => {
+                                self.render_leaderboard_panel().into_any_element()
+                            }
+                            Panel::Teams => self.render_teams_panel(cx).into_any_element(),
                         }
-                        Panel::Leaderboard => self.render_leaderboard_panel().into_any_element(),
-                        Panel::Teams => self.render_teams_panel(cx).into_any_element(),
-                    },
-                ),
+                    }),
             )
             // Create-team modal overlay
             .children(team_create_overlay)
@@ -11826,6 +12980,9 @@ impl Render for FermiConsole {
             // Just-created invite share modal (Sprint A) — immediate
             // Copy Link affordance after any /invites POST succeeds.
             .children(invite_share_overlay)
+            // Agent hire modal (Sprint C polish) — three-tier flow:
+            // forecast → driver → terms → confirm.
+            .children(hire_overlay)
             // Commit sheet overlay (⌘P)
             .children(commit_overlay)
             // Resolve sheet overlay
@@ -11834,6 +12991,8 @@ impl Render for FermiConsole {
             .children(pending_cascades_overlay)
             // Self-update modal (release notes + download progress)
             .children(update_overlay)
+            // First-run welcome modal (post-signup)
+            .children(welcome_overlay)
             // Toast notification overlay (bottom-right, auto-dismiss)
             .when(self.toast.is_some(), |el| {
                 if let Some((ref msg, icon, color)) = self.toast {
@@ -12243,9 +13402,28 @@ struct AgentMarketplaceEntry {
     tier: &'static str,
     tier_color: u32,
     score: f64,
+    /// True when we have any usage data at all (server
+    /// `total_executions > 0` or a completed session run). Used to
+    /// suppress "score 0" and "cost n/a" when the agent is genuinely
+    /// unrated instead of pretending zero is a real score.
+    has_data: bool,
     /// Whether this session already invoked this agent (→ hire
     /// button label switches to "Assigned").
     already_used: bool,
+    // ── Rich detail (populated from AgentCard) ───────────────────────────
+    version: String,
+    author: String,
+    model: String,
+    temperature: f64,
+    accepts: Vec<String>,
+    produces: Vec<String>,
+    sample_queries: Vec<String>,
+    /// MCP tool names (skip descriptions here — they're long).
+    mcp_tools: Vec<String>,
+    /// Skills declared by the agent card.
+    skills: Vec<String>,
+    /// Whether the agent needs any external secrets set.
+    needs_secrets: bool,
 }
 
 fn build_agent_marketplace(
@@ -12335,10 +13513,43 @@ fn build_agent_marketplace(
             .unwrap_or(0.0);
         let score = base + popularity_bonus + confidence_bonus - cost_penalty;
 
+        let has_data = total_executions > 0 || n_conf > 0;
+        // Derive a display name from the server-side display_alias when
+        // present (e.g. "Football Analyst" vs. "football_analyst"),
+        // falling back to the agent_id.
+        let display_name = server
+            .and_then(|s| s.get("display_alias"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| agent_id.clone());
+        // Server may also carry a longer/authoritative description —
+        // prefer it when it's non-empty, else fall back to the local
+        // card's `metadata.description`.
+        let description = server
+            .and_then(|s| s.get("description"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| card.metadata.description.clone());
+        // MCP tool names from the local card.
+        let mcp_tools: Vec<String> = card
+            .capabilities
+            .mcp_tools
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        let needs_secrets = !card.requires_secrets.is_empty()
+            || server
+                .and_then(|s| s.get("requires_secrets"))
+                .and_then(|v| v.as_array())
+                .map(|a| !a.is_empty())
+                .unwrap_or(false);
+
         entries.push(AgentMarketplaceEntry {
             agent_id: agent_id.clone(),
-            display_name: agent_id.clone(),
-            description: card.metadata.description.clone(),
+            display_name,
+            description,
             tags: card.metadata.tags.clone(),
             total_executions,
             success_rate,
@@ -12347,7 +13558,18 @@ fn build_agent_marketplace(
             tier,
             tier_color,
             score,
+            has_data,
             already_used: n_conf > 0,
+            version: card.version.clone(),
+            author: card.metadata.author.clone(),
+            model: card.capabilities.model.clone(),
+            temperature: card.capabilities.temperature,
+            accepts: card.accepts.clone(),
+            produces: card.produces.clone(),
+            sample_queries: card.metadata.sample_queries.clone(),
+            mcp_tools,
+            skills: card.capabilities.skills.clone(),
+            needs_secrets,
         });
     }
     entries
@@ -12358,11 +13580,19 @@ fn sort_marketplace(entries: &mut Vec<AgentMarketplaceEntry>, mode: &str) {
     entries.sort_by(|a, b| {
         use std::cmp::Ordering::Equal;
         let cmp = match mode {
-            "cost" => {
-                // Cheapest first; None (no cost data) sorts last.
+            "cost_asc" => {
+                // Cost low→high; None (no cost data) sorts last so
+                // the ranked list still starts with real data.
                 let ac = a.avg_cost_per_run.unwrap_or(f64::MAX);
                 let bc = b.avg_cost_per_run.unwrap_or(f64::MAX);
                 ac.partial_cmp(&bc).unwrap_or(Equal)
+            }
+            "cost_desc" => {
+                // Cost high→low; None still sorts last (unknown cost
+                // shouldn't jump the queue at either end).
+                let ac = a.avg_cost_per_run.unwrap_or(-1.0);
+                let bc = b.avg_cost_per_run.unwrap_or(-1.0);
+                bc.partial_cmp(&ac).unwrap_or(Equal)
             }
             "executions" => b.total_executions.cmp(&a.total_executions),
             "success" => b.success_rate.partial_cmp(&a.success_rate).unwrap_or(Equal),

@@ -1,9 +1,11 @@
 //! HTML page-serving handlers.
 
 use axum::{
+    extract::Query,
     http::{header, HeaderMap, HeaderValue, StatusCode},
-    response::{Html, IntoResponse, Response},
+    response::{Html, IntoResponse, Redirect, Response},
 };
+use serde::Deserialize;
 
 // ─── Fallback (404) ────────────────────────────────────────────────
 
@@ -138,6 +140,66 @@ pub async fn install_script() -> Response {
         HeaderValue::from_static("public, max-age=300"),
     );
     (StatusCode::OK, headers, INSTALL_SCRIPT).into_response()
+}
+
+// ─── Download indirection ───────────────────────────────────────────────────────
+//
+// `GET /fermi-console/download` → 302 to the actual binary URL.
+//
+// The install script and the in-app updater both talk to *this* URL,
+// never directly to GitHub. That lets us:
+//
+//   * ship testers a stable download URL even while the source repo
+//     is private (`github.com/Replicant-Partners/fermi/releases/...`
+//     returns 404 anonymously),
+//   * swap the backend later (R2, Cloudflare, S3, self-hosted) without
+//     touching a single tester's install,
+//   * pin a version cohort by env var without redeploying binaries.
+//
+// Configuration: `FERMI_CONSOLE_DOWNLOAD_URL` env var, defaults to the
+// GitHub Releases "latest" URL. Query param `?v=vX.Y.Z` is honoured
+// when set (in-app updater uses it to fetch a specific version).
+
+#[derive(Debug, Deserialize)]
+pub struct DownloadQuery {
+    /// Optional version pin (e.g. "v0.8.0"). Falls back to "latest".
+    #[serde(default)]
+    pub v: Option<String>,
+}
+
+pub async fn fermi_console_download(Query(q): Query<DownloadQuery>) -> Response {
+    // Priority order for resolving the download URL:
+    //   1. Explicit env override (staging, R2 bucket, whatever).
+    //   2. GitHub Releases with the requested version.
+    //   3. GitHub Releases latest.
+    //
+    // The env var is a URL *template* — we substitute `{version}` if
+    // it's present so a single env var can serve both `latest` and
+    // version-pinned requests. If the template omits the placeholder
+    // we ignore the ?v= param and always serve the same URL.
+    let version = q.v.as_deref().unwrap_or("latest");
+
+    let url = match std::env::var("FERMI_CONSOLE_DOWNLOAD_URL") {
+        Ok(template) if template.contains("{version}") => template.replace("{version}", version),
+        Ok(template) => template,
+        Err(_) => {
+            // Default: GitHub Releases. Note this returns 404 if the
+            // repo is private; the readable error is preferable to
+            // exposing that fact via our redirect.
+            if version == "latest" {
+                "https://github.com/Replicant-Partners/fermi/releases/latest/download/fermi-console-linux-x86_64".to_string()
+            } else {
+                format!(
+                    "https://github.com/Replicant-Partners/fermi/releases/download/{}/fermi-console-linux-x86_64",
+                    version
+                )
+            }
+        }
+    };
+
+    // 302 (Found) rather than 301 (Moved Permanently) so we can rotate
+    // the target later without cache poisoning.
+    Redirect::temporary(&url).into_response()
 }
 
 pub async fn agent_detail() -> Html<String> {

@@ -9,7 +9,7 @@ use axum::{
 use fermi_auth::{
     api_keys, build_github_auth_url, build_google_auth_url, create_session_token, generate_state,
     get_or_create_wallet, github_exchange_code, github_fetch_user_info, google_exchange_code,
-    google_fetch_user_info, sync_user, AuthPrincipal,
+    google_fetch_user_info, sync_user_from_app, AuthPrincipal,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -31,6 +31,10 @@ pub struct OAuthQuery {
     pub mobile: Option<String>,
     /// Where to redirect after auth (e.g. "/rabble/" for Rabble web)
     pub redirect: Option<String>,
+    /// App slug the sign-in was initiated from (e.g. "fermi_console").
+    /// Stamped on the `users` row for NEW signups only. Silently
+    /// ignored on existing-user logins.
+    pub app: Option<String>,
 }
 
 /// Redirect to Google OAuth
@@ -51,9 +55,35 @@ pub async fn auth_google(
         Some(r) => format!(":redirect={}", r),
         None => String::new(),
     };
-    let state_with_provider = format!("google:{}{}{}", csrf_state, mobile_flag, redirect_flag);
+    // App slug is passed through the OAuth `state` param — same
+    // channel as mobile/redirect. Validated on the callback side.
+    let app_flag = match q.app.as_deref().filter(|a| is_valid_app_slug(a)) {
+        Some(a) => format!(":app={}", a),
+        None => String::new(),
+    };
+    let state_with_provider = format!(
+        "google:{}{}{}{}",
+        csrf_state, mobile_flag, redirect_flag, app_flag
+    );
     let url = build_google_auth_url(config, &state_with_provider);
     Ok(Redirect::temporary(&url))
+}
+
+/// Validate a slug from an untrusted query param before we round-trip
+/// it through the OAuth state. Same shape check as `apps.slug`'s
+/// database constraint, so anything we accept here would be a valid
+/// App row if one exists.
+fn is_valid_app_slug(slug: &str) -> bool {
+    let bytes = slug.as_bytes();
+    if bytes.len() < 3 || bytes.len() > 64 {
+        return false;
+    }
+    if !bytes[0].is_ascii_lowercase() {
+        return false;
+    }
+    bytes
+        .iter()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_')
 }
 
 /// Redirect to GitHub OAuth
@@ -74,7 +104,14 @@ pub async fn auth_github(
         Some(r) => format!(":redirect={}", r),
         None => String::new(),
     };
-    let state_with_provider = format!("github:{}{}{}", csrf_state, mobile_flag, redirect_flag);
+    let app_flag = match q.app.as_deref().filter(|a| is_valid_app_slug(a)) {
+        Some(a) => format!(":app={}", a),
+        None => String::new(),
+    };
+    let state_with_provider = format!(
+        "github:{}{}{}{}",
+        csrf_state, mobile_flag, redirect_flag, app_flag
+    );
     let url = build_github_auth_url(config, &state_with_provider);
     Ok(Redirect::temporary(&url))
 }
@@ -113,7 +150,19 @@ pub async fn auth_callback_inner(
         .split_once(':')
         .unwrap_or(("unknown", &params.state));
     let is_mobile = rest.contains(":mobile");
-    let redirect_to = rest.split(":redirect=").nth(1).map(|s| s.to_string());
+    // `:redirect=` and `:app=` can each carry until the next `:` or
+    // end-of-string. Trailing values (e.g. `:app=fermi_console` at the
+    // tail) are supported by taking the first segment after the
+    // marker; anything appended after another `:` is stripped.
+    let redirect_to = rest
+        .split(":redirect=")
+        .nth(1)
+        .map(|s| s.split(':').next().unwrap_or(s).to_string());
+    let signup_app = rest
+        .split(":app=")
+        .nth(1)
+        .map(|s| s.split(':').next().unwrap_or(s).to_string())
+        .filter(|s| is_valid_app_slug(s));
 
     let user_info = match provider {
         "google" => {
@@ -139,8 +188,11 @@ pub async fn auth_callback_inner(
         }
     };
 
-    // Sync user to database
-    let user = sync_user(&state.db, &user_info).await.map_err(map_err)?;
+    // Sync user to database. The `signup_app` slug (if any) is only
+    // written on INSERT; existing users' signup_app_slug is preserved.
+    let user = sync_user_from_app(&state.db, &user_info, signup_app.as_deref())
+        .await
+        .map_err(map_err)?;
 
     // Ensure wallet exists (onboarding grant is auto-applied inside get_or_create_wallet)
     let _ = get_or_create_wallet(&state.db, "user", &user.user_id).await;

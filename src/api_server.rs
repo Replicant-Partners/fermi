@@ -737,6 +737,7 @@ async fn run_migrations(db: &PgPool) {
         "migrations/157_object_shares_complete_object_type.sql",
         "migrations/158_forecast_sim_probability.sql",
         "migrations/159_pending_cascades_relationship_id_nullable.sql",
+        "migrations/160_users_signup_app.sql",
     ];
 
     for file in &migration_files {
@@ -1570,6 +1571,13 @@ async fn main() {
         .route(
             "/fermi-console/install.sh",
             get(handlers::pages::install_script),
+        )
+        // Binary download indirection — install script + in-app updater
+        // both hit this so we can swap release backends without
+        // touching testers. See handlers::pages::fermi_console_download.
+        .route(
+            "/fermi-console/download",
+            get(handlers::pages::fermi_console_download),
         )
         .route("/apps", get(handlers::pages::apps_catalogue_view))
         .route("/apps/:slug", get(handlers::pages::app_detail_view))

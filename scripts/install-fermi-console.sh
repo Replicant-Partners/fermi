@@ -22,8 +22,10 @@
 
 set -euo pipefail
 
-REPO="Replicant-Partners/fermi"
-BINARY="fermi-console-linux-x86_64"
+# The default download host is baked in but overridable so testers on
+# a staging domain, or an operator running the installer locally, can
+# point at a different server without editing this script.
+DOWNLOAD_HOST="${FERMI_DOWNLOAD_HOST:-https://agent-bestiary.world}"
 INSTALL_DIR="${FERMI_INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${FERMI_VERSION:-latest}"
 
@@ -92,10 +94,15 @@ fi
 # ─── Step 2: download binary ────────────────────────────────────────
 step "Downloading Fermi Console (${VERSION})…"
 
+# We hit the server's `/fermi-console/download` redirect, not GitHub
+# directly. That keeps the release backend swappable and works while
+# the source repo is private (GitHub returns 404 anonymously for
+# private-repo release assets — this indirection lets ops point the
+# redirect at an R2 bucket or self-hosted URL instead).
 if [ "$VERSION" = "latest" ]; then
-  DOWNLOAD_URL="https://github.com/${REPO}/releases/latest/download/${BINARY}"
+  DOWNLOAD_URL="${DOWNLOAD_HOST}/fermi-console/download"
 else
-  DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/${BINARY}"
+  DOWNLOAD_URL="${DOWNLOAD_HOST}/fermi-console/download?v=${VERSION}"
 fi
 
 mkdir -p "$INSTALL_DIR"
@@ -106,8 +113,10 @@ trap 'rm -f "$TMP"' EXIT
 # --progress-bar renders a single-line bar over curl's default noise,
 # so the tester sees actual progress instead of nothing until it's done.
 # The 2>&1 lets the bar update over the same line in a piped context.
+# `-L` follows the redirect from /fermi-console/download to the actual
+# binary host. `-f` makes curl fail on 4xx/5xx so we surface real errors.
 if ! curl -fL --progress-bar "$DOWNLOAD_URL" -o "$TMP"; then
-  fail "Download failed. Check that a release exists at https://github.com/${REPO}/releases"
+  fail "Download failed. If this persists, ask the maintainer whether a build has been published yet."
 fi
 
 # ─── Step 3: sanity-check the download ──────────────────────────────

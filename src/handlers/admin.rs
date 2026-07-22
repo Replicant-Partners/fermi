@@ -298,6 +298,10 @@ pub struct AdminSearchParams {
     search: Option<String>,
     page: Option<i64>,
     limit: Option<i64>,
+    /// Filter users by the app they signed up through. `Some("fermi_console")`
+    /// shows just that cohort. `Some("")` shows direct ABW signups (NULL
+    /// signup_app_slug). `None` shows everyone.
+    signup_app: Option<String>,
 }
 
 pub async fn admin_list_users_handler(
@@ -310,37 +314,98 @@ pub async fn admin_list_users_handler(
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = (params.page.unwrap_or(1).max(1) - 1) * limit;
 
-    let rows = if let Some(ref search) = params.search {
-        let q = format!("%{}%", search);
-        sqlx::query(
-            "SELECT u.user_id, u.email, u.display_name, u.role, u.auth_provider, u.created_at,
-                    COALESCE(w.balance, 0) as balance,
-                    COALESCE(ac.cnt, 0) as agent_count
-             FROM users u
-             LEFT JOIN wallets w ON w.owner_type = 'user' AND w.owner_id = u.user_id
-             LEFT JOIN (SELECT user_id, COUNT(*) as cnt FROM agents GROUP BY user_id) ac ON ac.user_id = u.user_id
-             WHERE u.user_id ILIKE $1 OR u.email ILIKE $1 OR u.display_name ILIKE $1
-             ORDER BY u.created_at DESC LIMIT $2 OFFSET $3",
-        )
-        .bind(&q)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&state.db)
-        .await
-    } else {
-        sqlx::query(
-            "SELECT u.user_id, u.email, u.display_name, u.role, u.auth_provider, u.created_at,
-                    COALESCE(w.balance, 0) as balance,
-                    COALESCE(ac.cnt, 0) as agent_count
-             FROM users u
-             LEFT JOIN wallets w ON w.owner_type = 'user' AND w.owner_id = u.user_id
-             LEFT JOIN (SELECT user_id, COUNT(*) as cnt FROM agents GROUP BY user_id) ac ON ac.user_id = u.user_id
-             ORDER BY u.created_at DESC LIMIT $1 OFFSET $2",
-        )
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&state.db)
-        .await
+    // Optional `?signup_app=<slug>` filters to a specific cohort. Empty
+    // string is treated as "only show users who came in via ABW direct
+    // (signup_app_slug IS NULL)", which is what a bare `signup_app=`
+    // resolves to on the query-string.
+    let signup_app_filter = params.signup_app.clone();
+
+    let base_select = "u.user_id, u.email, u.display_name, u.role, u.auth_provider, \
+                       u.signup_app_slug, u.created_at, \
+                       COALESCE(w.balance, 0) as balance, \
+                       COALESCE(ac.cnt, 0) as agent_count \
+                       FROM users u \
+                       LEFT JOIN wallets w ON w.owner_type = 'user' AND w.owner_id = u.user_id \
+                       LEFT JOIN (SELECT user_id, COUNT(*) as cnt FROM agents GROUP BY user_id) ac \
+                         ON ac.user_id = u.user_id";
+
+    let rows = match (params.search.as_ref(), signup_app_filter.as_ref()) {
+        (Some(search), Some(app)) if !app.is_empty() => {
+            let q = format!("%{}%", search);
+            sqlx::query(&format!(
+                "SELECT {} WHERE (u.user_id ILIKE $1 OR u.email ILIKE $1 OR u.display_name ILIKE $1) \
+                 AND u.signup_app_slug = $2 \
+                 ORDER BY u.created_at DESC LIMIT $3 OFFSET $4",
+                base_select
+            ))
+            .bind(&q)
+            .bind(app)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&state.db)
+            .await
+        }
+        (Some(search), Some(_empty_app)) => {
+            // signup_app was provided but empty — filter for NULL slugs.
+            let q = format!("%{}%", search);
+            sqlx::query(&format!(
+                "SELECT {} WHERE (u.user_id ILIKE $1 OR u.email ILIKE $1 OR u.display_name ILIKE $1) \
+                 AND u.signup_app_slug IS NULL \
+                 ORDER BY u.created_at DESC LIMIT $2 OFFSET $3",
+                base_select
+            ))
+            .bind(&q)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&state.db)
+            .await
+        }
+        (Some(search), None) => {
+            let q = format!("%{}%", search);
+            sqlx::query(&format!(
+                "SELECT {} WHERE u.user_id ILIKE $1 OR u.email ILIKE $1 OR u.display_name ILIKE $1 \
+                 ORDER BY u.created_at DESC LIMIT $2 OFFSET $3",
+                base_select
+            ))
+            .bind(&q)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&state.db)
+            .await
+        }
+        (None, Some(app)) if !app.is_empty() => {
+            sqlx::query(&format!(
+                "SELECT {} WHERE u.signup_app_slug = $1 \
+                 ORDER BY u.created_at DESC LIMIT $2 OFFSET $3",
+                base_select
+            ))
+            .bind(app)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&state.db)
+            .await
+        }
+        (None, Some(_empty_app)) => {
+            sqlx::query(&format!(
+                "SELECT {} WHERE u.signup_app_slug IS NULL \
+                 ORDER BY u.created_at DESC LIMIT $1 OFFSET $2",
+                base_select
+            ))
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&state.db)
+            .await
+        }
+        (None, None) => {
+            sqlx::query(&format!(
+                "SELECT {} ORDER BY u.created_at DESC LIMIT $1 OFFSET $2",
+                base_select
+            ))
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&state.db)
+            .await
+        }
     }
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -353,6 +418,7 @@ pub async fn admin_list_users_handler(
                 "display_name": r.try_get::<Option<String>, _>("display_name").unwrap_or(None),
                 "role": r.try_get::<String, _>("role").unwrap_or_default(),
                 "auth_provider": r.try_get::<String, _>("auth_provider").unwrap_or_default(),
+                "signup_app_slug": r.try_get::<Option<String>, _>("signup_app_slug").unwrap_or(None),
                 "created_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").ok(),
                 "balance": r.try_get::<i32, _>("balance").unwrap_or(0),
                 "agent_count": r.try_get::<i64, _>("agent_count").unwrap_or(0),

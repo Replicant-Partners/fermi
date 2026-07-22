@@ -345,7 +345,23 @@ pub async fn github_fetch_user_info(access_token: &str) -> Result<UserInfoRespon
 // --- User sync (shared across providers) ---
 
 /// Sync or create user in our database from OAuth user info
+/// Existing entry point — kept for callers that don't need to record
+/// the app that a user is signing up through. Delegates to
+/// [`sync_user_from_app`] with `signup_app = None`.
 pub async fn sync_user(pool: &PgPool, user_info: &UserInfoResponse) -> Result<User, AuthError> {
+    sync_user_from_app(pool, user_info, None).await
+}
+
+/// Same as [`sync_user`] but records the app a *new* user is signing
+/// up through. `signup_app` is a free-form slug (e.g. `"fermi_console"`,
+/// `"rabble"`) matching `apps.slug`. Stamped ONCE on user creation and
+/// never overwritten on subsequent logins — a signup app is a
+/// historical fact, not a session attribute.
+pub async fn sync_user_from_app(
+    pool: &PgPool,
+    user_info: &UserInfoResponse,
+    signup_app: Option<&str>,
+) -> Result<User, AuthError> {
     let email = user_info
         .email
         .as_ref()
@@ -438,14 +454,17 @@ pub async fn sync_user(pool: &PgPool, user_info: &UserInfoResponse) -> Result<Us
         .await
         .map_err(|e| AuthError::DatabaseError(e.to_string()))?
     } else {
-        // Create new user
+        // Create new user. Stamp signup_app_slug here — and ONLY here.
+        // Subsequent logins from other apps must not overwrite it, so
+        // the UPDATE branch above never touches this column.
         let new_user_id = Uuid::new_v4().to_string();
         sqlx::query_as::<_, UserRecord>(
             r#"
             INSERT INTO users (user_id, email, display_name, avatar_url, auth_provider,
                                github_username, github_id, google_id,
+                               signup_app_slug,
                                last_login_at, password_hash, password_salt)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), '', '')
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), '', '')
             RETURNING id, user_id, email, display_name, avatar_url, role, auth_provider,
                       github_username, google_id, ethereum_address, ens_name
             "#,
@@ -458,6 +477,7 @@ pub async fn sync_user(pool: &PgPool, user_info: &UserInfoResponse) -> Result<Us
         .bind(&user_info.github_username)
         .bind(&user_info.github_id)
         .bind(&user_info.google_id)
+        .bind(signup_app)
         .fetch_one(pool)
         .await
         .map_err(|e| AuthError::DatabaseError(e.to_string()))?

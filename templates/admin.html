@@ -364,11 +364,19 @@
             placeholder="Search users by name or email..."
           />
         </div>
+        <!-- Signup-app filter strip: click chips to filter the users
+             table to a specific cohort. See renderSignupAppFilterChips
+             in the loadUsers script. -->
+        <div
+          id="signup-app-filter-strip"
+          style="display: flex; gap: 8px; margin: 0 0 12px 0; flex-wrap: wrap"
+        ></div>
         <table>
           <thead>
             <tr>
               <th>User</th>
               <th>Provider</th>
+              <th>Signup App</th>
               <th>Balance</th>
               <th>Agents</th>
               <th>Joined</th>
@@ -753,11 +761,18 @@
 
       // --- Users ---
       let usersPage = 1;
+      // Active signup-app filter chip. `null` = show all,
+      // `""` = show direct ABW signups (NULL slug),
+      // `"fermi_console"` etc. = show just that cohort.
+      let usersSignupAppFilter = null;
       async function loadUsers(search = "", page = 1) {
         usersPage = page;
         try {
           const params = new URLSearchParams({ page, limit: 20 });
           if (search) params.set("search", search);
+          if (usersSignupAppFilter !== null) {
+            params.set("signup_app", usersSignupAppFilter);
+          }
           const res = await fetch("/api/admin/users?" + params);
           if (!res.ok) return;
           const data = await res.json();
@@ -767,13 +782,20 @@
             const joined = u.created_at
               ? new Date(u.created_at).toLocaleDateString()
               : "-";
+            // Signup-app cell: linkifies the slug so operators can
+            // click through to just that cohort. "-" for direct signups.
+            const slug = u.signup_app_slug;
+            const signupCell = slug
+              ? `<a href="#" onclick="filterUsersBySignupApp('${escAttr(slug)}');return false;" style="color:var(--aqua);text-decoration:none;font-family:monospace;font-size:0.85em;">${escHtml(slug)}</a>`
+              : `<span style="color:var(--fg3);">—</span>`;
             const tr = document.createElement("tr");
             tr.innerHTML = `
               <td>
                 <div><a href="/user/${encodeURIComponent(u.user_id)}" style="color:var(--aqua);text-decoration:none">${escHtml(u.display_name || u.user_id || "-")}</a></div>
                 <div class="user-id">${escHtml(u.email || u.user_id || "")}</div>
               </td>
-              <td>${escHtml(u.provider || "-")}</td>
+              <td>${escHtml(u.auth_provider || "-")}</td>
+              <td>${signupCell}</td>
               <td style="color:var(--yellow);font-weight:bold;">${u.balance ?? "-"}</td>
               <td>${u.agent_count ?? "-"}</td>
               <td style="color:var(--fg3);">${joined}</td>
@@ -782,9 +804,45 @@
               </td>`;
             tbody.appendChild(tr);
           });
+          // Refresh the filter-chip strip so its active state matches.
+          renderSignupAppFilterChips();
         } catch (e) {
           console.error("Failed to load users", e);
         }
+      }
+
+      // Set the active signup-app filter and reload. Clicking the same
+      // chip again clears the filter — that's the natural "toggle off"
+      // gesture. Called from both the header chip strip and the inline
+      // slug link in each row.
+      function filterUsersBySignupApp(slug) {
+        usersSignupAppFilter = usersSignupAppFilter === slug ? null : slug;
+        loadUsers(document.getElementById("user-search")?.value || "", 1);
+      }
+
+      // Render the filter chips above the users table. Chip labels are
+      // fixed — we don't dynamically enumerate signup_app_slug values
+      // from the API because for 5 testers hardcoding is fine, and
+      // it keeps the strip readable.
+      function renderSignupAppFilterChips() {
+        const strip = document.getElementById("signup-app-filter-strip");
+        if (!strip) return;
+        const chips = [
+          { label: "All", value: null },
+          { label: "Fermi Console", value: "fermi_console" },
+          { label: "Rabble", value: "rabble" },
+          { label: "Direct (ABW)", value: "" },
+        ];
+        strip.innerHTML = chips
+          .map((c) => {
+            const active = usersSignupAppFilter === c.value;
+            const bg = active ? "var(--yellow)" : "var(--bg1)";
+            const fg = active ? "var(--bg0-hard)" : "var(--fg2)";
+            const escValue =
+              c.value === null ? "null" : `'${escAttr(c.value)}'`;
+            return `<button class="btn btn-sm" style="background:${bg};color:${fg};border:1px solid var(--bg3);" onclick="filterUsersBySignupApp(${escValue})">${escHtml(c.label)}</button>`;
+          })
+          .join("");
       }
 
       // --- Agents ---

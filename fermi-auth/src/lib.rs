@@ -18,7 +18,8 @@ pub use middleware::{auth_middleware, optional_auth_middleware, AuthState};
 pub use oidc::{
     build_github_auth_url, build_google_auth_url, generate_state, github_exchange_code,
     github_fetch_user_info, google_exchange_code, google_fetch_user_info, sync_user,
-    CallbackParams, GitHubOAuthConfig, GoogleOAuthConfig, OAuthConfig, UserInfoResponse,
+    sync_user_from_app, CallbackParams, GitHubOAuthConfig, GoogleOAuthConfig, OAuthConfig,
+    UserInfoResponse,
 };
 pub use secrets::{
     delete_secret, get_secret, get_secret_audit_log, get_secrets_for_agent, list_secrets,

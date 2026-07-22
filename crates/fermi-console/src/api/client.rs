@@ -494,6 +494,29 @@ pub struct AuthMe {
     pub email: Option<String>,
 }
 
+/// Wallet snapshot from `GET /api/wallet`.
+///
+/// Balance components:
+///   * `granted_balance`  — non-transferable (onboarding, admin grants).
+///   * `purchased_balance` — transferable (Stripe top-ups, earned royalties).
+///   * `balance == granted_balance + purchased_balance` (DB-enforced).
+///
+/// We only need `balance` for the sidebar chip; the components come
+/// along for the welcome modal ("100 free credits") + future top-up UI.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Wallet {
+    #[serde(default)]
+    pub balance: i64,
+    #[serde(default)]
+    pub granted_balance: i64,
+    #[serde(default)]
+    pub purchased_balance: i64,
+    #[serde(default)]
+    pub total_deposited: i64,
+    #[serde(default)]
+    pub total_spent: i64,
+}
+
 impl AuthMe {
     /// Best label to show in a compact UI cell. Prefers `display_name`,
     /// then `email`, then a shortened form of the raw user_id (never
@@ -1083,6 +1106,13 @@ impl ApiClient {
     /// Verify the API key and get the authenticated user's info.
     pub async fn auth_me(&self) -> Result<AuthMe, ApiError> {
         self.get("/api/auth/me").await
+    }
+
+    /// Fetch the authenticated user's wallet snapshot: balance,
+    /// granted vs purchased split, totals. Used for the sidebar
+    /// credits chip and the welcome-modal balance display.
+    pub async fn get_wallet(&self) -> Result<Wallet, ApiError> {
+        self.get("/api/wallet").await
     }
 
     // ═══════════════════════════════════════════════════════════════
