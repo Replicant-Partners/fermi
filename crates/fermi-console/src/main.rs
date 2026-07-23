@@ -3523,6 +3523,36 @@ impl FermiConsole {
 
         let mut candidates: Vec<Candidate> = Vec::new();
 
+        // Drafts — forecasts the operator is composing but hasn't
+        // published yet. Absent from the previous feed, which meant
+        // WIP work vanished from the Dashboard entirely until it was
+        // committed. Rank by created_at desc so the newest draft
+        // surfaces first.
+        for f in &self.draft_forecasts {
+            let ts = f
+                .updated_at
+                .clone()
+                .or_else(|| f.created_at.clone())
+                .unwrap_or_default();
+            if ts.is_empty() {
+                continue;
+            }
+            candidates.push(Candidate {
+                sort_key: ts.clone(),
+                item: ActivityItem {
+                    icon: "✎",
+                    text: format!(
+                        "Draft: {} — {:.0}%",
+                        truncate(&f.question_text, 40),
+                        f.predicted_probability * 100.0,
+                    ),
+                    time: format_relative_time(&ts),
+                    color: theme::GOLD,
+                    forecast_id: f.id.clone(),
+                },
+            });
+        }
+
         // Resolved forecasts → ✓ icon, Brier-colored.
         for f in &self.resolved_forecasts {
             let ts = f
@@ -3548,17 +3578,14 @@ impl FermiConsole {
                 item: ActivityItem {
                     icon: "✓",
                     text: format!(
-                        "{} — {} (Brier {:.2})",
-                        truncate(&f.question_text, 40),
+                        "Resolved {}: {} (Brier {:.2})",
                         outcome,
+                        truncate(&f.question_text, 36),
                         brier,
                     ),
-                    time: ts
-                        .split('T')
-                        .next()
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or("?")
-                        .to_string(),
+                    // Relative-time so "3m ago" reads at a glance
+                    // instead of a bare ISO date.
+                    time: format_relative_time(&ts),
                     color,
                     forecast_id: f.id.clone(),
                 },
@@ -3577,21 +3604,28 @@ impl FermiConsole {
             if ts.is_empty() {
                 continue;
             }
+            // Distinguish "just published" (created within the last
+            // hour) from "probability revised" so the operator can
+            // tell at a glance what changed. `updated_at != created_at`
+            // is the signal; when they match, no revision has landed
+            // yet and the row reads as a fresh publish.
+            let was_revised = f.created_at.as_ref().map(|c| c != &ts).unwrap_or(false);
+            let (icon, verb) = if was_revised {
+                ("→", "Revised")
+            } else {
+                ("◐", "Published")
+            };
             candidates.push(Candidate {
                 sort_key: ts.clone(),
                 item: ActivityItem {
-                    icon: "◐",
+                    icon,
                     text: format!(
-                        "{} — {:.0}%",
+                        "{}: {} — {:.0}%",
+                        verb,
                         truncate(&f.question_text, 40),
                         f.predicted_probability * 100.0,
                     ),
-                    time: ts
-                        .split('T')
-                        .next()
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or("?")
-                        .to_string(),
+                    time: format_relative_time(&ts),
                     color: theme::CYAN,
                     forecast_id: f.id.clone(),
                 },
@@ -4579,16 +4613,46 @@ impl FermiConsole {
                                 "○ Not connected".into()
                             }),
                     )
-                    .child(
+                    // Version + update-check chip. Always visible, always
+                    // clickable. Three states drive the label + color:
+                    //   (1) `available_update.is_some()` → "⬆ Update to vX"
+                    //       (cyan) — clicking opens the release-notes modal.
+                    //   (2) `update_check_in_flight`      → "vX — checking…"
+                    //       (dim) — button disabled while a check runs.
+                    //   (3) idle                          → "vX — up to date"
+                    //       (green when we've checked at least once, dim
+                    //       until then).
+                    .child({
+                        let current = env!("CARGO_PKG_VERSION");
+                        let (label, color, has_update) =
+                            if let Some(ref release) = self.available_update {
+                                (format!("⬆ Update to {}", release.tag), theme::CYAN, true)
+                            } else if self.update_check_in_flight {
+                                (format!("v{} — checking…", current), theme::FG_DIM, false)
+                            } else {
+                                (format!("v{} — up to date", current), theme::GREEN, false)
+                            };
                         div()
+                            .id("sidebar-version-chip")
                             .text_size(px(10.0))
-                            .text_color(theme::fg_dim())
+                            .text_color(rgb(color))
                             .mt(px(2.0))
-                            // Pulled from the crate's compile-time version so a
-                            // Cargo.toml bump suffices — no stringly-typed drift
-                            // between the cargo manifest and the footer label.
-                            .child(format!("v{} — BayesOps", env!("CARGO_PKG_VERSION"))),
-                    )
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(rgb(theme::FG)))
+                            .on_click(cx.listener(move |this, _, _w, cx| {
+                                if has_update {
+                                    this.update_modal_showing = true;
+                                    cx.notify();
+                                } else {
+                                    // Verbose=true so the operator gets a
+                                    // visible toast when they're on the
+                                    // latest — without it, clicking the
+                                    // "up to date" chip looks like a no-op.
+                                    this.check_for_updates(true, cx);
+                                }
+                            }))
+                            .child(label)
+                    })
                     // Wallet chip — keeps the current credit balance
                     // visible so testers know they can still run
                     // agents. Rendered only when authenticated because
@@ -4698,7 +4762,118 @@ impl FermiConsole {
             )
     }
 
-    // ── Dashboard Panel ───────────────────────────────────────────────────
+    // ── Dashboard Panel ─────────────────────────────────────────────────────────────
+
+    /// Big-button action bar on the Dashboard. Encodes the top-level
+    /// verbs an operator wants one click away: start a fresh forecast,
+    /// pull one from Polymarket, or paste a URL. Each button routes
+    /// to the same primitive the menu / composer type-ahead uses —
+    /// this is discoverability, not a new codepath.
+    fn render_dashboard_hero(&self, cx: &Context<Self>) -> impl IntoElement {
+        let hero_btn = |id: &'static str,
+                        icon: &'static str,
+                        title: &'static str,
+                        subtitle: &'static str,
+                        accent: u32| {
+            div()
+                .id(id)
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .px(px(16.0))
+                .py(px(12.0))
+                .min_w(px(200.0))
+                .flex_grow()
+                .rounded(px(8.0))
+                .border_1()
+                .border_color(rgb(accent))
+                .bg(theme::bg_elevated())
+                .cursor_pointer()
+                .hover(|s| s.bg(theme::bg_hover()))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(
+                            div()
+                                .text_size(px(18.0))
+                                .text_color(rgb(accent))
+                                .child(icon),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(13.0))
+                                .text_color(theme::fg())
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(title),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(theme::fg_dim())
+                        .child(subtitle),
+                )
+        };
+
+        div()
+            .flex()
+            .flex_wrap()
+            .gap(px(12.0))
+            .child(
+                hero_btn(
+                    "dash-new-forecast",
+                    "＋",
+                    "New forecast",
+                    "Type a question. Fermi decomposes into drivers.",
+                    theme::CYAN,
+                )
+                .on_click(cx.listener(|this, _, _w, cx| {
+                    let api = this.api.clone();
+                    this.cockpit =
+                        Some(cx.new(|cx| CockpitState::new(api, this.registry.clone(), cx)));
+                    this.active_panel = Panel::Composer;
+                    cx.notify();
+                })),
+            )
+            .child(
+                hero_btn(
+                    "dash-from-pm",
+                    "🔮",
+                    "From Polymarket",
+                    "Browse active prediction markets. Import as a Fermi forecast.",
+                    theme::PURPLE,
+                )
+                .on_click(cx.listener(|this, _, _w, cx| {
+                    // Route to Portfolio panel with the PM search sheet
+                    // pre-opened. The search UX already lives there;
+                    // this hero button is the discoverable path in.
+                    // A follow-up will replace this with an in-place
+                    // modal so the operator never leaves the Dashboard.
+                    this.pm_show_search = true;
+                    this.active_panel = Panel::Portfolio;
+                    cx.notify();
+                })),
+            )
+            .child(
+                hero_btn(
+                    "dash-paste-url",
+                    "📎",
+                    "Paste Polymarket URL",
+                    "Have a market in mind? Paste the link, we import it.",
+                    theme::GOLD,
+                )
+                .on_click(cx.listener(|this, _, _w, cx| {
+                    // Same target as "From Polymarket" for now; the
+                    // search field there accepts pasted URLs and
+                    // resolves them to a single match automatically.
+                    this.pm_show_search = true;
+                    this.active_panel = Panel::Portfolio;
+                    cx.notify();
+                })),
+            )
+    }
 
     fn render_dashboard(&self, cx: &Context<Self>) -> impl IntoElement {
         // Extract stats from API response or use defaults
@@ -4822,6 +4997,14 @@ impl FermiConsole {
             // (Sign-in card removed — the auth gate splash shown by
             // Render for FermiConsole handles the unauthenticated case
             // for the entire window, not just this panel.)
+            //
+            // Hero action bar — the three most common Dashboard verbs
+            // rendered as prominent buttons so testers don't have to
+            // hunt through menus / other panels. Sits above the stats
+            // cards where the operator's eye lands first.
+            .when(self.connected, |el| {
+                el.child(self.render_dashboard_hero(cx))
+            })
             .child(
                 // Stats cards row
                 div()
