@@ -100,6 +100,8 @@ fn build_menus() -> Vec<Menu> {
         Menu {
             name: "Help".into(),
             items: vec![
+                MenuItem::action("Keyboard Shortcuts    Ctrl+/", ShowShortcuts),
+                MenuItem::separator(),
                 MenuItem::action("Check for Updates…", CheckForUpdates),
                 MenuItem::action("Release Notes…", ShowUpdateModal),
             ],
@@ -204,6 +206,8 @@ actions!(
         CheckForUpdates,
         ShowUpdateModal,
         DismissUpdateModal,
+        ShowShortcuts,
+        DismissShortcuts,
     ]
 );
 
@@ -726,6 +730,13 @@ struct FermiConsole {
     update_modal_showing: bool,
     /// Progress + error state for the download-and-install phase.
     update_download: updater::DownloadState,
+    /// True when the operator has opened the keyboard-shortcuts help
+    /// modal (via Ctrl+/, the sidebar "❔ Shortcuts" chip, or the Help
+    /// menu). Rendered as a full-window overlay listing every bound
+    /// shortcut grouped by category — the entry point for anyone who
+    /// doesn't yet know the console's hotkeys, which is currently a
+    /// major usability wall.
+    shortcuts_modal_showing: bool,
 }
 
 #[derive(Clone)]
@@ -936,6 +947,7 @@ impl FermiConsole {
             update_check_in_flight: false,
             update_modal_showing: false,
             update_download: updater::DownloadState::Idle,
+            shortcuts_modal_showing: false,
         };
 
         // Try to load API key from environment (fallback for dev)
@@ -1309,6 +1321,30 @@ impl FermiConsole {
         cx: &mut Context<Self>,
     ) {
         self.update_modal_showing = false;
+        cx.notify();
+    }
+
+    // ── Keyboard shortcuts help modal ─────────────────────────────────────
+    //
+    // Discoverability affordance. The console has a dozen useful
+    // shortcuts (Ctrl+Enter to research, Ctrl+R to simulate, Ctrl+P
+    // to publish, Ctrl+1–6 to navigate, …) but no visible surface
+    // that lists them — testers currently have to know them or
+    // trawl menus. `Ctrl+/` opens the modal; Escape or clicking the
+    // backdrop dismisses.
+
+    fn on_show_shortcuts(&mut self, _: &ShowShortcuts, _w: &mut Window, cx: &mut Context<Self>) {
+        self.shortcuts_modal_showing = true;
+        cx.notify();
+    }
+
+    fn on_dismiss_shortcuts(
+        &mut self,
+        _: &DismissShortcuts,
+        _w: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.shortcuts_modal_showing = false;
         cx.notify();
     }
 
@@ -4683,6 +4719,30 @@ impl FermiConsole {
                                 .child(label),
                         )
                     })
+                    // Shortcuts help chip — the discoverability entry
+                    // point for operators who don't know the console's
+                    // hotkeys. Same click behavior as the Ctrl+/ hotkey
+                    // and the Help → Keyboard Shortcuts menu item.
+                    .child(
+                        div()
+                            .id("sidebar-shortcuts-chip")
+                            .mt(px(6.0))
+                            .px(px(8.0))
+                            .py(px(4.0))
+                            .rounded(px(4.0))
+                            .bg(theme::bg_hover())
+                            .border_1()
+                            .border_color(theme::fg_faint())
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_dim())
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::bg_active()).text_color(theme::fg()))
+                            .on_click(cx.listener(|this, _, _w, cx| {
+                                this.shortcuts_modal_showing = true;
+                                cx.notify();
+                            }))
+                            .child("⌨ Shortcuts · Ctrl+/"),
+                    )
                     // ⬆ Update-available badge (Sprint distribution).
                     // Only rendered when the background check has
                     // returned a strictly-newer release. Clicking
@@ -10691,6 +10751,199 @@ impl FermiConsole {
             .child(card)
     }
 
+    // ── Shortcuts help modal ─────────────────────────────────────────────────────
+    //
+    // Rendered when `self.shortcuts_modal_showing` is true. The list
+    // below is the single source of truth for what the console tells
+    // operators about its hotkeys — keep it in sync with the
+    // `cx.bind_keys([...])` block in `main()` and with `build_menus()`.
+    // When you add a new binding, add a row here too.
+    fn render_shortcuts_modal(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        // ((section label, [(keys, description)])) tuples.
+        // Ordered top-to-bottom by frequency-of-use so the shortcuts
+        // an operator hits every session are at the top of the modal.
+        type Row = (&'static str, &'static str);
+        let sections: Vec<(&'static str, Vec<Row>)> = vec![
+            (
+                "Forecast workflow",
+                vec![
+                    ("Ctrl+Enter", "Research question → draft forecast"),
+                    ("Ctrl+R", "Run Monte Carlo simulation"),
+                    ("Ctrl+P", "Publish forecast"),
+                    ("Ctrl+S", "Save forecast (local draft)"),
+                    ("Ctrl+O", "Import forecast from file"),
+                    ("Ctrl+E", "Toggle FPL source view"),
+                ],
+            ),
+            (
+                "Navigation",
+                vec![
+                    ("Ctrl+1", "Dashboard"),
+                    ("Ctrl+2", "Portfolio"),
+                    ("Ctrl+3", "Agent Fleet"),
+                    ("Ctrl+4", "Composer"),
+                    ("Ctrl+5", "Leaderboard"),
+                    ("Ctrl+6", "Teams"),
+                    ("Ctrl+N", "New forecast"),
+                    ("↑ / ↓", "Cycle drivers (in Composer)"),
+                ],
+            ),
+            (
+                "Window",
+                vec![
+                    ("Ctrl+M", "Minimize"),
+                    ("Ctrl+Shift+F", "Toggle fullscreen"),
+                    ("Ctrl+Q", "Quit Fermi Console"),
+                ],
+            ),
+            (
+                "Help",
+                vec![
+                    ("Ctrl+/", "Show this shortcuts panel"),
+                    ("Esc", "Dismiss any modal / overlay"),
+                ],
+            ),
+        ];
+
+        let render_row = |keys: &'static str, desc: &'static str| {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(12.0))
+                .py(px(4.0))
+                .child(
+                    // Key pill — fixed-width so descriptions align in
+                    // a clean column regardless of chord length.
+                    div()
+                        .flex_none()
+                        .w(px(140.0))
+                        .px(px(8.0))
+                        .py(px(3.0))
+                        .rounded(px(4.0))
+                        .bg(rgb(theme::BG))
+                        .border_1()
+                        .border_color(theme::fg_faint())
+                        .text_size(px(11.0))
+                        .text_color(theme::cyan())
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(keys),
+                )
+                .child(
+                    div()
+                        .flex_grow()
+                        .text_size(px(12.0))
+                        .text_color(theme::fg())
+                        .child(desc),
+                )
+        };
+
+        let mut body = div().flex().flex_col().gap(px(18.0));
+        for (label, rows) in sections {
+            let mut section = div().flex().flex_col().gap(px(6.0)).child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(theme::fg_dim())
+                    .font_weight(FontWeight::BOLD)
+                    // Poor-man's letter-spacing via a manual
+                    // uppercase transform; GPUI has no CSS-style
+                    // letter-spacing prop, so uppercase alone
+                    // gives the section header a distinct look.
+                    .child(label.to_uppercase()),
+            );
+            for (keys, desc) in rows {
+                section = section.child(render_row(keys, desc));
+            }
+            body = body.child(section);
+        }
+
+        let card = div()
+            .id("shortcuts-modal-card")
+            .flex()
+            .flex_col()
+            .gap(px(16.0))
+            .w(px(560.0))
+            .max_h(px(660.0))
+            .p(px(24.0))
+            .rounded(px(12.0))
+            .bg(rgb(theme::BG_ELEVATED))
+            .border_1()
+            .border_color(rgb(theme::CYAN))
+            // Header row — title + close button.
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(div().text_size(px(20.0)).child("⌨"))
+                    .child(
+                        div()
+                            .text_size(px(16.0))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme::fg())
+                            .child("Keyboard shortcuts"),
+                    )
+                    .child(div().flex_grow())
+                    .child(
+                        div()
+                            .id("shortcuts-modal-close")
+                            .px(px(10.0))
+                            .py(px(4.0))
+                            .rounded(px(4.0))
+                            .text_size(px(12.0))
+                            .text_color(theme::fg_dim())
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::bg_hover()).text_color(theme::fg()))
+                            .on_click(cx.listener(|this, _, _w, cx| {
+                                this.shortcuts_modal_showing = false;
+                                cx.notify();
+                            }))
+                            .child("Close  ✕"),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(theme::fg_dim())
+                    .child("Ctrl maps to ⌘ on macOS. Press Ctrl+/ any time to reopen this panel."),
+            )
+            // Scrollable body so a growing shortcut list never blows
+            // past the modal height.
+            .child(
+                div()
+                    .id("shortcuts-modal-body")
+                    .overflow_y_scroll()
+                    .max_h(px(480.0))
+                    .pr(px(8.0))
+                    .child(body),
+            );
+
+        // Full-window backdrop; clicking it dismisses the modal so the
+        // operator has a mouse-first way out that mirrors the Esc
+        // keybinding.
+        div()
+            .id("shortcuts-modal-backdrop")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::rgba(0x0A0E14CC))
+            .on_click(cx.listener(|this, _, _w, cx| {
+                this.shortcuts_modal_showing = false;
+                cx.notify();
+            }))
+            .child(
+                // Stop backdrop-dismiss from firing when the operator
+                // clicks inside the card itself.
+                div()
+                    .id("shortcuts-modal-inner")
+                    .on_click(cx.listener(|_, _, _w, cx| {
+                        cx.stop_propagation();
+                    }))
+                    .child(card),
+            )
+    }
+
     fn render_invite_share_modal(&self, cx: &mut Context<Self>) -> impl IntoElement {
         // Only rendered when `self.invite_share_modal.is_some()`; caller
         // is responsible for gating.
@@ -12985,6 +13238,11 @@ impl Render for FermiConsole {
         // presence of a ReleaseInfo so we can't render without data.
         let update_overlay = (self.update_modal_showing && self.available_update.is_some())
             .then(|| self.render_update_modal(cx).into_any_element());
+        // Keyboard-shortcuts help modal (Ctrl+/). Rendered on top of
+        // every panel; single flag, no data dependencies.
+        let shortcuts_overlay = self
+            .shortcuts_modal_showing
+            .then(|| self.render_shortcuts_modal(cx).into_any_element());
         // First-run welcome modal (fires once, when we detect a fresh
         // onboarding grant on the wallet snapshot). Rendered on top of
         // whatever panel is otherwise visible.
@@ -13015,6 +13273,8 @@ impl Render for FermiConsole {
             .on_action(cx.listener(Self::on_check_for_updates))
             .on_action(cx.listener(Self::on_show_update_modal))
             .on_action(cx.listener(Self::on_dismiss_update_modal))
+            .on_action(cx.listener(Self::on_show_shortcuts))
+            .on_action(cx.listener(Self::on_dismiss_shortcuts))
             .relative()
             .flex()
             .size_full()
@@ -13078,6 +13338,8 @@ impl Render for FermiConsole {
             .children(pending_cascades_overlay)
             // Self-update modal (release notes + download progress)
             .children(update_overlay)
+            // Keyboard shortcuts help modal (Ctrl+/)
+            .children(shortcuts_overlay)
             // First-run welcome modal (post-signup)
             .children(welcome_overlay)
             // Toast notification overlay (bottom-right, auto-dismiss)
@@ -15350,6 +15612,16 @@ fn main() {
             KeyBinding::new("secondary-e", ToggleFplSource, Some("FermiConsole")),
             KeyBinding::new("secondary-m", MinimizeWindow, Some("FermiConsole")),
             KeyBinding::new("ctrl-shift-f", ToggleFullscreen, Some("FermiConsole")),
+            // Discoverability: Ctrl+/ opens the shortcuts help modal.
+            // Bound with and without shift so "Ctrl+?" — the shape
+            // operators reach for on US layouts — also works.
+            KeyBinding::new("secondary-/", ShowShortcuts, Some("FermiConsole")),
+            KeyBinding::new("secondary-shift-/", ShowShortcuts, Some("FermiConsole")),
+            // Esc dismisses the shortcuts modal. Scoped to the whole
+            // console for now — there's no other Escape consumer at
+            // this level, and the handler is a no-op when the modal
+            // isn't showing.
+            KeyBinding::new("escape", DismissShortcuts, Some("FermiConsole")),
         ]);
 
         // Driver arrow navigation (up/down arrow keys while in the Composer)
