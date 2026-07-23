@@ -1,24 +1,24 @@
 {
   "forecast_id": "9f1adf4c-ad59-4c6a-bb80-06d78c430eae",
   "current_version": 1,
-  "predicted_probability": 0.3955219089984894,
+  "predicted_probability": 0.0010000000474974513,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-16 06:09",
-      "probability": 0.3955219089984894,
-      "change_summary": "Initial: 39.6% base=9%, 6 drivers, 6 evidence"
+      "timestamp": "2026-07-23 13:19",
+      "probability": 0.0010000000474974513,
+      "change_summary": "Initial: 0.1% base=2%, 6 drivers, 6 evidence"
     }
   ],
   "sim_results": null,
   "base_rate": {
-    "reference_class": "FIFA World Cup winners (1930-2022)",
-    "historical_frequency": 0.087,
-    "sample_size": 23,
-    "source": "fermi",
-    "reasoning": "Argentina has won 3 of 23 World Cups (1978, 1986, 2022), giving them a 13% historical win rate as a specific nation. However, the more appropriate reference class for any single tournament is 'World Cup winner per tournament' = 1/32 qualified teams = 3.1% base rate. Argentina as a top-tier nation (historically top 5 in FIFA rankings, consistent deep runs) sits above the naive 1/32 baseline. Adjusting for Argentina's elite status: they've reached 6 finals in 23 tournaments (26% final rate), and converted 50% of finals to wins. A calibrated base rate for Argentina winning any given World Cup, accounting for their historical strength, is approximately 8-9%. Using 8.7% (their empirical win rate) as the starting point before adjusting for current-state drivers like defending champion status, Messi retirement impact, squad quality, and draw."
+    "reference_class": "FIFA World Cup winners 1930–2022",
+    "historical_frequency": 0.0208,
+    "sample_size": 22,
+    "source": "FIFA tournament archive — 22 prior World Cups",
+    "reasoning": "Equal-prior baseline across the 2026 expanded 48-team field. Inside view diverges via the six factor-derived drivers."
   },
   "evidence": [
     {
@@ -173,16 +173,16 @@
     "event_id": "30615",
     "market_id": "558938",
     "question": "Will Argentina win the 2026 FIFA World Cup?",
-    "market_price": 0.4155,
-    "volume_24h": 13452499.69819006,
-    "liquidity": 6168552.7326,
-    "confidence": "Very High",
-    "price_change_1w": 0.215,
+    "market_price": 0.0,
+    "volume_24h": 0.0,
+    "liquidity": 0.0,
+    "confidence": "Low",
+    "price_change_1w": -0.181,
     "url": "https://polymarket.com/event/world-cup-winner",
     "price_history": [
       {
-        "t": 1784182148,
-        "p": 0.4155
+        "t": 1784812731,
+        "p": 0.0
       }
     ]
   },
