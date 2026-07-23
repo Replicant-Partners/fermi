@@ -3544,26 +3544,36 @@ impl FermiConsole {
     /// Rebuild the Dashboard's Recent Activity feed by merging recent
     /// resolutions with recent live-forecast probability updates.
     ///
-    /// Historically this only surfaced resolved forecasts sorted by
-    /// resolved_at DESC, which meant a dashboard with an active WC
-    /// portfolio would show a week's worth of old group-stage
-    /// eliminations and none of today's actual work (probability
-    /// updates on Argentina / England / Spain). Merge both streams
-    /// keyed on max(resolved_at, updated_at) and keep the top 8.
+    /// Design goals (each solving a specific complaint from testers):
+    ///   * Drafts and probability revisions surface — the feed used
+    ///     to be resolved-only, which meant WIP work vanished until
+    ///     publish + resolution.
+    ///   * Repeat-shape resolutions collapse. A user with a
+    ///     bulk-imported WC portfolio was seeing 8 rows of
+    ///     "Resolved No: Will X win the 2026 FIFA World Cup" — pure
+    ///     noise. Runs of same-family resolutions collapse to one
+    ///     summary row so the other 7 slots go to useful content.
+    ///   * Trivial-Brier resolutions (< 0.05) yield the floor when
+    ///     there's other content to show. A perfectly-called long
+    ///     shot at ~99% predicted is not a learning event; keep it
+    ///     only if the feed would otherwise be empty.
     fn recompute_recent_activity(&mut self) {
         #[derive(Clone)]
         struct Candidate {
             sort_key: String,
             item: ActivityItem,
+            /// True for trivial-Brier resolutions that we're willing
+            /// to drop when the feed has better content.
+            is_low_signal: bool,
+            /// Bucket key used for run-length collapse of same-family
+            /// resolutions. Empty for non-resolutions.
+            family_key: String,
         }
 
         let mut candidates: Vec<Candidate> = Vec::new();
 
         // Drafts — forecasts the operator is composing but hasn't
-        // published yet. Absent from the previous feed, which meant
-        // WIP work vanished from the Dashboard entirely until it was
-        // committed. Rank by created_at desc so the newest draft
-        // surfaces first.
+        // published yet.
         for f in &self.draft_forecasts {
             let ts = f
                 .updated_at
@@ -3586,6 +3596,8 @@ impl FermiConsole {
                     color: theme::GOLD,
                     forecast_id: f.id.clone(),
                 },
+                is_low_signal: false,
+                family_key: String::new(),
             });
         }
 
@@ -3619,12 +3631,14 @@ impl FermiConsole {
                         truncate(&f.question_text, 36),
                         brier,
                     ),
-                    // Relative-time so "3m ago" reads at a glance
-                    // instead of a bare ISO date.
                     time: format_relative_time(&ts),
                     color,
                     forecast_id: f.id.clone(),
                 },
+                // Perfect-Brier calls are noise for a learning-oriented
+                // feed; drop when better content is available.
+                is_low_signal: brier < 0.05,
+                family_key: activity_family_key(&f.question_text, f.actual_outcome),
             });
         }
 
@@ -3665,6 +3679,8 @@ impl FermiConsole {
                     color: theme::CYAN,
                     forecast_id: f.id.clone(),
                 },
+                is_low_signal: false,
+                family_key: String::new(),
             });
         }
 
@@ -3672,7 +3688,56 @@ impl FermiConsole {
         // ISO-8601 ("2026-07-15T…").
         candidates.sort_by(|a, b| b.sort_key.cmp(&a.sort_key));
 
-        self.recent_activity = candidates.into_iter().take(8).map(|c| c.item).collect();
+        // Two-pass curation.
+        //
+        // Pass 1: run-length collapse. Walk the sorted list and,
+        // whenever N ≥ 2 consecutive rows share the same family key,
+        // replace them with a single summary row ("Resolved 8x: 2026
+        // FIFA World Cup group winners — all No"). Non-resolution
+        // rows have an empty family_key so they never collapse.
+        let mut collapsed: Vec<Candidate> = Vec::new();
+        let mut i = 0;
+        while i < candidates.len() {
+            let head = &candidates[i];
+            if head.family_key.is_empty() {
+                collapsed.push(head.clone());
+                i += 1;
+                continue;
+            }
+            let mut j = i + 1;
+            while j < candidates.len() && candidates[j].family_key == head.family_key {
+                j += 1;
+            }
+            let run_len = j - i;
+            if run_len < 2 {
+                collapsed.push(head.clone());
+                i += 1;
+                continue;
+            }
+            // Build one summary row for the whole run. Keep the
+            // head's timestamp so ordering is preserved.
+            let family_label = describe_activity_family(&head.family_key);
+            let mut summary = head.clone();
+            summary.item.text = format!("Resolved {}×: {}", run_len, family_label,);
+            summary.is_low_signal = false; // aggregated row is signal.
+            collapsed.push(summary);
+            i = j;
+        }
+
+        // Pass 2: prefer signal over floor. Keep the top-8 while
+        // preferring non-low-signal rows. If the high-signal pool
+        // has fewer than 8 items, backfill with low-signal ones to
+        // avoid a near-empty feed.
+        let (signal, floor): (Vec<Candidate>, Vec<Candidate>) =
+            collapsed.into_iter().partition(|c| !c.is_low_signal);
+        let mut final_items: Vec<ActivityItem> =
+            signal.into_iter().take(8).map(|c| c.item).collect();
+        if final_items.len() < 8 {
+            let need = 8 - final_items.len();
+            final_items.extend(floor.into_iter().take(need).map(|c| c.item));
+        }
+
+        self.recent_activity = final_items;
     }
 
     fn fetch_forecasts(&mut self, cx: &mut Context<Self>) {
@@ -4906,13 +4971,12 @@ impl FermiConsole {
                     theme::PURPLE,
                 )
                 .on_click(cx.listener(|this, _, _w, cx| {
-                    // Route to Portfolio panel with the PM search sheet
-                    // pre-opened. The search UX already lives there;
-                    // this hero button is the discoverable path in.
-                    // A follow-up will replace this with an in-place
-                    // modal so the operator never leaves the Dashboard.
+                    // In-place: the PM search card renders on the
+                    // Dashboard itself (see `render_dashboard`). No
+                    // panel switch — the operator stays where they
+                    // clicked. Same UI, same handlers as the Portfolio
+                    // panel; both call `render_pm_search_card`.
                     this.pm_show_search = true;
-                    this.active_panel = Panel::Portfolio;
                     cx.notify();
                 })),
             )
@@ -4925,11 +4989,10 @@ impl FermiConsole {
                     theme::GOLD,
                 )
                 .on_click(cx.listener(|this, _, _w, cx| {
-                    // Same target as "From Polymarket" for now; the
-                    // search field there accepts pasted URLs and
-                    // resolves them to a single match automatically.
+                    // Same in-place card; the search field accepts
+                    // pasted URLs and resolves them to a single match
+                    // automatically via `search_polymarket`.
                     this.pm_show_search = true;
-                    this.active_panel = Panel::Portfolio;
                     cx.notify();
                 })),
             )
@@ -5065,6 +5128,13 @@ impl FermiConsole {
             .when(self.connected, |el| {
                 el.child(self.render_dashboard_hero(cx))
             })
+            // In-place Polymarket search. When the hero "From
+            // Polymarket" / "Paste PM URL" buttons toggle
+            // `pm_show_search`, this renders right below the hero —
+            // no navigation away from the Dashboard.
+            .when(self.connected && self.pm_show_search, |el| {
+                el.child(self.render_pm_search_card(cx))
+            })
             .child(
                 // Stats cards row
                 div()
@@ -5117,6 +5187,43 @@ impl FermiConsole {
                     cx,
                 ))
             })
+            // Drafts — forecasts the operator is composing but hasn't
+            // published yet. Without this section, unpublished drafts
+            // "orphaned" outside of any portfolio were completely
+            // invisible from the Dashboard: they don't show in Live
+            // (only actives), don't show in the Portfolio panel (only
+            // named portfolios), and the Composer view only surfaces
+            // the currently-open one. Rendering them here closes the
+            // discoverability gap so an operator can always find and
+            // resume their WIP.
+            .when(self.connected && !self.draft_forecasts.is_empty(), |el| {
+                el.child(self.render_forecast_section(
+                    "Drafts",
+                    "unpublished · click to open in Composer",
+                    &self.draft_forecasts,
+                    theme::GOLD,
+                    cx,
+                ))
+            })
+            // Recently resolved — the last 10 resolutions, so orphan
+            // forecasts not in any portfolio still surface somewhere.
+            // Distinct from the Recent Activity feed above: this is a
+            // full-fat list with per-row detail rather than a curated
+            // eight-item ticker.
+            .when(
+                self.connected && !self.resolved_forecasts.is_empty(),
+                |el| {
+                    let recent_resolved: Vec<Forecast> =
+                        self.resolved_forecasts.iter().take(10).cloned().collect();
+                    el.child(self.render_forecast_section(
+                        "Recently Resolved",
+                        "last 10 · sorted by Brier",
+                        &recent_resolved,
+                        theme::GREEN,
+                        cx,
+                    ))
+                },
+            )
             .child(
                 // Activity feed
                 div()
@@ -8022,90 +8129,90 @@ impl FermiConsole {
             .gap(px(16.0))
             .child(
                 // Header
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(12.0))
-                            .child(
+                div().flex().items_center().justify_between().child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(12.0))
+                        .child(
+                            div()
+                                .text_size(px(22.0))
+                                .text_color(theme::fg())
+                                .font_weight(FontWeight::BOLD)
+                                .child("Portfolio"),
+                        )
+                        // Import from Polymarket button
+                        .when(self.connected, |el| {
+                            el.child(
                                 div()
-                                    .text_size(px(22.0))
-                                    .text_color(theme::fg())
-                                    .font_weight(FontWeight::BOLD)
-                                    .child("Portfolio"),
+                                    .id("pm-import-btn")
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(6.0))
+                                    .px(px(12.0))
+                                    .py(px(5.0))
+                                    .rounded(px(6.0))
+                                    .bg(rgb(0x1A1A2E))
+                                    .border_1()
+                                    .border_color(rgb(theme::PURPLE))
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(theme::PURPLE))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .cursor_pointer()
+                                    .hover(|s| {
+                                        s.bg(rgb(theme::BG_HOVER)).border_color(rgb(theme::CYAN))
+                                    })
+                                    .on_click(cx.listener(|this, _event, _window, cx| {
+                                        this.pm_show_search = !this.pm_show_search;
+                                        cx.notify();
+                                    }))
+                                    .child("🔮 Import from Polymarket"),
                             )
-                            // Import from Polymarket button
-                            .when(self.connected, |el| {
-                                el.child(
-                                    div()
-                                        .id("pm-import-btn")
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(6.0))
-                                        .px(px(12.0))
-                                        .py(px(5.0))
-                                        .rounded(px(6.0))
-                                        .bg(rgb(0x1A1A2E))
-                                        .border_1()
-                                        .border_color(rgb(theme::PURPLE))
-                                        .text_size(px(11.0))
-                                        .text_color(rgb(theme::PURPLE))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(rgb(theme::BG_HOVER)).border_color(rgb(theme::CYAN)))
-                                        .on_click(cx.listener(|this, _event, _window, cx| {
-                                            this.pm_show_search = !this.pm_show_search;
-                                            cx.notify();
-                                        }))
-                                        .child("🔮 Import from Polymarket"),
-                                )
-                            })
-                            // Check Resolutions button (flywheel trigger)
-                            .when(self.connected, |el| {
-                                let loading = self.pm_resolutions_loading;
-                                let result = self.pm_resolutions_last_result.clone();
-                                let label = if loading {
-                                    "⚡ Checking…".to_string()
-                                } else if let Some(ref r) = result {
-                                    r.clone()
-                                } else {
-                                    "⚡ Check Resolutions".to_string()
-                                };
-                                let accent = if result.as_deref().map(|r| r.starts_with("✓")).unwrap_or(false) {
-                                    theme::GREEN
-                                } else {
-                                    theme::GOLD
-                                };
-                                el.child(
-                                    div()
-                                        .id("pm-check-resolutions-btn")
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(6.0))
-                                        .px(px(12.0))
-                                        .py(px(5.0))
-                                        .rounded(px(6.0))
-                                        .bg(rgb(0x1A1A1A))
-                                        .border_1()
-                                        .border_color(rgb(accent))
-                                        .text_size(px(11.0))
-                                        .text_color(rgb(accent))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .when(!loading, |s| s.cursor_pointer())
-                                        .when(!loading, |s| {
-                                            s.hover(|s| s.bg(rgb(theme::BG_HOVER)))
-                                        })
-                                        .on_click(cx.listener(|this, _event, _window, cx| {
-                                            this.check_pm_resolutions(cx);
-                                        }))
-                                        .child(label),
-                                )
-                            }),
-                    ),
+                        })
+                        // Check Resolutions button (flywheel trigger)
+                        .when(self.connected, |el| {
+                            let loading = self.pm_resolutions_loading;
+                            let result = self.pm_resolutions_last_result.clone();
+                            let label = if loading {
+                                "⚡ Checking…".to_string()
+                            } else if let Some(ref r) = result {
+                                r.clone()
+                            } else {
+                                "⚡ Check Resolutions".to_string()
+                            };
+                            let accent = if result
+                                .as_deref()
+                                .map(|r| r.starts_with("✓"))
+                                .unwrap_or(false)
+                            {
+                                theme::GREEN
+                            } else {
+                                theme::GOLD
+                            };
+                            el.child(
+                                div()
+                                    .id("pm-check-resolutions-btn")
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(6.0))
+                                    .px(px(12.0))
+                                    .py(px(5.0))
+                                    .rounded(px(6.0))
+                                    .bg(rgb(0x1A1A1A))
+                                    .border_1()
+                                    .border_color(rgb(accent))
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(accent))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .when(!loading, |s| s.cursor_pointer())
+                                    .when(!loading, |s| s.hover(|s| s.bg(rgb(theme::BG_HOVER))))
+                                    .on_click(cx.listener(|this, _event, _window, cx| {
+                                        this.check_pm_resolutions(cx);
+                                    }))
+                                    .child(label),
+                            )
+                        }),
+                ),
                 // The old "N active · M resolved · K drafts" strip that
                 // used to live on the right side of this header was
                 // aggregating counts across every forecast the user
@@ -8114,311 +8221,13 @@ impl FermiConsole {
                 // HUD already renders its own counts. Global live/draft
                 // counts stay on the Dashboard.
             )
-            // ── Polymarket Search Panel ───────────────────────────────
+            // ── Polymarket Search Panel ──────────────────────────────
+            // Extracted body lives in `render_pm_search_card`. Both
+            // this Portfolio-panel entry point and the Dashboard hero
+            // buttons render the same card so a UX/feature change
+            // only has to be made in one place.
             .when(self.pm_show_search, |el| {
-                el.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(10.0))
-                        .px(px(16.0))
-                        .py(px(12.0))
-                        .rounded(px(8.0))
-                        .bg(rgb(0x1A1A2E))
-                        .border_1()
-                        .border_color(rgb(theme::PURPLE))
-                        // Header
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .child(
-                                    div()
-                                        .text_size(px(14.0))
-                                        .text_color(rgb(theme::PURPLE))
-                                        .font_weight(FontWeight::BOLD)
-                                        .child("🔮 Browse Polymarket"),
-                                )
-                                .child(
-                                    div()
-                                        .id("pm-close-search")
-                                        .text_size(px(12.0))
-                                        .text_color(theme::fg_dim())
-                                        .px(px(8.0))
-                                        .py(px(2.0))
-                                        .rounded(px(4.0))
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(theme::bg_hover()))
-                                        .on_click(cx.listener(|this, _event, _window, cx| {
-                                            this.pm_show_search = false;
-                                            cx.notify();
-                                        }))
-                                        .child("✕"),
-                                ),
-                        )
-                        // Search input + button
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(8.0))
-                                .items_end()
-                                .child(
-                                    div()
-                                        .flex_grow()
-                                        .child(self.pm_search_input.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .id("pm-search-btn")
-                                        .px(px(14.0))
-                                        .py(px(6.0))
-                                        .rounded(px(4.0))
-                                        .bg(rgb(theme::PURPLE))
-                                        .text_color(rgb(theme::BG_DEEP))
-                                        .text_size(px(11.0))
-                                        .font_weight(FontWeight::BOLD)
-                                        .cursor_pointer()
-                                        .hover(|s| s.opacity(0.85))
-                                        .on_click(cx.listener(|this, _event, _window, cx| {
-                                            this.search_polymarket(cx);
-                                        }))
-                                        .child(if self.pm_search_loading {
-                                            "Searching…"
-                                        } else {
-                                            "Search"
-                                        }),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(9.0))
-                                .text_color(theme::fg_faint())
-                                .child("Search active prediction markets. Select one to import as a Fermi forecast."),
-                        )
-                        // Loading indicator
-                        .when(self.pm_search_loading, |el| {
-                            el.child(
-                                div()
-                                    .text_size(px(12.0))
-                                    .text_color(rgb(theme::PURPLE))
-                                    .child("⟳ Searching Polymarket…"),
-                            )
-                        })
-                        // Error
-                        .when(self.pm_search_error.is_some() && !self.pm_search_loading, |el| {
-                            el.child(
-                                div()
-                                    .text_size(px(11.0))
-                                    .text_color(rgb(theme::RED))
-                                    .px(px(10.0))
-                                    .py(px(6.0))
-                                    .rounded(px(4.0))
-                                    .bg(rgb(0x2A1A1A))
-                                    .child(format!(
-                                        "⚠ {}",
-                                        self.pm_search_error.as_deref().unwrap_or("Unknown error")
-                                    )),
-                            )
-                        })
-                        // Results
-                        .when(!self.pm_search_results.is_empty(), |el| {
-                            el.child(
-                                div()
-                                    .id("pm-results-scroll")
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(6.0))
-                                    .overflow_y_scroll()
-                                    .max_h(px(480.0))
-                                    .children(self.pm_search_results.iter().enumerate().map(|(i, result)| {
-                                        let question_str = result.get("question")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("Unknown")
-                                            .to_string();
-                                        let question_display = question_str.clone();
-                                        let event_title = result.get("event_title")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string();
-                                        let price_pct = result.get("market_price_pct")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("?")
-                                            .to_string();
-                                        let vol_fmt = result.get("volume_24h_fmt")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string();
-                                        let liq_fmt = result.get("liquidity_fmt")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string();
-                                        let confidence = result.get("confidence_signal")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("Low")
-                                            .to_string();
-                                        let pm_event_id = result.get("pm_event_id")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string();
-                                        let pm_market_id = result.get("pm_market_id")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string();
-                                        let market_price = result.get("market_price")
-                                            .and_then(|v| v.as_f64())
-                                            .unwrap_or(0.0);
-                                        let end_date = result.get("end_date")
-                                            .and_then(|v| v.as_str())
-                                            .map(|s| s[..10.min(s.len())].to_string())
-                                            .unwrap_or_default();
-                                        let change_1w = result.get("price_change_1w")
-                                            .and_then(|v| v.as_f64());
-                                        let volume_24h_raw = result.get("volume_24h")
-                                            .and_then(|v| v.as_f64());
-                                        let liquidity_raw = result.get("liquidity")
-                                            .and_then(|v| v.as_f64());
-
-                                        let conf_color = match confidence.as_str() {
-                                            "Very High" => theme::GREEN,
-                                            "High" => theme::CYAN,
-                                            "Medium" => theme::GOLD,
-                                            _ => theme::FG_FAINT,
-                                        };
-
-                                        div()
-                                            .id(ElementId::Name(format!("pm-result-{}", i).into()))
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(10.0))
-                                            .px(px(10.0))
-                                            .py(px(8.0))
-                                            .rounded(px(6.0))
-                                            .bg(rgb(theme::BG_ELEVATED))
-                                            .border_1()
-                                            .border_color(rgb(theme::FG_FAINT))
-                                            .cursor_pointer()
-                                            .hover(|s| s.border_color(rgb(theme::PURPLE)).bg(rgb(theme::BG_HOVER)))
-                                            .on_click({
-                                                let confidence_import = confidence.clone();
-                                                cx.listener(move |this, _event, _window, cx| {
-                                                    this.import_polymarket_forecast(
-                                                        &pm_event_id,
-                                                        &pm_market_id,
-                                                        &question_str,
-                                                        market_price,
-                                                        volume_24h_raw,
-                                                        liquidity_raw,
-                                                        Some(confidence_import.clone()),
-                                                        change_1w,
-                                                        cx,
-                                                    );
-                                                })
-                                            })
-                                            // Price
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .flex_col()
-                                                    .items_center()
-                                                    .w(px(60.0))
-                                                    .child(
-                                                        div()
-                                                            .text_size(px(18.0))
-                                                            .text_color(rgb(theme::PURPLE))
-                                                            .font_weight(FontWeight::BOLD)
-                                                            .child(price_pct),
-                                                    )
-                                                    .when(change_1w.is_some(), |el| {
-                                                        let c = change_1w.unwrap();
-                                                        let (arrow, color) = if c > 0.005 {
-                                                            ("↑", theme::GREEN)
-                                                        } else if c < -0.005 {
-                                                            ("↓", theme::RED)
-                                                        } else {
-                                                            ("→", theme::FG_DIM)
-                                                        };
-                                                        el.child(
-                                                            div()
-                                                                .text_size(px(8.0))
-                                                                .text_color(rgb(color))
-                                                                .child(format!("{}{:.1}pp", arrow, c * 100.0)),
-                                                        )
-                                                    }),
-                                            )
-                                            // Question + metadata
-                                            .child(
-                                                div()
-                                                    .flex_grow()
-                                                    .min_w(px(0.0))
-                                                    .flex()
-                                                    .flex_col()
-                                                    .gap(px(2.0))
-                                                    .child(
-                                                        div()
-                                                            .text_size(px(12.0))
-                                                            .text_color(theme::fg())
-                                                            .child(question_display.clone()),
-                                                    )
-                                                    .when(!event_title.is_empty() && event_title != question_display, |el| {
-                                                        el.child(
-                                                            div()
-                                                                .text_size(px(9.0))
-                                                                .text_color(theme::fg_faint())
-                                                                .child(event_title),
-                                                        )
-                                                    })
-                                                    .child(
-                                                        div()
-                                                            .flex()
-                                                            .gap(px(8.0))
-                                                            .text_size(px(9.0))
-                                                            .text_color(theme::fg_faint())
-                                                            .when(!vol_fmt.is_empty(), |el| {
-                                                                el.child(format!("{} vol", vol_fmt))
-                                                            })
-                                                            .when(!liq_fmt.is_empty(), |el| {
-                                                                el.child(format!("{} liq", liq_fmt))
-                                                            })
-                                                            .child(
-                                                                div()
-                                                                    .text_color(rgb(conf_color))
-                                                                    .child(confidence.clone()),
-                                                            )
-                                                            .when(!end_date.is_empty(), |el| {
-                                                                el.child(format!("ends {}", end_date))
-                                                            }),
-                                                    ),
-                                            )
-                                            // Import button
-                                            .child(
-                                                div()
-                                                    .text_size(px(10.0))
-                                                    .text_color(rgb(theme::PURPLE))
-                                                    .px(px(10.0))
-                                                    .py(px(4.0))
-                                                    .rounded(px(4.0))
-                                                    .bg(rgb(0x1A1A2E))
-                                                    .border_1()
-                                                    .border_color(rgb(theme::PURPLE))
-                                                    .child("Import →"),
-                                            )
-                                    })),
-                            )
-                        })
-                        // Empty state
-                        .when(
-                            !self.pm_search_loading && self.pm_search_results.is_empty() && !self.pm_show_search,
-                            |el| {
-                                el.child(
-                                    div()
-                                        .text_size(px(11.0))
-                                        .text_color(theme::fg_dim())
-                                        .child("Search for a Polymarket question to import into Fermi."),
-                                )
-                            },
-                        ),
-                )
+                el.child(self.render_pm_search_card(cx))
             })
             .when(self.forecasts_loading, |el| {
                 el.child(
@@ -8471,6 +8280,350 @@ impl FermiConsole {
         // each portfolio's HUD owns its per-portfolio counts, the
         // Composer owns Lab, and Workspaces have their own home.
         // The old block is gone — `git log` has it if we need it.
+    }
+
+    // ── Polymarket search card ──────────────────────────────────────────────
+    //
+    // Shared between:
+    //   * Portfolio panel — rendered inline when the operator clicks
+    //     "+ Import from Polymarket" in the portfolio header.
+    //   * Dashboard — rendered as an in-place overlay when the hero
+    //     buttons ("🔮 From Polymarket" / "📎 Paste PM URL") toggle
+    //     `pm_show_search`. Testers no longer get punted to the
+    //     Portfolio panel just to import a market.
+    //
+    // Gated on `self.pm_show_search`; callers control visibility.
+    fn render_pm_search_card(&self, cx: &Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(10.0))
+            .px(px(16.0))
+            .py(px(12.0))
+            .rounded(px(8.0))
+            .bg(rgb(0x1A1A2E))
+            .border_1()
+            .border_color(rgb(theme::PURPLE))
+            // Header
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(14.0))
+                            .text_color(rgb(theme::PURPLE))
+                            .font_weight(FontWeight::BOLD)
+                            .child("🔮 Browse Polymarket"),
+                    )
+                    .child(
+                        div()
+                            .id("pm-close-search")
+                            .text_size(px(12.0))
+                            .text_color(theme::fg_dim())
+                            .px(px(8.0))
+                            .py(px(2.0))
+                            .rounded(px(4.0))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::bg_hover()))
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.pm_show_search = false;
+                                cx.notify();
+                            }))
+                            .child("✕"),
+                    ),
+            )
+            // Search input + button
+            .child(
+                div()
+                    .flex()
+                    .gap(px(8.0))
+                    .items_end()
+                    .child(div().flex_grow().child(self.pm_search_input.clone()))
+                    .child(
+                        div()
+                            .id("pm-search-btn")
+                            .px(px(14.0))
+                            .py(px(6.0))
+                            .rounded(px(4.0))
+                            .bg(rgb(theme::PURPLE))
+                            .text_color(rgb(theme::BG_DEEP))
+                            .text_size(px(11.0))
+                            .font_weight(FontWeight::BOLD)
+                            .cursor_pointer()
+                            .hover(|s| s.opacity(0.85))
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.search_polymarket(cx);
+                            }))
+                            .child(if self.pm_search_loading {
+                                "Searching…"
+                            } else {
+                                "Search"
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(9.0))
+                    .text_color(theme::fg_faint())
+                    .child(
+                    "Search active prediction markets. Select one to import as a Fermi forecast.",
+                ),
+            )
+            // Loading indicator
+            .when(self.pm_search_loading, |el| {
+                el.child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(rgb(theme::PURPLE))
+                        .child("⟳ Searching Polymarket…"),
+                )
+            })
+            // Error
+            .when(
+                self.pm_search_error.is_some() && !self.pm_search_loading,
+                |el| {
+                    el.child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(rgb(theme::RED))
+                            .px(px(10.0))
+                            .py(px(6.0))
+                            .rounded(px(4.0))
+                            .bg(rgb(0x2A1A1A))
+                            .child(format!(
+                                "⚠ {}",
+                                self.pm_search_error.as_deref().unwrap_or("Unknown error")
+                            )),
+                    )
+                },
+            )
+            // Results
+            .when(!self.pm_search_results.is_empty(), |el| {
+                el.child(
+                    div()
+                        .id("pm-results-scroll")
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.0))
+                        .overflow_y_scroll()
+                        .max_h(px(480.0))
+                        .children(
+                            self.pm_search_results
+                                .iter()
+                                .enumerate()
+                                .map(|(i, result)| {
+                                    let question_str = result
+                                        .get("question")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("Unknown")
+                                        .to_string();
+                                    let question_display = question_str.clone();
+                                    let event_title = result
+                                        .get("event_title")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let price_pct = result
+                                        .get("market_price_pct")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("?")
+                                        .to_string();
+                                    let vol_fmt = result
+                                        .get("volume_24h_fmt")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let liq_fmt = result
+                                        .get("liquidity_fmt")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let confidence = result
+                                        .get("confidence_signal")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("Low")
+                                        .to_string();
+                                    let pm_event_id = result
+                                        .get("pm_event_id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let pm_market_id = result
+                                        .get("pm_market_id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let market_price = result
+                                        .get("market_price")
+                                        .and_then(|v| v.as_f64())
+                                        .unwrap_or(0.0);
+                                    let end_date = result
+                                        .get("end_date")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s[..10.min(s.len())].to_string())
+                                        .unwrap_or_default();
+                                    let change_1w =
+                                        result.get("price_change_1w").and_then(|v| v.as_f64());
+                                    let volume_24h_raw =
+                                        result.get("volume_24h").and_then(|v| v.as_f64());
+                                    let liquidity_raw =
+                                        result.get("liquidity").and_then(|v| v.as_f64());
+
+                                    let conf_color = match confidence.as_str() {
+                                        "Very High" => theme::GREEN,
+                                        "High" => theme::CYAN,
+                                        "Medium" => theme::GOLD,
+                                        _ => theme::FG_FAINT,
+                                    };
+
+                                    div()
+                                        .id(ElementId::Name(format!("pm-result-{}", i).into()))
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(10.0))
+                                        .px(px(10.0))
+                                        .py(px(8.0))
+                                        .rounded(px(6.0))
+                                        .bg(rgb(theme::BG_ELEVATED))
+                                        .border_1()
+                                        .border_color(rgb(theme::FG_FAINT))
+                                        .cursor_pointer()
+                                        .hover(|s| {
+                                            s.border_color(rgb(theme::PURPLE))
+                                                .bg(rgb(theme::BG_HOVER))
+                                        })
+                                        .on_click({
+                                            let confidence_import = confidence.clone();
+                                            cx.listener(move |this, _event, _window, cx| {
+                                                this.import_polymarket_forecast(
+                                                    &pm_event_id,
+                                                    &pm_market_id,
+                                                    &question_str,
+                                                    market_price,
+                                                    volume_24h_raw,
+                                                    liquidity_raw,
+                                                    Some(confidence_import.clone()),
+                                                    change_1w,
+                                                    cx,
+                                                );
+                                            })
+                                        })
+                                        // Price
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .flex_col()
+                                                .items_center()
+                                                .w(px(60.0))
+                                                .child(
+                                                    div()
+                                                        .text_size(px(18.0))
+                                                        .text_color(rgb(theme::PURPLE))
+                                                        .font_weight(FontWeight::BOLD)
+                                                        .child(price_pct),
+                                                )
+                                                .when(change_1w.is_some(), |el| {
+                                                    let c = change_1w.unwrap();
+                                                    let (arrow, color) = if c > 0.005 {
+                                                        ("↑", theme::GREEN)
+                                                    } else if c < -0.005 {
+                                                        ("↓", theme::RED)
+                                                    } else {
+                                                        ("→", theme::FG_DIM)
+                                                    };
+                                                    el.child(
+                                                        div()
+                                                            .text_size(px(8.0))
+                                                            .text_color(rgb(color))
+                                                            .child(format!(
+                                                                "{}{:.1}pp",
+                                                                arrow,
+                                                                c * 100.0
+                                                            )),
+                                                    )
+                                                }),
+                                        )
+                                        // Question + metadata
+                                        .child(
+                                            div()
+                                                .flex_grow()
+                                                .min_w(px(0.0))
+                                                .flex()
+                                                .flex_col()
+                                                .gap(px(2.0))
+                                                .child(
+                                                    div()
+                                                        .text_size(px(12.0))
+                                                        .text_color(theme::fg())
+                                                        .child(question_display.clone()),
+                                                )
+                                                .when(
+                                                    !event_title.is_empty()
+                                                        && event_title != question_display,
+                                                    |el| {
+                                                        el.child(
+                                                            div()
+                                                                .text_size(px(9.0))
+                                                                .text_color(theme::fg_faint())
+                                                                .child(event_title),
+                                                        )
+                                                    },
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .gap(px(8.0))
+                                                        .text_size(px(9.0))
+                                                        .text_color(theme::fg_faint())
+                                                        .when(!vol_fmt.is_empty(), |el| {
+                                                            el.child(format!("{} vol", vol_fmt))
+                                                        })
+                                                        .when(!liq_fmt.is_empty(), |el| {
+                                                            el.child(format!("{} liq", liq_fmt))
+                                                        })
+                                                        .child(
+                                                            div()
+                                                                .text_color(rgb(conf_color))
+                                                                .child(confidence.clone()),
+                                                        )
+                                                        .when(!end_date.is_empty(), |el| {
+                                                            el.child(format!("ends {}", end_date))
+                                                        }),
+                                                ),
+                                        )
+                                        // Import button
+                                        .child(
+                                            div()
+                                                .text_size(px(10.0))
+                                                .text_color(rgb(theme::PURPLE))
+                                                .px(px(10.0))
+                                                .py(px(4.0))
+                                                .rounded(px(4.0))
+                                                .bg(rgb(0x1A1A2E))
+                                                .border_1()
+                                                .border_color(rgb(theme::PURPLE))
+                                                .child("Import →"),
+                                        )
+                                }),
+                        ),
+                )
+            })
+            // Empty state
+            .when(
+                !self.pm_search_loading
+                    && self.pm_search_results.is_empty()
+                    && !self.pm_show_search,
+                |el| {
+                    el.child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(theme::fg_dim())
+                            .child("Search for a Polymarket question to import into Fermi."),
+                    )
+                },
+            )
     }
 
     fn render_forecast_section(
@@ -13393,6 +13546,71 @@ fn truncate(s: &str, max_chars: usize) -> String {
     } else {
         format!("{}…", s.chars().take(max_chars - 1).collect::<String>())
     }
+}
+
+/// Compute the "family" key for an activity row. Two resolutions
+/// share a family when their question text collapses to the same
+/// stem AND the outcome matches — e.g. "Will Jamaica win the 2026
+/// FIFA World Cup" and "Will Morocco win the 2026 FIFA World Cup"
+/// both stem to `2026 fifa world cup|no`.
+///
+/// The stem is derived by:
+///   1. Lowercasing
+///   2. Stripping leading "will <subject>" pattern (subject is any
+///      run of word chars up to the next connective).
+///   3. Trimming trailing punctuation.
+///
+/// Empty result means "don't collapse" — e.g. for questions that
+/// don't match the pattern we let each row stand.
+fn activity_family_key(question: &str, outcome: Option<bool>) -> String {
+    let lower = question.to_lowercase();
+    let trimmed = lower.trim_matches(|c: char| !c.is_alphanumeric());
+    // Strip common "will <subject>" prefix so per-subject variations
+    // collapse. We match "will" + space + one or more word tokens +
+    // " win" | " be" | " reach" | " defeat", then keep the rest.
+    let stem = if let Some(rest) = trimmed.strip_prefix("will ") {
+        // Walk past subject tokens until we hit a verb we recognise.
+        let verbs = [
+            " win ",
+            " be ",
+            " reach ",
+            " defeat ",
+            " beat ",
+            " qualify ",
+        ];
+        let mut found: Option<&str> = None;
+        for v in &verbs {
+            if let Some(idx) = rest.find(v) {
+                found = Some(&rest[idx + v.len()..]);
+                break;
+            }
+        }
+        found.unwrap_or(rest).to_string()
+    } else {
+        trimmed.to_string()
+    };
+    // Truncate the stem to a stable prefix so wording drift on the
+    // tail ("… in Group A" vs "… in Group B") still collapses.
+    let stem_prefix: String = stem.chars().take(40).collect();
+    let outcome_tag = match outcome {
+        Some(true) => "yes",
+        Some(false) => "no",
+        None => "?",
+    };
+    format!("{}|{}", stem_prefix.trim(), outcome_tag)
+}
+
+/// Human-readable label for a family key produced by
+/// `activity_family_key`. Used in the collapsed summary row.
+fn describe_activity_family(family_key: &str) -> String {
+    let (stem, outcome) = family_key.rsplit_once('|').unwrap_or((family_key, "?"));
+    let outcome_word = match outcome {
+        "yes" => "all Yes",
+        "no" => "all No",
+        _ => "mixed",
+    };
+    let stem_display = truncate(stem, 44);
+    format!("{} — {}", stem_display, outcome_word)
 }
 
 /// True if a team belongs to the fermi_forecast vertical and should appear

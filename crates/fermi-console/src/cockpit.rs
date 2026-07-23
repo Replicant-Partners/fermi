@@ -336,6 +336,16 @@ pub struct CockpitState {
     /// applied alongside `pending_publish_shares` post-publish as
     /// `share_type='team'` object_shares.
     pub pending_publish_team_shares: Vec<(String, String)>,
+    /// Portfolio memberships collected while the forecast is still a
+    /// draft (no `forecast_id` yet). Applied via
+    /// `toggle_portfolio_membership` calls right after publish, so the
+    /// operator can associate a forecast with portfolios during
+    /// composition instead of having to publish-then-remember-to-add.
+    ///
+    /// Cleared once the forecast has been published (there's no
+    /// meaningful "pending" state once a real forecast_id exists —
+    /// clicks go straight to the real API from that point on).
+    pub pending_publish_portfolios: HashSet<String>,
     pub registry: Arc<AgentRegistry>,
     pub cached_fpl: String,
     pub inside_view_explanation: String,
@@ -728,6 +738,7 @@ impl CockpitState {
             share_team_in_flight: HashSet::new(),
             pending_publish_shares: Vec::new(),
             pending_publish_team_shares: Vec::new(),
+            pending_publish_portfolios: HashSet::new(),
             registry,
             cached_fpl: String::new(),
             inside_view_explanation: String::new(),
@@ -8195,6 +8206,17 @@ impl CockpitState {
                             let targets = std::mem::take(&mut state.pending_publish_team_shares);
                             state.apply_publish_team_shares(fid.clone(), targets, cx);
                         }
+                        // Apply any portfolio memberships the operator
+                        // pre-selected during composition. Each toggle
+                        // fires its own optimistic API call; the chip
+                        // strip is now enabled because `forecast_id`
+                        // is set, so subsequent clicks work directly.
+                        if !state.pending_publish_portfolios.is_empty() {
+                            let targets = std::mem::take(&mut state.pending_publish_portfolios);
+                            for pid in targets {
+                                state.toggle_portfolio_membership(pid, cx);
+                            }
+                        }
                         cx.notify();
                     })
                     .ok();
@@ -13584,10 +13606,22 @@ fn render_portfolio_membership_strip(
     if state.cockpit_portfolios.is_empty() {
         return div().into_any_element();
     }
-    // Draft state: surface a hint so the operator understands why the
-    // chip row isn't interactive yet, but still shows their portfolios
-    // as context.
+    // Two modes:
+    //   * Draft (`forecast_id.is_none()`): chip clicks toggle a
+    //     pending selection (`pending_publish_portfolios`) that gets
+    //     applied automatically at publish time. Selected chips show
+    //     with a dashed gold border so the operator can tell the
+    //     difference between a committed membership (solid cyan) and
+    //     a pending one.
+    //   * Published: chip clicks go straight to the API via
+    //     `toggle_portfolio_membership` (existing behavior).
     let is_draft = state.forecast_id.is_none();
+
+    let header_text = if is_draft {
+        "ADD TO PORTFOLIOS ON PUBLISH:"
+    } else {
+        "IN PORTFOLIOS:"
+    };
 
     let mut row = div()
         .flex()
@@ -13605,24 +13639,35 @@ fn render_portfolio_membership_strip(
                 .text_size(px(9.0))
                 .text_color(rgb(theme::FG_FAINT))
                 .font_weight(FontWeight::SEMIBOLD)
-                .child("IN PORTFOLIOS:"),
+                .child(header_text),
         );
 
     for (pid, title) in &state.cockpit_portfolios {
         let is_member = state.current_portfolio_ids.contains(pid);
+        let is_pending = state.pending_publish_portfolios.contains(pid);
         let in_flight = state.portfolio_membership_in_flight.contains(pid);
         let pid_click = pid.clone();
+        // Selection state for the chip is the OR of committed and
+        // pending — both mean "this portfolio will hold the forecast
+        // after publish".
+        let is_selected = is_member || is_pending;
         let border_color = if is_member {
             theme::CYAN
+        } else if is_pending {
+            theme::GOLD
         } else {
             theme::FG_FAINT
         };
         let text_color = if is_member {
             theme::CYAN
+        } else if is_pending {
+            theme::GOLD
         } else {
             theme::FG_DIM
         };
         let label = if is_member {
+            format!("✓ {}", title)
+        } else if is_pending {
             format!("✓ {}", title)
         } else if in_flight {
             format!("… {}", title)
@@ -13636,7 +13681,7 @@ fn render_portfolio_membership_strip(
             .rounded(px(10.0))
             .border_1()
             .border_color(rgb(border_color))
-            .bg(if is_member {
+            .bg(if is_selected {
                 rgb(theme::BG_ACTIVE)
             } else {
                 rgb(theme::BG_ELEVATED)
@@ -13644,23 +13689,41 @@ fn render_portfolio_membership_strip(
             .text_size(px(10.0))
             .text_color(rgb(text_color))
             .child(label);
-        if !is_draft && !in_flight {
+        if !in_flight {
             chip = chip
                 .cursor_pointer()
                 .hover(|s| s.bg(rgb(theme::BG_HOVER)))
                 .on_click(cx.listener(move |state, _, _, cx| {
-                    state.toggle_portfolio_membership(pid_click.clone(), cx);
+                    if state.forecast_id.is_none() {
+                        // Draft: toggle pending selection. Applied on
+                        // the next publish.
+                        if state.pending_publish_portfolios.contains(&pid_click) {
+                            state.pending_publish_portfolios.remove(&pid_click);
+                        } else {
+                            state.pending_publish_portfolios.insert(pid_click.clone());
+                        }
+                        cx.notify();
+                    } else {
+                        state.toggle_portfolio_membership(pid_click.clone(), cx);
+                    }
                 }));
         }
         row = row.child(chip);
     }
 
     if is_draft {
+        // Hint changes based on whether the operator has already
+        // pre-selected anything, so they know clicks are doing work.
+        let hint = if state.pending_publish_portfolios.is_empty() {
+            "• selections apply on publish (Ctrl+P)"
+        } else {
+            "• applied on publish (Ctrl+P)"
+        };
         row = row.child(
             div()
                 .text_size(px(9.0))
                 .text_color(rgb(theme::FG_FAINT))
-                .child("• publish (Ctrl+P) to enable"),
+                .child(hint),
         );
     }
 
