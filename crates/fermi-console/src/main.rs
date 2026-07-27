@@ -760,6 +760,23 @@ struct FermiConsole {
     /// source. Marketplace stays a placeholder until we ingest
     /// marketplace publish events.
     dashboard_activity_filter: ActivityFilter,
+    /// Team detail cache keyed by team_id. Populated by a background
+    /// fan-out that fires after `fetch_teams` completes so the
+    /// Dashboard's team cards can render member counts and initials
+    /// without waiting for the operator to open the Teams panel.
+    /// Sits alongside (not replacing) `selected_team_detail`, which
+    /// is scoped to the Teams-panel right-pane selection.
+    team_details: std::collections::HashMap<String, TeamDetail>,
+    /// Team ids currently mid-flight in the detail fan-out. Guards
+    /// against duplicate fetches when `fetch_teams` fires again while
+    /// a previous refresh is still in progress.
+    team_details_in_flight: std::collections::HashSet<String>,
+    /// Which Dashboard team card is currently hovered. Drives the
+    /// hover-reveal roster strip: when set, the matching card
+    /// expands downward with an initials strip drawn from
+    /// `team_details`. Cleared on pointer-leave. Transient UI
+    /// state; not persisted.
+    hovered_team_id: Option<String>,
     /// The team selected in the left pane; drives the right-pane detail.
     selected_team_id: Option<String>,
     /// Loaded detail (team + members) for `selected_team_id`.
@@ -1062,6 +1079,9 @@ impl FermiConsole {
             portfolio_shares_in_flight: std::collections::HashSet::new(),
             selected_team_tab: TeamTab::Roster,
             dashboard_activity_filter: ActivityFilter::All,
+            team_details: std::collections::HashMap::new(),
+            team_details_in_flight: std::collections::HashSet::new(),
+            hovered_team_id: None,
             selected_team_id: None,
             selected_team_detail: None,
             team_detail_loading: false,
@@ -2009,6 +2029,12 @@ impl FermiConsole {
                     if let Some(id) = this.selected_team_id.clone() {
                         this.fetch_team_detail(&id, cx);
                     }
+                    // Warm the shared team_details cache in the
+                    // background so the Dashboard's team cards can
+                    // render member counts + hover-reveal rosters
+                    // without the operator having to open each team
+                    // manually.
+                    this.refresh_team_details_cache(cx);
                     cx.notify();
                 })
                 .ok();
@@ -2024,6 +2050,45 @@ impl FermiConsole {
             }
         })
         .detach();
+    }
+
+    /// Background fan-out: warm the `team_details` cache for every
+    /// team the operator is a member of. Powers the Dashboard's team
+    /// cards (member counts + hover-reveal roster). Cheap because
+    /// users are in ≤ handful of teams; skipped for teams already in
+    /// the cache or in-flight.
+    ///
+    /// Fires-and-forgets each request; a single 403/500 doesn't stall
+    /// the rest. Called at the tail of `fetch_teams`.
+    fn refresh_team_details_cache(&mut self, cx: &mut Context<Self>) {
+        if !self.connected {
+            return;
+        }
+        let mut targets: Vec<String> = Vec::new();
+        for t in &self.teams {
+            if self.team_details.contains_key(&t.id) {
+                continue;
+            }
+            if !self.team_details_in_flight.insert(t.id.clone()) {
+                continue;
+            }
+            targets.push(t.id.clone());
+        }
+        for tid in targets {
+            let api = self.api.clone();
+            cx.spawn(async move |this, cx| {
+                let result = api.get_team_detail(&tid).await;
+                this.update(cx, |this, cx| {
+                    this.team_details_in_flight.remove(&tid);
+                    if let Ok(detail) = result {
+                        this.team_details.insert(tid.clone(), detail);
+                        cx.notify();
+                    }
+                })
+                .ok();
+            })
+            .detach();
+        }
     }
 
     /// Load the member roster for one team into the right pane. Also
@@ -2042,6 +2107,10 @@ impl FermiConsole {
             async move |this, cx| match api.get_team_detail(&team_id).await {
                 Ok(detail) => {
                     this.update(cx, |this, cx| {
+                        // Stash in the shared cache so the Dashboard's
+                        // team cards pick up the fresh roster too.
+                        this.team_details
+                            .insert(detail.team.id.clone(), detail.clone());
                         // Ignore stale responses if the user clicked away.
                         if this.selected_team_id.as_deref() == Some(detail.team.id.as_str()) {
                             this.selected_team_detail = Some(detail);
@@ -6343,11 +6412,24 @@ impl FermiConsole {
 
     // Individual team tile in the Dashboard's Teams strip. Uses the
     // team's slug initial as an inline glyph so cards read at a glance
-    // even with the roster hidden. Click navigates to the Teams panel
-    // with the team selected — the roster and shared-forecasts view
-    // live there.
+    // even with the roster collapsed. On hover the card expands to
+    // reveal member names — a lightweight roster peek that keeps
+    // rosters findable without a panel switch.
+    //
+    // Data sources:
+    //   * team.name/description — always available from `fetch_teams`.
+    //   * team_details[id] — warmed in the background by
+    //     `refresh_team_details_cache`; may be None on the first
+    //     render tick, in which case the sub-line reads "loading…"
+    //     and the hover state gracefully degrades.
+    //
+    // Click navigates to the Teams panel with the team selected — the
+    // full roster + shared items + activity view live there.
     fn render_dashboard_team_card(&self, team: &Team, cx: &Context<Self>) -> impl IntoElement {
         let tid = team.id.clone();
+        let tid_hover_enter = tid.clone();
+        let tid_hover_leave = tid.clone();
+        let tid_click = tid.clone();
         let name = team.name.clone();
         let initial = team
             .name
@@ -6355,24 +6437,32 @@ impl FermiConsole {
             .next()
             .map(|c| c.to_uppercase().to_string())
             .unwrap_or_else(|| "?".into());
-        let desc = team
-            .description
-            .as_deref()
-            .map(|d| truncate(d, 44).to_string())
-            .filter(|d| !d.is_empty())
-            .unwrap_or_else(|| "no description".into());
         // Team-specific accent — same colour the team-dot uses on
         // forecast rows and activity items. Renders the initial badge
         // in the team's colour so the operator's mental model links
         // this card to "the amber dot on those three forecasts".
         let accent = team_color(&team.id);
 
+        let detail = self.team_details.get(&tid);
+        let member_count = detail.map(|d| d.members.len());
+        let is_hovered = self.hovered_team_id.as_deref() == Some(&tid);
+
+        // Sub-line: prefer the concrete member count once loaded;
+        // fall back to the team description if there is one; else
+        // "loading…" during the first cache-warm tick.
+        let subline: String = if let Some(n) = member_count {
+            format!("{} member{}", n, if n == 1 { "" } else { "s" })
+        } else if let Some(d) = team.description.as_deref().filter(|d| !d.is_empty()) {
+            truncate(d, 44).to_string()
+        } else {
+            "loading…".into()
+        };
+
         div()
             .id(SharedString::from(format!("dash-team-{}", tid)))
             .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(10.0))
+            .flex_col()
+            .gap(px(8.0))
             .px(px(12.0))
             .py(px(10.0))
             .min_w(px(200.0))
@@ -6380,51 +6470,154 @@ impl FermiConsole {
             .flex_grow()
             .rounded(px(6.0))
             .border_1()
-            .border_color(theme::fg_faint())
-            .bg(theme::bg())
+            .border_color(if is_hovered {
+                rgb(accent).into()
+            } else {
+                theme::fg_faint()
+            })
+            .bg(if is_hovered {
+                theme::bg_hover()
+            } else {
+                theme::bg()
+            })
             .cursor_pointer()
-            .hover(|s| s.bg(theme::bg_hover()).border_color(rgb(accent)))
+            .on_hover(cx.listener(move |this, is_over: &bool, _w, cx| {
+                // on_hover fires with a bool: true on enter, false on
+                // leave. We flip `hovered_team_id` accordingly, but
+                // only clear it if it still points at this card —
+                // otherwise a fast pointer sweep could clear the state
+                // of the card that's currently under the pointer.
+                if *is_over {
+                    this.hovered_team_id = Some(tid_hover_enter.clone());
+                } else if this.hovered_team_id.as_deref() == Some(tid_hover_leave.as_str()) {
+                    this.hovered_team_id = None;
+                }
+                cx.notify();
+            }))
             .on_click(cx.listener(move |this, _e, _w, cx| {
-                this.selected_team_id = Some(tid.clone());
+                this.selected_team_id = Some(tid_click.clone());
                 this.selected_team_detail = None;
                 this.navigate(Panel::Teams, cx);
             }))
-            // Initial glyph in a rounded square — stand-in for an
-            // avatar. The roster hover-reveal is a future iteration.
+            // Row 1: initial glyph + name + member count.
             .child(
                 div()
-                    .w(px(32.0))
-                    .h(px(32.0))
                     .flex()
+                    .flex_row()
                     .items_center()
-                    .justify_center()
-                    .rounded(px(6.0))
-                    .bg(rgb(accent))
-                    .text_size(px(14.0))
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(rgb(theme::BG))
-                    .child(initial),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_grow()
-                    .overflow_hidden()
+                    .gap(px(10.0))
                     .child(
                         div()
-                            .text_size(px(12.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme::fg())
-                            .child(name),
+                            .w(px(32.0))
+                            .h(px(32.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(6.0))
+                            .bg(rgb(accent))
+                            .text_size(px(14.0))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(theme::BG))
+                            .child(initial),
                     )
                     .child(
                         div()
-                            .text_size(px(10.0))
-                            .text_color(theme::fg_dim())
-                            .child(desc),
+                            .flex()
+                            .flex_col()
+                            .flex_grow()
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(theme::fg())
+                                    .child(name),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(theme::fg_dim())
+                                    .child(subline),
+                            ),
                     ),
             )
+            // Row 2 (hover only): compact roster — up to 4 member
+            // names truncated + '+N' overflow. When the cache hasn't
+            // landed yet, shows a discreet "roster loading…" hint
+            // so the hover doesn't feel broken.
+            .when(is_hovered, |el| {
+                el.child(self.render_team_card_roster_peek(&tid, accent))
+            })
+    }
+
+    /// Roster peek shown on team-card hover. Bordered strip below the
+    /// main row with up to 4 member labels + "+N" overflow. Reads
+    /// from `team_details`; degrades gracefully with a "loading…"
+    /// message when the cache-warm hasn't landed yet.
+    fn render_team_card_roster_peek(&self, team_id: &str, accent: u32) -> AnyElement {
+        let Some(detail) = self.team_details.get(team_id) else {
+            return div()
+                .px(px(4.0))
+                .py(px(4.0))
+                .border_t_1()
+                .border_color(theme::fg_faint())
+                .text_size(px(10.0))
+                .text_color(theme::fg_faint())
+                .child("roster loading…")
+                .into_any_element();
+        };
+
+        // Best-effort display: prefer server-resolved display name;
+        // fall back to short_user_label (first 8 of a UUID) so the
+        // row stays readable when the users JOIN missed.
+        let names: Vec<String> = detail
+            .members
+            .iter()
+            .map(|m| {
+                m.member_display_name
+                    .clone()
+                    .unwrap_or_else(|| short_user_label(&m.member_id))
+            })
+            .collect();
+
+        let show: Vec<&String> = names.iter().take(4).collect();
+        let overflow = names.len().saturating_sub(4);
+
+        let mut row = div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap(px(4.0))
+            .px(px(4.0))
+            .py(px(6.0))
+            .border_t_1()
+            .border_color(theme::fg_faint());
+
+        for label in show {
+            row = row.child(
+                div()
+                    .px(px(6.0))
+                    .py(px(2.0))
+                    .rounded(px(4.0))
+                    .bg(theme::bg_elevated())
+                    .border_1()
+                    .border_color(rgb(accent))
+                    .text_size(px(10.0))
+                    .text_color(theme::fg())
+                    .child(truncate(label, 20)),
+            );
+        }
+        if overflow > 0 {
+            row = row.child(
+                div()
+                    .px(px(6.0))
+                    .py(px(2.0))
+                    .text_size(px(10.0))
+                    .text_color(theme::fg_dim())
+                    .child(format!("+{}", overflow)),
+            );
+        }
+        row.into_any_element()
     }
 
     // ── Dashboard: Activity feed (wider, filterable) ────────────────────────
