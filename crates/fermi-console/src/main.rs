@@ -704,10 +704,28 @@ struct FermiConsole {
     /// while `connected` is false (e.g. after sign-out).
     background_refresh_started: bool,
 
-    // ── Teams panel (Spec 24 §3.5.4) ──────────────────────────────
+    // ── Teams panel (Spec 24 §3.5.4) ──────────────────────────────────
     /// Teams the user belongs to (left pane of Panel::Teams).
     teams: Vec<Team>,
     teams_loading: bool,
+    /// Cached team-share associations per forecast id — the set of
+    /// team_ids each forecast has been shared with via an
+    /// `object_shares` row with `share_type='team'`. Populated lazily
+    /// by `refresh_forecast_shares_cache` after every `fetch_forecasts`
+    /// run, walking only the own-forecasts with `share_count > 0` so
+    /// the fan-out cost scales with real sharing activity rather than
+    /// the full book size.
+    ///
+    /// Used by `primary_team_id_for_forecast` to colour the team-dot
+    /// on forecast rows and activity items: a forecast's "primary
+    /// team" is its owning `team_id` when present, else the first
+    /// team it's been shared with. When neither exists no dot is
+    /// rendered.
+    forecast_team_shares: std::collections::HashMap<String, Vec<String>>,
+    /// Forecast ids currently mid-flight in the shares fan-out.
+    /// Guards against duplicate fetches when `fetch_forecasts` fires
+    /// while an earlier refresh is still in progress.
+    forecast_shares_in_flight: std::collections::HashSet<String>,
     /// The team selected in the left pane; drives the right-pane detail.
     selected_team_id: Option<String>,
     /// Loaded detail (team + members) for `selected_team_id`.
@@ -976,6 +994,8 @@ impl FermiConsole {
             background_refresh_started: false,
             teams: Vec::new(),
             teams_loading: false,
+            forecast_team_shares: std::collections::HashMap::new(),
+            forecast_shares_in_flight: std::collections::HashSet::new(),
             selected_team_id: None,
             selected_team_detail: None,
             team_detail_loading: false,
@@ -1681,6 +1701,87 @@ impl FermiConsole {
     }
 
     // ── Teams (Spec 24 §3.5.4) ─────────────────────────────────────────
+
+    /// Populate `forecast_team_shares` for own forecasts that have
+    /// non-zero `share_count`. One /api/forecasts/:id/shares call per
+    /// eligible forecast — skipped when the share_count is zero (nothing
+    /// to fetch) and when the id is already in-flight or resolved.
+    ///
+    /// Fires-and-forgets; failures log and are silently ignored so a
+    /// single 403/500 doesn't stall the dot-rendering for the rest of
+    /// the book. Cheap enough that we call it after every
+    /// `fetch_forecasts` refresh: real users have O(10) shared
+    /// forecasts, not O(1000).
+    fn refresh_forecast_shares_cache(&mut self, cx: &mut Context<Self>) {
+        if !self.connected {
+            return;
+        }
+        let mut targets: Vec<String> = Vec::new();
+        for f in self
+            .active_forecasts
+            .iter()
+            .chain(self.draft_forecasts.iter())
+            .chain(self.resolved_forecasts.iter())
+        {
+            let has_shares = f.share_count.unwrap_or(0) > 0;
+            if !has_shares {
+                continue;
+            }
+            if self.forecast_team_shares.contains_key(&f.id) {
+                continue;
+            }
+            if !self.forecast_shares_in_flight.insert(f.id.clone()) {
+                continue;
+            }
+            targets.push(f.id.clone());
+        }
+        for fid in targets {
+            let api = self.api.clone();
+            cx.spawn(async move |this, cx| {
+                let result = api.list_forecast_shares(&fid).await;
+                this.update(cx, |this, cx| {
+                    this.forecast_shares_in_flight.remove(&fid);
+                    if let Ok(resp) = result {
+                        let team_ids: Vec<String> = resp
+                            .shares
+                            .into_iter()
+                            .filter(|s| s.share_type == "team")
+                            .map(|s| s.share_target)
+                            .collect();
+                        this.forecast_team_shares.insert(fid.clone(), team_ids);
+                        cx.notify();
+                    }
+                })
+                .ok();
+            })
+            .detach();
+        }
+    }
+
+    /// Return the primary team_id to use when colouring a forecast's
+    /// team-dot. Precedence:
+    ///   1. The forecast's owning `team_id` (Spec 24 §3.5.6).
+    ///   2. The first team-share in `forecast_team_shares` for its id.
+    ///   3. None — no dot rendered.
+    fn primary_team_id_for_forecast(&self, forecast: &Forecast) -> Option<String> {
+        if let Some(ref tid) = forecast.team_id {
+            if !tid.is_empty() {
+                return Some(tid.clone());
+            }
+        }
+        self.forecast_team_shares
+            .get(&forecast.id)
+            .and_then(|v| v.first().cloned())
+    }
+
+    /// O(N) lookup of a team's display name by id. N is tiny (users are
+    /// in ≤ handful of teams); no need for a HashMap.
+    fn team_name_by_id(&self, team_id: &str) -> Option<String> {
+        self.teams
+            .iter()
+            .find(|t| t.id == team_id)
+            .map(|t| t.name.clone())
+    }
 
     /// Fetch the user's teams for the left pane. Auto-selects the first
     /// team (and loads its detail) when none is selected yet.
@@ -3863,6 +3964,12 @@ impl FermiConsole {
                 // WC group-stage eliminations.
                 this.recompute_recent_activity();
                 this.forecasts_loading = false;
+                // Background-populate the team-share cache for any
+                // shared forecast we haven't looked up yet. Fire-and-
+                // forget; the team-dot rendering treats missing entries
+                // as "no team association" and re-renders when the
+                // cache lands.
+                this.refresh_forecast_shares_cache(cx);
                 cx.notify();
             })
             .ok();
@@ -4545,7 +4652,8 @@ impl FermiConsole {
                 // flow: Trajectory → Wiki → Schedules → Access → Fpl →
                 // Edit → (back to Trajectory).
                 cockpit.right_tab = match cockpit.right_tab {
-                    crate::cockpit::RightTab::Trajectory => crate::cockpit::RightTab::Wiki,
+                    crate::cockpit::RightTab::Trajectory => crate::cockpit::RightTab::Provenance,
+                    crate::cockpit::RightTab::Provenance => crate::cockpit::RightTab::Wiki,
                     crate::cockpit::RightTab::Wiki => crate::cockpit::RightTab::Schedules,
                     crate::cockpit::RightTab::Schedules => crate::cockpit::RightTab::Access,
                     crate::cockpit::RightTab::Access => crate::cockpit::RightTab::Fpl,
@@ -4554,6 +4662,9 @@ impl FermiConsole {
                 };
                 if cockpit.right_tab == crate::cockpit::RightTab::Trajectory {
                     cockpit.load_timeline(cx);
+                }
+                if cockpit.right_tab == crate::cockpit::RightTab::Provenance {
+                    cockpit.load_provenance(cx);
                 }
                 if cockpit.right_tab == crate::cockpit::RightTab::Access
                     && cockpit.shares_loaded_for != cockpit.forecast_id
@@ -5934,6 +6045,11 @@ impl FermiConsole {
             .map(|d| truncate(d, 44).to_string())
             .filter(|d| !d.is_empty())
             .unwrap_or_else(|| "no description".into());
+        // Team-specific accent — same colour the team-dot uses on
+        // forecast rows and activity items. Renders the initial badge
+        // in the team's colour so the operator's mental model links
+        // this card to "the amber dot on those three forecasts".
+        let accent = team_color(&team.id);
 
         div()
             .id(SharedString::from(format!("dash-team-{}", tid)))
@@ -5951,7 +6067,7 @@ impl FermiConsole {
             .border_color(theme::fg_faint())
             .bg(theme::bg())
             .cursor_pointer()
-            .hover(|s| s.bg(theme::bg_hover()).border_color(rgb(theme::GOLD)))
+            .hover(|s| s.bg(theme::bg_hover()).border_color(rgb(accent)))
             .on_click(cx.listener(move |this, _e, _w, cx| {
                 this.selected_team_id = Some(tid.clone());
                 this.selected_team_detail = None;
@@ -5967,7 +6083,7 @@ impl FermiConsole {
                     .items_center()
                     .justify_center()
                     .rounded(px(6.0))
-                    .bg(rgb(theme::GOLD))
+                    .bg(rgb(accent))
                     .text_size(px(14.0))
                     .font_weight(FontWeight::BOLD)
                     .text_color(rgb(theme::BG))
@@ -6108,8 +6224,57 @@ impl FermiConsole {
             )
     }
 
+    /// Look up a Forecast by id across the three own-lists (active,
+    /// draft, resolved). Returns None for shared-with-me / unassigned
+    /// forecasts and for stale ids from an older ActivityItem.
+    fn find_own_forecast(&self, forecast_id: &str) -> Option<&Forecast> {
+        self.active_forecasts
+            .iter()
+            .chain(self.draft_forecasts.iter())
+            .chain(self.resolved_forecasts.iter())
+            .find(|f| f.id == forecast_id)
+    }
+
+    /// A small coloured dot + tiny label indicating a forecast's primary
+    /// team association. Returns an empty element when there's no team
+    /// association — caller can always attach it unconditionally.
+    ///
+    /// Colour comes from `team_color(team_id)` — a deterministic hash
+    /// into the theme palette — so the same team is the same colour
+    /// everywhere (forecast rows, activity items, team cards in the
+    /// Dashboard strip). That consistency is the whole point: the
+    /// operator learns "amber = Macro Desk" once and then reads it
+    /// everywhere.
+    fn render_team_dot(&self, team_id: Option<&str>) -> AnyElement {
+        match team_id {
+            None => div().into_any_element(),
+            Some(tid) if tid.is_empty() => div().into_any_element(),
+            Some(tid) => {
+                let color = team_color(tid);
+                let label = self.team_name_by_id(tid).unwrap_or_else(|| {
+                    format!("team …{}", tid.chars().take(4).collect::<String>())
+                });
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.0))
+                    .child(div().w(px(8.0)).h(px(8.0)).rounded(px(4.0)).bg(rgb(color)))
+                    .child(
+                        div()
+                            .text_size(px(9.0))
+                            .text_color(theme::fg_faint())
+                            .child(truncate(&label, 14)),
+                    )
+                    .into_any_element()
+            }
+        }
+    }
+
     fn render_activity_item(&self, item: &ActivityItem, cx: &Context<Self>) -> impl IntoElement {
         let fid = item.forecast_id.clone();
+        let team_id: Option<String> = self
+            .find_own_forecast(&item.forecast_id)
+            .and_then(|f| self.primary_team_id_for_forecast(f));
         div()
             .id(SharedString::from(format!("activity-{}", item.forecast_id)))
             .flex()
@@ -6137,6 +6302,7 @@ impl FermiConsole {
                     .text_color(theme::fg())
                     .child(item.text.clone()),
             )
+            .child(self.render_team_dot(team_id.as_deref()))
             .child(
                 div()
                     .text_size(px(11.0))
@@ -9821,6 +9987,10 @@ impl FermiConsole {
 
         let is_selected = self.selected_forecast_id.as_deref() == Some(&forecast.id);
         let fid_toggle = forecast.id.clone();
+        // Primary team association for the team-dot. Owning team wins;
+        // else the first team-share we've loaded (may be None until the
+        // background shares fan-out lands).
+        let team_id = self.primary_team_id_for_forecast(forecast);
 
         div()
             .id(SharedString::from(format!("forecast-{}", forecast.id)))
@@ -9848,6 +10018,7 @@ impl FermiConsole {
                         }
                         cx.notify();
                     }))
+                    .child(self.render_team_dot(team_id.as_deref()))
                     .child(
                         // Probability badge
                         div()
@@ -14676,6 +14847,33 @@ fn truncate(s: &str, max_chars: usize) -> String {
     } else {
         format!("{}…", s.chars().take(max_chars - 1).collect::<String>())
     }
+}
+
+/// Deterministic team-id → palette-colour mapping. The same team_id
+/// always produces the same colour so operators learn the mapping
+/// through repetition ("the amber dot is Macro Desk, the cyan dot is
+/// Sports"). Palette is 7 accent colours from the theme; teams beyond
+/// the palette size wrap around — collisions are cosmetic, not
+/// semantic, so they're acceptable.
+fn team_color(team_id: &str) -> u32 {
+    const PALETTE: &[u32] = &[
+        theme::CYAN,
+        theme::GOLD,
+        theme::PURPLE,
+        theme::BLUE,
+        theme::GREEN,
+        theme::ORANGE,
+        theme::RED,
+    ];
+    // Cheap FNV-1a-ish rolling hash over the id bytes. Not a security
+    // primitive; just needs stability + uniform distribution across
+    // the palette. `wrapping_*` avoids arithmetic panics on debug.
+    let mut h: u32 = 2166136261;
+    for b in team_id.as_bytes() {
+        h ^= *b as u32;
+        h = h.wrapping_mul(16777619);
+    }
+    PALETTE[(h as usize) % PALETTE.len()]
 }
 
 /// Small pill used by the Dashboard's activity feed header to signal
