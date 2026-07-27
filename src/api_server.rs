@@ -2858,6 +2858,15 @@ async fn main() {
             "/api/relationship-groups/:group_id/members",
             get(handlers::relationships::groups::get_group_members_handler),
         )
+        // Phase 2.5 Slice B: dry-run propagate for the cascade detail
+        // panel's "what if I resolve this member NO?" preview.
+        // Defaults dry_run=true; POST body carries trigger_forecast_id
+        // + trigger_kind + outcome. See src/handlers/relationships/
+        // groups.rs::preview_group_propagation_handler.
+        .route(
+            "/api/relationship-groups/:group_id/propagate",
+            post(handlers::relationships::groups::preview_group_propagation_handler),
+        )
         // ── Forecast group membership (Spec 25 §6.2) ────────────────
         .route(
             "/api/forecasts/:forecast_id/groups",

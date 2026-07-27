@@ -1,6 +1,13 @@
 //! Group CRUD — create, read, update, archive relationship groups.
 //!
 //! Spec 25 §6.1.
+//!
+//! Also hosts `preview_group_propagation_handler`
+//! (Phase 2.5 Slice B) — the dry-run propagate endpoint that powers
+//! the cascade detail panel's "what if I resolve this member NO?"
+//! preview. Lives here because it's a group-scoped read operation on
+//! the same primitive; keeping it in one file mirrors how the CRUD
+//! endpoints are laid out.
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -10,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 use sqlx::Row;
 
+use super::propagation::{dispatch_propagation_group, PropagateRequest, PropagateResult};
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -248,7 +256,10 @@ pub async fn patch_group_handler(
     if !valid_kinds.contains(&new_kind) {
         return Err((
             StatusCode::BAD_REQUEST,
-            format!("Unknown group kind '{}'. Valid: mutex, at_most_n, implies", new_kind),
+            format!(
+                "Unknown group kind '{}'. Valid: mutex, at_most_n, implies",
+                new_kind
+            ),
         ));
     }
 
@@ -256,10 +267,7 @@ pub async fn patch_group_handler(
     let new_params = req.parameters.as_ref().unwrap_or(&current_params);
 
     let current_desc: Option<String> = row.try_get("description").ok().flatten();
-    let new_desc = req
-        .description
-        .as_deref()
-        .or(current_desc.as_deref());
+    let new_desc = req.description.as_deref().or(current_desc.as_deref());
 
     let result = sqlx::query(
         "UPDATE public.forecast_relationship_groups
@@ -285,6 +293,98 @@ pub async fn patch_group_handler(
         "description": new_desc,
         "updated": true,
     })))
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// POST /api/relationship-groups/:group_id/propagate
+//
+// Group-scoped propagation endpoint. Two use cases:
+//   * dry_run=true (default) — the cascade detail panel's preview:
+//     "if I resolve <trigger_forecast_id> as YES/NO, here's how the
+//     other members shift." Zero side effects; returns a
+//     `PropagateResult` with the proposed `deltas`. This is the
+//     read-side of the cascade authoring surface.
+//   * dry_run=false — direct apply, bypassing the pending_cascades
+//     queue. Kept for symmetry with the legacy propagate route and
+//     for CLI tooling; the normal apply flow still routes through
+//     /api/pending-cascades/:id/apply, which enforces the operator-
+//     gate. Callers who bypass do so knowingly.
+//
+// This endpoint does NOT queue a pending_cascade; it just executes
+// `dispatch_propagation_group` on the caller's behalf. The read-only
+// (dry_run=true) path is safe to call repeatedly.
+//
+// Auth: caller must own the group (or be admin), same as the CRUD
+// handlers above. Prevents leaking probability shifts on other
+// operators' groups.
+
+#[derive(Debug, Deserialize)]
+pub struct PreviewPropagateRequest {
+    /// The forecast whose resolution / update we're simulating.
+    /// Must be a member of the target group (server validates).
+    pub trigger_forecast_id: String,
+    /// "resolved" (outcome fixed to true/false) or "updated" (soft
+    /// probability shift). Matches PropagateRequest semantics.
+    pub trigger_kind: String,
+    /// For trigger_kind="resolved": the outcome (true=YES, false=NO).
+    /// Ignored for "updated".
+    pub outcome: Option<bool>,
+    /// Default true — previews are the common case. Set false only
+    /// when explicitly bypassing the pending_cascades operator-gate
+    /// (CLI tooling, admin one-shots).
+    #[serde(default = "default_dry_run")]
+    pub dry_run: bool,
+}
+
+fn default_dry_run() -> bool {
+    true
+}
+
+pub async fn preview_group_propagation_handler(
+    Path(group_id): Path<String>,
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Json(req): Json<PreviewPropagateRequest>,
+) -> Result<Json<PropagateResult>, (StatusCode, String)> {
+    let user_id = principal.user_id().to_string();
+
+    // Group + auth. Same shape as get_group_handler; a preview leaks
+    // the group's kind + parameters + members, so it must be
+    // owner-gated.
+    let row = sqlx::query(
+        "SELECT kind, parameters, owner_id
+          FROM public.forecast_relationship_groups
+          WHERE group_id = $1 AND archived_at IS NULL",
+    )
+    .bind(&group_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Group not found".into()))?;
+
+    let owner: String = row.try_get("owner_id").unwrap_or_default();
+    if owner != user_id && !principal.can_admin() {
+        return Err((StatusCode::FORBIDDEN, "Not your group".into()));
+    }
+    let kind: String = row.try_get("kind").unwrap_or_default();
+    let parameters: JsonValue = row.try_get("parameters").unwrap_or(JsonValue::Null);
+
+    let prop_req = PropagateRequest {
+        trigger_forecast_id: req.trigger_forecast_id.clone(),
+        trigger_kind: req.trigger_kind,
+        outcome: req.outcome,
+    };
+
+    dispatch_propagation_group(
+        &kind,
+        &group_id,
+        &parameters,
+        &prop_req,
+        &state.db,
+        req.dry_run,
+    )
+    .await
+    .map(Json)
 }
 
 pub async fn delete_group_handler(

@@ -560,6 +560,31 @@ pub struct CockpitState {
     /// When Some, the picker replaces the list with the create form.
     pub cascade_create_draft: Option<CascadeCreateDraft>,
 
+    // ── Cascade group detail panel (Phase 2.5, Slice B) ─────────────
+    //
+    // Reached by clicking a cascade chip's label (not the ×). Replaces
+    // the picker panel with a group-detail view: kind + parameters +
+    // description + members table + invariant health + inline dry-run
+    // preview. Mutually exclusive with `show_cascade_picker` — opening
+    // one closes the other.
+    /// group_id currently displayed in the detail panel. None = panel
+    /// closed. Set by `open_cascade_detail`.
+    pub cascade_detail_group_id: Option<String>,
+    /// Cached response from GET /api/relationship-groups/:id. Contains
+    /// `group` (metadata) and `members` (forecasts in the group). None
+    /// while the fetch is in flight or hasn't been triggered.
+    pub cascade_detail_data: Option<JsonValue>,
+    /// Cached response from POST /api/relationship-groups/:id/propagate
+    /// (dry_run=true). None until the operator clicks a member's
+    /// "preview NO" button.
+    pub cascade_preview_data: Option<JsonValue>,
+    /// forecast_id whose "preview NO" is currently displayed. Lets the
+    /// panel highlight the triggering row and label the preview strip.
+    pub cascade_preview_trigger: Option<String>,
+    /// True while a preview propagate call is in flight; disables
+    /// per-row buttons to prevent double-submit.
+    pub cascade_preview_loading: bool,
+
     // ── Polymarket Price History ──────────────────────────────────
     /// Time-series of crowd prices, sampled at `pm_poll_interval`.
     /// Each entry is (timestamp_epoch_secs, price 0.0–1.0).
@@ -911,6 +936,11 @@ impl CockpitState {
             show_cascade_picker: false,
             cascade_picker_query: String::new(),
             cascade_create_draft: None,
+            cascade_detail_group_id: None,
+            cascade_detail_data: None,
+            cascade_preview_data: None,
+            cascade_preview_trigger: None,
+            cascade_preview_loading: false,
             pm_price_history: Vec::new(),
             pm_poll_interval: None,
             pm_last_refresh_at: None,
@@ -4494,6 +4524,12 @@ impl CockpitState {
         self.show_cascade_picker = true;
         self.cascade_picker_query.clear();
         self.cascade_create_draft = None;
+        // Mutually exclusive with the detail panel; opening the picker
+        // closes any open detail so the two never stack in the header.
+        self.cascade_detail_group_id = None;
+        self.cascade_detail_data = None;
+        self.cascade_preview_data = None;
+        self.cascade_preview_trigger = None;
         if self.available_cascade_groups.is_none() {
             self.load_available_cascade_groups(cx);
         }
@@ -4673,6 +4709,125 @@ impl CockpitState {
             .ok();
         })
         .detach();
+    }
+
+    // ─── Phase 2.5 Slice B: cascade detail panel + dry-run preview ────
+    //
+    // Detail panel replaces the picker (they share the same slot in the
+    // question header). Opens on chip-label click; the chip's × remains
+    // the remove-membership affordance.
+    //
+    // The preview subresource is on-demand: opening the panel loads the
+    // group + members, but the preview only fires when the operator
+    // clicks a member's "preview NO" button.
+
+    /// Open the cascade detail panel for `group_id`, closing the picker
+    /// if it's open. Kicks a fetch of the group metadata + members.
+    /// Idempotent — calling with the same group_id just refreshes.
+    pub fn open_cascade_detail(&mut self, group_id: &str, cx: &mut Context<Self>) {
+        // Mutually exclusive with the picker so both never render.
+        self.show_cascade_picker = false;
+        self.cascade_create_draft = None;
+        self.cascade_detail_group_id = Some(group_id.to_string());
+        // Reset any stale preview; a new group_id starts fresh.
+        self.cascade_preview_data = None;
+        self.cascade_preview_trigger = None;
+        self.load_cascade_detail(cx);
+        cx.notify();
+    }
+
+    /// Close the detail panel. Clears the preview cache so a re-open
+    /// on a different group doesn't briefly flash the old preview.
+    pub fn close_cascade_detail(&mut self, cx: &mut Context<Self>) {
+        self.cascade_detail_group_id = None;
+        self.cascade_detail_data = None;
+        self.cascade_preview_data = None;
+        self.cascade_preview_trigger = None;
+        cx.notify();
+    }
+
+    /// Fetch the currently-selected group's metadata + members.
+    /// Extracted from open_cascade_detail so a future "refresh" button
+    /// can call it directly.
+    pub fn load_cascade_detail(&mut self, cx: &mut Context<Self>) {
+        let Some(group_id) = self.cascade_detail_group_id.clone() else {
+            return;
+        };
+        self.cascade_groups_loading = true;
+        self.cascade_groups_error = None;
+        cx.notify();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.get_cascade_group(&group_id).await;
+            this.update(cx, |state, cx| {
+                state.cascade_groups_loading = false;
+                match result {
+                    Ok(data) => {
+                        state.cascade_detail_data = Some(data);
+                        state.cascade_groups_error = None;
+                    }
+                    Err(e) => {
+                        state.cascade_groups_error = Some(format!(
+                            "Failed to load cascade group '{}': {}",
+                            group_id, e
+                        ));
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Preview a dry-run resolution of `trigger_forecast_id` inside the
+    /// currently-open detail group. `outcome` is what we're resolving
+    /// the trigger to (typically false / NO for the mutex case). The
+    /// server returns per-member deltas without writing.
+    pub fn preview_cascade_resolution(
+        &mut self,
+        trigger_forecast_id: &str,
+        outcome: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(group_id) = self.cascade_detail_group_id.clone() else {
+            return;
+        };
+        self.cascade_preview_loading = true;
+        self.cascade_preview_trigger = Some(trigger_forecast_id.to_string());
+        cx.notify();
+        let api = self.api.clone();
+        let tfid = trigger_forecast_id.to_string();
+        cx.spawn(async move |this, cx| {
+            let result = api
+                .preview_cascade_propagation(&group_id, &tfid, outcome)
+                .await;
+            this.update(cx, |state, cx| {
+                state.cascade_preview_loading = false;
+                match result {
+                    Ok(data) => {
+                        state.cascade_preview_data = Some(data);
+                        state.cascade_groups_error = None;
+                    }
+                    Err(e) => {
+                        state.cascade_preview_data = None;
+                        state.cascade_groups_error =
+                            Some(format!("Preview failed for trigger '{}': {}", tfid, e));
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Clear the current preview without closing the detail panel.
+    /// Fired from the preview strip's × button.
+    pub fn clear_cascade_preview(&mut self, cx: &mut Context<Self>) {
+        self.cascade_preview_data = None;
+        self.cascade_preview_trigger = None;
+        cx.notify();
     }
 
     /// Manually trigger a scheduled agent now and bump its next_run_at.
@@ -9549,6 +9704,11 @@ fn render_question_section(
         // When the picker is open, expand a second panel below the
         // chip strip with the group list + create-new inline form.
         .child(render_cascade_picker(state, cx))
+        // Slice B: when a chip is clicked, expand a detail panel below
+        // the strip with the group's members + dry-run preview.
+        // Mutually exclusive with the picker (open_cascade_detail
+        // closes show_cascade_picker).
+        .child(render_cascade_detail_panel(state, cx))
         .child(
             // Header row: probability + inside-view explainer + confidence
             // + (researching badge) + (publish status). flex_wrap() lets a
@@ -14886,6 +15046,15 @@ fn render_cascade_group_strip(
             .unwrap_or_else(|| "mutex".to_string());
         let glyph = cascade_kind_glyph(&kind);
         let gid_for_remove = gid.clone();
+        let gid_for_detail = gid.clone();
+        let is_open_in_detail = state.cascade_detail_group_id.as_ref() == Some(&gid);
+        // Border pops gold when the chip's detail panel is currently
+        // open, so the operator sees which chip they're viewing.
+        let chip_border = if is_open_in_detail {
+            theme::GOLD
+        } else {
+            theme::CYAN
+        };
 
         row = row.child(
             div()
@@ -14898,7 +15067,7 @@ fn render_cascade_group_strip(
                 .rounded(px(10.0))
                 .bg(rgb(theme::BG_ELEVATED))
                 .border_1()
-                .border_color(rgb(theme::CYAN))
+                .border_color(rgb(chip_border))
                 .text_size(px(11.0))
                 .text_color(rgb(theme::CYAN))
                 .child(
@@ -14907,7 +15076,24 @@ fn render_cascade_group_strip(
                         .text_color(rgb(theme::FG_DIM))
                         .child(glyph),
                 )
-                .child(div().child(gid.clone()))
+                // Clicking the label opens the detail panel; the ×
+                // stays as the remove-membership affordance.
+                .child(
+                    div()
+                        .id(SharedString::from(format!("cascade-chip-label-{}", gid)))
+                        .cursor_pointer()
+                        .child(gid.clone())
+                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                            // Toggle: clicking the currently-open chip
+                            // closes the panel, so the label doubles as
+                            // a close button.
+                            if this.cascade_detail_group_id.as_deref() == Some(&gid_for_detail) {
+                                this.close_cascade_detail(cx);
+                            } else {
+                                this.open_cascade_detail(&gid_for_detail, cx);
+                            }
+                        })),
+                )
                 .child(
                     div()
                         .id(SharedString::from(format!("cascade-chip-x-{}", gid)))
@@ -15383,6 +15569,517 @@ fn render_cascade_create_form(
 
 /// Slugify a question text into a candidate group_id. Best-effort;
 /// the operator can override once Slice B ships the EditorEntity.
+// ══════════════════════════════════════════════════════════════════
+// Cascade group DETAIL panel (Phase 2.5 Slice B).
+//
+// Opens when the operator clicks a chip label (not the ×). Renders in
+// the same slot as the picker — they're mutually exclusive.
+//
+// Layout:
+//   [Header]      ⊗  wc_2026_winner        × close
+//                 kind: Mutually exclusive  —  N members  —  Σp = 1.003 ✓
+//   [Description] (if present)
+//   [Members]     one row per member:
+//                   forecast question  |  current p  |  status  |  preview NO ▶
+//   [Preview]     (when the operator clicks a member's preview button)
+//                 "If Curaçao resolved NO, the group would shift:"
+//                   ▆ Curaçao   −0.9pp   1.0% → 0.1%
+//                   ▆ Spain    +0.5pp  55.9% → 56.4%
+//                   …
+//
+// The header's Σp health strip is kind-aware: for mutex/at_most_n it
+// checks Sum ≈ 1.0 within a tolerance and paints green/red. For implies
+// it's meaningless so we show "n/a".
+
+fn render_cascade_detail_panel(
+    state: &CockpitState,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let Some(group_id) = state.cascade_detail_group_id.clone() else {
+        return div().into_any_element();
+    };
+
+    let panel = div()
+        .flex()
+        .flex_col()
+        .gap(px(10.0))
+        .p(px(12.0))
+        .rounded(px(6.0))
+        .bg(rgb(theme::BG))
+        .border_1()
+        .border_color(rgb(theme::GOLD));
+
+    // Loading path: nothing in cache yet.
+    if state.cascade_detail_data.is_none() {
+        let body = if state.cascade_groups_loading {
+            div()
+                .text_size(px(11.0))
+                .text_color(rgb(theme::FG_DIM))
+                .child(format!("Loading cascade group ‘{}’…", group_id))
+        } else if let Some(err) = &state.cascade_groups_error {
+            div()
+                .text_size(px(11.0))
+                .text_color(rgb(theme::RED))
+                .child(err.clone())
+        } else {
+            div()
+                .text_size(px(11.0))
+                .text_color(rgb(theme::FG_DIM))
+                .child("Waiting for cascade group…")
+        };
+        return panel.child(body).into_any_element();
+    }
+
+    render_cascade_detail_body(state, cx, &group_id).into_any_element()
+}
+
+fn render_cascade_detail_body(
+    state: &CockpitState,
+    cx: &mut Context<CockpitState>,
+    group_id: &str,
+) -> impl IntoElement {
+    let data = state.cascade_detail_data.clone().unwrap_or(JsonValue::Null);
+    let group = data.get("group").cloned().unwrap_or(JsonValue::Null);
+    let members = data
+        .get("members")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let kind = group
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("mutex")
+        .to_string();
+    let description = group
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let glyph = cascade_kind_glyph(&kind);
+    let kind_label = cascade_kind_label(&kind);
+
+    let sum_p: f64 = members
+        .iter()
+        .filter_map(|m| m.get("predicted_probability").and_then(|v| v.as_f64()))
+        .sum();
+    let (invariant_str, invariant_color) = cascade_invariant_health(&kind, sum_p, members.len());
+
+    // ---- Header row ----
+    let header = div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(8.0))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .text_size(px(14.0))
+                        .text_color(rgb(theme::CYAN))
+                        .child(glyph),
+                )
+                .child(
+                    div()
+                        .text_size(px(13.0))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(rgb(theme::CYAN))
+                        .child(group_id.to_string()),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .child(format!(
+                            "kind: {} — {} member{} — {}",
+                            kind_label,
+                            members.len(),
+                            if members.len() == 1 { "" } else { "s" },
+                            invariant_str
+                        )),
+                )
+                .child(
+                    div()
+                        .w(px(8.0))
+                        .h(px(8.0))
+                        .rounded(px(4.0))
+                        .bg(rgb(invariant_color)),
+                ),
+        )
+        .child({
+            div()
+                .id("cascade-detail-close")
+                .px(px(8.0))
+                .py(px(2.0))
+                .rounded(px(4.0))
+                .text_size(px(10.0))
+                .text_color(rgb(theme::FG_DIM))
+                .cursor_pointer()
+                .hover(|s| s.text_color(rgb(theme::FG)))
+                .child("× close")
+                .on_click(cx.listener(|this, _event, _window, cx| {
+                    this.close_cascade_detail(cx);
+                }))
+        });
+
+    // ---- Optional description ----
+    let desc_row = description.map(|d| {
+        div()
+            .text_size(px(11.0))
+            .text_color(rgb(theme::FG_DIM))
+            .child(d)
+    });
+
+    // ---- Members table ----
+    let table_head = div()
+        .flex()
+        .items_center()
+        .gap(px(12.0))
+        .px(px(6.0))
+        .py(px(4.0))
+        .border_b_1()
+        .border_color(rgb(theme::FG_FAINT))
+        .text_size(px(9.0))
+        .text_color(rgb(theme::FG_FAINT))
+        .child(div().flex_grow().child("MEMBER"))
+        .child(div().w(px(80.0)).child("CURRENT"))
+        .child(div().w(px(90.0)).child("STATUS"))
+        .child(div().w(px(100.0)).child("PREVIEW"));
+
+    let preview_trigger = state.cascade_preview_trigger.clone();
+    let preview_loading = state.cascade_preview_loading;
+
+    let mut member_rows_container = div().flex().flex_col();
+    for m in &members {
+        let mid = m
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let q = m
+            .get("question_text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(no question)")
+            .to_string();
+        let p = m
+            .get("predicted_probability")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let status = m
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("active")
+            .to_string();
+
+        let is_this_preview = preview_trigger.as_deref() == Some(&mid);
+        let row_bg = if is_this_preview {
+            theme::BG_ACTIVE
+        } else {
+            theme::BG_ELEVATED
+        };
+        let mid_for_click = mid.clone();
+
+        let short = shorten_question_for_provenance(&q);
+        let status_color = match status.as_str() {
+            "resolved" | "completed" => theme::GREEN,
+            "archived" | "failed" => theme::FG_FAINT,
+            _ => theme::FG_DIM,
+        };
+
+        member_rows_container = member_rows_container.child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(12.0))
+                .px(px(6.0))
+                .py(px(4.0))
+                .bg(rgb(row_bg))
+                .border_b_1()
+                .border_color(rgb(theme::BG))
+                .text_size(px(11.0))
+                .child(
+                    div()
+                        .flex_grow()
+                        .overflow_hidden()
+                        .text_color(rgb(theme::FG))
+                        .child(short),
+                )
+                .child(
+                    div()
+                        .w(px(80.0))
+                        .text_color(rgb(theme::CYAN))
+                        .child(format!("{:.1}%", p * 100.0)),
+                )
+                .child(
+                    div()
+                        .w(px(90.0))
+                        .text_size(px(10.0))
+                        .text_color(rgb(status_color))
+                        .child(status),
+                )
+                .child(
+                    div()
+                        .id(SharedString::from(format!("cascade-preview-btn-{}", mid)))
+                        .w(px(100.0))
+                        .px(px(8.0))
+                        .py(px(2.0))
+                        .rounded(px(4.0))
+                        .bg(rgb(if is_this_preview {
+                            theme::BG_HOVER
+                        } else {
+                            theme::BG
+                        }))
+                        .border_1()
+                        .border_color(rgb(if preview_loading && is_this_preview {
+                            theme::GOLD
+                        } else if is_this_preview {
+                            theme::GOLD
+                        } else {
+                            theme::FG_FAINT
+                        }))
+                        .text_size(px(10.0))
+                        .text_color(rgb(if is_this_preview {
+                            theme::GOLD
+                        } else {
+                            theme::FG_DIM
+                        }))
+                        .cursor_pointer()
+                        .child(if preview_loading && is_this_preview {
+                            "previewing…".to_string()
+                        } else if is_this_preview {
+                            "showing NO ↓".to_string()
+                        } else {
+                            "preview NO ▶".to_string()
+                        })
+                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                            if this.cascade_preview_loading {
+                                return;
+                            }
+                            this.preview_cascade_resolution(&mid_for_click, false, cx);
+                        })),
+                ),
+        );
+    }
+
+    // ---- Preview strip (only when there's a preview) ----
+    let preview_strip = state
+        .cascade_preview_data
+        .as_ref()
+        .map(|p| render_cascade_preview_strip(p, &preview_trigger, &members, cx));
+
+    // ---- Assemble ----
+    let mut panel = div()
+        .flex()
+        .flex_col()
+        .gap(px(10.0))
+        .p(px(12.0))
+        .rounded(px(6.0))
+        .bg(rgb(theme::BG))
+        .border_1()
+        .border_color(rgb(theme::GOLD))
+        .child(header);
+    if let Some(d) = desc_row {
+        panel = panel.child(d);
+    }
+    panel = panel.child(table_head).child(member_rows_container);
+    if let Some(p) = preview_strip {
+        panel = panel.child(p);
+    }
+    if let Some(err) = &state.cascade_groups_error {
+        panel = panel.child(
+            div()
+                .text_size(px(10.0))
+                .text_color(rgb(theme::RED))
+                .child(err.clone()),
+        );
+    }
+
+    panel
+}
+
+/// Kind-aware invariant check: for a mutex or at_most_n group Sum
+/// should be ≈ 1.0. For implies there's no simple additive invariant.
+/// Returns a display string plus a colour for the health dot.
+fn cascade_invariant_health(kind: &str, sum_p: f64, n_members: usize) -> (String, u32) {
+    if n_members == 0 {
+        return ("(empty group)".to_string(), theme::FG_FAINT);
+    }
+    match kind {
+        "mutex" | "mutually_exclusive" | "at_most_n" => {
+            let drift = (sum_p - 1.0).abs();
+            let color = if drift < 0.05 {
+                theme::GREEN
+            } else if drift < 0.20 {
+                theme::GOLD
+            } else {
+                theme::RED
+            };
+            (format!("Σp = {:.3}", sum_p), color)
+        }
+        _ => ("Σp n/a".to_string(), theme::FG_FAINT),
+    }
+}
+
+/// Render the dry-run preview strip that appears below the members
+/// table when a preview is loaded. Sorted by |delta_pp| desc so the
+/// trigger (largest magnitude by construction) is first, followed by
+/// the survivors that gain the most mass.
+fn render_cascade_preview_strip(
+    preview: &JsonValue,
+    trigger_id: &Option<String>,
+    members: &[JsonValue],
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let mut deltas = preview
+        .get("deltas")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    // Server sorts by insertion order; the preview panel wants |delta|
+    // descending so the trigger anchors the top.
+    deltas.sort_by(|a, b| {
+        let da = a
+            .get("delta_pp")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0)
+            .abs();
+        let db_ = b
+            .get("delta_pp")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0)
+            .abs();
+        db_.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // Trigger short label for the header line.
+    let trigger_short = trigger_id.as_ref().and_then(|tid| {
+        members
+            .iter()
+            .find(|m| m.get("id").and_then(|v| v.as_str()) == Some(tid))
+            .and_then(|m| m.get("question_text").and_then(|v| v.as_str()))
+            .map(shorten_question_for_provenance)
+    });
+
+    let header = div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .child(
+            div()
+                .text_size(px(11.0))
+                .font_weight(FontWeight::BOLD)
+                .text_color(rgb(theme::GOLD))
+                .child(match trigger_short {
+                    Some(name) => format!("If {} resolved NO, the cascade would shift:", name),
+                    None => "Dry-run preview".to_string(),
+                }),
+        )
+        .child(
+            div()
+                .id("cascade-preview-clear")
+                .px(px(6.0))
+                .py(px(2.0))
+                .rounded(px(4.0))
+                .text_size(px(10.0))
+                .text_color(rgb(theme::FG_DIM))
+                .cursor_pointer()
+                .hover(|s| s.text_color(rgb(theme::FG)))
+                .child("clear")
+                .on_click(cx.listener(|this, _event, _window, cx| {
+                    this.clear_cascade_preview(cx);
+                })),
+        );
+
+    let mut rows = div().flex().flex_col();
+    for d in deltas.iter().take(12) {
+        let delta_pp = d.get("delta_pp").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let prev = d
+            .get("previous_probability")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let new_p = d
+            .get("new_probability")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let fid = d
+            .get("forecast_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let is_trigger = trigger_id.as_deref() == Some(&fid);
+
+        // Best-effort human name from the members list.
+        let name = members
+            .iter()
+            .find(|m| m.get("id").and_then(|v| v.as_str()) == Some(&fid))
+            .and_then(|m| m.get("question_text").and_then(|v| v.as_str()))
+            .map(shorten_question_for_provenance)
+            .unwrap_or_else(|| short_id(&fid));
+
+        let (color, glyph) = if is_trigger {
+            (theme::GOLD, "◆")
+        } else if delta_pp >= 0.0 {
+            (theme::GREEN, "▲")
+        } else {
+            (theme::RED, "▼")
+        };
+        let sign = if delta_pp >= 0.0 { "+" } else { "" };
+        let bar_w = (delta_pp.abs() * 6.0).clamp(2.0, 60.0) as f32;
+
+        rows = rows.child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(10.0))
+                .px(px(6.0))
+                .py(px(3.0))
+                .text_size(px(11.0))
+                .child(div().w(px(12.0)).text_color(rgb(color)).child(glyph))
+                .child(
+                    div()
+                        .flex_grow()
+                        .text_color(rgb(if is_trigger { theme::GOLD } else { theme::FG }))
+                        .child(name),
+                )
+                .child(
+                    div()
+                        .w(px(60.0))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(rgb(color))
+                        .child(format!("{}{:.2}", sign, delta_pp)),
+                )
+                .child(
+                    div()
+                        .h(px(5.0))
+                        .w(px(bar_w))
+                        .rounded(px(2.0))
+                        .bg(rgb(color)),
+                )
+                .child(
+                    div()
+                        .w(px(110.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .text_size(px(10.0))
+                        .child(format!("{:.1}% → {:.1}%", prev * 100.0, new_p * 100.0)),
+                ),
+        );
+    }
+
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .p(px(8.0))
+        .rounded(px(4.0))
+        .bg(rgb(theme::BG_ELEVATED))
+        .border_1()
+        .border_color(rgb(theme::GOLD))
+        .child(header)
+        .child(rows)
+}
+
 fn cascade_suggest_group_id(question: &str) -> String {
     let stripped = question
         .trim_start_matches("Will ")

@@ -246,6 +246,13 @@ pub struct Portfolio {
     pub forecast_count: Option<i64>,
     pub resolved_count: Option<i64>,
     pub avg_brier: Option<f64>,
+    /// Owning team (Spec 24 §3.5.4). Populated by
+    /// `list_portfolios_handler` when the portfolio is team-owned.
+    /// `default`s to None against older API builds that don't return
+    /// it. Used by the Teams panel's Shared tab to filter portfolios
+    /// owned by a specific team.
+    #[serde(default)]
+    pub team_id: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -1778,6 +1785,35 @@ impl ApiClient {
             "/api/forecasts/{}/groups/{}",
             forecast_id, group_id
         ))
+        .await
+    }
+
+    /// Phase 2.5 Slice B: dry-run propagate for the cascade detail
+    /// panel's preview. "What would happen if I resolved this member
+    /// NO?" Returns a `PropagateResult` with per-forecast deltas but
+    /// writes nothing to the DB. Powers the preview table in the
+    /// detail panel.
+    ///
+    /// Server contract:
+    /// `POST /api/relationship-groups/:group_id/propagate`
+    /// with `{ trigger_forecast_id, trigger_kind: "resolved", outcome,
+    /// dry_run: true }`. See
+    /// src/handlers/relationships/groups.rs::preview_group_propagation_handler.
+    pub async fn preview_cascade_propagation(
+        &self,
+        group_id: &str,
+        trigger_forecast_id: &str,
+        outcome: bool,
+    ) -> Result<JsonValue, ApiError> {
+        self.post(
+            &format!("/api/relationship-groups/{}/propagate", group_id),
+            &serde_json::json!({
+                "trigger_forecast_id": trigger_forecast_id,
+                "trigger_kind": "resolved",
+                "outcome": outcome,
+                "dry_run": true,
+            }),
+        )
         .await
     }
 
