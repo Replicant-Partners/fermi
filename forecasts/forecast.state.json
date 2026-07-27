@@ -1,15 +1,15 @@
 {
   "forecast_id": null,
   "current_version": 1,
-  "predicted_probability": 0.365,
+  "predicted_probability": 0.295,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-27 17:42",
-      "probability": 0.365,
-      "change_summary": "Initial: 36.5%, 0 drivers, 0 evidence"
+      "timestamp": "2026-07-27 17:50",
+      "probability": 0.295,
+      "change_summary": "Initial: 29.5%, 0 drivers, 0 evidence"
     }
   ],
   "sim_results": null,
@@ -19,18 +19,18 @@
   "driver_confidence": {},
   "polymarket": {
     "event_id": "659518",
-    "market_id": "2771324",
-    "question": "Will Arsenal win the 2026-27 English Premier League (EPL) Championship?",
-    "market_price": 0.365,
-    "volume_24h": 928.805027,
-    "liquidity": 421982.8652,
+    "market_id": "2771335",
+    "question": "Will Manchester City win the 2026-27 English Premier League (EPL) Championship?",
+    "market_price": 0.295,
+    "volume_24h": 649.089315,
+    "liquidity": 1061400.0501,
     "confidence": "Low",
     "price_change_1w": null,
     "url": "https://polymarket.com/event/659518",
     "price_history": [
       {
-        "t": 1785174158,
-        "p": 0.365
+        "t": 1785174601,
+        "p": 0.295
       }
     ]
   },
