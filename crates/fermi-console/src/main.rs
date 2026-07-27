@@ -5735,9 +5735,14 @@ impl FermiConsole {
     // empty on a fresh install.
     fn render_dashboard_marketplace_card(&self, cx: &Context<Self>) -> impl IntoElement {
         let local_cards = self.registry.list_cards().unwrap_or_default();
+        // Same filter render_agent_fleet_panel uses: agents tagged
+        // `fermi-orchestra` in their card metadata. The old
+        // `agent_type == "forecast_analyst"` filter matched nothing
+        // (no curated agent uses that type), which is why the Fresh
+        // tier read empty on the Dashboard.
         let fermi_cards: Vec<&AgentCard> = local_cards
             .iter()
-            .filter(|c| c.agent_type == "forecast_analyst")
+            .filter(|c| c.metadata.tags.iter().any(|t| t == "fermi-orchestra"))
             .collect();
         // Session runs are only relevant when a cockpit is open; on
         // the Dashboard we don't have one so pass an empty slice.
@@ -7767,11 +7772,27 @@ impl FermiConsole {
     ) {
         self.pm_show_search = false;
 
-        // Create cockpit if needed
-        if self.cockpit.is_none() {
-            let api = self.api.clone();
-            self.cockpit = Some(cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx)));
-        }
+        // Always start from a fresh cockpit. The old code only
+        // created a new one when `self.cockpit.is_none()`, which
+        // meant importing a second PM market while a previous forecast
+        // was still open reused the same CockpitState — leaking its
+        // forecast_id, program (drivers/evidence/base rate), timeline,
+        // provenance, PM price history, resolved metadata, session
+        // cost, agent_runs, and messages into the newly-imported
+        // forecast. Symptom: the newly-imported question rendered on
+        // top of the previous forecast's trajectory, resolution
+        // banner, cascade events, and "Locked: Resolved→No" chrome.
+        //
+        // Same pattern as `on_new_forecast` / `on_reset_cockpit`:
+        // unconditional replace. GC drops the old CockpitState the
+        // moment we overwrite the Option.
+        let api = self.api.clone();
+        self.cockpit = Some(cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx)));
+        // Selection tracker on the FermiConsole itself — not owned by
+        // the cockpit — must also be cleared so panel views that key
+        // off it (Portfolio expand, forecast detail) don't keep
+        // pointing at the previous forecast.
+        self.selected_forecast_id = None;
 
         // Pre-populate cockpit with the PM question and link data
         if let Some(ref cockpit) = self.cockpit {

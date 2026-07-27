@@ -2788,6 +2788,16 @@ async fn main() {
             "/api/forecasts/:forecast_id/timeline",
             get(handlers::forecast_benchmark::forecast_timeline_handler),
         )
+        // Phase 2.5 (cascades). Redistribution waterfall for one forecast:
+        // where its current probability came from in terms of upstream
+        // resolutions that cascaded mass onto (or off) it. Read-only view
+        // over fermi_forecast_updates rows with revision_trigger
+        // ∈ {'cascade','cascade_undo'}. Drives the Provenance right-tab in
+        // the cockpit; see docs/fermi/WORLD_CUP_ROADMAP.md.
+        .route(
+            "/api/forecasts/:forecast_id/cascade-provenance",
+            get(handlers::forecast_benchmark::forecast_cascade_provenance_handler),
+        )
         .route(
             "/api/forecasts/:forecast_id/commit",
             post(handlers::forecast_benchmark::commit_forecast_handler),

@@ -93,6 +93,12 @@ pub enum RightTab {
     /// upstream resolution, and market poll. The "spacetime" view from
     /// the spec, scoped to this forecast.
     Trajectory,
+    /// Phase 2.5 (cascades): redistribution waterfall. "Why is this
+    /// probability what it is?" — one row per upstream resolution that
+    /// cascaded mass onto (or off) this forecast, sorted by |delta_pp|
+    /// desc. Reads GET /api/forecasts/:id/cascade-provenance. See
+    /// docs/fermi/WORLD_CUP_ROADMAP.md.
+    Provenance,
     /// Spec 24 §3.5.2: who can see/edit this forecast. Lists object_shares
     /// rows and lets the owner add (by user/email) or revoke collaborators.
     Access,
@@ -459,6 +465,16 @@ pub struct CockpitState {
     /// Error message from the last timeline fetch, if any.
     pub timeline_error: Option<String>,
 
+    // ── Cascade provenance view (Phase 2.5) ───────────────────────
+    /// Cached response from GET /api/forecasts/:id/cascade-provenance.
+    /// None until the operator opens the Provenance tab for the first
+    /// time, or the load errored. Same lifecycle as `timeline_data`.
+    pub provenance_data: Option<JsonValue>,
+    /// True while a provenance fetch is in flight.
+    pub provenance_loading: bool,
+    /// Error message from the last provenance fetch, if any.
+    pub provenance_error: Option<String>,
+
     // ── Polymarket Price History ──────────────────────────────────
     /// Time-series of crowd prices, sampled at `pm_poll_interval`.
     /// Each entry is (timestamp_epoch_secs, price 0.0–1.0).
@@ -800,6 +816,9 @@ impl CockpitState {
             timeline_data: None,
             timeline_loading: false,
             timeline_error: None,
+            provenance_data: None,
+            provenance_loading: false,
+            provenance_error: None,
             pm_price_history: Vec::new(),
             pm_poll_interval: None,
             pm_last_refresh_at: None,
@@ -4224,6 +4243,44 @@ impl CockpitState {
                     }
                     Err(e) => {
                         state.timeline_error = Some(e.to_string());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    // ─── Phase 2.5: cascade provenance fetch ────────────────────────
+    //
+    // Reads GET /api/forecasts/:id/cascade-provenance, cached in
+    // `provenance_data` so re-renders don't re-fetch. Idempotent: safe to
+    // call on every Provenance tab click; the request only fires when the
+    // tab is actively viewed.
+
+    pub fn load_provenance(&mut self, cx: &mut Context<Self>) {
+        let Some(forecast_id) = self.forecast_id.clone() else {
+            self.provenance_error =
+                Some("Save the forecast first to see its cascade provenance.".to_string());
+            cx.notify();
+            return;
+        };
+        self.provenance_loading = true;
+        self.provenance_error = None;
+        cx.notify();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.forecast_cascade_provenance(&forecast_id).await;
+            this.update(cx, |state, cx| {
+                state.provenance_loading = false;
+                match result {
+                    Ok(data) => {
+                        state.provenance_data = Some(data);
+                        state.provenance_error = None;
+                    }
+                    Err(e) => {
+                        state.provenance_error = Some(e.to_string());
                     }
                 }
                 cx.notify();
@@ -9051,6 +9108,9 @@ impl Render for CockpitState {
                                 RightTab::Trajectory => {
                                     render_trajectory_tab(self, cx).into_any_element()
                                 }
+                                RightTab::Provenance => {
+                                    render_provenance_tab(self, cx).into_any_element()
+                                }
                                 RightTab::Access => {
                                     render_access_tab(self, cx).into_any_element()
                                 }
@@ -9221,32 +9281,395 @@ fn render_question_section(
         // the headline product of the forecasting workflow. Hidden when
         // no comparison anchor exists yet.
         .child(render_delta_chips(state))
+        .child(render_action_bar(state, cx))
+}
+
+// ── Composer action bar (in-context affordances for the hotkeys) ────────
+//
+// The composer has seven core hotkeys (Ctrl+↵ research, Ctrl+R simulate,
+// Ctrl+S save, Ctrl+P publish, Ctrl+N new, Ctrl+O import, Ctrl+E tabs).
+// The previous incarnation of this strip was a row of dim text — discoverable
+// but stateless. This version turns each shortcut into a clickable chip that:
+//
+//   * shows the current state per action (idle / running / done / dirty /
+//     locked / not-yet-saved)
+//   * highlights whichever action is the recommended NEXT step given the
+//     current cockpit state (primary chip = cyan border, everything else
+//     stays quiet)
+//   * fires the action on click for the ones the cockpit owns directly
+//     (Research, Simulate, Save, Publish). New / Import / Tabs stay as
+//     visible hints — those are dispatched at the FermiConsole level.
+//
+// Rendered under the delta-chip row inside `render_question_section` so
+// the operator sees state + affordance without their eyes leaving the
+// probability headline.
+
+/// Recommended next action given the current cockpit state. Powers the
+/// primary-chip highlighting in the action bar so the operator's next
+/// step is one glance away.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NextAction {
+    Research,
+    Simulate,
+    Save,
+    Publish,
+    None,
+}
+
+fn next_action(state: &CockpitState) -> NextAction {
+    // Resolved/void forecasts are locked — no writes accepted, no primary.
+    if state.is_locked() {
+        return NextAction::None;
+    }
+    let has_question = state
+        .program
+        .question()
+        .map(|q| !q.text.trim().is_empty())
+        .unwrap_or(false);
+    if !has_question {
+        return NextAction::None;
+    }
+    let has_drivers = !state.program.drivers().is_empty();
+    let has_sim = state.sim_results.is_some();
+    let has_forecast_id = state.forecast_id.is_some();
+    let dirty = state.dirty;
+    let is_active = state.forecast_status.as_deref() == Some("active");
+
+    // No drivers yet → need Research to decompose the question.
+    if !has_drivers {
+        return NextAction::Research;
+    }
+    // Drivers but no sim → need Simulate to compute probability.
+    if !has_sim {
+        return NextAction::Simulate;
+    }
+    // Sim done but never persisted → Publish (first-time create).
+    // Save also works but publish is the more meaningful "you're done" step.
+    if !has_forecast_id {
+        return NextAction::Publish;
+    }
+    // Persisted + local edits since last save → Save.
+    if dirty {
+        return NextAction::Save;
+    }
+    // Persisted as draft on server + not yet published → Publish.
+    if !is_active {
+        return NextAction::Publish;
+    }
+    NextAction::None
+}
+
+/// Human-friendly "how long ago" formatting for the Saved indicator.
+/// Kept intentionally short (fits in the chip). Uses seconds up to a
+/// minute, then minutes up to an hour, then hours.
+fn short_ago(elapsed: std::time::Duration) -> String {
+    let secs = elapsed.as_secs();
+    if secs < 5 {
+        "just now".to_string()
+    } else if secs < 60 {
+        format!("{}s ago", secs)
+    } else if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else {
+        format!("{}h ago", secs / 3600)
+    }
+}
+
+/// Build one non-interactive action chip (informational only). Used
+/// for New / Import / Tabs which are dispatched at the FermiConsole
+/// level — the cockpit only shows them so the operator remembers the
+/// shortcut exists.
+fn action_chip_static(
+    id: &'static str,
+    icon: &str,
+    label: &str,
+    hotkey: &str,
+    accent: u32,
+) -> gpui::AnyElement {
+    div()
+        .id(SharedString::from(format!("action-chip-{}", id)))
+        .flex()
+        .items_center()
+        .gap(px(6.0))
+        .px(px(8.0))
+        .py(px(3.0))
+        .rounded(px(4.0))
+        .border_1()
+        .border_color(rgb(accent))
+        .text_size(px(10.0))
+        .text_color(rgb(accent))
+        .opacity(0.85)
+        .when(!icon.is_empty(), |el| {
+            el.child(div().text_color(rgb(accent)).child(icon.to_string()))
+        })
         .child(
             div()
-                .flex()
-                .gap(px(12.0))
-                .text_size(px(10.0))
-                .text_color(rgb(theme::FG_FAINT))
-                // ── 8A: Context-sensitive hint for Ctrl+Enter ──
-                .child(if state.orchestration_running {
-                    "⏳ Researching…".to_string()
-                } else {
-                    "Ctrl+Enter research".to_string()
-                })
-                // ── 8A: Context-sensitive hint for Ctrl+R ──
-                .child(if state.sim_running {
-                    "⏳ Simulating…".to_string()
-                } else if state.sim_results.is_some() {
-                    "✓ Simulated · Ctrl+R re-run".to_string()
-                } else {
-                    "Ctrl+R simulate".to_string()
-                })
-                .child("Ctrl+P publish")
-                .child("Ctrl+N new")
-                .child("Ctrl+O import")
-                .child("Ctrl+S save")
-                .child("Ctrl+E tabs"),
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(label.to_string()),
         )
+        .child(
+            div()
+                .text_color(rgb(theme::FG_DIM))
+                .child(hotkey.to_string()),
+        )
+        .into_any_element()
+}
+
+fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gpui::AnyElement {
+    let next = next_action(state);
+    let locked = state.is_locked();
+    let has_question = state
+        .program
+        .question()
+        .map(|q| !q.text.trim().is_empty())
+        .unwrap_or(false);
+    let has_drivers = !state.program.drivers().is_empty();
+
+    // ── Research chip ──────────────────────────────────────────────
+    let (research_icon, research_label, research_accent) = if state.orchestration_running {
+        ("⟳", "Researching…", theme::GOLD)
+    } else if has_drivers {
+        ("✓", "Research", theme::GREEN)
+    } else if next == NextAction::Research {
+        ("💡", "Research", theme::CYAN)
+    } else {
+        ("", "Research", theme::FG_FAINT)
+    };
+    let research_disabled = !has_question || state.orchestration_running || locked;
+
+    // ── Simulate chip ──────────────────────────────────────────────
+    let (sim_icon, sim_label, sim_accent) = if state.sim_running {
+        ("⟳", "Simulating…", theme::GOLD)
+    } else if locked {
+        ("🔒", "Simulate", theme::FG_DIM)
+    } else if state.sim_results.is_some() {
+        ("✓", "Re-simulate", theme::GREEN)
+    } else if next == NextAction::Simulate {
+        ("▶", "Simulate", theme::CYAN)
+    } else {
+        ("", "Simulate", theme::FG_FAINT)
+    };
+    let sim_disabled = state.sim_running || locked || !has_drivers;
+
+    // ── Save chip ─────────────────────────────────────────────────────
+    let save_ago = state.last_autosave_at.map(|t| short_ago(t.elapsed()));
+    let (save_icon, save_label, save_accent) = if locked {
+        ("🔒".to_string(), "Save".to_string(), theme::FG_DIM)
+    } else if state.dirty {
+        // Gold dot signals "unsaved edits" — same convention as most
+        // editors.
+        ("●".to_string(), "Save".to_string(), theme::GOLD)
+    } else if let Some(ref ago) = save_ago {
+        ("✓".to_string(), format!("Saved {}", ago), theme::GREEN)
+    } else if next == NextAction::Save {
+        ("💾".to_string(), "Save".to_string(), theme::CYAN)
+    } else {
+        (String::new(), "Save".to_string(), theme::FG_FAINT)
+    };
+    let save_disabled = locked || !has_question;
+
+    // ── Publish chip ────────────────────────────────────────────────
+    let is_active = state.forecast_status.as_deref() == Some("active");
+    let (pub_icon, pub_label, pub_accent) = if locked {
+        ("🔒", "Publish", theme::FG_DIM)
+    } else if is_active {
+        ("✓", "Published", theme::GREEN)
+    } else if next == NextAction::Publish {
+        ("🚀", "Publish", theme::CYAN)
+    } else {
+        ("", "Publish", theme::FG_FAINT)
+    };
+    let pub_disabled = locked || !has_question || state.sim_results.is_none();
+
+    // Optional secondary background tint for the recommended-next chip,
+    // so it stands out even at a glance without operator focus.
+    let primary_bg: u32 = 0x1A2A2E;
+
+    // Build each chip in-place. Click handlers use `cx.listener` and
+    // therefore have to be constructed inside this function directly
+    // (they can't cross a helper boundary without naming gpui's
+    // listener type, which is private). Non-interactive chips (New /
+    // Import / Tabs) go through `action_chip_static`.
+    let research_chip = div()
+        .id(SharedString::from("action-chip-research"))
+        .flex()
+        .items_center()
+        .gap(px(6.0))
+        .px(px(8.0))
+        .py(px(3.0))
+        .rounded(px(4.0))
+        .border_1()
+        .border_color(rgb(research_accent))
+        .text_size(px(10.0))
+        .text_color(rgb(research_accent))
+        .when(next == NextAction::Research, |el| el.bg(rgb(primary_bg)))
+        .when(research_disabled, |el| el.opacity(0.5))
+        .when(!research_disabled, |el| {
+            el.cursor_pointer()
+                .hover(|s| s.bg(theme::bg_hover()))
+                .on_click(cx.listener(|this, _e, _w, cx| {
+                    let q = this
+                        .program
+                        .question()
+                        .map(|q| q.text.clone())
+                        .unwrap_or_default();
+                    if !q.trim().is_empty() {
+                        this.orchestrate_question(&q, cx);
+                    }
+                }))
+        })
+        .when(!research_icon.is_empty(), |el| {
+            el.child(
+                div()
+                    .text_color(rgb(research_accent))
+                    .child(research_icon.to_string()),
+            )
+        })
+        .child(
+            div()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(research_label.to_string()),
+        )
+        .child(div().text_color(rgb(theme::FG_DIM)).child("Ctrl+↵"));
+
+    let simulate_chip = div()
+        .id(SharedString::from("action-chip-simulate"))
+        .flex()
+        .items_center()
+        .gap(px(6.0))
+        .px(px(8.0))
+        .py(px(3.0))
+        .rounded(px(4.0))
+        .border_1()
+        .border_color(rgb(sim_accent))
+        .text_size(px(10.0))
+        .text_color(rgb(sim_accent))
+        .when(next == NextAction::Simulate, |el| el.bg(rgb(primary_bg)))
+        .when(sim_disabled, |el| el.opacity(0.5))
+        .when(!sim_disabled, |el| {
+            el.cursor_pointer()
+                .hover(|s| s.bg(theme::bg_hover()))
+                .on_click(cx.listener(|this, _e, _w, cx| {
+                    this.run_simulation(cx);
+                }))
+        })
+        .when(!sim_icon.is_empty(), |el| {
+            el.child(
+                div()
+                    .text_color(rgb(sim_accent))
+                    .child(sim_icon.to_string()),
+            )
+        })
+        .child(
+            div()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(sim_label.to_string()),
+        )
+        .child(div().text_color(rgb(theme::FG_DIM)).child("Ctrl+R"));
+
+    let save_chip = div()
+        .id(SharedString::from("action-chip-save"))
+        .flex()
+        .items_center()
+        .gap(px(6.0))
+        .px(px(8.0))
+        .py(px(3.0))
+        .rounded(px(4.0))
+        .border_1()
+        .border_color(rgb(save_accent))
+        .text_size(px(10.0))
+        .text_color(rgb(save_accent))
+        .when(next == NextAction::Save, |el| el.bg(rgb(primary_bg)))
+        .when(save_disabled, |el| el.opacity(0.5))
+        .when(!save_disabled, |el| {
+            el.cursor_pointer()
+                .hover(|s| s.bg(theme::bg_hover()))
+                .on_click(cx.listener(|this, _e, _w, cx| {
+                    this.save_forecast(cx);
+                }))
+        })
+        .when(!save_icon.is_empty(), |el| {
+            let icon_for_chip = save_icon.clone();
+            el.child(div().text_color(rgb(save_accent)).child(icon_for_chip))
+        })
+        .child(
+            div()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(save_label.clone()),
+        )
+        .child(div().text_color(rgb(theme::FG_DIM)).child("Ctrl+S"));
+
+    let publish_chip = div()
+        .id(SharedString::from("action-chip-publish"))
+        .flex()
+        .items_center()
+        .gap(px(6.0))
+        .px(px(8.0))
+        .py(px(3.0))
+        .rounded(px(4.0))
+        .border_1()
+        .border_color(rgb(pub_accent))
+        .text_size(px(10.0))
+        .text_color(rgb(pub_accent))
+        .when(next == NextAction::Publish, |el| el.bg(rgb(primary_bg)))
+        .when(pub_disabled, |el| el.opacity(0.5))
+        .when(!pub_disabled, |el| {
+            // Chip click fires direct publish with `private` visibility.
+            // Ctrl+P still opens the full commit sheet at the FermiConsole
+            // level (with visibility picker + share targets). Trade-off
+            // documented rather than mystery-behaviour.
+            el.cursor_pointer()
+                .hover(|s| s.bg(theme::bg_hover()))
+                .on_click(cx.listener(|this, _e, _w, cx| {
+                    this.publish_forecast("private".into(), cx);
+                }))
+        })
+        .when(!pub_icon.is_empty(), |el| {
+            el.child(
+                div()
+                    .text_color(rgb(pub_accent))
+                    .child(pub_icon.to_string()),
+            )
+        })
+        .child(
+            div()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(pub_label.to_string()),
+        )
+        .child(div().text_color(rgb(theme::FG_DIM)).child("Ctrl+P"));
+
+    div()
+        .flex()
+        .flex_wrap()
+        .gap(px(8.0))
+        .mt(px(6.0))
+        .child(research_chip)
+        .child(simulate_chip)
+        .child(save_chip)
+        .child(publish_chip)
+        // Informational-only chips — dispatched at FermiConsole level.
+        .child(action_chip_static(
+            "new",
+            "➕",
+            "New",
+            "Ctrl+N",
+            theme::FG_FAINT,
+        ))
+        .child(action_chip_static(
+            "import",
+            "⬇",
+            "Import",
+            "Ctrl+O",
+            theme::FG_FAINT,
+        ))
+        .child(action_chip_static(
+            "tabs",
+            "⇆",
+            "Tabs",
+            "Ctrl+E",
+            theme::FG_FAINT,
+        ))
+        .into_any_element()
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -14384,6 +14807,10 @@ fn render_tab_bar(active: RightTab, cx: &mut Context<CockpitState>) -> impl Into
     // default landing pad.
     let tabs = [
         (RightTab::Trajectory, "Trajectory"),
+        // Phase 2.5: Provenance sits next to Trajectory because it's the
+        // "why" for the "what" the Trajectory chart shows. Reader eyes
+        // move left-to-right through the causal chain.
+        (RightTab::Provenance, "Provenance"),
         (RightTab::Wiki, "Wiki"),
         (RightTab::Schedules, "Schedules"),
         (RightTab::Access, "Access"),
@@ -14439,6 +14866,9 @@ fn render_tab_bar(active: RightTab, cx: &mut Context<CockpitState>) -> impl Into
                     }
                     if t == RightTab::Trajectory {
                         this.load_timeline(cx);
+                    }
+                    if t == RightTab::Provenance {
+                        this.load_provenance(cx);
                     }
                     if t == RightTab::Access {
                         // Lazy-load shares once per forecast_id.
@@ -17011,6 +17441,400 @@ fn render_fpl_tab(state: &CockpitState) -> impl IntoElement {
                 fpl
             }),
     )
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Provenance tab — Phase 2.5 cascade waterfall.
+//
+// Reads GET /api/forecasts/:id/cascade-provenance (a read-only view over
+// fermi_forecast_updates rows tagged revision_trigger IN
+// ('cascade','cascade_undo')) and renders a top-down waterfall that
+// explains the forecast's current probability in terms of upstream
+// resolutions.
+//
+// The layout:
+//   [Header]  Current 55.9%  ← baseline 11.9%  (Σ cascades: +44.0 pp)
+//   [Rows]    Curaçao eliminated       +2.0 pp   50.0 → 52.0
+//             Panama eliminated        +1.5 pp   52.0 → 53.5
+//             …
+// The rows are sorted server-side by |delta_pp| desc.
+
+fn render_provenance_tab(
+    state: &CockpitState,
+    _cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let body = if state.provenance_loading {
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .size_full()
+            .text_color(rgb(theme::FG_DIM))
+            .child("Loading cascade provenance…")
+            .into_any_element()
+    } else if let Some(err) = &state.provenance_error {
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .size_full()
+            .text_color(rgb(theme::RED))
+            .child(format!("Failed to load provenance: {}", err))
+            .into_any_element()
+    } else if state.forecast_id.is_none() {
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(px(8.0))
+            .size_full()
+            .text_color(rgb(theme::FG_DIM))
+            .child(
+                div()
+                    .text_size(px(13.0))
+                    .text_color(rgb(theme::FG_DIM))
+                    .child("Cascade provenance will appear here."),
+            )
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(rgb(theme::FG_FAINT))
+                    .child(
+                        "Publish this forecast and add it to a relationship group (mutex / at_most_n / implies) to see how upstream resolutions redistribute its probability.",
+                    ),
+            )
+            .into_any_element()
+    } else if let Some(data) = state.provenance_data.as_ref() {
+        render_provenance_body(data).into_any_element()
+    } else {
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .size_full()
+            .text_color(rgb(theme::FG_DIM))
+            .child("Loading cascade provenance…")
+            .into_any_element()
+    };
+
+    div().flex().flex_col().size_full().child(body)
+}
+
+fn render_provenance_body(data: &JsonValue) -> impl IntoElement {
+    let current = data
+        .get("current_probability")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let baseline = data
+        .get("baseline_probability")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(current);
+    let cumulative_pp = data
+        .get("cumulative_cascade_pp")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let cascade_count = data
+        .get("cascade_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let contributions = data
+        .get("contributions")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    // Header. Shows the three numbers that satisfy the waterfall
+    // invariant: current = baseline + cumulative.
+    let cumulative_sign = if cumulative_pp >= 0.0 { "+" } else { "" };
+    let cumulative_color = if cumulative_pp.abs() < 0.05 {
+        theme::FG_DIM
+    } else if cumulative_pp >= 0.0 {
+        theme::GREEN
+    } else {
+        theme::RED
+    };
+
+    let header = div()
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .p(px(16.0))
+        .border_b_1()
+        .border_color(rgb(theme::FG_FAINT))
+        .child(
+            div()
+                .flex()
+                .items_baseline()
+                .gap(px(12.0))
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .child("Current"),
+                )
+                .child(
+                    div()
+                        .text_size(px(24.0))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(rgb(theme::CYAN))
+                        .child(format!("{:.1}%", current * 100.0)),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(theme::FG_FAINT))
+                        .child("="),
+                )
+                .child(
+                    div()
+                        .text_size(px(14.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .child(format!("baseline {:.1}%", baseline * 100.0)),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(theme::FG_FAINT))
+                        .child("+"),
+                )
+                .child(
+                    div()
+                        .text_size(px(14.0))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(rgb(cumulative_color))
+                        .child(format!(
+                            "{}{:.1} pp cascades",
+                            cumulative_sign, cumulative_pp
+                        )),
+                ),
+        )
+        .child(
+            div()
+                .text_size(px(11.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .child(if cascade_count == 0 {
+                    "No cascades have fired on this forecast yet.".to_string()
+                } else {
+                    format!(
+                        "{} cascade event{} — sorted by |Δpp| descending",
+                        cascade_count,
+                        if cascade_count == 1 { "" } else { "s" }
+                    )
+                }),
+        );
+
+    // Empty state — header is enough context, hint at how to get here.
+    if contributions.is_empty() {
+        return div().flex().flex_col().size_full().child(header).child(
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap(px(6.0))
+                .p(px(24.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .child("This forecast hasn't received any cascade updates."),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .child(
+                            "When an upstream forecast in the same relationship group resolves, its probability mass will redistribute onto this one and appear here.",
+                        ),
+                ),
+        );
+    }
+
+    // Table header for the waterfall rows.
+    let table_head = div()
+        .flex()
+        .px(px(16.0))
+        .py(px(6.0))
+        .gap(px(12.0))
+        .border_b_1()
+        .border_color(rgb(theme::FG_FAINT))
+        .text_size(px(10.0))
+        .text_color(rgb(theme::FG_FAINT))
+        .child(div().w(px(280.0)).child("TRIGGER"))
+        .child(div().w(px(80.0)).child("Δ PP"))
+        .child(div().w(px(120.0)).child("PROB SHIFT"))
+        .child(div().flex_grow().child("WHEN"));
+
+    // One row per cascade contribution.
+    let rows: Vec<gpui::AnyElement> = contributions
+        .iter()
+        .map(|c| render_provenance_row(c).into_any_element())
+        .collect();
+
+    let table = div().flex().flex_col().child(table_head).children(rows);
+
+    // Outer .overflow_y_scroll() lives on the parent `right-tab-content`
+    // div (see impl Render for CockpitState). This body just stacks its
+    // pieces and lets the parent handle scrolling; adding another scroll
+    // container here would nest scrollbars.
+    div()
+        .flex()
+        .flex_col()
+        .size_full()
+        .child(header)
+        .child(table)
+}
+
+fn render_provenance_row(c: &JsonValue) -> impl IntoElement {
+    let delta_pp = c.get("delta_pp").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let prev_p = c.get("prev_p").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let new_p = c.get("new_p").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let is_undo = c.get("is_undo").and_then(|v| v.as_bool()).unwrap_or(false);
+    let ts = c
+        .get("ts")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // Trigger label: prefer the parsed short form of the question, fall
+    // back to the full question, then to the trigger uuid, then to a
+    // generic "upstream update" placeholder for cascade_undo rows.
+    let trigger_question = c
+        .get("trigger_question")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let trigger_id = c
+        .get("trigger_forecast_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let label = match (is_undo, trigger_question, trigger_id) {
+        (true, _, _) => "Cascade undo".to_string(),
+        (false, Some(q), _) => shorten_question_for_provenance(&q),
+        (false, None, Some(id)) => format!("trigger → {}", short_id(&id)),
+        (false, None, None) => "Upstream update".to_string(),
+    };
+
+    let sign = if delta_pp >= 0.0 { "+" } else { "" };
+    let (delta_color, glyph): (u32, &'static str) = if is_undo {
+        (theme::GOLD, "↺")
+    } else if delta_pp >= 0.0 {
+        (theme::GREEN, "▲")
+    } else {
+        (theme::RED, "▼")
+    };
+
+    // Bar width — caps at 60px so single big deltas don't blow out the
+    // layout. We show the raw number to the left of the bar so the bar
+    // is decorative, not the source of truth.
+    let bar_w = (delta_pp.abs() * 6.0).clamp(2.0, 60.0) as f32;
+
+    div()
+        .flex()
+        .items_center()
+        .px(px(16.0))
+        .py(px(6.0))
+        .gap(px(12.0))
+        .border_b_1()
+        .border_color(rgb(theme::BG_ELEVATED))
+        .hover(|s| s.bg(rgb(theme::BG_ELEVATED)))
+        .text_size(px(12.0))
+        .child(
+            div()
+                .w(px(280.0))
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .child(div().text_color(rgb(delta_color)).w(px(12.0)).child(glyph))
+                .child(
+                    div()
+                        .flex_grow()
+                        .overflow_hidden()
+                        .text_color(rgb(theme::FG))
+                        .child(label),
+                ),
+        )
+        .child(
+            div()
+                .w(px(80.0))
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .child(
+                    div()
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(rgb(delta_color))
+                        .child(format!("{}{:.2}", sign, delta_pp)),
+                )
+                .child(
+                    div()
+                        .h(px(6.0))
+                        .w(px(bar_w))
+                        .rounded(px(2.0))
+                        .bg(rgb(delta_color)),
+                ),
+        )
+        .child(
+            div()
+                .w(px(120.0))
+                .text_color(rgb(theme::FG_DIM))
+                .child(format!("{:.1}% → {:.1}%", prev_p * 100.0, new_p * 100.0)),
+        )
+        .child(
+            div()
+                .flex_grow()
+                .text_size(px(11.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .child(shorten_ts(&ts)),
+        )
+}
+
+/// Best-effort short label. Handles the common WC/binary question shape
+/// ("Will X win the 2026 FIFA World Cup?", "Will Y happen by Z?") by
+/// stripping the "Will " prefix and the "?" suffix, then trimming the
+/// tail after " win " / " happen " / " occur " if present. Falls back to
+/// the full question if none of those patterns match.
+fn shorten_question_for_provenance(q: &str) -> String {
+    let stripped = q.trim_start_matches("Will ").trim_end_matches('?').trim();
+    for split_on in [" win ", " happen ", " occur ", " resolve ", " be "] {
+        if let Some(idx) = stripped.find(split_on) {
+            let short = stripped[..idx].trim();
+            if !short.is_empty() {
+                return short.to_string();
+            }
+        }
+    }
+    if stripped.len() > 60 {
+        format!("{}…", &stripped[..57])
+    } else {
+        stripped.to_string()
+    }
+}
+
+/// Show only the first segment of a UUID so a fallback trigger label
+/// stays scannable.
+fn short_id(id: &str) -> String {
+    id.split('-').next().unwrap_or(id).to_string()
+}
+
+/// Trim an RFC-3339 timestamp to the minute for compact display. If the
+/// string doesn't match the expected shape we just return it as-is.
+fn shorten_ts(ts: &str) -> String {
+    // Expected: 2026-07-04T22:00:00Z or with an offset. Strip seconds.
+    if let Some(t_pos) = ts.find('T') {
+        let date = &ts[..t_pos];
+        let rest = &ts[t_pos + 1..];
+        // Cut at the second ':' if present so "22:00:00Z" → "22:00".
+        let mut colons = 0;
+        for (i, ch) in rest.char_indices() {
+            if ch == ':' {
+                colons += 1;
+                if colons == 2 {
+                    return format!("{} {}", date, &rest[..i]);
+                }
+            }
+        }
+    }
+    ts.to_string()
 }
 
 fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl IntoElement {

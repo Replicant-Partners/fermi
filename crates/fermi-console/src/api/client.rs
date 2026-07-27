@@ -1371,9 +1371,15 @@ impl ApiClient {
     // Agents
     // ═══════════════════════════════════════════════════════════════
 
-    /// List all available agents.
+    /// List all Fermi-orchestra agents. ABW is shared substrate:
+    /// `/api/agents` returns every vertical's agents (rabble swarms,
+    /// kask sim ops, adaptogen research, AR, …), which drowns the
+    /// Fermi console's Agent Fleet in unrelated cards. The `?tag=`
+    /// filter narrows to agents tagged `fermi-orchestra` — the
+    /// convention every curated Fermi research agent uses in its
+    /// card's `metadata.tags`.
     pub async fn list_agents(&self) -> Result<JsonValue, ApiError> {
-        self.get("/api/agents").await
+        self.get("/api/agents?tag=fermi-orchestra&limit=200").await
     }
 
     /// Get a specific agent's card.
@@ -1669,6 +1675,22 @@ impl ApiClient {
     pub async fn forecast_timeline(&self, forecast_id: &str) -> Result<JsonValue, ApiError> {
         self.get(&format!("/api/forecasts/{}/timeline", forecast_id))
             .await
+    }
+
+    /// Phase 2.5 (cascades): fetch the redistribution waterfall for one
+    /// forecast. Returns baseline probability + a list of per-trigger
+    /// contributions sorted by |delta_pp| desc, so the operator can see
+    /// exactly which upstream resolutions moved this forecast's
+    /// probability and by how much. Drives the Provenance tab.
+    pub async fn forecast_cascade_provenance(
+        &self,
+        forecast_id: &str,
+    ) -> Result<JsonValue, ApiError> {
+        self.get(&format!(
+            "/api/forecasts/{}/cascade-provenance",
+            forecast_id
+        ))
+        .await
     }
 
     // ═══════════════════════════════════════════════════════════════
