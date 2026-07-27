@@ -6398,46 +6398,130 @@ impl FermiConsole {
             .find(|f| f.id == forecast_id)
     }
 
-    /// A small coloured dot + tiny label indicating a forecast's primary
-    /// team association. Returns an empty element when there's no team
-    /// association — caller can always attach it unconditionally.
+    /// Return every team_id a forecast is associated with. Owning
+    /// team first (deduplicated against the share cache), then any
+    /// team-share targets in the order they came back from
+    /// `/api/forecasts/:id/shares`. Used by the dot-stack renderer to
+    /// show up to N dots per forecast row.
+    fn team_ids_for_forecast(&self, forecast: &Forecast) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        if let Some(ref tid) = forecast.team_id {
+            if !tid.is_empty() && seen.insert(tid.clone()) {
+                out.push(tid.clone());
+            }
+        }
+        if let Some(shares) = self.forecast_team_shares.get(&forecast.id) {
+            for tid in shares {
+                if !tid.is_empty() && seen.insert(tid.clone()) {
+                    out.push(tid.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// Team-affiliation glyph strip for a forecast row. Behaviour by
+    /// team count:
+    ///   * 0 teams — empty element (no visual noise).
+    ///   * 1 team — dot + tiny team-name label (the v0.8.7 look).
+    ///   * 2–3 teams — overlapping dot stack, no label (space would
+    ///     eat the row).
+    ///   * 4+ teams — top 3 dots plus a "+N" chip.
     ///
     /// Colour comes from `team_color(team_id)` — a deterministic hash
     /// into the theme palette — so the same team is the same colour
     /// everywhere (forecast rows, activity items, team cards in the
-    /// Dashboard strip). That consistency is the whole point: the
-    /// operator learns "amber = Macro Desk" once and then reads it
-    /// everywhere.
+    /// Dashboard strip). Overlapping stack uses a small negative
+    /// margin so multi-team dots read as "a set" rather than a row
+    /// of unrelated dots.
+    fn render_team_dots(&self, team_ids: &[String]) -> AnyElement {
+        // Filter empties defensively; a shares row with an empty
+        // string is a schema bug, not a real team.
+        let ids: Vec<&String> = team_ids.iter().filter(|t| !t.is_empty()).collect();
+        if ids.is_empty() {
+            return div().into_any_element();
+        }
+
+        // Single-team path preserves the v0.8.7 look: dot + label.
+        // Multi-team drops the label because the strip would push the
+        // rest of the row off-screen; the colours + "+N" carry the
+        // story on their own.
+        if ids.len() == 1 {
+            let tid = ids[0];
+            let color = team_color(tid);
+            let label = self
+                .team_name_by_id(tid)
+                .unwrap_or_else(|| format!("team …{}", tid.chars().take(4).collect::<String>()));
+            return div()
+                .flex()
+                .items_center()
+                .gap(px(4.0))
+                .child(div().w(px(8.0)).h(px(8.0)).rounded(px(4.0)).bg(rgb(color)))
+                .child(
+                    div()
+                        .text_size(px(9.0))
+                        .text_color(theme::fg_faint())
+                        .child(truncate(&label, 14)),
+                )
+                .into_any_element();
+        }
+
+        // Multi-team stack. Show at most 3 dots; append "+N" when
+        // more exist.
+        let visible = ids.iter().take(3);
+        let overflow = ids.len().saturating_sub(3);
+        let mut stack = div().flex().items_center();
+        for (i, tid) in visible.enumerate() {
+            let color = team_color(tid);
+            let dot = div()
+                .w(px(9.0))
+                .h(px(9.0))
+                .rounded(px(5.0))
+                .bg(rgb(color))
+                // Thin dark border between overlapping dots so the
+                // colour boundaries stay legible against the row's bg.
+                .border_1()
+                .border_color(theme::bg_elevated());
+            // Overlap all but the first dot by a few pixels so the
+            // stack reads as one unit.
+            stack = stack.child(if i == 0 { dot } else { dot.ml(px(-3.0)) });
+        }
+        if overflow > 0 {
+            stack = stack.child(
+                div()
+                    .ml(px(4.0))
+                    .text_size(px(9.0))
+                    .text_color(theme::fg_faint())
+                    .child(format!("+{}", overflow)),
+            );
+        }
+        stack.into_any_element()
+    }
+
+    /// Back-compat wrapper: single-team rendering, unchanged from
+    /// v0.8.7 semantics. New callers should use `render_team_dots`
+    /// with the full list.
     fn render_team_dot(&self, team_id: Option<&str>) -> AnyElement {
         match team_id {
             None => div().into_any_element(),
             Some(tid) if tid.is_empty() => div().into_any_element(),
-            Some(tid) => {
-                let color = team_color(tid);
-                let label = self.team_name_by_id(tid).unwrap_or_else(|| {
-                    format!("team …{}", tid.chars().take(4).collect::<String>())
-                });
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(4.0))
-                    .child(div().w(px(8.0)).h(px(8.0)).rounded(px(4.0)).bg(rgb(color)))
-                    .child(
-                        div()
-                            .text_size(px(9.0))
-                            .text_color(theme::fg_faint())
-                            .child(truncate(&label, 14)),
-                    )
-                    .into_any_element()
-            }
+            Some(tid) => self.render_team_dots(&[tid.to_string()]),
         }
     }
 
     fn render_activity_item(&self, item: &ActivityItem, cx: &Context<Self>) -> impl IntoElement {
         let fid = item.forecast_id.clone();
-        let team_id: Option<String> = self
+        // Full team-affiliation set for the activity row's forecast
+        // — drives the multi-dot stack. Falls back to the empty vec
+        // when the forecast isn't one of our own (activity items are
+        // sourced from own-forecast lists today; team-source items
+        // arriving in a later change will still have a lookupable
+        // forecast because they reference shared_with_me).
+        let team_ids: Vec<String> = self
             .find_own_forecast(&item.forecast_id)
-            .and_then(|f| self.primary_team_id_for_forecast(f));
+            .map(|f| self.team_ids_for_forecast(f))
+            .unwrap_or_default();
         div()
             .id(SharedString::from(format!("activity-{}", item.forecast_id)))
             .flex()
@@ -6465,7 +6549,7 @@ impl FermiConsole {
                     .text_color(theme::fg())
                     .child(item.text.clone()),
             )
-            .child(self.render_team_dot(team_id.as_deref()))
+            .child(self.render_team_dots(&team_ids))
             .child(
                 div()
                     .text_size(px(11.0))
@@ -10173,10 +10257,11 @@ impl FermiConsole {
 
         let is_selected = self.selected_forecast_id.as_deref() == Some(&forecast.id);
         let fid_toggle = forecast.id.clone();
-        // Primary team association for the team-dot. Owning team wins;
-        // else the first team-share we've loaded (may be None until the
-        // background shares fan-out lands).
-        let team_id = self.primary_team_id_for_forecast(forecast);
+        // Full team-affiliation set for the multi-dot stack (owning
+        // team + all team shares from the fan-out cache). When empty,
+        // the strip renders nothing — no visual noise for unassigned
+        // forecasts.
+        let team_ids = self.team_ids_for_forecast(forecast);
 
         div()
             .id(SharedString::from(format!("forecast-{}", forecast.id)))
@@ -10204,7 +10289,7 @@ impl FermiConsole {
                         }
                         cx.notify();
                     }))
-                    .child(self.render_team_dot(team_id.as_deref()))
+                    .child(self.render_team_dots(&team_ids))
                     .child(
                         // Probability badge
                         div()
