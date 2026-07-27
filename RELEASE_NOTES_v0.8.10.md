@@ -177,7 +177,71 @@ Everything else was already live.
   kinds only requires teaching `cascade_kind_glyph` /
   `cascade_kind_label` / `cascade_invariant_health` about them.
 
-## Files touched
+## Also in this release (Teams v2 pass, folded in)
+
+A parallel Teams-panel thread that was sitting in the working tree
+when this release cut. Folded into v0.8.10 at operator request so
+nothing lingers unpushed. Cleanly separable in the diff (only
+`main.rs`, `agent_card.json`, and one line in `forecasts.rs`), and
+unrelated to the cascade primitive — documented here so the tag
+history doesn't imply otherwise.
+
+### Teams panel: sub-tab layout (Roster / Shared / Activity)
+
+New `TeamTab` enum + tab bar on the Teams panel's right-pane detail
+view. Splits the surface into three concerns:
+
+- **Roster** — the existing member list + invites + delete. Default.
+- **Shared** — forecasts + portfolios owned by *or* shared with the
+  team. Two sections, compact tile per row.
+- **Activity** — team-scoped recent revisions / publications /
+  resolutions. Team-level counterpart to the Dashboard's Recent
+  Activity ticker.
+
+Rationale: each concern was previously either siloed on another panel
+or missing entirely. Stacking them in a single pane stretched it past
+the fold; sub-tabs keep everything findable without vertical bloat.
+
+### Portfolio team-shares cache
+
+Mirror of v0.8.7's `forecast_team_shares` for portfolios:
+
+- `portfolio_team_shares: HashMap<portfolio_id, Vec<team_id>>` on
+  `FermiConsole`
+- `portfolio_shares_in_flight` in-flight dedup
+- `refresh_portfolio_shares_cache` fan-out, same O(10)-per-operator
+  shape as the forecast counterpart
+- `portfolios_for_team()` / `forecasts_for_team()` helpers that
+  filter both owned and shared-with items in memory (no extra API
+  round-trips per team switch).
+
+### `team_id` on portfolio list response
+
+One-line addition to `list_portfolios_handler` in
+`src/handlers/forecasts.rs`:
+
+- Selects `p.team_id` from `fermi_portfolios` (Spec 24 §3.5.4).
+- Serializes as `team_id: string | null` on each row.
+- Nullable — personally-owned portfolios have `team_id NULL`.
+
+Needed so the Teams panel can filter portfolios owned by a specific
+team without a per-portfolio round trip.
+
+### Fermi agent card: tier moved to `system`
+
+`agents/curated/fermi/agent_card.json`:
+
+- `agent_type: system → meta`
+- `tier: curated → system`
+- `hireable: false` added
+- JSON whitespace normalized on the tool schema block
+
+Reason: Fermi is the platform's always-on navigator, not a hireable
+marketplace agent. The Dashboard's Fresh tier and marketplace fleet
+filters now correctly exclude it (via the tier check that was
+already looking for `!= System`).
+
+## Files touched (Cascade Slice B — core release)
 
 - `src/handlers/relationships/groups.rs` — new
   `preview_group_propagation_handler` + `PreviewPropagateRequest`.
@@ -199,3 +263,16 @@ Everything else was already live.
   click; picker mutually exclusive with detail. Wired into
   `render_question_section`.
 - `crates/fermi-console/Cargo.toml` — version bump.
+
+## Files touched (Teams v2 — folded in)
+
+- `crates/fermi-console/src/main.rs` — `TeamTab` enum,
+  `portfolio_team_shares` + `portfolio_shares_in_flight` fields,
+  `refresh_portfolio_shares_cache`, `forecasts_for_team`,
+  `portfolios_for_team`, `render_team_tab_bar`,
+  `render_team_roster_body`, `render_team_shared_body`,
+  `render_team_portfolio_row`, `render_team_activity_body`,
+  marketplace/fleet exclusion of `tier=System` agents.
+- `agents/curated/fermi/agent_card.json` — tier/type/hireable
+  refactor described above.
+- `src/handlers/forecasts.rs` — `team_id` on portfolio list rows.

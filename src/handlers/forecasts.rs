@@ -1446,7 +1446,7 @@ pub async fn list_portfolios_handler(
 
     let rows = sqlx::query(
         "SELECT p.id, p.title, p.description, p.owner_id::text AS owner_id,
-                p.visibility, p.domain, p.created_at, p.updated_at,
+                p.visibility, p.domain, p.team_id, p.created_at, p.updated_at,
                 (SELECT COUNT(*) FROM fermi_portfolio_forecasts pf WHERE pf.portfolio_id = p.id) AS forecast_count,
                 (SELECT COUNT(*) FROM fermi_portfolio_forecasts pf
                  JOIN fermi_forecasts f ON f.id = pf.forecast_id
@@ -1488,6 +1488,12 @@ pub async fn list_portfolios_handler(
                 "forecast_count": r.try_get::<i64, _>("forecast_count").ok(),
                 "resolved_count": r.try_get::<i64, _>("resolved_count").ok(),
                 "avg_brier": r.try_get::<Option<f64>, _>("avg_brier").ok().flatten(),
+                // Owning team (Spec 24 §3.5.4). Exposed here so the
+                // console's Teams panel can filter portfolios owned by
+                // a specific team without an extra per-portfolio round
+                // trip. Nullable — personally-owned portfolios have
+                // team_id NULL.
+                "team_id": r.try_get::<Option<Uuid>, _>("team_id").ok().flatten().map(|u| u.to_string()),
                 "created_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").ok().map(|t| t.to_rfc3339()),
                 "updated_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("updated_at").ok().map(|t| t.to_rfc3339()),
             })

@@ -1,0 +1,44 @@
+{
+  "forecast_id": "0803935f-371c-429f-b33c-b4d9af90af0b",
+  "current_version": 1,
+  "predicted_probability": 0.3650000095367432,
+  "inside_view_explanation": "",
+  "forecast_confidence": 0.5,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-07-27 18:33",
+      "probability": 0.3650000095367432,
+      "change_summary": "Initial: 36.5% base=36%, 3 drivers, 0 evidence"
+    }
+  ],
+  "sim_results": null,
+  "base_rate": {
+    "reference_class": "Polymarket crowd-implied probability (Will Arsenal win the 2026-27 English Premier League (EPL) Championship?)",
+    "historical_frequency": 0.365,
+    "sample_size": null,
+    "source": "Polymarket",
+    "reasoning": "Crowd price backed by $896 volume, $428K liquidity. Low confidence."
+  },
+  "evidence": [],
+  "agents": [],
+  "driver_confidence": {},
+  "polymarket": {
+    "event_id": "659518",
+    "market_id": "2771324",
+    "question": "Will Arsenal win the 2026-27 English Premier League (EPL) Championship?",
+    "market_price": 0.365,
+    "volume_24h": 896.3725959999998,
+    "liquidity": 427733.5538,
+    "confidence": "Low",
+    "price_change_1w": null,
+    "url": "https://polymarket.com/event/epl-2027-champion-20260701200428749",
+    "price_history": [
+      {
+        "t": 1785177192,
+        "p": 0.365
+      }
+    ]
+  },
+  "workspace_id": null
+}

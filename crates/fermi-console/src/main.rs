@@ -223,6 +223,21 @@ enum Panel {
     Teams,
 }
 
+/// Sub-tabs inside the Teams panel's right-pane team detail view.
+/// Splits the team surface into three concerns: the people (roster +
+/// invites + delete), the things (forecasts + portfolios owned by or
+/// shared with the team), and the motion (recent revisions,
+/// publications, resolutions across the team's forecasts). Each
+/// concern was previously either siloed on another panel or missing
+/// entirely; the tabbed layout keeps them findable without stretching
+/// the detail pane to an unmanageable length.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TeamTab {
+    Roster,
+    Shared,
+    Activity,
+}
+
 /// Selection state for the Portfolio panel's virtual buckets. These
 /// aren't backed by `fermi_portfolios` rows — they're derived views
 /// that give homeless forecasts a place to live in the UX.
@@ -726,6 +741,20 @@ struct FermiConsole {
     /// Guards against duplicate fetches when `fetch_forecasts` fires
     /// while an earlier refresh is still in progress.
     forecast_shares_in_flight: std::collections::HashSet<String>,
+    /// Mirror of `forecast_team_shares` for portfolios. Powers the
+    /// Teams panel's Shared tab: portfolios explicitly shared with a
+    /// team appear even when their owning `team_id` is None. Populated
+    /// by `refresh_portfolio_shares_cache`; same fan-out shape, keyed
+    /// off portfolio id.
+    portfolio_team_shares: std::collections::HashMap<String, Vec<String>>,
+    /// Portfolio ids currently mid-flight in the portfolio shares
+    /// fan-out. De-dup guard mirroring `forecast_shares_in_flight`.
+    portfolio_shares_in_flight: std::collections::HashSet<String>,
+    /// Which sub-tab of the team detail pane is showing. Persists
+    /// across team selections (opening a different team preserves the
+    /// active tab), which matches how the tab bars work in the
+    /// composer's right pane.
+    selected_team_tab: TeamTab,
     /// The team selected in the left pane; drives the right-pane detail.
     selected_team_id: Option<String>,
     /// Loaded detail (team + members) for `selected_team_id`.
@@ -996,6 +1025,9 @@ impl FermiConsole {
             teams_loading: false,
             forecast_team_shares: std::collections::HashMap::new(),
             forecast_shares_in_flight: std::collections::HashSet::new(),
+            portfolio_team_shares: std::collections::HashMap::new(),
+            portfolio_shares_in_flight: std::collections::HashSet::new(),
+            selected_team_tab: TeamTab::Roster,
             selected_team_id: None,
             selected_team_detail: None,
             team_detail_loading: false,
@@ -1781,6 +1813,123 @@ impl FermiConsole {
             .iter()
             .find(|t| t.id == team_id)
             .map(|t| t.name.clone())
+    }
+
+    /// Portfolio counterpart of `refresh_forecast_shares_cache`. Walks
+    /// the portfolio list and fires one /api/portfolios/:id/shares call
+    /// per portfolio we haven't already resolved. Unlike forecasts we
+    /// don't have a `share_count` hint on the portfolio row, so we
+    /// fan out for all portfolios — acceptable because users have
+    /// O(10) portfolios, not O(hundreds).
+    fn refresh_portfolio_shares_cache(&mut self, cx: &mut Context<Self>) {
+        if !self.connected {
+            return;
+        }
+        let mut targets: Vec<String> = Vec::new();
+        for p in &self.portfolios {
+            if self.portfolio_team_shares.contains_key(&p.id) {
+                continue;
+            }
+            if !self.portfolio_shares_in_flight.insert(p.id.clone()) {
+                continue;
+            }
+            targets.push(p.id.clone());
+        }
+        for pid in targets {
+            let api = self.api.clone();
+            cx.spawn(async move |this, cx| {
+                let result = api.list_portfolio_shares(&pid).await;
+                this.update(cx, |this, cx| {
+                    this.portfolio_shares_in_flight.remove(&pid);
+                    if let Ok(resp) = result {
+                        let team_ids: Vec<String> = resp
+                            .shares
+                            .into_iter()
+                            .filter(|s| s.share_type == "team")
+                            .map(|s| s.share_target)
+                            .collect();
+                        this.portfolio_team_shares.insert(pid.clone(), team_ids);
+                        cx.notify();
+                    }
+                })
+                .ok();
+            })
+            .detach();
+        }
+    }
+
+    /// Return all forecasts associated with a team:
+    ///   1. Own forecasts whose owning `team_id` matches, OR
+    ///   2. Own forecasts with a team-share pointing at this team, OR
+    ///   3. Shared-with-me forecasts whose owning `team_id` matches.
+    ///
+    /// Bucketed newest-first by updated_at (fallback created_at).
+    /// Cheap to compute because everything is already in memory —
+    /// this is a filter, not a fetch.
+    fn forecasts_for_team(&self, team_id: &str) -> Vec<&Forecast> {
+        let mut out: Vec<&Forecast> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        let matches_own = |f: &Forecast| -> bool {
+            if f.team_id.as_deref() == Some(team_id) {
+                return true;
+            }
+            self.forecast_team_shares
+                .get(&f.id)
+                .map(|v| v.iter().any(|t| t == team_id))
+                .unwrap_or(false)
+        };
+
+        for f in self
+            .active_forecasts
+            .iter()
+            .chain(self.draft_forecasts.iter())
+            .chain(self.resolved_forecasts.iter())
+        {
+            if matches_own(f) && seen.insert(f.id.clone()) {
+                out.push(f);
+            }
+        }
+        // Shared-with-me only qualifies via owning team_id — the
+        // object_shares fan-out is only run on OWN forecasts.
+        for f in &self.shared_with_me_forecasts {
+            if f.team_id.as_deref() == Some(team_id) && seen.insert(f.id.clone()) {
+                out.push(f);
+            }
+        }
+
+        out.sort_by(|a, b| {
+            let ka = a.updated_at.as_ref().or(a.created_at.as_ref());
+            let kb = b.updated_at.as_ref().or(b.created_at.as_ref());
+            kb.cmp(&ka)
+        });
+        out
+    }
+
+    /// Return all portfolios associated with a team. Same shape as
+    /// `forecasts_for_team`: owning team match OR team-share match.
+    fn portfolios_for_team(&self, team_id: &str) -> Vec<&Portfolio> {
+        let mut out: Vec<&Portfolio> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        for p in &self.portfolios {
+            let owned = p.team_id.as_deref() == Some(team_id);
+            let shared = self
+                .portfolio_team_shares
+                .get(&p.id)
+                .map(|v| v.iter().any(|t| t == team_id))
+                .unwrap_or(false);
+            if (owned || shared) && seen.insert(p.id.clone()) {
+                out.push(p);
+            }
+        }
+
+        out.sort_by(|a, b| {
+            let ka = a.updated_at.as_ref().or(a.created_at.as_ref());
+            let kb = b.updated_at.as_ref().or(b.created_at.as_ref());
+            kb.cmp(&ka)
+        });
+        out
     }
 
     /// Fetch the user's teams for the left pane. Auto-selects the first
@@ -4076,6 +4225,11 @@ impl FermiConsole {
                 this.update(cx, |this, cx| {
                     this.portfolios = resp.portfolios;
                     this.portfolios_loading = false;
+                    // Background-populate the team-share cache for any
+                    // portfolio we haven't looked up yet. Powers the
+                    // Teams panel's Shared tab; missing entries mean
+                    // "no team shares" until the fan-out lands.
+                    this.refresh_portfolio_shares_cache(cx);
                     cx.notify();
                 })
                 .ok();
@@ -5740,9 +5894,13 @@ impl FermiConsole {
         // `agent_type == "forecast_analyst"` filter matched nothing
         // (no curated agent uses that type), which is why the Fresh
         // tier read empty on the Dashboard.
+        // Match render_agent_fleet_panel: exclude tier=System agents
+        // (Fermi itself, xaman_ek, other infra) so the Dashboard
+        // marketplace card only surfaces genuinely hireable specialists.
         let fermi_cards: Vec<&AgentCard> = local_cards
             .iter()
             .filter(|c| c.metadata.tags.iter().any(|t| t == "fermi-orchestra"))
+            .filter(|c| !matches!(c.tier, fermi::agent_backend::agent_card::AgentTier::System))
             .collect();
         // Session runs are only relevant when a cockpit is open; on
         // the Dashboard we don't have one so pass an empty slice.
@@ -10236,9 +10394,16 @@ impl FermiConsole {
 
     fn render_agent_fleet_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let cards = self.registry.list_cards().unwrap_or_default();
+        // Show only hireable orchestra members. `tier=System` filters
+        // out meta/infrastructure agents like Fermi itself (the
+        // conductor) and xaman_ek: they're always-on by design, not
+        // discoverable hires. Same signal the conformance test uses,
+        // so a future system agent tagged fermi-orchestra by mistake
+        // won't accidentally appear here.
         let fermi_agents: Vec<_> = cards
             .iter()
             .filter(|c| c.metadata.tags.iter().any(|t| t == "fermi-orchestra"))
+            .filter(|c| !matches!(c.tier, fermi::agent_backend::agent_card::AgentTier::System))
             .collect();
 
         // Pull live cockpit data if we're in a forecast session.
@@ -11296,16 +11461,21 @@ impl FermiConsole {
             .gap(px(16.0));
 
         let Some(detail) = self.selected_team_detail.as_ref() else {
-            return container.child(div().text_size(px(12.0)).text_color(theme::fg_dim()).child(
-                if self.selected_team_id.is_some() {
-                    "Loading team…"
-                } else {
-                    "Select a team to view its members."
-                },
-            ));
+            return container
+                .child(div().text_size(px(12.0)).text_color(theme::fg_dim()).child(
+                    if self.selected_team_id.is_some() {
+                        "Loading team…"
+                    } else {
+                        "Select a team to view its members."
+                    },
+                ))
+                .into_any_element();
         };
 
-        let invite_role = self.team_invite_role.clone();
+        let team_id = detail.team.id.clone();
+        let team_forecasts = self.forecasts_for_team(&team_id);
+        let team_portfolios = self.portfolios_for_team(&team_id);
+        let tab = self.selected_team_tab;
 
         container
             // Team header
@@ -11330,6 +11500,123 @@ impl FermiConsole {
                         )
                     }),
             )
+            // Sub-tab bar (Roster / Shared / Activity). Each pill's
+            // count is computed above from the same helpers the tab
+            // bodies read, so the number and content can't drift.
+            .child(self.render_team_tab_bar(
+                detail.members.len(),
+                team_forecasts.len() + team_portfolios.len(),
+                cx,
+            ))
+            // Tab body dispatch. Each branch is self-contained so the
+            // scroll position, focus, and lifecycle stay simple.
+            .when(tab == TeamTab::Roster, |el| {
+                el.child(self.render_team_roster_body(cx))
+            })
+            .when(tab == TeamTab::Shared, |el| {
+                el.child(self.render_team_shared_body(&team_forecasts, &team_portfolios, cx))
+            })
+            .when(tab == TeamTab::Activity, |el| {
+                el.child(self.render_team_activity_body(&team_forecasts, cx))
+            })
+            .into_any_element()
+    }
+
+    /// Tab bar for the team detail pane. Three pills with count
+    /// badges. Clicking a pill sets `selected_team_tab`; the current
+    /// tab is highlighted with an accent border.
+    fn render_team_tab_bar(
+        &self,
+        member_count: usize,
+        shared_count: usize,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let tab = self.selected_team_tab;
+        let pill = |id: &'static str,
+                    label: String,
+                    kind: TeamTab,
+                    accent: u32,
+                    cx: &mut Context<Self>|
+         -> AnyElement {
+            let active = tab == kind;
+            div()
+                .id(id)
+                .px(px(12.0))
+                .py(px(6.0))
+                .rounded(px(6.0))
+                .border_1()
+                .border_color(if active {
+                    rgb(accent).into()
+                } else {
+                    theme::fg_faint()
+                })
+                .bg(if active {
+                    theme::bg_hover()
+                } else {
+                    theme::bg()
+                })
+                .text_size(px(11.0))
+                .text_color(if active {
+                    rgb(accent).into()
+                } else {
+                    theme::fg_dim()
+                })
+                .font_weight(if active {
+                    FontWeight::SEMIBOLD
+                } else {
+                    FontWeight::NORMAL
+                })
+                .cursor_pointer()
+                .hover(|s| s.bg(theme::bg_hover()))
+                .on_click(cx.listener(move |this, _e, _w, cx| {
+                    this.selected_team_tab = kind;
+                    cx.notify();
+                }))
+                .child(label)
+                .into_any_element()
+        };
+
+        div()
+            .flex()
+            .flex_row()
+            .gap(px(8.0))
+            .child(pill(
+                "team-tab-roster",
+                format!("🧑 Roster ({})", member_count),
+                TeamTab::Roster,
+                theme::CYAN,
+                cx,
+            ))
+            .child(pill(
+                "team-tab-shared",
+                format!("◈ Shared ({})", shared_count),
+                TeamTab::Shared,
+                theme::BLUE,
+                cx,
+            ))
+            .child(pill(
+                "team-tab-activity",
+                "📊 Activity".into(),
+                TeamTab::Activity,
+                theme::GOLD,
+                cx,
+            ))
+    }
+
+    /// Roster tab body — the existing team pane content (member
+    /// header, invite row, error line, member rows, invites section,
+    /// danger zone). Extracted from `render_team_detail_pane` so the
+    /// tab dispatch stays readable.
+    fn render_team_roster_body(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(detail) = self.selected_team_detail.as_ref() else {
+            return div().into_any_element();
+        };
+        let invite_role = self.team_invite_role.clone();
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(16.0))
             // Members section header + invite toggle
             .child(
                 div()
@@ -11525,9 +11812,363 @@ impl FermiConsole {
             //
             // Delete-team is destructive + irreversible; server-side
             // only the OWNER can call it. Rendered at the very bottom
-            // of the detail pane (not the header) with a two-step
+            // of the roster tab (not the header) with a two-step
             // confirmation flow so a stray click can't nuke a team.
             .child(self.render_team_danger_zone(cx))
+            .into_any_element()
+    }
+
+    /// Shared tab body — forecasts + portfolios owned by or shared
+    /// with the team. Purely a client-side view over data already
+    /// loaded for other panels; the fan-out that populates the team
+    /// shares caches runs on `fetch_forecasts` / `fetch_portfolios`
+    /// completion. Empty state coaches the operator through the
+    /// two ways items get associated with a team.
+    fn render_team_shared_body(
+        &self,
+        forecasts: &[&Forecast],
+        portfolios: &[&Portfolio],
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let container = div().flex().flex_col().gap(px(16.0));
+
+        if forecasts.is_empty() && portfolios.is_empty() {
+            return container
+                .child(
+                    div()
+                        .p(px(16.0))
+                        .rounded(px(6.0))
+                        .bg(theme::bg_elevated())
+                        .border_1()
+                        .border_color(theme::fg_faint())
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.0))
+                        .child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(theme::fg())
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child("Nothing shared with this team yet"),
+                        )
+                        .child(div().text_size(px(11.0)).text_color(theme::fg_dim()).child(
+                            "Two ways to associate work with a team:\n\
+                                       • Own the forecast or portfolio as the team (team_id).\n\
+                                       • Share it with the team from the item's Access panel.",
+                        )),
+                )
+                .into_any_element();
+        }
+
+        // Forecasts section
+        let mut result = container;
+        if !forecasts.is_empty() {
+            result = result.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme::cyan())
+                            .child(format!("Forecasts ({})", forecasts.len())),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .rounded(px(6.0))
+                            .overflow_hidden()
+                            .border_1()
+                            .border_color(theme::fg_faint())
+                            .children(forecasts.iter().map(|f| self.render_forecast_row(f, cx))),
+                    ),
+            );
+        }
+
+        // Portfolios section
+        if !portfolios.is_empty() {
+            result = result.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme::blue())
+                            .child(format!("Portfolios ({})", portfolios.len())),
+                    )
+                    .child(
+                        div().flex().flex_col().gap(px(6.0)).children(
+                            portfolios
+                                .iter()
+                                .map(|p| self.render_team_portfolio_row(p, cx)),
+                        ),
+                    ),
+            );
+        }
+
+        result.into_any_element()
+    }
+
+    /// One row in the Shared tab's portfolio list. Compact tile:
+    /// title + counts, click navigates to Portfolio panel with the
+    /// portfolio selected. Uses the existing selection state so the
+    /// two panels stay in lockstep.
+    fn render_team_portfolio_row(
+        &self,
+        portfolio: &Portfolio,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let pid = portfolio.id.clone();
+        let pid_click = pid.clone();
+        let title = portfolio.title.clone();
+        let count = portfolio.forecast_count.unwrap_or(0);
+        let resolved = portfolio.resolved_count.unwrap_or(0);
+        let brier_text = portfolio
+            .avg_brier
+            .map(|b| format!("· avg Brier {:.3}", b))
+            .unwrap_or_default();
+
+        div()
+            .id(SharedString::from(format!("team-portfolio-{}", pid)))
+            .flex()
+            .items_center()
+            .gap(px(10.0))
+            .px(px(12.0))
+            .py(px(10.0))
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(theme::fg_faint())
+            .bg(theme::bg_elevated())
+            .cursor_pointer()
+            .hover(|s| s.bg(theme::bg_hover()).border_color(rgb(theme::BLUE)))
+            .on_click(cx.listener(move |this, _e, _w, cx| {
+                this.selected_portfolio_id = Some(pid_click.clone());
+                this.selected_virtual_portfolio = None;
+                this.fetch_portfolio_forecasts(pid_click.clone(), cx);
+                this.fetch_portfolio_stats_if_needed(pid_click.clone(), cx);
+                this.navigate(Panel::Portfolio, cx);
+            }))
+            .child(
+                div()
+                    .text_size(px(14.0))
+                    .text_color(rgb(theme::BLUE))
+                    .child("◈"),
+            )
+            .child(
+                div()
+                    .flex_grow()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .child(
+                        div()
+                            .text_size(px(13.0))
+                            .text_color(theme::fg())
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_dim())
+                            .child(format!(
+                                "{} forecast{} · {} resolved {}",
+                                count,
+                                if count == 1 { "" } else { "s" },
+                                resolved,
+                                brier_text
+                            )),
+                    ),
+            )
+    }
+
+    /// Activity tab body — recent revisions / publications /
+    /// resolutions across the team's forecasts. Client-side derived
+    /// from the same fields the Dashboard's Recent Activity feed
+    /// reads (updated_at, created_at, resolved_at, status). Sorted
+    /// newest-first, truncated to the top 15 to keep it scannable.
+    ///
+    /// This is the team-scoped counterpart of `recompute_recent_activity`;
+    /// kept as an on-demand derivation rather than a cached feed
+    /// because it changes every time a team gains or loses a
+    /// forecast, and the input size is small (< N forecasts * 1
+    /// event each).
+    fn render_team_activity_body(
+        &self,
+        forecasts: &[&Forecast],
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        // Build a flat event list. Each forecast contributes at most
+        // one event: the most recent milestone we can derive without
+        // the full update_history (which isn't populated on list
+        // responses). Precedence: resolved > revised > published >
+        // draft.
+        struct Event<'a> {
+            forecast: &'a Forecast,
+            ts: String,
+            icon: &'static str,
+            color: u32,
+            verb: &'static str,
+            trailing: String,
+        }
+
+        let mut events: Vec<Event> = Vec::new();
+        for f in forecasts.iter().copied() {
+            let ts = f
+                .resolved_at
+                .clone()
+                .or_else(|| f.updated_at.clone())
+                .or_else(|| f.created_at.clone())
+                .unwrap_or_default();
+            if ts.is_empty() {
+                continue;
+            }
+            let (icon, color, verb, trailing): (&'static str, u32, &'static str, String) =
+                if f.status == "resolved" {
+                    let outcome = if f.actual_outcome == Some(true) {
+                        "Yes"
+                    } else {
+                        "No"
+                    };
+                    let brier = f.brier_score.unwrap_or(0.5);
+                    let color = if brier < 0.15 {
+                        theme::GREEN
+                    } else if brier < 0.3 {
+                        theme::GOLD
+                    } else {
+                        theme::ORANGE
+                    };
+                    (
+                        "✓",
+                        color,
+                        "Resolved",
+                        format!("{} · Brier {:.2}", outcome, brier),
+                    )
+                } else if f.status == "draft" {
+                    (
+                        "✎",
+                        theme::GOLD,
+                        "Draft",
+                        format!("{:.0}%", f.predicted_probability * 100.0),
+                    )
+                } else {
+                    // active — distinguish first publish from later revision
+                    let was_revised = f.created_at.as_ref().map(|c| c != &ts).unwrap_or(false);
+                    let (icon, verb) = if was_revised {
+                        ("→", "Revised")
+                    } else {
+                        ("◐", "Published")
+                    };
+                    (
+                        icon,
+                        theme::CYAN,
+                        verb,
+                        format!("{:.0}%", f.predicted_probability * 100.0),
+                    )
+                };
+            events.push(Event {
+                forecast: f,
+                ts,
+                icon,
+                color,
+                verb,
+                trailing,
+            });
+        }
+
+        events.sort_by(|a, b| b.ts.cmp(&a.ts));
+        events.truncate(15);
+
+        let container = div().flex().flex_col().gap(px(8.0));
+
+        if events.is_empty() {
+            return container
+                .child(
+                    div()
+                        .p(px(16.0))
+                        .rounded(px(6.0))
+                        .bg(theme::bg_elevated())
+                        .border_1()
+                        .border_color(theme::fg_faint())
+                        .text_size(px(11.0))
+                        .text_color(theme::fg_dim())
+                        .child(
+                            "No activity yet. Publish or revise a forecast \
+                             associated with this team to see events here.",
+                        ),
+                )
+                .into_any_element();
+        }
+
+        container
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .rounded(px(6.0))
+                    .overflow_hidden()
+                    .border_1()
+                    .border_color(theme::fg_faint())
+                    .bg(theme::bg_elevated())
+                    .children(events.into_iter().map(|e| {
+                        let fid = e.forecast.id.clone();
+                        let question = truncate(&e.forecast.question_text, 48).to_string();
+                        let time = format_relative_time(&e.ts);
+                        div()
+                            .id(SharedString::from(format!("team-act-{}", fid)))
+                            .flex()
+                            .items_center()
+                            .gap(px(10.0))
+                            .px(px(12.0))
+                            .py(px(8.0))
+                            .border_b_1()
+                            .border_color(theme::fg_faint())
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::bg_hover()))
+                            .on_click(cx.listener(move |this, _ev, _w, cx| {
+                                this.open_forecast(&fid, cx);
+                            }))
+                            .child(
+                                div()
+                                    .w(px(20.0))
+                                    .text_size(px(13.0))
+                                    .text_color(rgb(e.color))
+                                    .child(e.icon),
+                            )
+                            .child(
+                                div()
+                                    .flex_grow()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(2.0))
+                                    .child(
+                                        div()
+                                            .text_size(px(12.0))
+                                            .text_color(theme::fg())
+                                            .child(format!("{}: {}", e.verb, question)),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(10.0))
+                                            .text_color(theme::fg_dim())
+                                            .child(e.trailing),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(theme::fg_faint())
+                                    .child(time),
+                            )
+                    })),
+            )
+            .into_any_element()
     }
 
     /// Danger zone at the bottom of the team detail pane: a two-step
@@ -15432,6 +16073,28 @@ fn build_agent_marketplace(
     for agent_id in ordered_ids {
         let local = local_by_id.get(&agent_id).copied();
         let server = server_by_id.get(&agent_id).copied();
+
+        // Never surface meta / system agents in the marketplace — Fermi
+        // is the conductor of the orchestra, not a hire; xaman_ek is
+        // ABW's always-on navigator; both are invoked implicitly by the
+        // app itself. Same signal as render_agent_fleet_panel's
+        // filter, applied here too so a server-only registration of
+        // one of these ids can't sneak back in via the Fresh tier.
+        let is_system_local = local
+            .map(|c| matches!(c.tier, fermi::agent_backend::agent_card::AgentTier::System))
+            .unwrap_or(false);
+        let is_system_server = server
+            .map(|s| {
+                let agent_type = s.get("agent_type").and_then(|v| v.as_str()).unwrap_or("");
+                let tier = s.get("tier").and_then(|v| v.as_str()).unwrap_or("");
+                let hireable = s.get("hireable").and_then(|v| v.as_bool()).unwrap_or(true);
+                agent_type == "meta" || tier == "system" || !hireable
+            })
+            .unwrap_or(false);
+        if is_system_local || is_system_server {
+            continue;
+        }
+
         let stats = server.and_then(|s| s.get("execution_stats"));
         let total_executions = stats
             .and_then(|s| s.get("total_executions"))
@@ -16782,7 +17445,15 @@ fn render_portfolio_risk_view(
         .child(tile(
             format!("{}", m.joint_tree.len()),
             "JOINT SCENARIOS (TOP 4)",
-            format!("see tree below →"),
+            // Caveat surfaces the model assumption directly on the
+            // tile. Today the tree enumerates 2⁴ outcomes and computes
+            // each as ∏ p_i for YES bits, ∏ (1−p_i) for NO bits —
+            // classic independence. When the top-4 belong to a
+            // scenario constraint (e.g. a mutex group like "EPL
+            // winner"), some rows here are structurally impossible.
+            // See docs/fermi/SCENARIO_TREE_DESIGN.md for the
+            // scenario-aware upgrade path.
+            "assumes independence · see tree ↓".to_string(),
             theme::PURPLE,
         ));
 
@@ -16847,6 +17518,25 @@ fn render_portfolio_risk_view(
         rows
     };
 
+    // Footer summary line beneath the joint-scenario tree. Answers
+    // the two questions an operator has after scanning the rows:
+    //
+    //   1. "Why don't these sum to 100?"  → shown mass + total-rows.
+    //   2. "Should I trust the multi-YES rows?" → assumption label.
+    //
+    // A future scenario-aware upgrade (see design doc) turns the
+    // assumption chip into either "scenario-aware · N/M valid" or
+    // keeps the current "assumes independence" depending on whether
+    // the top-4 belong to any scenario constraint.
+    let n_shown = m.joint_tree.iter().take(8).count();
+    let total_rows = m.joint_tree.len();
+    let shown_mass_pct: f64 = m
+        .joint_tree
+        .iter()
+        .take(8)
+        .map(|o| o.joint_prob * 100.0)
+        .sum();
+
     div()
         .flex()
         .flex_col()
@@ -16868,7 +17558,30 @@ fn render_portfolio_risk_view(
                     .border_1()
                     .border_color(theme::fg_faint())
                     .bg(theme::bg_elevated())
-                    .children(tree_rows),
+                    .children(tree_rows)
+                    // Footer strip — shown mass + assumption label.
+                    .child(
+                        div()
+                            .px(px(8.0))
+                            .py(px(4.0))
+                            .border_t_1()
+                            .border_color(theme::fg_faint())
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap(px(8.0))
+                            .text_size(px(9.0))
+                            .text_color(theme::fg_faint())
+                            .child(div().child(format!(
+                                "Σ shown = {:.1}% · {}/{} scenarios",
+                                shown_mass_pct, n_shown, total_rows
+                            )))
+                            .child(
+                                div()
+                                    .text_color(rgb(theme::GOLD))
+                                    .child("assumes independence"),
+                            ),
+                    ),
             )
         })
 }
