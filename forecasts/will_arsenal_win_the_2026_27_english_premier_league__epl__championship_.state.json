@@ -7,7 +7,7 @@
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-27 18:33",
+      "timestamp": "2026-07-27 19:16",
       "probability": 0.3650000095367432,
       "change_summary": "Initial: 36.5% base=36%, 3 drivers, 0 evidence"
     }
@@ -28,14 +28,14 @@
     "market_id": "2771324",
     "question": "Will Arsenal win the 2026-27 English Premier League (EPL) Championship?",
     "market_price": 0.365,
-    "volume_24h": 896.3725959999998,
-    "liquidity": 427733.5538,
+    "volume_24h": 996.7509729999998,
+    "liquidity": 430610.7826,
     "confidence": "Low",
     "price_change_1w": null,
     "url": "https://polymarket.com/event/epl-2027-champion-20260701200428749",
     "price_history": [
       {
-        "t": 1785177192,
+        "t": 1785179804,
         "p": 0.365
       }
     ]
