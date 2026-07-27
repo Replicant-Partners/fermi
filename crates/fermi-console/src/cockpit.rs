@@ -8029,6 +8029,49 @@ impl CockpitState {
 
             match outcome {
                 Ok((fid, created)) => {
+                    // Persist the Polymarket link to the server on
+                    // first-save-of-a-PM-import. Without this, PM
+                    // event/market ids stay in cockpit RAM only — the
+                    // create payload doesn't include them — so on the
+                    // next open_forecast the server returns
+                    // `metadata.polymarket = null`, the PM panel
+                    // disappears, and the question-input observer
+                    // fires a fresh typeahead search (visible as the
+                    // "🔍 SEARCHING POLYMARKET…" strip that never
+                    // clears). Only fires on `created` because for
+                    // existing forecasts the link is already persisted;
+                    // re-linking on every autosave is wasteful and
+                    // could stomp a server-side link that was later
+                    // updated by hand.
+                    if created {
+                        let pm_ids_snapshot = this
+                            .update(cx, |state, _| {
+                                state
+                                    .pm_event_id
+                                    .clone()
+                                    .zip(state.pm_market_id.clone())
+                            })
+                            .ok()
+                            .flatten();
+                        if let Some((eid, mid)) = pm_ids_snapshot {
+                            let api2 = api.clone();
+                            let fid2 = fid.clone();
+                            tokio::spawn(async move {
+                                match api2.pm_link(&fid2, &eid, &mid).await {
+                                    Ok(_) => log::info!(
+                                        "[save] pm_link ok forecast={} event={} market={}",
+                                        fid2, eid, mid
+                                    ),
+                                    Err(e) => log::warn!(
+                                        "[save] pm_link failed forecast={} event={} market={}: {} \
+                                         — PM data will not survive reload",
+                                        fid2, eid, mid, e
+                                    ),
+                                }
+                            });
+                        }
+                    }
+
                     this.update(cx, |state, cx| {
                         // Successful write — clear dirty so the
                         // autosave loop doesn't immediately re-fire.
@@ -9117,6 +9160,43 @@ impl CockpitState {
 
             match outcome {
                 Ok((fid, created)) => {
+                    // Mirror of persist_backend_save: on first-create,
+                    // if the cockpit has a Polymarket link in memory,
+                    // fire /api/polymarket/link so `metadata.polymarket`
+                    // gets populated server-side. Without this, publish
+                    // straight from a PM import silently drops the
+                    // market link — next open_forecast shows no PM
+                    // panel + a stuck typeahead. See pm_link's doc
+                    // comment for the full failure chain.
+                    if created {
+                        let pm_ids_snapshot = this
+                            .update(cx, |state, _| {
+                                state
+                                    .pm_event_id
+                                    .clone()
+                                    .zip(state.pm_market_id.clone())
+                            })
+                            .ok()
+                            .flatten();
+                        if let Some((eid, mid)) = pm_ids_snapshot {
+                            let api2 = api.clone();
+                            let fid2 = fid.clone();
+                            tokio::spawn(async move {
+                                match api2.pm_link(&fid2, &eid, &mid).await {
+                                    Ok(_) => log::info!(
+                                        "[publish] pm_link ok forecast={} event={} market={}",
+                                        fid2, eid, mid
+                                    ),
+                                    Err(e) => log::warn!(
+                                        "[publish] pm_link failed forecast={} event={} market={}: {} \
+                                         — PM data will not survive reload",
+                                        fid2, eid, mid, e
+                                    ),
+                                }
+                            });
+                        }
+                    }
+
                     this.update(cx, |state, cx| {
                         state.forecast_id = Some(fid.clone());
                         state.publish_status = Some(if created {

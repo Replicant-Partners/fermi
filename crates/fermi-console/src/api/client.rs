@@ -1330,6 +1330,35 @@ impl ApiClient {
             .await
     }
 
+    /// Link a Polymarket market to an existing Fermi forecast. Writes
+    /// the `metadata.polymarket` block that `get_forecast_handler`
+    /// surfaces on load, so a subsequent `open_forecast` can hydrate
+    /// the cockpit's PM state (pm_event_id, pm_market_id, pm_url, and
+    /// the last cached crowd snapshot) without re-importing.
+    ///
+    /// This is the missing wire that made `import_polymarket_forecast`
+    /// silently drop the market link on save: the cockpit stored the
+    /// PM ids in RAM, `persist_backend_save` never sent them, and on
+    /// reload `metadata.polymarket` was null. Fire this after the
+    /// forecast row exists (i.e. after first save/publish returns a
+    /// forecast_id) whenever the cockpit has PM state in memory.
+    pub async fn pm_link(
+        &self,
+        forecast_id: &str,
+        pm_event_id: &str,
+        pm_market_id: &str,
+    ) -> Result<JsonValue, ApiError> {
+        self.post(
+            "/api/polymarket/link",
+            &json!({
+                "forecast_id": forecast_id,
+                "pm_event_id": pm_event_id,
+                "pm_market_id": pm_market_id,
+            }),
+        )
+        .await
+    }
+
     /// Refresh the latest crowd price for a linked forecast.
     ///
     /// The server's `SnapshotRequest` REQUIRES both `pm_event_id` and

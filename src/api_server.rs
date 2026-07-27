@@ -2867,10 +2867,18 @@ async fn main() {
             "/api/relationship-groups/:group_id/propagate",
             post(handlers::relationships::groups::preview_group_propagation_handler),
         )
-        // ── Forecast group membership (Spec 25 §6.2) ────────────────
+        // ── Forecast group membership (Spec 25 §6.2) ────────────
+        //
+        // GET was previously omitted — the console's cockpit chip strip
+        // fires this on every open_forecast to hydrate the chip strip.
+        // Without the GET binding the client got HTTP 405 which surfaced
+        // as "Failed to load: HTTP 405: ..." in the CASCADES row of the
+        // composer header. The handler was already implemented, just
+        // never wired.
         .route(
             "/api/forecasts/:forecast_id/groups",
-            put(handlers::relationships::membership::set_forecast_groups_handler),
+            get(handlers::relationships::membership::get_forecast_groups_handler)
+                .put(handlers::relationships::membership::set_forecast_groups_handler),
         )
         .route(
             "/api/forecasts/:forecast_id/groups/:group_id",
