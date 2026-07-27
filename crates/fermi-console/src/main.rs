@@ -7197,6 +7197,11 @@ impl FermiConsole {
             // Trajectory is the default right-panel tab; pre-warm it so
             // the worm renders alongside the composer on first open.
             cockpit.load_timeline(cx);
+            // Pre-warm the cascade-group chip strip so the operator can
+            // see "Not in any cascade group" (or the existing chips)
+            // the moment the composer lands, not after they open the
+            // Provenance tab.
+            cockpit.load_forecast_cascade_groups(cx);
 
             // Set question and data from workspace params
             if let Some(ref wf) = wf {
@@ -7481,6 +7486,8 @@ impl FermiConsole {
                             // now, so pre-warm the timeline so operators
                             // see the worm the moment the cockpit lands.
                             cockpit.load_timeline(cx);
+                            // Chip strip prewarm — see open_workspace_forecast.
+                            cockpit.load_forecast_cascade_groups(cx);
                         }
                         // Populate the composer's inline portfolio chips.
                         // These come from the operator's portfolios list;

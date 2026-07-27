@@ -81,6 +81,56 @@ pub enum FocusedNode {
     FplSource,
 }
 
+/// One row in the cascade-group picker — the display record that
+/// backs the "pick an existing group" list.
+///
+/// The API returns a richer JSON blob (parameters, description, updated
+/// timestamps); we only keep what the picker needs to render.
+#[derive(Debug, Clone)]
+pub struct CascadeGroupSummary {
+    pub group_id: String,
+    pub kind: String,
+    pub description: Option<String>,
+    pub member_count: i64,
+}
+
+/// The picker's inline "create new group" form state.
+///
+/// Kept dumb on purpose: the form only holds a group_id, a kind, and
+/// per-kind parameters. The picker's submit handler assembles the JSON
+/// body and calls `create_cascade_group`, which validates server-side.
+#[derive(Debug, Clone)]
+pub struct CascadeCreateDraft {
+    /// Slug-style identifier the operator types (e.g. "wc_2026_winner").
+    /// Server 409s on collision.
+    pub group_id: String,
+    /// One of "mutex", "at_most_n", "implies". Defaulted to "mutex"
+    /// since it's overwhelmingly the most common kind and needs no
+    /// parameters. Selectable via the kind chips in the form.
+    pub kind: String,
+    /// For at_most_n kind: the N. Ignored otherwise.
+    pub at_most_n: u32,
+    /// For implies kind: the antecedent forecast id.
+    pub implies_antecedent: String,
+    /// For implies kind: the consequent forecast id.
+    pub implies_consequent: String,
+    /// Optional human description shown in the picker + group detail.
+    pub description: String,
+}
+
+impl Default for CascadeCreateDraft {
+    fn default() -> Self {
+        Self {
+            group_id: String::new(),
+            kind: "mutex".to_string(),
+            at_most_n: 1,
+            implies_antecedent: String::new(),
+            implies_consequent: String::new(),
+            description: String::new(),
+        }
+    }
+}
+
 /// Which tab is active in the right panel.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RightTab {
@@ -475,6 +525,41 @@ pub struct CockpitState {
     /// Error message from the last provenance fetch, if any.
     pub provenance_error: Option<String>,
 
+    // ── Cascade group composition (Phase 2.5, Slice A) ───────────────
+    //
+    // Authoring surface for cascade dependencies. The chip strip on the
+    // question header reads `forecast_cascade_groups`; the picker overlay
+    // reads `available_cascade_groups`.
+    //
+    // Loaded lazily: forecast_cascade_groups on cockpit mount (once we
+    // have a forecast_id), available_cascade_groups the first time the
+    // picker is opened per session.
+    /// Group IDs this forecast currently belongs to. Sourced from
+    /// `fermi_forecasts.relationship_groups` via GET /api/forecasts/
+    /// :id/groups. Mutated in-place after add/remove so the chip strip
+    /// updates without a full refetch.
+    pub forecast_cascade_groups: Vec<String>,
+    /// True while any cascade-group fetch/mutate call is in flight.
+    /// Drives the chip strip's "…" spinner and disables the picker's
+    /// add button to prevent double-submit.
+    pub cascade_groups_loading: bool,
+    /// Error message from the last cascade-group operation, if any.
+    /// Rendered inline near the chip strip.
+    pub cascade_groups_error: Option<String>,
+    /// The cached picker list: every cascade group the operator owns,
+    /// with member counts. Populated by list_cascade_groups() when the
+    /// picker overlay opens. `None` = not fetched yet.
+    pub available_cascade_groups: Option<Vec<CascadeGroupSummary>>,
+    /// Whether the group-picker overlay is visible.
+    pub show_cascade_picker: bool,
+    /// Text in the picker's search box. Filters `available_cascade_groups`
+    /// by group_id substring (case-insensitive).
+    pub cascade_picker_query: String,
+    /// The picker's "create new group" inline form. When None, the form
+    /// is collapsed and the picker shows the existing-groups list.
+    /// When Some, the picker replaces the list with the create form.
+    pub cascade_create_draft: Option<CascadeCreateDraft>,
+
     // ── Polymarket Price History ──────────────────────────────────
     /// Time-series of crowd prices, sampled at `pm_poll_interval`.
     /// Each entry is (timestamp_epoch_secs, price 0.0–1.0).
@@ -819,6 +904,13 @@ impl CockpitState {
             provenance_data: None,
             provenance_loading: false,
             provenance_error: None,
+            forecast_cascade_groups: Vec::new(),
+            cascade_groups_loading: false,
+            cascade_groups_error: None,
+            available_cascade_groups: None,
+            show_cascade_picker: false,
+            cascade_picker_query: String::new(),
+            cascade_create_draft: None,
             pm_price_history: Vec::new(),
             pm_poll_interval: None,
             pm_last_refresh_at: None,
@@ -4281,6 +4373,299 @@ impl CockpitState {
                     }
                     Err(e) => {
                         state.provenance_error = Some(e.to_string());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    // ─── Phase 2.5: cascade group composition (authoring) ─────────────
+    //
+    // Five entry points corresponding to the picker workflow:
+    //   load_forecast_cascade_groups  → what groups am I in?
+    //   load_available_cascade_groups → what groups can I add to?
+    //   open_cascade_picker           → UI-side open+prewarm
+    //   add_forecast_to_cascade_group / remove_forecast_from_cascade_group
+    //   create_and_add_cascade_group  → combo: create new + add current
+    //
+    // The pattern mirrors load_timeline / load_provenance: cx.spawn on
+    // the tokio runtime, patch state via this.update, cx.notify at the
+    // end to trigger a re-render.
+
+    /// Fetch the group IDs this forecast belongs to. Cheap read; called
+    /// automatically on cockpit mount / forecast switch so the chip
+    /// strip is always populated.
+    pub fn load_forecast_cascade_groups(&mut self, cx: &mut Context<Self>) {
+        let Some(forecast_id) = self.forecast_id.clone() else {
+            return;
+        };
+        self.cascade_groups_loading = true;
+        self.cascade_groups_error = None;
+        cx.notify();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.get_forecast_cascade_groups(&forecast_id).await;
+            this.update(cx, |state, cx| {
+                state.cascade_groups_loading = false;
+                match result {
+                    Ok(data) => {
+                        let groups: Vec<String> = data
+                            .get("groups")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        state.forecast_cascade_groups = groups;
+                        state.cascade_groups_error = None;
+                    }
+                    Err(e) => {
+                        state.cascade_groups_error = Some(e.to_string());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Fetch the full list of cascade groups the operator owns, for the
+    /// picker. Called lazily the first time the picker opens per session
+    /// (or when the operator hits "refresh" — not implemented yet).
+    pub fn load_available_cascade_groups(&mut self, cx: &mut Context<Self>) {
+        self.cascade_groups_loading = true;
+        cx.notify();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.list_cascade_groups().await;
+            this.update(cx, |state, cx| {
+                state.cascade_groups_loading = false;
+                match result {
+                    Ok(data) => {
+                        let summaries: Vec<CascadeGroupSummary> = data
+                            .get("groups")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|g| {
+                                        let id = g.get("group_id")?.as_str()?.to_string();
+                                        let kind = g.get("kind")?.as_str()?.to_string();
+                                        let description = g
+                                            .get("description")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string());
+                                        let member_count = g
+                                            .get("member_count")
+                                            .and_then(|v| v.as_i64())
+                                            .unwrap_or(0);
+                                        Some(CascadeGroupSummary {
+                                            group_id: id,
+                                            kind,
+                                            description,
+                                            member_count,
+                                        })
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        state.available_cascade_groups = Some(summaries);
+                        state.cascade_groups_error = None;
+                    }
+                    Err(e) => {
+                        state.cascade_groups_error = Some(e.to_string());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Open the picker overlay, kicking a lazy fetch of the group list
+    /// if we don't have it yet. Fired from the chip strip's "+" button.
+    pub fn open_cascade_picker(&mut self, cx: &mut Context<Self>) {
+        self.show_cascade_picker = true;
+        self.cascade_picker_query.clear();
+        self.cascade_create_draft = None;
+        if self.available_cascade_groups.is_none() {
+            self.load_available_cascade_groups(cx);
+        }
+        cx.notify();
+    }
+
+    /// Dismiss the picker (Esc, backdrop click, successful add).
+    pub fn close_cascade_picker(&mut self, cx: &mut Context<Self>) {
+        self.show_cascade_picker = false;
+        self.cascade_create_draft = None;
+        cx.notify();
+    }
+
+    /// Flip the picker into create-new mode. Fired from the "+ New
+    /// group" button in the picker's footer.
+    pub fn begin_cascade_create(&mut self, cx: &mut Context<Self>) {
+        self.cascade_create_draft = Some(CascadeCreateDraft::default());
+        cx.notify();
+    }
+
+    /// Cancel the create-new form and go back to the picker list.
+    pub fn cancel_cascade_create(&mut self, cx: &mut Context<Self>) {
+        self.cascade_create_draft = None;
+        cx.notify();
+    }
+
+    /// Wire the current forecast into an existing cascade group.
+    /// Optimistically appends to `forecast_cascade_groups`, then confirms
+    /// with the server; on server error we surface the message and
+    /// re-fetch to restore truth.
+    pub fn add_forecast_to_cascade_group(&mut self, group_id: &str, cx: &mut Context<Self>) {
+        let Some(forecast_id) = self.forecast_id.clone() else {
+            self.cascade_groups_error =
+                Some("Save the forecast first to add it to a cascade group.".into());
+            cx.notify();
+            return;
+        };
+        // Optimistic update — the chip appears immediately. If the POST
+        // fails, load_forecast_cascade_groups repopulates from truth.
+        if !self.forecast_cascade_groups.iter().any(|g| g == group_id) {
+            self.forecast_cascade_groups.push(group_id.to_string());
+        }
+        self.close_cascade_picker(cx);
+        let gid = group_id.to_string();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.add_forecast_to_cascade_group(&forecast_id, &gid).await;
+            this.update(cx, |state, cx| {
+                if let Err(e) = result {
+                    state.cascade_groups_error =
+                        Some(format!("Failed to add to group '{}': {}", gid, e));
+                    // Roll back optimistic add by refetching truth.
+                    state.load_forecast_cascade_groups(cx);
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Detach the current forecast from a cascade group. Fired from a
+    /// chip's "×" button. Same optimistic pattern as add.
+    pub fn remove_forecast_from_cascade_group(&mut self, group_id: &str, cx: &mut Context<Self>) {
+        let Some(forecast_id) = self.forecast_id.clone() else {
+            return;
+        };
+        self.forecast_cascade_groups.retain(|g| g != group_id);
+        cx.notify();
+        let gid = group_id.to_string();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api
+                .remove_forecast_from_cascade_group(&forecast_id, &gid)
+                .await;
+            this.update(cx, |state, cx| {
+                if let Err(e) = result {
+                    state.cascade_groups_error =
+                        Some(format!("Failed to remove from group '{}': {}", gid, e));
+                    state.load_forecast_cascade_groups(cx);
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Submit the picker's create-new form: creates the group via
+    /// POST /api/relationship-groups and, on success, adds the current
+    /// forecast to it. Merges the two round-trips into one operator
+    /// action so the picker doesn't need a separate "now add me" step.
+    pub fn create_and_add_cascade_group(&mut self, cx: &mut Context<Self>) {
+        let Some(draft) = self.cascade_create_draft.clone() else {
+            return;
+        };
+        let Some(forecast_id) = self.forecast_id.clone() else {
+            self.cascade_groups_error =
+                Some("Save the forecast first to create a cascade group from it.".into());
+            cx.notify();
+            return;
+        };
+        let group_id = draft.group_id.trim().to_string();
+        if group_id.is_empty() {
+            self.cascade_groups_error = Some("Cascade group id is required.".into());
+            cx.notify();
+            return;
+        }
+
+        // Assemble the kind-specific parameters. Matches the server's
+        // validation in groups.rs::create_group_handler.
+        let parameters = match draft.kind.as_str() {
+            "at_most_n" => serde_json::json!({ "n": draft.at_most_n }),
+            "implies" => serde_json::json!({
+                "antecedent": draft.implies_antecedent.trim(),
+                "consequent": draft.implies_consequent.trim(),
+            }),
+            _ => serde_json::json!({}),
+        };
+        let description = if draft.description.trim().is_empty() {
+            None
+        } else {
+            Some(draft.description.trim().to_string())
+        };
+
+        self.cascade_groups_loading = true;
+        cx.notify();
+        let api = self.api.clone();
+        let kind = draft.kind.clone();
+        let gid_for_add = group_id.clone();
+        cx.spawn(async move |this, cx| {
+            let create_result = api
+                .create_cascade_group(&group_id, &kind, parameters, description.as_deref())
+                .await;
+            let add_result = match &create_result {
+                Ok(_) => Some(
+                    api.add_forecast_to_cascade_group(&forecast_id, &gid_for_add)
+                        .await,
+                ),
+                Err(_) => None,
+            };
+            this.update(cx, |state, cx| {
+                state.cascade_groups_loading = false;
+                match (create_result, add_result) {
+                    // Unreachable in practice — we only skip the add
+                    // when create failed. Kept for exhaustiveness.
+                    (Ok(_), None) => {}
+                    (Ok(_), Some(Ok(_))) => {
+                        // Prepend the new group to the chip strip so the
+                        // operator sees the effect of their action.
+                        if !state
+                            .forecast_cascade_groups
+                            .iter()
+                            .any(|g| g == &gid_for_add)
+                        {
+                            state.forecast_cascade_groups.push(gid_for_add.clone());
+                        }
+                        // Invalidate the picker cache so the new group
+                        // shows up next time it opens.
+                        state.available_cascade_groups = None;
+                        state.close_cascade_picker(cx);
+                    }
+                    (Ok(_), Some(Err(e))) => {
+                        state.cascade_groups_error = Some(format!(
+                            "Group created but adding this forecast failed: {}",
+                            e
+                        ));
+                        state.available_cascade_groups = None;
+                    }
+                    (Err(e), _) => {
+                        state.cascade_groups_error =
+                            Some(format!("Failed to create cascade group: {}", e));
                     }
                 }
                 cx.notify();
@@ -9155,6 +9540,15 @@ fn render_question_section(
         // portfolios without leaving the composer. Only meaningful
         // after publish (needs a forecast_id to attach memberships to).
         .child(render_portfolio_membership_strip(state, cx))
+        // Phase 2.5 Slice A: cascade group chips. The authoring surface
+        // for cascade dependencies. Shows which cascade groups this
+        // forecast belongs to (mutex ⊗, at_most_n ≤n, implies ⇒), lets
+        // the operator add/remove memberships and create new groups
+        // inline. Only meaningful after publish (needs a forecast_id).
+        .child(render_cascade_group_strip(state, cx))
+        // When the picker is open, expand a second panel below the
+        // chip strip with the group list + create-new inline form.
+        .child(render_cascade_picker(state, cx))
         .child(
             // Header row: probability + inside-view explainer + confidence
             // + (researching badge) + (publish status). flex_wrap() lets a
@@ -14376,6 +14770,656 @@ fn render_histogram(bins: &[u32]) -> impl IntoElement {
 ///   * Silent when the operator hasn't published yet (no forecast_id
 ///     to attach memberships to). Shows a tiny hint instead.
 ///   * Silent when the operator has zero portfolios.
+// ══════════════════════════════════════════════════════════════════
+// Cascade group composition strip (Phase 2.5 Slice A).
+//
+// Two visual pieces:
+//   * render_cascade_group_strip — the always-visible chip strip in
+//     the question header. Shows current memberships as chips with a
+//     kind glyph (⊗ mutex, ≤n at_most_n, ⇒ implies) and a "+" button
+//     that opens the picker. Draft (no forecast_id yet) collapses to
+//     a hint chip that says "publish first".
+//   * render_cascade_picker — the inline expanded panel that appears
+//     below the strip when show_cascade_picker=true. Two modes:
+//       - Browse: existing-groups list filtered by cascade_picker_query,
+//         plus a "+ New cascade group" button that flips to Create.
+//       - Create: an inline form for group_id + kind + optional params
+//         + description. On submit, creates the group and adds the
+//         current forecast to it in one operator action.
+//
+// Server contract is the Spec 25 relationship_groups API; we just
+// rename "relationship_group" → "cascade group" in the UI vocab.
+
+/// Kind glyph for a chip. Matches the vocabulary used on the Provenance
+/// tab and in docs/fermi/WORLD_CUP_ROADMAP.md.
+fn cascade_kind_glyph(kind: &str) -> &'static str {
+    match kind {
+        "mutex" | "mutually_exclusive" => "⊗",
+        "at_most_n" => "≤n",
+        "implies" => "⇒",
+        _ => "◇",
+    }
+}
+
+/// Human label for a kind, used in the create-new form's kind chips.
+fn cascade_kind_label(kind: &str) -> &'static str {
+    match kind {
+        "mutex" | "mutually_exclusive" => "Mutually exclusive",
+        "at_most_n" => "At most N",
+        "implies" => "Implies",
+        _ => "Unknown kind",
+    }
+}
+
+fn render_cascade_group_strip(
+    state: &CockpitState,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    // Draft: no forecast_id yet — we can't attach memberships. Render a
+    // muted hint so the operator sees the feature exists.
+    if state.forecast_id.is_none() {
+        return div()
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .px(px(8.0))
+            .py(px(4.0))
+            .rounded(px(6.0))
+            .bg(rgb(theme::BG))
+            .border_1()
+            .border_color(rgb(theme::FG_FAINT))
+            .child(
+                div()
+                    .text_size(px(9.0))
+                    .text_color(rgb(theme::FG_FAINT))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("CASCADES:"),
+            )
+            .child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(rgb(theme::FG_FAINT))
+                    .child("Publish this forecast first, then add it to a cascade group."),
+            )
+            .into_any_element();
+    }
+
+    let has_groups = !state.forecast_cascade_groups.is_empty();
+
+    let mut row = div()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .gap(px(4.0))
+        .px(px(8.0))
+        .py(px(4.0))
+        .rounded(px(6.0))
+        .bg(rgb(theme::BG))
+        .border_1()
+        .border_color(rgb(theme::FG_FAINT))
+        .child(
+            div()
+                .text_size(px(9.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child("CASCADES:"),
+        );
+
+    if !has_groups {
+        row = row.child(
+            div()
+                .text_size(px(10.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .child("Not in any cascade group."),
+        );
+    }
+
+    // Render one chip per current membership. Kind glyph comes from a
+    // best-effort lookup in `available_cascade_groups`; if the picker
+    // hasn't loaded yet the glyph falls back to ◇.
+    for gid in state.forecast_cascade_groups.clone() {
+        let kind = state
+            .available_cascade_groups
+            .as_ref()
+            .and_then(|list| list.iter().find(|g| g.group_id == gid))
+            .map(|g| g.kind.clone())
+            .unwrap_or_else(|| "mutex".to_string());
+        let glyph = cascade_kind_glyph(&kind);
+        let gid_for_remove = gid.clone();
+
+        row = row.child(
+            div()
+                .id(SharedString::from(format!("cascade-chip-{}", gid)))
+                .flex()
+                .items_center()
+                .gap(px(4.0))
+                .px(px(8.0))
+                .py(px(2.0))
+                .rounded(px(10.0))
+                .bg(rgb(theme::BG_ELEVATED))
+                .border_1()
+                .border_color(rgb(theme::CYAN))
+                .text_size(px(11.0))
+                .text_color(rgb(theme::CYAN))
+                .child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .child(glyph),
+                )
+                .child(div().child(gid.clone()))
+                .child(
+                    div()
+                        .id(SharedString::from(format!("cascade-chip-x-{}", gid)))
+                        .px(px(4.0))
+                        .text_size(px(11.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(rgb(theme::RED)))
+                        .child("×")
+                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                            this.remove_forecast_from_cascade_group(&gid_for_remove, cx);
+                        })),
+                ),
+        );
+    }
+
+    // Trailing "+" chip toggles the picker.
+    let picker_open = state.show_cascade_picker;
+    row = row.child(
+        div()
+            .id("cascade-chip-add")
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .px(px(8.0))
+            .py(px(2.0))
+            .rounded(px(10.0))
+            .bg(rgb(theme::BG_ELEVATED))
+            .border_1()
+            .border_color(rgb(if picker_open {
+                theme::GOLD
+            } else {
+                theme::FG_FAINT
+            }))
+            .text_size(px(11.0))
+            .text_color(rgb(if picker_open {
+                theme::GOLD
+            } else {
+                theme::FG_DIM
+            }))
+            .cursor_pointer()
+            .hover(|s| s.text_color(rgb(theme::CYAN)))
+            .child(if picker_open { "− close" } else { "+ add" })
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                if this.show_cascade_picker {
+                    this.close_cascade_picker(cx);
+                } else {
+                    this.open_cascade_picker(cx);
+                }
+            })),
+    );
+
+    // Inline error banner — keep it in the strip so a failed add/remove
+    // is visible next to the chips that caused it.
+    if let Some(err) = &state.cascade_groups_error {
+        row = row.child(
+            div()
+                .text_size(px(10.0))
+                .text_color(rgb(theme::RED))
+                .child(err.clone()),
+        );
+    }
+
+    row.into_any_element()
+}
+
+fn render_cascade_picker(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl IntoElement {
+    if !state.show_cascade_picker {
+        return div().into_any_element();
+    }
+
+    let panel = div()
+        .flex()
+        .flex_col()
+        .gap(px(8.0))
+        .p(px(12.0))
+        .rounded(px(6.0))
+        .bg(rgb(theme::BG))
+        .border_1()
+        .border_color(rgb(theme::GOLD));
+
+    // Two modes: create-form OR browse-list. Never both.
+    if state.cascade_create_draft.is_some() {
+        return panel
+            .child(render_cascade_create_form(state, cx))
+            .into_any_element();
+    }
+
+    panel
+        .child(render_cascade_browse_list(state, cx))
+        .into_any_element()
+}
+
+fn render_cascade_browse_list(
+    state: &CockpitState,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let query = state.cascade_picker_query.to_lowercase();
+    let all_groups = state.available_cascade_groups.clone().unwrap_or_default();
+    // Filter by group_id substring; hide groups the forecast is already
+    // in (chip strip already shows those).
+    let already_in: std::collections::HashSet<String> =
+        state.forecast_cascade_groups.iter().cloned().collect();
+    let filtered: Vec<CascadeGroupSummary> = all_groups
+        .into_iter()
+        .filter(|g| !already_in.contains(&g.group_id))
+        .filter(|g| {
+            query.is_empty()
+                || g.group_id.to_lowercase().contains(&query)
+                || g.description
+                    .as_deref()
+                    .map(|d| d.to_lowercase().contains(&query))
+                    .unwrap_or(false)
+        })
+        .collect();
+
+    let mut container = div().flex().flex_col().gap(px(6.0));
+
+    // Header
+    container = container.child(
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(rgb(theme::GOLD))
+                    .child("Add to cascade group"),
+            )
+            .child(
+                div()
+                    .id("cascade-picker-new")
+                    .px(px(8.0))
+                    .py(px(2.0))
+                    .rounded(px(4.0))
+                    .bg(rgb(theme::BG_ELEVATED))
+                    .border_1()
+                    .border_color(rgb(theme::GREEN))
+                    .text_size(px(10.0))
+                    .text_color(rgb(theme::GREEN))
+                    .cursor_pointer()
+                    .child("+ New cascade group")
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.begin_cascade_create(cx);
+                    })),
+            ),
+    );
+
+    // Search input — we don't have an easy input primitive here without
+    // the Editor Entity for a small filter. Keep the picker minimal for
+    // Slice A: show all groups, let the operator scroll. Search box can
+    // be added in Slice B once we wire an EditorEntity for it.
+    // (Deliberately omitted; documented so it's not confused with a bug.)
+
+    if state.cascade_groups_loading && state.available_cascade_groups.is_none() {
+        container = container.child(
+            div()
+                .text_size(px(11.0))
+                .text_color(rgb(theme::FG_DIM))
+                .child("Loading cascade groups…"),
+        );
+    } else if filtered.is_empty() {
+        let msg = if state
+            .available_cascade_groups
+            .as_ref()
+            .map(|l| l.is_empty())
+            .unwrap_or(true)
+        {
+            "You don't own any cascade groups yet. Click “+ New cascade group” to create one."
+        } else {
+            "This forecast is already in every cascade group you own. Create a new one to expand."
+        };
+        container = container.child(
+            div()
+                .text_size(px(11.0))
+                .text_color(rgb(theme::FG_DIM))
+                .child(msg),
+        );
+    } else {
+        for group in filtered {
+            let gid = group.group_id.clone();
+            let gid_for_click = gid.clone();
+            let kind_glyph = cascade_kind_glyph(&group.kind);
+            let member_count = group.member_count;
+            let desc = group.description.clone();
+
+            container = container.child(
+                div()
+                    .id(SharedString::from(format!("cascade-picker-row-{}", gid)))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .px(px(8.0))
+                    .py(px(6.0))
+                    .rounded(px(4.0))
+                    .bg(rgb(theme::BG_ELEVATED))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                    .child(
+                        div()
+                            .w(px(24.0))
+                            .text_size(px(12.0))
+                            .text_color(rgb(theme::CYAN))
+                            .child(kind_glyph),
+                    )
+                    .child(
+                        div()
+                            .flex_grow()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(rgb(theme::FG))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(gid.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(rgb(theme::FG_DIM))
+                                    .child(desc.unwrap_or_else(|| {
+                                        cascade_kind_label(&group.kind).to_string()
+                                    })),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(rgb(theme::FG_FAINT))
+                            .child(format!("{} members", member_count)),
+                    )
+                    .child(
+                        div()
+                            .px(px(8.0))
+                            .py(px(2.0))
+                            .rounded(px(4.0))
+                            .bg(rgb(theme::BG))
+                            .border_1()
+                            .border_color(rgb(theme::CYAN))
+                            .text_size(px(10.0))
+                            .text_color(rgb(theme::CYAN))
+                            .child("add →"),
+                    )
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.add_forecast_to_cascade_group(&gid_for_click, cx);
+                    })),
+            );
+        }
+    }
+
+    container
+}
+
+fn render_cascade_create_form(
+    state: &CockpitState,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    // Read-only view of the draft; text input for group_id/description
+    // requires an EditorEntity which is a bigger wiring job. For Slice A,
+    // the form's group_id is auto-generated from the current forecast's
+    // question, and the description is left empty. The operator can
+    // change either afterward via a PATCH once we build Slice B.
+    let draft = state.cascade_create_draft.clone().unwrap_or_default();
+
+    // Auto-suggest a group_id if the operator hasn't entered one:
+    // slugify(question) + short random suffix. Purely a placeholder —
+    // Slice B adds an EditorEntity so the operator can override.
+    let suggested_gid = if !draft.group_id.is_empty() {
+        draft.group_id.clone()
+    } else if let Some(q) = state.program.question().map(|q| q.text.clone()) {
+        cascade_suggest_group_id(&q)
+    } else if let Some(fid) = &state.forecast_id {
+        format!("cascade_{}", short_id(fid))
+    } else {
+        "new_cascade".to_string()
+    };
+
+    let mut form = div().flex().flex_col().gap(px(8.0));
+
+    // Header + cancel
+    form = form.child(
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(rgb(theme::GREEN))
+                    .child("Create cascade group"),
+            )
+            .child(
+                div()
+                    .id("cascade-create-cancel")
+                    .px(px(8.0))
+                    .py(px(2.0))
+                    .rounded(px(4.0))
+                    .text_size(px(10.0))
+                    .text_color(rgb(theme::FG_DIM))
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(rgb(theme::FG)))
+                    .child("cancel")
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.cancel_cascade_create(cx);
+                    })),
+            ),
+    );
+
+    // Suggested group_id (read-only display for Slice A).
+    form = form.child(
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
+            .child(
+                div()
+                    .text_size(px(9.0))
+                    .text_color(rgb(theme::FG_FAINT))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("GROUP ID"),
+            )
+            .child(
+                div()
+                    .px(px(8.0))
+                    .py(px(4.0))
+                    .rounded(px(4.0))
+                    .bg(rgb(theme::BG_ELEVATED))
+                    .border_1()
+                    .border_color(rgb(theme::FG_FAINT))
+                    .text_size(px(11.0))
+                    .text_color(rgb(theme::FG))
+                    .child(suggested_gid.clone()),
+            ),
+    );
+
+    // Kind chips — clickable, current selection highlighted.
+    let current_kind = draft.kind.clone();
+    let mut kind_row = div().flex().gap(px(6.0)).items_center();
+    for (kind, label) in [
+        ("mutex", "Mutually exclusive (⊗)"),
+        ("at_most_n", "At most N (≤n)"),
+        ("implies", "Implies (⇒)"),
+    ] {
+        let is_selected = current_kind == kind;
+        let kind_owned = kind.to_string();
+        kind_row = kind_row.child(
+            div()
+                .id(SharedString::from(format!("cascade-kind-{}", kind)))
+                .px(px(10.0))
+                .py(px(4.0))
+                .rounded(px(10.0))
+                .bg(rgb(if is_selected {
+                    theme::BG_ACTIVE
+                } else {
+                    theme::BG_ELEVATED
+                }))
+                .border_1()
+                .border_color(rgb(if is_selected {
+                    theme::CYAN
+                } else {
+                    theme::FG_FAINT
+                }))
+                .text_size(px(11.0))
+                .text_color(rgb(if is_selected {
+                    theme::CYAN
+                } else {
+                    theme::FG_DIM
+                }))
+                .cursor_pointer()
+                .child(label)
+                .on_click(cx.listener(move |this, _event, _window, cx| {
+                    if let Some(d) = this.cascade_create_draft.as_mut() {
+                        d.kind = kind_owned.clone();
+                        cx.notify();
+                    }
+                })),
+        );
+    }
+    form = form.child(
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(
+                div()
+                    .text_size(px(9.0))
+                    .text_color(rgb(theme::FG_FAINT))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("KIND"),
+            )
+            .child(kind_row),
+    );
+
+    // Kind-specific hint below the chip row.
+    let hint = match current_kind.as_str() {
+        "mutex" => "Only one member can resolve YES. When one resolves NO, its probability mass redistributes across the survivors weighted by prior. (This is the WC 2026 winner group's rule.)",
+        "at_most_n" => "At most N members resolve YES. Requires parameters.n; today Slice A ships with N=1 and no editor. Slice B adds a numeric input.",
+        "implies" => "If antecedent resolves YES, consequent also resolves YES (soft coupling). Slice A ships with placeholder ids; Slice B adds forecast pickers for antecedent + consequent.",
+        _ => "",
+    };
+    form = form.child(
+        div()
+            .text_size(px(10.0))
+            .text_color(rgb(theme::FG_DIM))
+            .child(hint),
+    );
+
+    // Submit + status.
+    let create_disabled = state.cascade_groups_loading
+        || (current_kind == "implies"
+            && (draft.implies_antecedent.is_empty() || draft.implies_consequent.is_empty()));
+    let gid_for_submit = suggested_gid.clone();
+    let mut submit_row = div().flex().items_center().gap(px(8.0));
+    submit_row = submit_row.child(
+        div()
+            .id("cascade-create-submit")
+            .px(px(12.0))
+            .py(px(4.0))
+            .rounded(px(4.0))
+            .bg(rgb(if create_disabled {
+                theme::BG_ELEVATED
+            } else {
+                theme::BG_ELEVATED
+            }))
+            .border_1()
+            .border_color(rgb(if create_disabled {
+                theme::FG_FAINT
+            } else {
+                theme::GREEN
+            }))
+            .text_size(px(11.0))
+            .text_color(rgb(if create_disabled {
+                theme::FG_FAINT
+            } else {
+                theme::GREEN
+            }))
+            .cursor_pointer()
+            .child(if state.cascade_groups_loading {
+                "Creating…"
+            } else {
+                "Create + add current forecast"
+            })
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                if this.cascade_groups_loading {
+                    return;
+                }
+                // Sync the suggested gid into the draft so
+                // create_and_add_cascade_group has something to send.
+                if let Some(d) = this.cascade_create_draft.as_mut() {
+                    if d.group_id.is_empty() {
+                        d.group_id = gid_for_submit.clone();
+                    }
+                }
+                this.create_and_add_cascade_group(cx);
+            })),
+    );
+    if let Some(err) = &state.cascade_groups_error {
+        submit_row = submit_row.child(
+            div()
+                .text_size(px(10.0))
+                .text_color(rgb(theme::RED))
+                .child(err.clone()),
+        );
+    }
+    form = form.child(submit_row);
+
+    form
+}
+
+/// Slugify a question text into a candidate group_id. Best-effort;
+/// the operator can override once Slice B ships the EditorEntity.
+fn cascade_suggest_group_id(question: &str) -> String {
+    let stripped = question
+        .trim_start_matches("Will ")
+        .trim_end_matches('?')
+        .trim();
+    let cleaned: String = stripped
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    // Collapse runs of underscores.
+    let mut out = String::with_capacity(cleaned.len());
+    let mut last_us = false;
+    for c in cleaned.chars() {
+        if c == '_' {
+            if !last_us {
+                out.push(c);
+            }
+            last_us = true;
+        } else {
+            out.push(c);
+            last_us = false;
+        }
+    }
+    let trimmed: String = out.trim_matches('_').chars().take(48).collect();
+    if trimmed.is_empty() {
+        "cascade_group".to_string()
+    } else {
+        format!("cascade_{}", trimmed)
+    }
+}
+
 fn render_portfolio_membership_strip(
     state: &CockpitState,
     cx: &mut Context<CockpitState>,

@@ -1693,6 +1693,94 @@ impl ApiClient {
         .await
     }
 
+    // ════════════════════════════════════════════════════════════
+    // Cascade group composition — Spec 25 authoring API.
+    //
+    // UI vocabulary is "cascade group" but the server contract stays
+    // `relationship_group` — same primitive, older name. These methods
+    // mirror /api/relationship-groups + /api/forecasts/:id/groups as
+    // registered in api_server.rs.
+    // ════════════════════════════════════════════════════════════
+
+    /// List cascade groups owned by the caller. Each entry includes
+    /// `member_count` computed by the server. Powers the picker's
+    /// "pick an existing group" list and the future All-Groups page.
+    pub async fn list_cascade_groups(&self) -> Result<JsonValue, ApiError> {
+        self.get("/api/relationship-groups").await
+    }
+
+    /// Read one cascade group (kind, parameters, description) plus its
+    /// member list. Powers the Group detail modal.
+    pub async fn get_cascade_group(&self, group_id: &str) -> Result<JsonValue, ApiError> {
+        self.get(&format!("/api/relationship-groups/{}", group_id))
+            .await
+    }
+
+    /// Create a new cascade group. `kind` must be one of "mutex",
+    /// "at_most_n", or "implies" — the server validates and requires
+    /// `parameters.n` for at_most_n and `parameters.antecedent` +
+    /// `.consequent` for implies. `group_id` is operator-chosen (slug-
+    /// style, e.g. "wc_2026_winner"); server 409s on collision.
+    pub async fn create_cascade_group(
+        &self,
+        group_id: &str,
+        kind: &str,
+        parameters: JsonValue,
+        description: Option<&str>,
+    ) -> Result<JsonValue, ApiError> {
+        self.post(
+            "/api/relationship-groups",
+            &serde_json::json!({
+                "group_id": group_id,
+                "kind": kind,
+                "parameters": parameters,
+                "description": description,
+            }),
+        )
+        .await
+    }
+
+    /// Which cascade groups is this forecast a member of? Read straight
+    /// from `fermi_forecasts.relationship_groups`; returns a `{groups:
+    /// [group_id…]}` shape. Powers the chip strip on the composer.
+    pub async fn get_forecast_cascade_groups(
+        &self,
+        forecast_id: &str,
+    ) -> Result<JsonValue, ApiError> {
+        self.get(&format!("/api/forecasts/{}/groups", forecast_id))
+            .await
+    }
+
+    /// Add a forecast to a cascade group. Idempotent server-side (uses
+    /// `array_append` guarded by `NOT ($2 = ANY(relationship_groups))`).
+    /// Fires on the operator's "add" click in the picker.
+    pub async fn add_forecast_to_cascade_group(
+        &self,
+        forecast_id: &str,
+        group_id: &str,
+    ) -> Result<JsonValue, ApiError> {
+        // POST body is unused server-side but must be valid JSON.
+        self.post(
+            &format!("/api/forecasts/{}/groups/{}", forecast_id, group_id),
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    /// Remove a forecast from a cascade group. Fires on the chip's
+    /// remove-x click. Idempotent server-side (`array_remove`).
+    pub async fn remove_forecast_from_cascade_group(
+        &self,
+        forecast_id: &str,
+        group_id: &str,
+    ) -> Result<(), ApiError> {
+        self.delete(&format!(
+            "/api/forecasts/{}/groups/{}",
+            forecast_id, group_id
+        ))
+        .await
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Forecast relationships — generalized inter-forecast dependencies.
     //
