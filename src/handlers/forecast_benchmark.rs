@@ -1012,3 +1012,227 @@ pub async fn forecast_timeline_handler(
         "span": span,
     })))
 }
+
+// ═══════════════════════════════════════════════════════════════════
+//
+// GET /api/forecasts/:forecast_id/cascade-provenance
+//
+// Redistribution waterfall for a single forecast — the read side of the
+// "where did this probability come from" question. This is the first UI
+// surface for the generalized cascade primitive; see
+// docs/fermi/WORLD_CUP_ROADMAP.md §Phase 2.5.
+//
+// Every row in fermi_forecast_updates with revision_trigger ∈ {'cascade',
+// 'cascade_undo'} is a lateral redistribution: some upstream forecast's
+// resolution (or un-resolution) shifted the mass of this one. Summed, they
+// explain the delta between the raw model output and the currently
+// displayed probability.
+//
+// The response is one JSON object with:
+//   * baseline_probability     — current − Σ(cascade Δ). The counterfactual
+//                                  probability if no cascade had ever fired.
+//   * current_probability      — what the forecast currently reads.
+//   * cumulative_cascade_pp    — Σ|Δ| across cascade rows, in percentage
+//                                  points. Two views collapse to one number.
+//   * contributions            — one row per cascade delta, sorted by
+//                                  |delta_pp| descending so the biggest
+//                                  movers are at the top of the waterfall.
+//                                  Includes trigger_forecast_id + question
+//                                  so the client can render a human label.
+//
+// This handler does not join to pending_cascades / cascade_id; it reads
+// only from fermi_forecast_updates. If we later add trigger_forecast_id as
+// a first-class column (currently parsed out of the `reason` string), this
+// handler is where that column would be surfaced.
+
+/// GET /api/forecasts/:forecast_id/cascade-provenance
+pub async fn forecast_cascade_provenance_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(forecast_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let pool = &state.db;
+
+    // ── Forecast + auth ──────────────────────────────────────────────
+    // Mirrors forecast_timeline_handler's ownership/team-member gate so
+    // provenance visibility follows forecast visibility exactly.
+    let forecast = sqlx::query(
+        "SELECT id, owner_id::text AS owner_id, team_id,
+                question_text, predicted_probability
+         FROM fermi_forecasts WHERE id = $1",
+    )
+    .bind(&forecast_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Forecast not found".into()))?;
+
+    let owner_id: String = forecast.try_get("owner_id").unwrap_or_default();
+    if owner_id != user_id && !principal.can_admin() {
+        let team_id: Option<uuid::Uuid> = forecast.try_get("team_id").ok().flatten();
+        let allowed = match team_id {
+            Some(tid) => fermi_auth::teams::get_member_role(pool, tid, &user_id)
+                .await
+                .ok()
+                .flatten()
+                .is_some(),
+            None => false,
+        };
+        if !allowed {
+            return Err((StatusCode::FORBIDDEN, "Not allowed".into()));
+        }
+    }
+
+    let current_probability: Option<f32> = forecast.try_get("predicted_probability").ok();
+    let question: Option<String> = forecast.try_get("question_text").ok().flatten();
+
+    // ── Cascade + cascade_undo rows ──────────────────────────────────
+    // Chronological read; we re-sort by |delta_pp| desc after enriching
+    // with trigger names.
+    let rows = sqlx::query(
+        "SELECT id, previous_probability, new_probability, reason,
+                revision_trigger, created_at
+         FROM fermi_forecast_updates
+         WHERE forecast_id = $1
+           AND revision_trigger IN ('cascade', 'cascade_undo')
+         ORDER BY created_at ASC",
+    )
+    .bind(&forecast_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    // Extract trigger_forecast_id from `reason`. Reason format is stable
+    // across the four callers that write cascade rows:
+    //   - propagate_mutex:       "cascade from <fid> (<kind>)"
+    //   - propagate_at_most_n:   "cascade from <fid> (<kind>) [at_most_n=…]"
+    //   - propagate_implies:     "cascade from <fid> (<kind>) [implies: …]"
+    //   - apply_wc_cascades:     "cascade from <fid> (resolved)"
+    //   - undo_pending_cascade:  "cascade_undo of <cascade_id>"
+    // For undo rows the id is a pending_cascade uuid, not a forecast id;
+    // we return null trigger info for those and mark them undo=true.
+    fn parse_trigger_id(reason: &str) -> Option<String> {
+        let prefix = "cascade from ";
+        if let Some(rest) = reason.strip_prefix(prefix) {
+            let end = rest.find(' ').unwrap_or(rest.len());
+            return Some(rest[..end].to_string());
+        }
+        None
+    }
+
+    #[derive(Clone)]
+    struct Parsed {
+        ts: chrono::DateTime<Utc>,
+        prev_p: f64,
+        new_p: f64,
+        delta: f64,
+        reason: String,
+        revision_trigger: String,
+        trigger_forecast_id: Option<String>,
+    }
+
+    let parsed: Vec<Parsed> = rows
+        .iter()
+        .filter_map(|r| {
+            let ts = r.try_get::<chrono::DateTime<Utc>, _>("created_at").ok()?;
+            let prev = r.try_get::<f32, _>("previous_probability").ok()? as f64;
+            let new_p = r.try_get::<f32, _>("new_probability").ok()? as f64;
+            let reason: String = r.try_get("reason").ok().unwrap_or_default();
+            let revision_trigger: String = r.try_get("revision_trigger").ok().unwrap_or_default();
+            let trigger_forecast_id = parse_trigger_id(&reason);
+            Some(Parsed {
+                ts,
+                prev_p: prev,
+                new_p,
+                delta: new_p - prev,
+                reason,
+                revision_trigger,
+                trigger_forecast_id,
+            })
+        })
+        .collect();
+
+    // Batch-fetch trigger questions in one round-trip so the client can
+    // render "Curaçao eliminated" instead of an opaque uuid.
+    let trigger_ids: Vec<String> = parsed
+        .iter()
+        .filter_map(|p| p.trigger_forecast_id.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    let mut trigger_questions: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    if !trigger_ids.is_empty() {
+        let trig_rows =
+            sqlx::query("SELECT id, question_text FROM fermi_forecasts WHERE id = ANY($1)")
+                .bind(&trigger_ids)
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default();
+        for r in &trig_rows {
+            let id: String = match r.try_get("id") {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let q: Option<String> = r.try_get("question_text").ok().flatten();
+            if let Some(q) = q {
+                trigger_questions.insert(id, q);
+            }
+        }
+    }
+
+    // Assemble + sort by |delta_pp| descending. Cascade_undo rows have
+    // negative deltas w.r.t. this forecast (they revert a prior gain);
+    // we sort by magnitude so the biggest movers surface first regardless
+    // of sign.
+    let mut contributions: Vec<Value> = parsed
+        .iter()
+        .map(|p| {
+            let delta_pp = p.delta * 100.0;
+            let trigger_question = p
+                .trigger_forecast_id
+                .as_ref()
+                .and_then(|id| trigger_questions.get(id).cloned());
+            json!({
+                "ts": p.ts.to_rfc3339(),
+                "trigger_forecast_id": p.trigger_forecast_id,
+                "trigger_question": trigger_question,
+                "prev_p": p.prev_p,
+                "new_p": p.new_p,
+                "delta_pp": delta_pp,
+                "revision_trigger": p.revision_trigger,
+                "is_undo": p.revision_trigger == "cascade_undo",
+                "reason": p.reason,
+            })
+        })
+        .collect();
+    contributions.sort_by(|a, b| {
+        let da = a
+            .get("delta_pp")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0)
+            .abs();
+        let db_ = b
+            .get("delta_pp")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0)
+            .abs();
+        db_.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let cumulative_delta: f64 = parsed.iter().map(|p| p.delta).sum();
+    let cumulative_cascade_pp = cumulative_delta * 100.0;
+    let baseline_probability = current_probability.map(|c| c as f64 - cumulative_delta);
+
+    Ok(Json(json!({
+        "forecast_id": forecast_id,
+        "question": question,
+        "current_probability": current_probability,
+        "baseline_probability": baseline_probability,
+        "cumulative_cascade_pp": cumulative_cascade_pp,
+        "cascade_count": parsed.len(),
+        "contributions": contributions,
+    })))
+}
