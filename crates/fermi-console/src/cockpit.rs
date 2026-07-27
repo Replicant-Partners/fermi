@@ -8046,10 +8046,7 @@ impl CockpitState {
                     if created {
                         let pm_ids_snapshot = this
                             .update(cx, |state, _| {
-                                state
-                                    .pm_event_id
-                                    .clone()
-                                    .zip(state.pm_market_id.clone())
+                                state.pm_event_id.clone().zip(state.pm_market_id.clone())
                             })
                             .ok()
                             .flatten();
@@ -8060,13 +8057,17 @@ impl CockpitState {
                                 match api2.pm_link(&fid2, &eid, &mid).await {
                                     Ok(_) => log::info!(
                                         "[save] pm_link ok forecast={} event={} market={}",
-                                        fid2, eid, mid
+                                        fid2,
+                                        eid,
+                                        mid
                                     ),
-                                    Err(e) => log::warn!(
+                                    Err(e) => {
+                                        log::warn!(
                                         "[save] pm_link failed forecast={} event={} market={}: {} \
                                          — PM data will not survive reload",
                                         fid2, eid, mid, e
-                                    ),
+                                    )
+                                    }
                                 }
                             });
                         }
@@ -8112,10 +8113,7 @@ impl CockpitState {
                         state.messages.push(AssistantMessage {
                             node: "save".into(),
                             kind: MessageKind::Warning,
-                            text: format!(
-                                "Saved locally, but backend save failed: {}. Work will not survive closing the composer.",
-                                e
-                            ),
+                            text: friendly_backend_save_error(&e.to_string()),
                         });
                         cx.notify();
                     })
@@ -9254,7 +9252,12 @@ impl CockpitState {
                 }
                 Err(e) => {
                     this.update(cx, |state, cx| {
-                        state.publish_status = Some(format!("Failed: {}", e));
+                        // Route the raw error through the same
+                        // friendly rewriter the autosave path uses so
+                        // FK-violation surface as actionable text
+                        // rather than raw SQL wire format.
+                        state.publish_status =
+                            Some(format!("Failed: {}", friendly_backend_save_error(&e)));
                         // If the server rejected the write because the
                         // forecast is already resolved, our local view was
                         // stale — reconcile so the cockpit locks and shows
@@ -19635,6 +19638,70 @@ fn shorten_question_for_provenance(q: &str) -> String {
 /// stays scannable.
 fn short_id(id: &str) -> String {
     id.split('-').next().unwrap_or(id).to_string()
+}
+
+/// Translate a raw backend error string into an operator-facing
+/// message. Two goals:
+///   * Hide the raw SQL / sqlx wire format from the toast — seeing
+///     "insert or update on table 'fermi_forecasts' violates foreign
+///     key constraint" is worse than useless when what the operator
+///     needs to do is sign out and back in.
+///   * Preserve enough context to reach us with useful diagnostics if
+///     the message doesn't match any known pattern.
+///
+/// The categorisation is intentionally cautious: only well-known
+/// wire-format phrases get rewritten. Everything else falls through
+/// with the raw text so we don't accidentally hide a novel failure.
+fn friendly_backend_save_error(raw: &str) -> String {
+    let lower = raw.to_lowercase();
+
+    // Users-row FK violation (fixed in the backend by ensure_user_row,
+    // but keep this branch as a safety net for stale binaries and to
+    // rewrite the message on the way to the toast).
+    if lower.contains("foreign key") && (lower.contains("owner_id") || lower.contains("users")) {
+        return "Backend save failed: your account isn't fully provisioned. \
+                Sign out and sign in again to complete setup, then retry."
+            .to_string();
+    }
+
+    // Server-signalled precondition failure — our ensure_user_row
+    // helper returns this when it can't backfill (e.g. api-key
+    // principal with an orphan user_id).
+    if lower.contains("isn't fully provisioned")
+        || lower.contains("isn't provisioned")
+        || lower.contains("not fully provisioned")
+    {
+        return format!("Backend save failed: {}", raw);
+    }
+
+    // Notebook FK — legacy fermi_forecasts.notebook_id points at a
+    // notebook that no longer exists. The client no longer sets
+    // notebook_id but old drafts might; surface a hint the operator
+    // can act on.
+    if lower.contains("foreign key") && lower.contains("notebook_id") {
+        return "Backend save failed: this forecast's notebook is missing. \
+                Reset the composer (Ctrl+N) and paste your work into a new \
+                forecast."
+            .to_string();
+    }
+
+    // Generic FK violation — tell the operator what happened without
+    // dumping the SQL.
+    if lower.contains("foreign key") {
+        return format!(
+            "Backend save failed: a referenced row is missing on the server. \
+             Try refreshing (Ctrl+R) and retry. Details: {}",
+            raw
+        );
+    }
+
+    // Unknown — fall through with the raw text so we can still
+    // diagnose. This is the last-resort branch.
+    format!(
+        "Saved locally, but backend save failed: {}. Work will not survive \
+         closing the composer.",
+        raw
+    )
 }
 
 /// Trim an RFC-3339 timestamp to the minute for compact display. If the

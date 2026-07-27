@@ -21,9 +21,104 @@ use uuid::Uuid;
 use crate::AppState;
 use fermi::gas::charge_gas;
 use fermi_auth::visibility::{can_access, can_edit, can_view};
-use fermi_auth::{get_or_create_wallet, AuthPrincipal, ObjectType, Visibility};
+use fermi_auth::{get_or_create_wallet, AuthPrincipal, AuthProvider, ObjectType, Visibility};
+use sqlx::PgPool;
 
-// ═══════════════════════════════════════════════════════════════════
+/// Ensure the users row referenced by `principal.user_id()` exists.
+/// Fixes a class of "insert or update on table 'fermi_forecasts'
+/// violates foreign key constraint" 500s that surfaced when a session's
+/// user_id didn't match a row in `users` — e.g. a session token minted
+/// against a different environment's DB, or a users row deleted after
+/// the session was created. The FK on `fermi_forecasts.owner_id →
+/// users(user_id)` (migration 094) fires before our INSERT lands and
+/// the raw sqlx error was surfacing to the operator as an inscrutable
+/// "Saved locally, but backend save failed" toast.
+///
+/// Best-effort UPSERT: uses the principal's email + display_name when
+/// available (AuthPrincipal::User branch). API-key principals only
+/// carry user_id, so if their users row is missing we can't backfill
+/// safely (users.email is UNIQUE NOT NULL) and return a clean
+/// PRECONDITION_FAILED with an actionable message instead.
+///
+/// Idempotent: fast-path SELECT returns immediately when the row
+/// already exists, so this adds one round trip per write handler in
+/// the happy path. Cheap given the existing charge_gas + INSERT flow.
+async fn ensure_user_row(
+    pool: &PgPool,
+    principal: &AuthPrincipal,
+) -> Result<(), (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let exists: Option<i32> = sqlx::query_scalar("SELECT 1 FROM users WHERE user_id = $1 LIMIT 1")
+        .bind(&user_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if exists.is_some() {
+        return Ok(());
+    }
+
+    // Missing users row. Try to backfill from the AuthPrincipal.
+    match principal {
+        AuthPrincipal::User(user) => {
+            let provider_str = match user.auth_provider {
+                AuthProvider::Google => "google",
+                AuthProvider::GitHub => "github",
+                AuthProvider::Ethereum => "ethereum",
+                AuthProvider::Email => "email",
+            };
+            let result = sqlx::query(
+                r#"INSERT INTO users (user_id, email, display_name, role, auth_provider,
+                                       password_hash, password_salt, last_login_at)
+                   VALUES ($1, $2, $3, 'developer', $4, '', '', NOW())
+                   ON CONFLICT (user_id) DO NOTHING"#,
+            )
+            .bind(&user.user_id)
+            .bind(&user.email)
+            .bind(&user.display_name)
+            .bind(provider_str)
+            .execute(pool)
+            .await;
+            if let Err(e) = result {
+                // Most likely case: email UNIQUE conflict with a
+                // different user_id. Surface a clean error rather
+                // than the raw SQL so the operator can act on it.
+                log::warn!(
+                    "[ensure_user_row] backfill failed for user_id={}: {}",
+                    user.user_id,
+                    e
+                );
+                return Err((
+                    StatusCode::PRECONDITION_FAILED,
+                    "Your account isn't fully provisioned. Please sign out \
+                     and sign in again to complete setup."
+                        .into(),
+                ));
+            }
+            log::info!(
+                "[ensure_user_row] backfilled missing users row for user_id={} ({})",
+                user.user_id,
+                user.email
+            );
+            Ok(())
+        }
+        AuthPrincipal::ApiKey(_) => {
+            // API key with orphan user_id — data integrity issue we
+            // can't recover from here. The API key's user_id column
+            // should FK to users(user_id), but if the row is gone we
+            // don't have email/display_name to insert one.
+            Err((
+                StatusCode::PRECONDITION_FAILED,
+                format!(
+                    "Your account (user_id={}) isn't provisioned. Sign in \
+                     through the web console once, then retry.",
+                    user_id
+                ),
+            ))
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════
 // Request / Response Types
 // ═══════════════════════════════════════════════════════════════════
 
@@ -173,6 +268,10 @@ pub async fn create_forecast_handler(
 ) -> Result<(StatusCode, Json<JsonValue>), (StatusCode, String)> {
     let user_id = principal.user_id();
     let pool = &state.db;
+
+    // Backfill the users row if missing — guards against the FK
+    // violation on fermi_forecasts.owner_id → users(user_id).
+    ensure_user_row(pool, &principal).await?;
 
     // Validate probability
     if req.predicted_probability < 0.0 || req.predicted_probability > 1.0 {
@@ -1404,6 +1503,12 @@ pub async fn create_portfolio_handler(
 ) -> Result<(StatusCode, Json<JsonValue>), (StatusCode, String)> {
     let user_id = principal.user_id();
     let pool = &state.db;
+
+    // Same defensive backfill as create_forecast_handler: guards
+    // against fermi_portfolios.owner_id → users(user_id) FK
+    // violation when the session's user_id is orphaned.
+    ensure_user_row(pool, &principal).await?;
+
     let portfolio_id = Uuid::new_v4().to_string();
     let visibility = req.visibility.as_deref().unwrap_or("private");
     let team_id: Option<Uuid> = req.team_id.as_ref().and_then(|s| Uuid::parse_str(s).ok());
