@@ -236,6 +236,19 @@ enum VirtualPortfolio {
     /// yet — including drafts saved via Ctrl+S. Gives loose work a
     /// discoverable home.
     Unassigned,
+    /// All active (committed, Brier-scored) forecasts the caller owns,
+    /// across every named portfolio. Replaces the Dashboard's Live
+    /// section — the Dashboard is a command center, not a book view.
+    Live,
+    /// All draft forecasts the caller owns — the WIP inbox. Replaces
+    /// the Dashboard's Drafts section. `Unassigned` overlaps for drafts
+    /// without a portfolio; this bucket lists every draft regardless of
+    /// portfolio membership.
+    Drafts,
+    /// The caller's most recent resolved forecasts. Replaces the
+    /// Dashboard's Recently Resolved section. Cheaper than opening
+    /// each portfolio to hunt for resolved rows.
+    RecentlyResolved,
 }
 
 /// Ordering options for the portfolio detail's forecast list. Each maps to
@@ -1510,6 +1523,11 @@ impl FermiConsole {
         self.fetch_my_invites(cx);
         // Wallet snapshot for the sidebar chip + welcome modal.
         self.fetch_wallet(cx);
+        // Teams list — previously fetched lazily on Panel::Teams open
+        // or when a share modal needed it. The Dashboard's Teams strip
+        // wants it on first render, and the payload is small (bare
+        // team headers), so we pull it up-front.
+        self.fetch_teams(cx);
     }
 
     /// Pull the current wallet snapshot. First fetch after sign-in
@@ -3796,6 +3814,13 @@ impl FermiConsole {
         match self.selected_virtual_portfolio {
             Some(VirtualPortfolio::SharedWithMe) => self.fetch_shared_with_me(cx),
             Some(VirtualPortfolio::Unassigned) => self.fetch_unassigned_forecasts(cx),
+            // Live / Drafts / RecentlyResolved are pure client-side
+            // filters over data `fetch_forecasts` itself just wrote to
+            // `active_forecasts` / `draft_forecasts` / `resolved_forecasts`.
+            // No extra round-trip needed.
+            Some(VirtualPortfolio::Live)
+            | Some(VirtualPortfolio::Drafts)
+            | Some(VirtualPortfolio::RecentlyResolved) => {}
             None => {}
         }
         let api = self.api.clone();
@@ -3926,6 +3951,11 @@ impl FermiConsole {
         match bucket {
             VirtualPortfolio::SharedWithMe => self.fetch_shared_with_me(cx),
             VirtualPortfolio::Unassigned => self.fetch_unassigned_forecasts(cx),
+            // Client-side buckets — the underlying vectors are already
+            // populated by `fetch_forecasts`.
+            VirtualPortfolio::Live
+            | VirtualPortfolio::Drafts
+            | VirtualPortfolio::RecentlyResolved => {}
         }
         cx.notify();
     }
@@ -5314,85 +5344,728 @@ impl FermiConsole {
                         theme::GOLD,
                     )),
             )
-            // Live forecasts — the operator's active book. Moved here
-            // from the Portfolio panel where it competed for space with
-            // the named-portfolio sidebar. Dashboard is where you go
-            // for "what am I forecasting right now", Portfolio is where
-            // you go for "how have I organised my forecasts".
-            .when(self.connected && !self.active_forecasts.is_empty(), |el| {
-                el.child(self.render_forecast_section(
-                    "Live",
-                    "committed · Brier-scored",
-                    &self.active_forecasts,
-                    theme::CYAN,
-                    cx,
-                ))
+            // ── Command-center lanes ──────────────────────────────────
+            //
+            // The Dashboard used to end with three big lists (Live /
+            // Drafts / Recently Resolved) followed by an activity feed.
+            // That was a book view, not a command center: it told you
+            // "what forecasts do I own", nothing about the research
+            // team behind them or the marketplace they draw from.
+            //
+            // The three lists are now virtual portfolio buckets
+            // (Portfolio panel, sidebar). What lives here instead:
+            //
+            //   Row 1  RESEARCH  |  MARKETPLACE     two-column grid
+            //   Row 2  TEAMS strip                    full-width
+            //   Row 3  RECENT ACTIVITY                full-width, wider
+            //
+            // This is the "self-improving agentic research team, powered
+            // by an expanding marketplace of specialist agents" narrative,
+            // above the fold, at the operator's first glance.
+            .when(self.connected, |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap(px(16.0))
+                        .child(
+                            div()
+                                .flex_grow()
+                                .flex_basis(px(0.0))
+                                .child(self.render_dashboard_research_card(cx)),
+                        )
+                        .child(
+                            div()
+                                .flex_grow()
+                                .flex_basis(px(0.0))
+                                .child(self.render_dashboard_marketplace_card(cx)),
+                        ),
+                )
             })
-            // Drafts — forecasts the operator is composing but hasn't
-            // published yet. Without this section, unpublished drafts
-            // "orphaned" outside of any portfolio were completely
-            // invisible from the Dashboard: they don't show in Live
-            // (only actives), don't show in the Portfolio panel (only
-            // named portfolios), and the Composer view only surfaces
-            // the currently-open one. Rendering them here closes the
-            // discoverability gap so an operator can always find and
-            // resume their WIP.
-            .when(self.connected && !self.draft_forecasts.is_empty(), |el| {
-                el.child(self.render_forecast_section(
-                    "Drafts",
-                    "unpublished · click to open in Composer",
-                    &self.draft_forecasts,
-                    theme::GOLD,
-                    cx,
-                ))
+            .when(self.connected, |el| {
+                el.child(self.render_dashboard_teams_strip(cx))
             })
-            // Recently resolved — the last 10 resolutions, so orphan
-            // forecasts not in any portfolio still surface somewhere.
-            // Distinct from the Recent Activity feed above: this is a
-            // full-fat list with per-row detail rather than a curated
-            // eight-item ticker.
-            .when(
-                self.connected && !self.resolved_forecasts.is_empty(),
-                |el| {
-                    let recent_resolved: Vec<Forecast> =
-                        self.resolved_forecasts.iter().take(10).cloned().collect();
-                    el.child(self.render_forecast_section(
-                        "Recently Resolved",
-                        "last 10 · sorted by Brier",
-                        &recent_resolved,
-                        theme::GREEN,
-                        cx,
-                    ))
-                },
+            .child(self.render_dashboard_activity_feed(cx))
+    }
+
+    // ── Dashboard: Research card ───────────────────────────────────────────
+    //
+    // Left lane of the command center. Tells the "research economy"
+    // story: how much evidence has your fleet gathered lately, roughly
+    // what did it cost, and which forecasts are the active ones.
+    //
+    // Cost is *estimated* — ABW doesn't yet expose a per-forecast
+    // cost rollup, so we approximate as
+    //   sum over agents in `agents_used` of (avg_cost_per_run × 1).
+    // That's an honest lower bound ("this forecast has consumed at
+    // least one run of each of these agents") and is clearly labeled
+    // "est." in the UI so nobody mistakes it for authoritative spend.
+    // A follow-up commit can swap this for a real rollup without
+    // changing the visual shell.
+    fn render_dashboard_research_card(&self, cx: &Context<Self>) -> impl IntoElement {
+        // Index server agent execution_stats so we can look up
+        // avg_cost_per_run by agent_id in O(1).
+        let mut avg_cost_by_id: std::collections::HashMap<String, f64> =
+            std::collections::HashMap::new();
+        for sc in &self.agent_cards {
+            let Some(id) = sc.get("agent_id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let stats = sc.get("execution_stats");
+            let total_exec = stats
+                .and_then(|s| s.get("total_executions"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let total_cost = stats
+                .and_then(|s| s.get("total_cost_usd"))
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            if total_exec > 0 && total_cost > 0.0 {
+                avg_cost_by_id.insert(id.to_string(), total_cost / total_exec as f64);
+            }
+        }
+
+        // Walk the operator's own forecasts, summing evidence and
+        // estimated cost. `agents_used` shape from the server is an
+        // array of `{agent_id, driver_refs: […]}` objects.
+        let mut total_evidence: usize = 0;
+        let mut total_est_cost: f64 = 0.0;
+        // Per-row: (forecast, evidence_count, est_cost, agent_ids)
+        let mut rows: Vec<(&Forecast, usize, f64, Vec<String>)> = Vec::new();
+        let all_own: Vec<&Forecast> = self
+            .active_forecasts
+            .iter()
+            .chain(self.draft_forecasts.iter())
+            .chain(self.resolved_forecasts.iter())
+            .collect();
+        for f in &all_own {
+            let evidence_count = f
+                .evidence
+                .as_ref()
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            let agent_ids: Vec<String> = f
+                .agents_used
+                .as_ref()
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|e| {
+                            e.get("agent_id")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let est_cost: f64 = agent_ids
+                .iter()
+                .filter_map(|id| avg_cost_by_id.get(id).copied())
+                .sum();
+            total_evidence += evidence_count;
+            total_est_cost += est_cost;
+            if evidence_count > 0 || !agent_ids.is_empty() {
+                rows.push((*f, evidence_count, est_cost, agent_ids));
+            }
+        }
+        // Newest first — use updated_at where present, fall back to
+        // created_at.
+        rows.sort_by(|a, b| {
+            let ka = a.0.updated_at.as_ref().or(a.0.created_at.as_ref());
+            let kb = b.0.updated_at.as_ref().or(b.0.created_at.as_ref());
+            kb.cmp(&ka)
+        });
+        let top: Vec<_> = rows.into_iter().take(5).collect();
+
+        let header_summary = if total_evidence == 0 && total_est_cost == 0.0 {
+            "no research yet".to_string()
+        } else {
+            format!(
+                "{} evidence · ⚡ {:.2} est.",
+                total_evidence, total_est_cost
+            )
+        };
+
+        let is_empty = top.is_empty();
+
+        div()
+            .flex()
+            .flex_col()
+            .bg(theme::bg_elevated())
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(theme::fg_faint())
+            .overflow_hidden()
+            // Header
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .px(px(16.0))
+                    .py(px(12.0))
+                    .border_b_1()
+                    .border_color(theme::fg_faint())
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .child(
+                                div()
+                                    .text_size(px(14.0))
+                                    .text_color(rgb(theme::CYAN))
+                                    .child("🔬"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(13.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(theme::fg())
+                                    .child("Research"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(theme::fg_dim())
+                            .child(header_summary),
+                    ),
+            )
+            // Body
+            .when(is_empty, |el| {
+                el.child(
+                    div()
+                        .p(px(16.0))
+                        .text_size(px(11.0))
+                        .text_color(theme::fg_faint())
+                        .child(
+                            "No agent runs on your forecasts yet. Open a forecast \
+                             in the Composer and hire an agent to gather evidence.",
+                        ),
+                )
+            })
+            .children(top.into_iter().map(|(f, ev_count, est_cost, agent_ids)| {
+                let fid = f.id.clone();
+                let question = truncate(&f.question_text, 48).to_string();
+                let n_agents = agent_ids.len();
+                let subline = if est_cost > 0.0 {
+                    format!(
+                        "{} evidence · {} agent{} · ⚡ {:.2} est.",
+                        ev_count,
+                        n_agents,
+                        if n_agents == 1 { "" } else { "s" },
+                        est_cost,
+                    )
+                } else if n_agents > 0 {
+                    format!(
+                        "{} evidence · {} agent{} · cost n/a",
+                        ev_count,
+                        n_agents,
+                        if n_agents == 1 { "" } else { "s" },
+                    )
+                } else {
+                    format!("{} evidence", ev_count)
+                };
+                div()
+                    .id(SharedString::from(format!("dash-research-{}", fid)))
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .px(px(16.0))
+                    .py(px(10.0))
+                    .border_b_1()
+                    .border_color(theme::fg_faint())
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::bg_hover()))
+                    .on_click(cx.listener(move |this, _e, _w, cx| {
+                        this.open_forecast(&fid, cx);
+                    }))
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(theme::fg())
+                            .child(question),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_dim())
+                            .child(subline),
+                    )
+            }))
+            // Footer: link to Agent Fleet for the full picture.
+            .child(
+                div()
+                    .id("dash-research-see-all")
+                    .px(px(16.0))
+                    .py(px(8.0))
+                    .text_size(px(11.0))
+                    .text_color(rgb(theme::CYAN))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::bg_hover()))
+                    .on_click(cx.listener(|this, _e, _w, cx| {
+                        this.navigate(Panel::AgentFleet, cx);
+                    }))
+                    .child("See all research →"),
+            )
+    }
+
+    // ── Dashboard: Marketplace card ───────────────────────────────────────
+    //
+    // Right lane. Surfaces the "expanding community of specialist
+    // agents" pillar. Shows the top few Fresh/Rising agents so the
+    // operator can discover new hires without opening Agent Fleet.
+    //
+    // Depends on `build_agent_marketplace` iterating the union of
+    // local + server agent_ids (see P0 fix): before that fix, server-
+    // only agents were invisible here and this card would always be
+    // empty on a fresh install.
+    fn render_dashboard_marketplace_card(&self, cx: &Context<Self>) -> impl IntoElement {
+        let local_cards = self.registry.list_cards().unwrap_or_default();
+        let fermi_cards: Vec<&AgentCard> = local_cards
+            .iter()
+            .filter(|c| c.agent_type == "forecast_analyst")
+            .collect();
+        // Session runs are only relevant when a cockpit is open; on
+        // the Dashboard we don't have one so pass an empty slice.
+        let no_runs: Vec<cockpit::AgentExecution> = Vec::new();
+        let mut entries = build_agent_marketplace(&fermi_cards, &self.agent_cards, &no_runs);
+        // Fresh + rising — the "try me" pool. Sort by tier priority
+        // first, then by descending score within each tier.
+        entries.retain(|e| e.tier == "fresh" || e.tier == "rising");
+        entries.sort_by(|a, b| {
+            let ta = if a.tier == "fresh" { 0 } else { 1 };
+            let tb = if b.tier == "fresh" { 0 } else { 1 };
+            ta.cmp(&tb).then(
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+        });
+        let fresh_count = entries.iter().filter(|e| e.tier == "fresh").count();
+        let total_agents = self.agent_cards.len().max(fermi_cards.len());
+        let top: Vec<AgentMarketplaceEntry> = entries.into_iter().take(4).collect();
+        let is_empty = top.is_empty();
+
+        let header_summary = if total_agents == 0 {
+            "loading…".to_string()
+        } else if fresh_count == 0 {
+            format!("{} agents · no new arrivals", total_agents)
+        } else {
+            format!("{} agents · {} fresh", total_agents, fresh_count)
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .bg(theme::bg_elevated())
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(theme::fg_faint())
+            .overflow_hidden()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .px(px(16.0))
+                    .py(px(12.0))
+                    .border_b_1()
+                    .border_color(theme::fg_faint())
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .child(
+                                div()
+                                    .text_size(px(14.0))
+                                    .text_color(rgb(theme::PURPLE))
+                                    .child("✨"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(13.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(theme::fg())
+                                    .child("Marketplace"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(theme::fg_dim())
+                            .child(header_summary),
+                    ),
+            )
+            .when(is_empty, |el| {
+                el.child(
+                    div()
+                        .p(px(16.0))
+                        .text_size(px(11.0))
+                        .text_color(theme::fg_faint())
+                        .child(
+                            "No new agents to try right now. Check back \
+                             later — the community ships specialists all \
+                             the time.",
+                        ),
+                )
+            })
+            .children(top.into_iter().map(|e| {
+                let aid = e.agent_id.clone();
+                let tier_glyph = match e.tier {
+                    "fresh" => "✨",
+                    "rising" => "▲",
+                    _ => "◉",
+                };
+                let cost_text = e
+                    .avg_cost_per_run
+                    .map(|c| format!("⚡ {:.2}/run", c))
+                    .unwrap_or_else(|| "cost n/a".into());
+                let desc = truncate(&e.description, 60).to_string();
+                div()
+                    .id(SharedString::from(format!("dash-mkt-{}", aid)))
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .px(px(16.0))
+                    .py(px(10.0))
+                    .border_b_1()
+                    .border_color(theme::fg_faint())
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::bg_hover()))
+                    .on_click(cx.listener(move |this, _e, _w, cx| {
+                        // Take the operator to the marketplace with the
+                        // clicked agent already expanded so they can
+                        // review terms before hiring. Same primitive
+                        // the Fleet panel uses for its cards.
+                        this.agent_marketplace_expanded.insert(aid.clone());
+                        this.navigate(Panel::AgentFleet, cx);
+                    }))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(e.tier_color))
+                                    .child(tier_glyph),
+                            )
+                            .child(
+                                div()
+                                    .flex_grow()
+                                    .text_size(px(12.0))
+                                    .text_color(theme::fg())
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(e.display_name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(theme::fg_dim())
+                                    .child(cost_text),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_dim())
+                            .child(desc),
+                    )
+            }))
+            .child(
+                div()
+                    .id("dash-mkt-see-all")
+                    .px(px(16.0))
+                    .py(px(8.0))
+                    .text_size(px(11.0))
+                    .text_color(rgb(theme::PURPLE))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::bg_hover()))
+                    .on_click(cx.listener(|this, _e, _w, cx| {
+                        this.navigate(Panel::AgentFleet, cx);
+                    }))
+                    .child("Browse marketplace →"),
+            )
+    }
+
+    // ── Dashboard: Teams strip ──────────────────────────────────────────────
+    //
+    // A single-row strip of team cards. Each card is a small tile with
+    // the team name, one-line description, and a click handler that
+    // navigates to the Teams panel with the team preselected.
+    //
+    // Rosters are not fetched eagerly here — that would fan out one
+    // `get_team(id)` per team on every Dashboard visit. The user's
+    // "elegant and minimal" ask means we surface the team _existence_
+    // here and defer the full roster + shared-forecasts view to the
+    // Teams panel one click away.
+    fn render_dashboard_teams_strip(&self, cx: &Context<Self>) -> impl IntoElement {
+        // Filter to Fermi-vertical teams the same way
+        // `render_teams_panel` does. ABW returns every vertical's teams
+        // through `/api/teams`; the console only cares about ones
+        // tagged `fermi_forecast`.
+        let teams: Vec<&Team> = self
+            .teams
+            .iter()
+            .filter(|t| {
+                t.origin
+                    .as_deref()
+                    .map(|o| o == "fermi_forecast")
+                    .unwrap_or(true)
+            })
+            .collect();
+
+        let is_empty = teams.is_empty();
+
+        div()
+            .flex()
+            .flex_col()
+            .bg(theme::bg_elevated())
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(theme::fg_faint())
+            .overflow_hidden()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .px(px(16.0))
+                    .py(px(10.0))
+                    .border_b_1()
+                    .border_color(theme::fg_faint())
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .child(
+                                div()
+                                    .text_size(px(14.0))
+                                    .text_color(rgb(theme::GOLD))
+                                    .child("👥"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(13.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(theme::fg())
+                                    .child("Teams"),
+                            )
+                            .child(div().text_size(px(11.0)).text_color(theme::fg_dim()).child(
+                                if is_empty {
+                                    "none yet".to_string()
+                                } else {
+                                    format!(
+                                        "{} team{}",
+                                        teams.len(),
+                                        if teams.len() == 1 { "" } else { "s" }
+                                    )
+                                },
+                            )),
+                    )
+                    .child(
+                        div()
+                            .id("dash-teams-manage")
+                            .text_size(px(11.0))
+                            .text_color(rgb(theme::GOLD))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::bg_hover()))
+                            .px(px(6.0))
+                            .py(px(2.0))
+                            .rounded(px(4.0))
+                            .on_click(cx.listener(|this, _e, _w, cx| {
+                                this.navigate(Panel::Teams, cx);
+                            }))
+                            .child("Manage →"),
+                    ),
+            )
+            .when(is_empty, |el| {
+                el.child(
+                    div()
+                        .p(px(16.0))
+                        .text_size(px(11.0))
+                        .text_color(theme::fg_faint())
+                        .child(
+                            "You're not in any teams yet. Create one from the \
+                             Teams panel to share forecasts with collaborators.",
+                        ),
+                )
+            })
+            .when(!is_empty, |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .gap(px(10.0))
+                        .p(px(12.0))
+                        .children(
+                            teams
+                                .into_iter()
+                                .map(|t| self.render_dashboard_team_card(t, cx)),
+                        ),
+                )
+            })
+    }
+
+    // Individual team tile in the Dashboard's Teams strip. Uses the
+    // team's slug initial as an inline glyph so cards read at a glance
+    // even with the roster hidden. Click navigates to the Teams panel
+    // with the team selected — the roster and shared-forecasts view
+    // live there.
+    fn render_dashboard_team_card(&self, team: &Team, cx: &Context<Self>) -> impl IntoElement {
+        let tid = team.id.clone();
+        let name = team.name.clone();
+        let initial = team
+            .name
+            .chars()
+            .next()
+            .map(|c| c.to_uppercase().to_string())
+            .unwrap_or_else(|| "?".into());
+        let desc = team
+            .description
+            .as_deref()
+            .map(|d| truncate(d, 44).to_string())
+            .filter(|d| !d.is_empty())
+            .unwrap_or_else(|| "no description".into());
+
+        div()
+            .id(SharedString::from(format!("dash-team-{}", tid)))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(10.0))
+            .px(px(12.0))
+            .py(px(10.0))
+            .min_w(px(200.0))
+            .max_w(px(280.0))
+            .flex_grow()
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(theme::fg_faint())
+            .bg(theme::bg())
+            .cursor_pointer()
+            .hover(|s| s.bg(theme::bg_hover()).border_color(rgb(theme::GOLD)))
+            .on_click(cx.listener(move |this, _e, _w, cx| {
+                this.selected_team_id = Some(tid.clone());
+                this.selected_team_detail = None;
+                this.navigate(Panel::Teams, cx);
+            }))
+            // Initial glyph in a rounded square — stand-in for an
+            // avatar. The roster hover-reveal is a future iteration.
+            .child(
+                div()
+                    .w(px(32.0))
+                    .h(px(32.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(6.0))
+                    .bg(rgb(theme::GOLD))
+                    .text_size(px(14.0))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(rgb(theme::BG))
+                    .child(initial),
             )
             .child(
-                // Activity feed
                 div()
                     .flex()
                     .flex_col()
                     .flex_grow()
-                    .bg(theme::bg_elevated())
-                    .rounded(px(8.0))
-                    .border_1()
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme::fg())
+                            .child(name),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(theme::fg_dim())
+                            .child(desc),
+                    ),
+            )
+    }
+
+    // ── Dashboard: Activity feed (wider, filterable) ────────────────────────
+    //
+    // The activity ticker at the bottom of the Dashboard. Extracted
+    // from the old `render_dashboard` body so it can grow filter chips
+    // (all/mine/team/marketplace) without inflating the top-level fn.
+    //
+    // Today only "mine" has content — the events are all derived from
+    // the operator's own forecasts by `recompute_recent_activity`.
+    // Team and marketplace chips are rendered but disabled with a
+    // "coming soon" tooltip so the future information architecture is
+    // visible without pretending we have data we don't.
+    fn render_dashboard_activity_feed(&self, cx: &Context<Self>) -> impl IntoElement {
+        let n = self.recent_activity.len();
+        div()
+            .flex()
+            .flex_col()
+            .flex_grow()
+            .bg(theme::bg_elevated())
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(theme::fg_faint())
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .px(px(16.0))
+                    .py(px(10.0))
+                    .border_b_1()
                     .border_color(theme::fg_faint())
                     .child(
                         div()
-                            .px(px(16.0))
-                            .py(px(12.0))
-                            .border_b_1()
-                            .border_color(theme::fg_faint())
-                            .text_size(px(14.0))
-                            .text_color(theme::fg())
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Recent Activity"),
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(
+                                div()
+                                    .text_size(px(13.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(theme::fg())
+                                    .child("Recent Activity"),
+                            )
+                            .child(div().text_size(px(11.0)).text_color(theme::fg_dim()).child(
+                                if n == 0 {
+                                    "nothing yet".to_string()
+                                } else {
+                                    format!("{} event{}", n, if n == 1 { "" } else { "s" })
+                                },
+                            )),
                     )
+                    // Source filter chips. "All" and "Mine" resolve to
+                    // the same content today; team + marketplace are
+                    // placeholders for future ingestion (see
+                    // roadmap P4). They render as disabled chips so
+                    // the shape is visible.
                     .child(
-                        div().flex().flex_col().p(px(8.0)).gap(px(2.0)).children(
-                            self.recent_activity
-                                .iter()
-                                .map(|item| self.render_activity_item(item, cx)),
-                        ),
+                        div()
+                            .flex()
+                            .gap(px(6.0))
+                            .child(activity_source_chip("All", true, false))
+                            .child(activity_source_chip("👤 Mine", false, false))
+                            .child(activity_source_chip("👥 Team", false, true))
+                            .child(activity_source_chip("✨ Marketplace", false, true)),
                     ),
+            )
+            .child(
+                div().flex().flex_col().p(px(8.0)).gap(px(2.0)).children(
+                    self.recent_activity
+                        .iter()
+                        .map(|item| self.render_activity_item(item, cx)),
+                ),
             )
     }
 
@@ -7137,6 +7810,18 @@ impl FermiConsole {
                             // user still has a landing spot for their
                             // saved-but-not-yet-organised work.
                             .child(self.render_virtual_portfolio_row(
+                                VirtualPortfolio::Live,
+                                cx,
+                            ))
+                            .child(self.render_virtual_portfolio_row(
+                                VirtualPortfolio::Drafts,
+                                cx,
+                            ))
+                            .child(self.render_virtual_portfolio_row(
+                                VirtualPortfolio::RecentlyResolved,
+                                cx,
+                            ))
+                            .child(self.render_virtual_portfolio_row(
                                 VirtualPortfolio::SharedWithMe,
                                 cx,
                             ))
@@ -8871,6 +9556,30 @@ impl FermiConsole {
                 self.unassigned_loading,
                 "unassigned",
             ),
+            VirtualPortfolio::Live => (
+                "◐",
+                "Live",
+                "Active · Brier-scored",
+                self.active_forecasts.len(),
+                self.forecasts_loading,
+                "live",
+            ),
+            VirtualPortfolio::Drafts => (
+                "✎",
+                "Drafts",
+                "Unpublished WIP",
+                self.draft_forecasts.len(),
+                self.forecasts_loading,
+                "drafts",
+            ),
+            VirtualPortfolio::RecentlyResolved => (
+                "✓",
+                "Recently Resolved",
+                "Last resolutions · Brier-scored",
+                self.resolved_forecasts.len(),
+                self.forecasts_loading,
+                "recently-resolved",
+            ),
         };
 
         div()
@@ -8950,25 +9659,56 @@ impl FermiConsole {
         bucket: VirtualPortfolio,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let (title, blurb, forecasts, loading) = match bucket {
-            VirtualPortfolio::SharedWithMe => (
-                "📥 Shared with me",
-                "Forecasts other people have shared with you — via team \
+        // For RecentlyResolved we take a slice of the newest 20 so the
+        // list doesn't grow unbounded for prolific forecasters. `Live`
+        // and `Drafts` show every row — the operator asked for these
+        // to become the canonical home of that data.
+        let recently_resolved: Vec<Forecast> =
+            self.resolved_forecasts.iter().take(20).cloned().collect();
+        let (title, blurb, forecasts, loading): (&'static str, &'static str, &Vec<Forecast>, bool) =
+            match bucket {
+                VirtualPortfolio::SharedWithMe => (
+                    "📥 Shared with me",
+                    "Forecasts other people have shared with you — via team \
                  membership, direct share, or public visibility. Read-only \
                  unless the share grants edit/admin.",
-                &self.shared_with_me_forecasts,
-                self.shared_with_me_loading,
-            ),
-            VirtualPortfolio::Unassigned => (
-                "📌 Unassigned",
-                "Your forecasts that aren't in any portfolio yet. Drafts \
+                    &self.shared_with_me_forecasts,
+                    self.shared_with_me_loading,
+                ),
+                VirtualPortfolio::Unassigned => (
+                    "📌 Unassigned",
+                    "Your forecasts that aren't in any portfolio yet. Drafts \
                  saved with Ctrl+S land here first — open one, click a \
                  portfolio chip in the composer, and it moves to that \
                  portfolio.",
-                &self.unassigned_forecasts,
-                self.unassigned_loading,
-            ),
-        };
+                    &self.unassigned_forecasts,
+                    self.unassigned_loading,
+                ),
+                VirtualPortfolio::Live => (
+                    "◐ Live",
+                    "Every active forecast you own, across every portfolio. \
+                 Brier-scored, updating on schedule. The Dashboard used \
+                 to show this section directly; it lives here now so the \
+                 Dashboard can stay a command center.",
+                    &self.active_forecasts,
+                    self.forecasts_loading,
+                ),
+                VirtualPortfolio::Drafts => (
+                    "✎ Drafts",
+                    "Unpublished forecasts. Click any row to open it in \
+                 the Composer and finish drafting. Publishing moves the \
+                 row into Live.",
+                    &self.draft_forecasts,
+                    self.forecasts_loading,
+                ),
+                VirtualPortfolio::RecentlyResolved => (
+                    "✓ Recently Resolved",
+                    "Your last 20 resolved forecasts, newest first. Full \
+                 resolution history is available through each portfolio.",
+                    &recently_resolved,
+                    self.forecasts_loading,
+                ),
+            };
 
         let count = forecasts.len();
         div()
@@ -9037,6 +9777,18 @@ impl FermiConsole {
                             VirtualPortfolio::Unassigned => {
                                 "No unassigned forecasts. Every forecast you own \
                                  is already in a portfolio — nice."
+                            }
+                            VirtualPortfolio::Live => {
+                                "No live forecasts yet. Publish a draft (Ctrl+P) \
+                                 and it will appear here."
+                            }
+                            VirtualPortfolio::Drafts => {
+                                "No drafts. Start a new forecast from the \
+                                 Dashboard hero or Ctrl+N."
+                            }
+                            VirtualPortfolio::RecentlyResolved => {
+                                "No resolutions yet. Once a forecast reaches its \
+                                 resolution date, it will appear here with its Brier score."
                             }
                         }),
                 )
@@ -13926,6 +14678,32 @@ fn truncate(s: &str, max_chars: usize) -> String {
     }
 }
 
+/// Small pill used by the Dashboard's activity feed header to signal
+/// the source-filter shape (`All / Mine / Team / Marketplace`). Team
+/// and Marketplace are `disabled` today — they render dimmer and are
+/// non-interactive — because the underlying event streams aren't
+/// ingested yet. Rendering them anyway shows the operator the
+/// information architecture the console is growing into.
+fn activity_source_chip(label: &str, active: bool, disabled: bool) -> impl IntoElement {
+    let (bg_color, fg_color, border_color) = if disabled {
+        (theme::BG, theme::FG_FAINT, theme::FG_FAINT)
+    } else if active {
+        (theme::BG_HOVER, theme::FG, theme::CYAN)
+    } else {
+        (theme::BG, theme::FG_DIM, theme::FG_FAINT)
+    };
+    div()
+        .px(px(8.0))
+        .py(px(2.0))
+        .rounded(px(10.0))
+        .border_1()
+        .border_color(rgb(border_color))
+        .bg(rgb(bg_color))
+        .text_size(px(10.0))
+        .text_color(rgb(fg_color))
+        .child(label.to_string())
+}
+
 /// Compute the "family" key for an activity row. Two resolutions
 /// share a family when their question text collapses to the same
 /// stem AND the outcome matches — e.g. "Will Jamaica win the 2026
@@ -14563,7 +15341,6 @@ fn build_agent_marketplace(
                 server
                     .and_then(|s| s.get("temperature"))
                     .and_then(|v| v.as_f64())
-                    .map(|f| f as f32)
             })
             .unwrap_or(0.0);
         let accepts = local.map(|c| c.accepts.clone()).unwrap_or_else(|| {
