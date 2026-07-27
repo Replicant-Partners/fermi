@@ -6,20 +6,6 @@
 
 ---
 
-## Polymarket Crowd Price
-
-| Metric | Value |
-|---|---|
-| Crowd price | **29.5%** |
-| Fermi estimate | **29.5%** |
-| Divergence | +0.0pp above crowd (Consensus) |
-| 24h volume | $649 |
-| Market confidence | Low |
-
-[View on Polymarket](https://polymarket.com/event/659518)
-
----
-
 ## Methodology
 
 This forecast uses a **Fermi decomposition** approach based on Tetlock superforecasting methodology:
