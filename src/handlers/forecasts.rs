@@ -112,6 +112,18 @@ pub struct ListForecastsQuery {
     pub offset: Option<i64>,
     pub sort: Option<String>, // "created", "updated", "target_date", "brier_score"
     pub order: Option<String>, // "asc", "desc"
+    /// Ownership scope filter for the Portfolio panel's virtual buckets.
+    /// * `"mine"`  — only forecasts owned by the caller.
+    /// * `"shared"` — only forecasts the caller can see because they're
+    ///                team-shared, object-shared, or public/shared
+    ///                visibility, but **not** owned by the caller.
+    /// * absent    — full accessible set (current behaviour).
+    /// Drives the Portfolio panel's "📥 Shared with me" and
+    /// "📌 Unassigned" virtual portfolios.
+    pub scope: Option<String>,
+    /// If `true`, restrict to forecasts that are NOT in any portfolio.
+    /// Drives the "📌 Unassigned" virtual portfolio.
+    pub unassigned: Option<bool>,
 }
 
 // ── Portfolios ─────────────────────────────────────────────────────
@@ -504,6 +516,35 @@ pub async fn list_forecasts_handler(
             bind_idx
         ));
         binds.push(portfolio_id.clone());
+    }
+
+    // Ownership-scope filter. Layered on top of the ACL clause above so
+    // that `scope=shared` never leaks forecasts the caller can't already
+    // see — it just narrows the accessible set to the non-owned slice.
+    match q.scope.as_deref() {
+        Some("mine") => {
+            bind_idx += 1;
+            conditions.push(format!("f.owner_id = ${}::uuid", bind_idx));
+            binds.push(user_id.clone());
+        }
+        Some("shared") => {
+            bind_idx += 1;
+            conditions.push(format!("f.owner_id <> ${}::uuid", bind_idx));
+            binds.push(user_id.clone());
+        }
+        _ => {}
+    }
+
+    // "Not in any portfolio" filter. Powers the "📌 Unassigned" virtual
+    // portfolio in the console. When both `portfolio_id` and
+    // `unassigned=true` are set the two conditions are contradictory and
+    // the result set is empty — that's intentional; the caller shouldn't
+    // send both.
+    if q.unassigned.unwrap_or(false) {
+        conditions.push(
+            "NOT EXISTS(SELECT 1 FROM fermi_portfolio_forecasts pf WHERE pf.forecast_id = f.id)"
+                .to_string(),
+        );
     }
 
     let sort_col = match q.sort.as_deref() {

@@ -223,6 +223,21 @@ enum Panel {
     Teams,
 }
 
+/// Selection state for the Portfolio panel's virtual buckets. These
+/// aren't backed by `fermi_portfolios` rows — they're derived views
+/// that give homeless forecasts a place to live in the UX.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VirtualPortfolio {
+    /// Forecasts the caller can view but doesn't own (team-shared,
+    /// object-shared, or public/shared visibility). Fixes the
+    /// "shared forecasts orphaned in the UX" bug.
+    SharedWithMe,
+    /// Forecasts the caller owns that aren't in any named portfolio
+    /// yet — including drafts saved via Ctrl+S. Gives loose work a
+    /// discoverable home.
+    Unassigned,
+}
+
 /// Ordering options for the portfolio detail's forecast list. Each maps to
 /// a sort key on `PortfolioForecast` so the operator can find what they're
 /// looking for without scrolling 48 rows.
@@ -507,6 +522,31 @@ struct FermiConsole {
     portfolio_create_loading: bool,
     portfolio_create_error: Option<String>,
     selected_portfolio_id: Option<String>,
+    /// Selection state for the Portfolio panel's *virtual* buckets —
+    /// forecasts that don't live in a named portfolio but still need
+    /// a home in the UX:
+    ///
+    /// * `SharedWithMe`: forecasts owned by teammates/collaborators
+    ///   that the caller can see (team share, object share, or
+    ///   public/shared visibility). Fixes the "shared forecasts are
+    ///   orphaned" reported bug.
+    /// * `Unassigned`: forecasts the caller owns that aren't a member
+    ///   of any named portfolio — including drafts saved with Ctrl+S
+    ///   before the operator picks a home for them.
+    ///
+    /// Mutually exclusive with `selected_portfolio_id`; selecting a
+    /// virtual bucket clears the named-portfolio selection and vice
+    /// versa.
+    selected_virtual_portfolio: Option<VirtualPortfolio>,
+    /// Forecasts shared with the caller by others. Populated on demand
+    /// when the operator selects the "📥 Shared with me" bucket, and
+    /// refetched whenever the parent forecast list refreshes.
+    shared_with_me_forecasts: Vec<Forecast>,
+    shared_with_me_loading: bool,
+    /// Forecasts the caller owns that aren't in any portfolio.
+    /// Populated on demand for the "📌 Unassigned" bucket.
+    unassigned_forecasts: Vec<Forecast>,
+    unassigned_loading: bool,
     portfolio_stats_cache: HashMap<String, PortfolioStats>,
     portfolio_forecasts: HashMap<String, Vec<PortfolioForecast>>,
     portfolio_forecasts_loading: HashSet<String>,
@@ -861,6 +901,11 @@ impl FermiConsole {
             portfolio_create_loading: false,
             portfolio_create_error: None,
             selected_portfolio_id: None,
+            selected_virtual_portfolio: None,
+            shared_with_me_forecasts: Vec::new(),
+            shared_with_me_loading: false,
+            unassigned_forecasts: Vec::new(),
+            unassigned_loading: false,
             portfolio_stats_cache: HashMap::new(),
             portfolio_forecasts: HashMap::new(),
             portfolio_forecasts_loading: HashSet::new(),
@@ -3742,6 +3787,17 @@ impl FermiConsole {
 
     fn fetch_forecasts(&mut self, cx: &mut Context<Self>) {
         self.forecasts_loading = true;
+        // Whenever we refresh the main forecast lists, also refresh
+        // whichever virtual bucket is currently open. Without this,
+        // publishing/saving a new forecast leaves the Portfolio panel's
+        // "📌 Unassigned" or "📥 Shared with me" list stale until
+        // the operator manually re-clicks the bucket. Both fetches are
+        // idempotent and gated on `connected` internally.
+        match self.selected_virtual_portfolio {
+            Some(VirtualPortfolio::SharedWithMe) => self.fetch_shared_with_me(cx),
+            Some(VirtualPortfolio::Unassigned) => self.fetch_unassigned_forecasts(cx),
+            None => {}
+        }
         let api = self.api.clone();
 
         cx.spawn(async move |this, cx| {
@@ -3787,6 +3843,91 @@ impl FermiConsole {
             .ok();
         })
         .detach();
+    }
+
+    /// Fetch the "📥 Shared with me" virtual portfolio: forecasts
+    /// the caller can view but doesn't own. Backend applies
+    /// `scope=shared` to `list_forecasts_handler` — same ACL, just
+    /// filtered to the non-owned slice. Idempotent; safe to call
+    /// repeatedly.
+    fn fetch_shared_with_me(&mut self, cx: &mut Context<Self>) {
+        if !self.connected {
+            return;
+        }
+        self.shared_with_me_loading = true;
+        cx.notify();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let query = ForecastQuery::shared_with_me();
+            let result = api.list_forecasts(&query).await;
+            this.update(cx, |this, cx| {
+                this.shared_with_me_loading = false;
+                match result {
+                    Ok(resp) => {
+                        this.shared_with_me_forecasts = resp.forecasts;
+                    }
+                    Err(e) => {
+                        log::warn!("[portfolio-virtual] shared_with_me fetch failed: {}", e);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Fetch the "📌 Unassigned" virtual portfolio: forecasts the
+    /// caller owns that aren't a member of any named portfolio. Backend
+    /// applies `scope=mine&unassigned=true` on top of the standard
+    /// list projection.
+    fn fetch_unassigned_forecasts(&mut self, cx: &mut Context<Self>) {
+        if !self.connected {
+            return;
+        }
+        self.unassigned_loading = true;
+        cx.notify();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let query = ForecastQuery::mine_unassigned();
+            let result = api.list_forecasts(&query).await;
+            this.update(cx, |this, cx| {
+                this.unassigned_loading = false;
+                match result {
+                    Ok(resp) => {
+                        this.unassigned_forecasts = resp.forecasts;
+                    }
+                    Err(e) => {
+                        log::warn!("[portfolio-virtual] unassigned fetch failed: {}", e);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Switch the Portfolio panel to a virtual bucket. Clears any
+    /// named-portfolio selection so the right-hand pane doesn't try to
+    /// render two things at once, and warms the appropriate cache.
+    fn select_virtual_portfolio(&mut self, bucket: VirtualPortfolio, cx: &mut Context<Self>) {
+        // Toggle: clicking the currently-selected virtual bucket
+        // deselects it (matches the named-portfolio card behaviour).
+        if self.selected_virtual_portfolio == Some(bucket) {
+            self.selected_virtual_portfolio = None;
+            cx.notify();
+            return;
+        }
+        self.selected_virtual_portfolio = Some(bucket);
+        self.selected_portfolio_id = None;
+        self.portfolio_confirm_delete_id = None;
+        self.portfolio_rename_id = None;
+        match bucket {
+            VirtualPortfolio::SharedWithMe => self.fetch_shared_with_me(cx),
+            VirtualPortfolio::Unassigned => self.fetch_unassigned_forecasts(cx),
+        }
+        cx.notify();
     }
 
     fn fetch_portfolios(&mut self, cx: &mut Context<Self>) {
@@ -6979,7 +7120,7 @@ impl FermiConsole {
                     .flex()
                     .flex_row()
                     .min_h(px(200.0))
-                    // ── Left: portfolio list ──────────────────────────
+                    // ── Left: portfolio list ──────────────────────────────
                     .child(
                         div()
                             .w(px(220.0))
@@ -6988,6 +7129,21 @@ impl FermiConsole {
                             .flex_col()
                             .border_r_1()
                             .border_color(theme::fg_faint())
+                            // Virtual buckets pinned to the top: give
+                            // homeless forecasts (shared with me,
+                            // unassigned/drafts) a discoverable UX
+                            // surface. Rendered even when the
+                            // `portfolios` list is empty so a fresh
+                            // user still has a landing spot for their
+                            // saved-but-not-yet-organised work.
+                            .child(self.render_virtual_portfolio_row(
+                                VirtualPortfolio::SharedWithMe,
+                                cx,
+                            ))
+                            .child(self.render_virtual_portfolio_row(
+                                VirtualPortfolio::Unassigned,
+                                cx,
+                            ))
                             .when(self.portfolios.is_empty(), |el| {
                                 el.child(
                                     div()
@@ -6995,7 +7151,7 @@ impl FermiConsole {
                                         .py(px(12.0))
                                         .text_size(px(11.0))
                                         .text_color(theme::fg_faint())
-                                        .child("No portfolios yet."),
+                                        .child("No named portfolios yet."),
                                 )
                             })
                             .children(self.portfolios.iter().map(|p| {
@@ -7141,6 +7297,10 @@ impl FermiConsole {
                                                         this.selected_portfolio_id = None;
                                                     } else {
                                                         this.selected_portfolio_id = Some(pid_sel.clone());
+                                                        // Selecting a named portfolio clears any
+                                                        // active virtual bucket so the right pane
+                                                        // isn't rendering two headers at once.
+                                                        this.selected_virtual_portfolio = None;
                                                         this.fetch_portfolio_forecasts(pid_sel.clone(), cx);
                                                         this.fetch_portfolio_stats_if_needed(pid_sel.clone(), cx);
                                                     }
@@ -7219,13 +7379,21 @@ impl FermiConsole {
                                     })
                             })),
                     )
-                    // ── Right: selected portfolio detail ──────────────
+                    // ── Right: selected portfolio detail ──────────
                     .child(
                         div()
                             .flex()
                             .flex_col()
                             .flex_grow()
-                            .when(selected.is_none(), |el| {
+                            // Virtual bucket path: rendered instead of the
+                            // named-portfolio detail. `select_virtual_portfolio`
+                            // clears `selected_portfolio_id` so these branches
+                            // are mutually exclusive.
+                            .when(self.selected_virtual_portfolio.is_some(), |el| {
+                                let bucket = self.selected_virtual_portfolio.unwrap();
+                                el.child(self.render_virtual_portfolio_detail(bucket, cx))
+                            })
+                            .when(selected.is_none() && self.selected_virtual_portfolio.is_none(), |el| {
                                 el.child(
                                     div()
                                         .flex()
@@ -8672,6 +8840,216 @@ impl FermiConsole {
                     .flex_col()
                     .children(forecasts.iter().map(|f| self.render_forecast_row(f, cx))),
             )
+    }
+
+    /// Renders one entry in the Portfolio panel's virtual-bucket band
+    /// (“📥 Shared with me” / “📌 Unassigned”). Styled to be
+    /// visually distinct from named-portfolio cards (dashed border,
+    /// gold accent) so operators don't mistake them for real portfolios
+    /// they can rename or delete. Clicking selects/deselects the
+    /// bucket via `select_virtual_portfolio`, which handles the fetch.
+    fn render_virtual_portfolio_row(
+        &self,
+        bucket: VirtualPortfolio,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let is_selected = self.selected_virtual_portfolio == Some(bucket);
+        let (icon, title, subtitle, count, loading, id_suffix) = match bucket {
+            VirtualPortfolio::SharedWithMe => (
+                "📥",
+                "Shared with me",
+                "Team + collaborator shares",
+                self.shared_with_me_forecasts.len(),
+                self.shared_with_me_loading,
+                "shared-with-me",
+            ),
+            VirtualPortfolio::Unassigned => (
+                "📌",
+                "Unassigned",
+                "Mine, no portfolio yet",
+                self.unassigned_forecasts.len(),
+                self.unassigned_loading,
+                "unassigned",
+            ),
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .border_b_1()
+            .border_color(theme::fg_faint())
+            .when(is_selected, |el| el.bg(theme::bg_hover()))
+            .child(
+                // `id` must live on the interactive element for gpui
+                // to attach `on_click`; the outer div is a plain
+                // layout container.
+                div()
+                    .id(SharedString::from(format!(
+                        "virtual-portfolio-{}",
+                        id_suffix
+                    )))
+                    .px(px(12.0))
+                    .py(px(8.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::bg_hover()))
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.select_virtual_portfolio(bucket, cx);
+                    }))
+                    // Distinct icon uses gold to signal "virtual"
+                    // (vs the blue ◈ used for named portfolios).
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(rgb(theme::GOLD))
+                            .child(icon),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_grow()
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(theme::fg())
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .overflow_hidden()
+                                    .child(title),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(theme::fg_faint())
+                                    .child(if loading {
+                                        "loading…".to_string()
+                                    } else if count == 0 {
+                                        subtitle.to_string()
+                                    } else {
+                                        format!(
+                                            "{} forecast{}",
+                                            count,
+                                            if count == 1 { "" } else { "s" }
+                                        )
+                                    }),
+                            ),
+                    ),
+            )
+    }
+
+    /// Renders the right-hand pane of the Portfolio panel when a
+    /// virtual bucket is selected. Straight vertical list of forecast
+    /// rows using the same `render_forecast_row` widget as the
+    /// Dashboard, so click → detail → “→ Open in Cockpit” round-trips
+    /// via `open_forecast` for free.
+    fn render_virtual_portfolio_detail(
+        &self,
+        bucket: VirtualPortfolio,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let (title, blurb, forecasts, loading) = match bucket {
+            VirtualPortfolio::SharedWithMe => (
+                "📥 Shared with me",
+                "Forecasts other people have shared with you — via team \
+                 membership, direct share, or public visibility. Read-only \
+                 unless the share grants edit/admin.",
+                &self.shared_with_me_forecasts,
+                self.shared_with_me_loading,
+            ),
+            VirtualPortfolio::Unassigned => (
+                "📌 Unassigned",
+                "Your forecasts that aren't in any portfolio yet. Drafts \
+                 saved with Ctrl+S land here first — open one, click a \
+                 portfolio chip in the composer, and it moves to that \
+                 portfolio.",
+                &self.unassigned_forecasts,
+                self.unassigned_loading,
+            ),
+        };
+
+        let count = forecasts.len();
+        div()
+            .flex()
+            .flex_col()
+            .flex_grow()
+            .child(
+                div()
+                    .px(px(14.0))
+                    .py(px(8.0))
+                    .border_b_1()
+                    .border_color(theme::fg_faint())
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(
+                                div()
+                                    .text_size(px(13.0))
+                                    .text_color(theme::fg())
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(title),
+                            )
+                            .child(
+                                div()
+                                    .px(px(6.0))
+                                    .py(px(1.0))
+                                    .rounded(px(4.0))
+                                    .bg(theme::bg_hover())
+                                    .text_size(px(10.0))
+                                    .text_color(rgb(theme::GOLD))
+                                    .child(format!("{}", count)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(theme::fg_dim())
+                            .child(blurb),
+                    ),
+            )
+            .when(loading, |el| {
+                el.child(
+                    div()
+                        .p(px(14.0))
+                        .text_size(px(11.0))
+                        .text_color(theme::fg_faint())
+                        .child("Loading forecasts…"),
+                )
+            })
+            .when(!loading && count == 0, |el| {
+                el.child(
+                    div()
+                        .p(px(24.0))
+                        .text_size(px(12.0))
+                        .text_color(theme::fg_faint())
+                        .child(match bucket {
+                            VirtualPortfolio::SharedWithMe => {
+                                "Nothing shared with you yet. When a teammate \
+                                 shares a forecast or portfolio, it will show up here."
+                            }
+                            VirtualPortfolio::Unassigned => {
+                                "No unassigned forecasts. Every forecast you own \
+                                 is already in a portfolio — nice."
+                            }
+                        }),
+                )
+            })
+            .when(!loading && count > 0, |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .children(forecasts.iter().map(|f| self.render_forecast_row(f, cx))),
+                )
+            })
+            .into_any_element()
     }
 
     fn render_forecast_row(&self, forecast: &Forecast, cx: &Context<Self>) -> impl IntoElement {
@@ -14006,6 +14384,11 @@ fn build_agent_marketplace(
             Some((id.to_string(), c))
         })
         .collect();
+    // Index local cards for O(1) lookup while iterating the union.
+    let local_by_id: std::collections::HashMap<String, &AgentCard> = local_cards
+        .iter()
+        .map(|c| (c.agent_id.clone(), *c))
+        .collect();
 
     // Index session runs by agent_name (with confidence averages).
     let mut session_confidence: std::collections::HashMap<String, (f64, usize)> =
@@ -14020,10 +14403,31 @@ fn build_agent_marketplace(
         }
     }
 
-    let mut entries: Vec<AgentMarketplaceEntry> = Vec::new();
+    // Build the union of agent_ids: locals first (to preserve the
+    // registry's ordering), then any server-only ids the local install
+    // doesn't know about. Server-only ids are what makes the "Fresh"
+    // and "Rising" tiers actually discoverable — previously the
+    // marketplace only ever showed agents you already had on disk, so
+    // truly new community agents were invisible from this surface.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut ordered_ids: Vec<String> = Vec::new();
     for card in local_cards {
-        let agent_id = card.agent_id.clone();
-        let server = server_by_id.get(&agent_id);
+        if seen.insert(card.agent_id.clone()) {
+            ordered_ids.push(card.agent_id.clone());
+        }
+    }
+    for sc in server_cards {
+        if let Some(id) = sc.get("agent_id").and_then(|v| v.as_str()) {
+            if seen.insert(id.to_string()) {
+                ordered_ids.push(id.to_string());
+            }
+        }
+    }
+
+    let mut entries: Vec<AgentMarketplaceEntry> = Vec::new();
+    for agent_id in ordered_ids {
+        let local = local_by_id.get(&agent_id).copied();
+        let server = server_by_id.get(&agent_id).copied();
         let stats = server.and_then(|s| s.get("execution_stats"));
         let total_executions = stats
             .and_then(|s| s.get("total_executions"))
@@ -14081,43 +14485,121 @@ fn build_agent_marketplace(
         let score = base + popularity_bonus + confidence_bonus - cost_penalty;
 
         let has_data = total_executions > 0 || n_conf > 0;
-        // Derive a display name from the server-side display_alias when
-        // present (e.g. "Football Analyst" vs. "football_analyst"),
-        // falling back to the agent_id.
+        // Display name: server display_alias > local card > agent_id.
         let display_name = server
             .and_then(|s| s.get("display_alias"))
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(str::to_string)
             .unwrap_or_else(|| agent_id.clone());
-        // Server may also carry a longer/authoritative description —
-        // prefer it when it's non-empty, else fall back to the local
-        // card's `metadata.description`.
+        // Description: server > local card > empty.
         let description = server
             .and_then(|s| s.get("description"))
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(str::to_string)
-            .unwrap_or_else(|| card.metadata.description.clone());
-        // MCP tool names from the local card.
-        let mcp_tools: Vec<String> = card
-            .capabilities
-            .mcp_tools
-            .iter()
-            .map(|t| t.name.clone())
-            .collect();
-        let needs_secrets = !card.requires_secrets.is_empty()
+            .or_else(|| local.map(|c| c.metadata.description.clone()))
+            .unwrap_or_default();
+        // Tags: local card tags first, else server tags array.
+        let tags: Vec<String> = local.map(|c| c.metadata.tags.clone()).unwrap_or_else(|| {
+            server
+                .and_then(|s| s.get("tags"))
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|t| t.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
+        // MCP tool names come from the local card's capabilities block;
+        // server-only entries render with no MCP tools listed (correct —
+        // the operator hasn't downloaded the card yet).
+        let mcp_tools: Vec<String> = local
+            .map(|c| {
+                c.capabilities
+                    .mcp_tools
+                    .iter()
+                    .map(|t| t.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let needs_secrets = local
+            .map(|c| !c.requires_secrets.is_empty())
+            .unwrap_or(false)
             || server
                 .and_then(|s| s.get("requires_secrets"))
                 .and_then(|v| v.as_array())
                 .map(|a| !a.is_empty())
                 .unwrap_or(false);
+        // Version / author / model prefer local; fall back to server
+        // JSON so server-only entries still render a meaningful header.
+        let version = local.map(|c| c.version.clone()).unwrap_or_else(|| {
+            server
+                .and_then(|s| s.get("version"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("?")
+                .to_string()
+        });
+        let author = local.map(|c| c.metadata.author.clone()).unwrap_or_else(|| {
+            server
+                .and_then(|s| s.get("author"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("community")
+                .to_string()
+        });
+        let model = local
+            .map(|c| c.capabilities.model.clone())
+            .unwrap_or_else(|| {
+                server
+                    .and_then(|s| s.get("model"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            });
+        let temperature = local
+            .map(|c| c.capabilities.temperature)
+            .or_else(|| {
+                server
+                    .and_then(|s| s.get("temperature"))
+                    .and_then(|v| v.as_f64())
+                    .map(|f| f as f32)
+            })
+            .unwrap_or(0.0);
+        let accepts = local.map(|c| c.accepts.clone()).unwrap_or_else(|| {
+            server
+                .and_then(|s| s.get("accepts"))
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|t| t.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
+        let produces = local.map(|c| c.produces.clone()).unwrap_or_else(|| {
+            server
+                .and_then(|s| s.get("produces"))
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|t| t.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
+        let sample_queries = local
+            .map(|c| c.metadata.sample_queries.clone())
+            .unwrap_or_default();
+        let skills = local
+            .map(|c| c.capabilities.skills.clone())
+            .unwrap_or_default();
 
         entries.push(AgentMarketplaceEntry {
             agent_id: agent_id.clone(),
             display_name,
             description,
-            tags: card.metadata.tags.clone(),
+            tags,
             total_executions,
             success_rate,
             avg_cost_per_run: avg_cost,
@@ -14127,15 +14609,15 @@ fn build_agent_marketplace(
             score,
             has_data,
             already_used: n_conf > 0,
-            version: card.version.clone(),
-            author: card.metadata.author.clone(),
-            model: card.capabilities.model.clone(),
-            temperature: card.capabilities.temperature,
-            accepts: card.accepts.clone(),
-            produces: card.produces.clone(),
-            sample_queries: card.metadata.sample_queries.clone(),
+            version,
+            author,
+            model,
+            temperature,
+            accepts,
+            produces,
+            sample_queries,
             mcp_tools,
-            skills: card.capabilities.skills.clone(),
+            skills,
             needs_secrets,
         });
     }

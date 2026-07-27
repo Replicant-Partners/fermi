@@ -752,6 +752,15 @@ pub struct ForecastQuery {
     pub order: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+    /// Ownership-scope filter served by
+    /// `list_forecasts_handler`. `"mine"` restricts to forecasts owned
+    /// by the caller; `"shared"` restricts to the accessible-but-not-owned
+    /// slice (team-shared, object-shared, public/shared visibility).
+    /// Powers the Portfolio panel's virtual buckets.
+    pub scope: Option<String>,
+    /// If `Some(true)`, restrict to forecasts that are NOT a member of
+    /// any portfolio. Powers the "📌 Unassigned" virtual portfolio.
+    pub unassigned: Option<bool>,
 }
 
 impl ForecastQuery {
@@ -785,6 +794,30 @@ impl ForecastQuery {
         }
     }
 
+    /// Forecasts the caller can see but does NOT own — team-shared,
+    /// object-shared, or public/shared visibility. Feeds the Portfolio
+    /// panel's "📥 Shared with me" virtual bucket so shared work
+    /// isn't orphaned in the UX.
+    pub fn shared_with_me() -> Self {
+        Self {
+            scope: Some("shared".into()),
+            sort: Some("updated".into()),
+            ..Default::default()
+        }
+    }
+
+    /// Forecasts owned by the caller that aren't in any portfolio.
+    /// Feeds the Portfolio panel's "📌 Unassigned" virtual bucket so
+    /// non-published/loose forecasts have a discoverable home.
+    pub fn mine_unassigned() -> Self {
+        Self {
+            scope: Some("mine".into()),
+            unassigned: Some(true),
+            sort: Some("updated".into()),
+            ..Default::default()
+        }
+    }
+
     fn to_query_pairs(&self) -> Vec<(String, String)> {
         let mut pairs = Vec::new();
         if let Some(ref v) = self.status {
@@ -810,6 +843,12 @@ impl ForecastQuery {
         }
         if let Some(v) = self.offset {
             pairs.push(("offset".into(), v.to_string()));
+        }
+        if let Some(ref v) = self.scope {
+            pairs.push(("scope".into(), v.clone()));
+        }
+        if let Some(v) = self.unassigned {
+            pairs.push(("unassigned".into(), v.to_string()));
         }
         pairs
     }

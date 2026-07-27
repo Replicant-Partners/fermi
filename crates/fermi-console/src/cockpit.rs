@@ -43,9 +43,26 @@ use crate::api::client::{
 use crate::text_input::TextInput;
 use crate::theme;
 
-// ═══════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
+// Autosave tuning
+// ════════════════════════════════════════════════════════════════════
+
+/// How often the autosave loop wakes up to check for pending writes.
+/// Cheap (only a dirty-flag + elapsed check on the entity), but this
+/// bounds the worst-case latency between the operator finishing an
+/// edit and the backend PUT firing to `AUTOSAVE_TICK +
+/// AUTOSAVE_IDLE_THRESHOLD`.
+const AUTOSAVE_TICK: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How long the operator must be idle after their last dirty-marking
+/// mutation before autosave actually writes. Debounces mid-drag,
+/// mid-type states so we don't PUT after every keystroke; still fast
+/// enough that closing the composer after a pause preserves work.
+const AUTOSAVE_IDLE_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(10);
+
+// ════════════════════════════════════════════════════════════════════
 // Cockpit State — the FPL Program is the source of truth
-// ═══════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
 
 /// Which node of the FPL tree the user is currently focused on.
 #[derive(Debug, Clone, PartialEq)]
@@ -498,6 +515,26 @@ pub struct CockpitState {
     /// True while a snapshot request is in flight (from either the
     /// interval poll or the manual ↻ Refresh now button).
     pub pm_refresh_in_flight: bool,
+
+    // ── Autosave (“💾 don't lose my work”) ────────────────────────
+    /// Set true whenever the operator does something that would be
+    /// lost if the composer closed without hitting Ctrl+S. Cleared
+    /// when `persist_backend_save` completes successfully. Consulted
+    /// by the background autosave loop.
+    pub dirty: bool,
+    /// Timestamp of the most recent state change that flipped `dirty`
+    /// on. The autosave loop debounces off this: it only writes to
+    /// the backend once the operator has been idle for a few seconds,
+    /// so mid-drag/mid-type states don't hammer the API.
+    pub last_edit_at: Option<std::time::Instant>,
+    /// Timestamp of the last successful backend autosave. Powers the
+    /// tiny “Saved 4s ago” indicator we might add next to the Save
+    /// chip, and prevents redundant PUTs when nothing has actually
+    /// changed since the previous cycle.
+    pub last_autosave_at: Option<std::time::Instant>,
+    /// Guard so we don't kick off multiple autosave loops when the
+    /// operator re-enters the composer.
+    pub autosave_started: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -768,6 +805,10 @@ impl CockpitState {
             pm_last_refresh_at: None,
             pm_last_refresh_error: None,
             pm_refresh_in_flight: false,
+            dirty: false,
+            last_edit_at: None,
+            last_autosave_at: None,
+            autosave_started: false,
             hovered_histogram_bin: None,
             hovered_index_version: None,
             hovered_trajectory_event: None,
@@ -974,6 +1015,36 @@ impl CockpitState {
         })
         .detach();
 
+        // Also treat every keystroke on the question field as a
+        // dirty-marking edit — that way the autosave loop notices
+        // fresh work even when the operator hasn't touched a driver
+        // or run a simulation yet. Cheap: `mark_dirty` just flips a
+        // bool + timestamps, and the loop debounces off idle time so
+        // typing bursts don't PUT after every character.
+        cx.observe(&s.question_input, |state, _input, _cx| {
+            state.mark_dirty();
+        })
+        .detach();
+
+        // Kick off the autosave background loop. Guarded by
+        // `autosave_started`; the loop is a no-op until `mark_dirty`
+        // is called and enough idle time has elapsed.
+        //
+        // Started here (rather than lazily on first edit) so a
+        // freshly-created cockpit is armed to autosave the moment the
+        // operator starts typing — which is when Ctrl+S is most
+        // likely to be forgotten.
+        cx.spawn(async move |this, cx| {
+            // One-tick delay before starting to give `new` a chance
+            // to complete and any load_forecast/hydrate paths to run
+            // through without racing.
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(500))
+                .await;
+            this.update(cx, |state, cx| state.start_autosave(cx)).ok();
+        })
+        .detach();
+
         s
     }
 
@@ -1148,6 +1219,9 @@ impl CockpitState {
         // a sensible starting anchor (they'll refine via Fermi
         // decomposition or manual driver adjustments).
         self.predicted_probability = market_price.clamp(0.01, 0.99);
+        // Linking a market changes the anchor probability and metadata
+        // — flag for autosave so the linkage survives closing the composer.
+        self.mark_dirty();
         // Clear the type-ahead so the strip collapses once linked.
         self.pm_suggestions.clear();
         self.pm_suggest_dismissed = true;
@@ -5710,6 +5784,11 @@ impl CockpitState {
             FocusedNode::Driver(n) => n.clone(),
             _ => return,
         };
+        // A driver save is a definite operator-driven edit: mark the
+        // cockpit dirty so autosave picks it up. The FPL cache is
+        // stale after this too but that's regenerated by callers of
+        // save_focused_driver (publish/save/run_simulation).
+        self.mark_dirty();
 
         let new_name = self.editor_name.read(cx).text().to_string();
         let rationale = self.editor_rationale.read(cx).text().to_string();
@@ -6186,6 +6265,12 @@ impl CockpitState {
                     learnable_drivers,
                 });
                 self.sim_running = false;
+                // A fresh sim result is a new persistable state — the
+                // computed mean becomes the new predicted_probability
+                // and the confidence interval moves. Flag for autosave
+                // so a subsequent close of the composer doesn't lose
+                // this simulation.
+                self.mark_dirty();
                 // Spec 23 R-2: refresh server-side pending fits after every
                 // sim run so the sparkline badges reflect any fits the refit
                 // hook may have produced since we last looked.
@@ -7140,6 +7225,267 @@ impl CockpitState {
         self.load_schedules(cx);
         cx.notify();
     }
+    /// Mark the cockpit dirty. Called from every state transition
+    /// that would be lost if the operator closed the composer without
+    /// hitting Ctrl+S: driver edits, new sim results, question text
+    /// changes, base-rate updates, probability drags. The autosave
+    /// loop watches `dirty` + `last_edit_at` and writes to the
+    /// backend once the operator has been idle for a few seconds.
+    ///
+    /// Cheap and idempotent — safe to sprinkle liberally at mutation
+    /// sites; false positives cost at most one extra PUT.
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
+        self.last_edit_at = Some(std::time::Instant::now());
+    }
+
+    /// Kick off the autosave background loop. Fires once per cockpit
+    /// (guarded by `autosave_started`). Every `AUTOSAVE_TICK` the
+    /// loop checks whether the cockpit is dirty AND the operator has
+    /// been idle for at least `AUTOSAVE_IDLE_THRESHOLD` — if so, it
+    /// fires `persist_backend_save`, same code path Ctrl+S takes.
+    ///
+    /// Debouncing off `last_edit_at` (rather than a fixed interval)
+    /// means active editing doesn't get interrupted by a mid-drag
+    /// PUT, but once the operator pauses their work lands on the
+    /// server within a few seconds.
+    pub fn start_autosave(&mut self, cx: &mut Context<Self>) {
+        if self.autosave_started {
+            return;
+        }
+        self.autosave_started = true;
+
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(AUTOSAVE_TICK).await;
+
+                let keep_going = this
+                    .update(cx, |state, cx| {
+                        // Bail if the entity is being torn down; the
+                        // .update itself will Err, but this branch is
+                        // defensive.
+                        if !state.dirty {
+                            return true;
+                        }
+                        let idle_ok = state
+                            .last_edit_at
+                            .map(|t| t.elapsed() >= AUTOSAVE_IDLE_THRESHOLD)
+                            .unwrap_or(false);
+                        if !idle_ok {
+                            return true;
+                        }
+                        // Skip if the forecast is locked (resolved/void)
+                        // — persist_backend_save also guards, but
+                        // short-circuiting here saves the spawn.
+                        if state.is_locked() {
+                            return true;
+                        }
+                        // No question yet — nothing to persist.
+                        let has_question = state
+                            .program
+                            .question()
+                            .map(|q| !q.text.trim().is_empty())
+                            .unwrap_or(false);
+                        if !has_question {
+                            return true;
+                        }
+                        log::info!(
+                            "[autosave] firing (forecast_id={:?}, prob={:.3})",
+                            state.forecast_id,
+                            state.predicted_probability
+                        );
+                        state.persist_backend_save(cx);
+                        // Optimistically clear dirty; persist_backend_save
+                        // will set last_autosave_at on success. If the
+                        // PUT fails the warning message surfaces via
+                        // persist_backend_save's error branch, and any
+                        // subsequent edit will flip dirty back on.
+                        state.dirty = false;
+                        state.last_autosave_at = Some(std::time::Instant::now());
+                        true
+                    })
+                    .ok()
+                    .unwrap_or(false);
+
+                if !keep_going {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Persist the current cockpit state to the backend without
+    /// promoting it to `status='active'`. This is the "Ctrl+S doesn't
+    /// lose my work" path:
+    ///
+    /// * If no `forecast_id` yet, POST a new row with `status='draft'`
+    ///   and `visibility='private'`. The returned id is captured so
+    ///   subsequent Ctrl+S presses become idempotent updates.
+    /// * If a `forecast_id` already exists, PUT an update WITHOUT
+    ///   sending a `status` field — preserving whatever the server
+    ///   thinks the forecast is (draft / active / resolved). We never
+    ///   want save-draft to silently demote a published forecast back
+    ///   to draft.
+    ///
+    /// Fire-and-forget: local disk/git snapshot still happens up in
+    /// `save_forecast`; this is the backend leg so the operator can
+    /// close the composer and come back to the same forecast on any
+    /// device via `open_forecast(id)`.
+    fn persist_backend_save(&mut self, cx: &mut Context<Self>) {
+        // No question yet — the API rejects empty question_text with 400
+        // and there's nothing to persist anyway. Silent no-op is fine
+        // here; save_forecast has already surfaced its own status.
+        let question = self
+            .program
+            .question()
+            .map(|q| q.text.clone())
+            .unwrap_or_default();
+        if question.trim().is_empty() {
+            return;
+        }
+
+        // Reconcile-derived lock: server has settled this forecast.
+        // A backend write would 409; skip it silently. The local disk
+        // snapshot in save_forecast still succeeds.
+        if self.is_locked() {
+            return;
+        }
+
+        let api = self.api.clone();
+        let fpl = self.cached_fpl.clone();
+        let prob = self.predicted_probability;
+        let res_crit = self
+            .program
+            .question()
+            .and_then(|q| q.resolution_criteria.clone());
+        let target_date = self.program.question().and_then(|q| q.target_date.clone());
+        let ci_low = self.sim_results.as_ref().map(|s| s.p5);
+        let ci_high = self.sim_results.as_ref().map(|s| s.p95);
+        let sim_results_json = self.sim_results.as_ref().map(
+            |s| serde_json::json!({ "mean": s.mean, "median": s.median, "p5": s.p5, "p95": s.p95 }),
+        );
+        let existing_fid = self.forecast_id.clone();
+
+        cx.spawn(async move |this, cx| {
+            let outcome: Result<(String, bool), String> = if let Some(fid) = existing_fid {
+                // PUT — don't touch `status`. This keeps published
+                // forecasts published and draft forecasts draft.
+                let mut updates = serde_json::Map::new();
+                updates.insert("question_text".into(), serde_json::json!(question));
+                updates.insert("predicted_probability".into(), serde_json::json!(prob));
+                updates.insert("fpl_source".into(), serde_json::json!(fpl));
+                if let Some(ref s) = res_crit {
+                    updates.insert("resolution_criteria".into(), serde_json::json!(s));
+                }
+                if let Some(ref s) = target_date {
+                    updates.insert("target_date".into(), serde_json::json!(s));
+                }
+                if let Some(v) = ci_low {
+                    updates.insert("confidence_interval_low".into(), serde_json::json!(v));
+                }
+                if let Some(v) = ci_high {
+                    updates.insert("confidence_interval_high".into(), serde_json::json!(v));
+                }
+                if let Some(ref v) = sim_results_json {
+                    updates.insert("simulation_results".into(), v.clone());
+                }
+                let body = serde_json::Value::Object(updates);
+                api.update_forecast(&fid, &body)
+                    .await
+                    .map(|_| (fid, false))
+                    .map_err(|e| e.to_string())
+            } else {
+                // POST — first-time save, land it as a private draft so
+                // it's discoverable in the Portfolio panel's
+                // "📌 Unassigned" bucket (or Dashboard drafts) but not
+                // yet visible to teammates.
+                let req = CreateForecastRequest {
+                    question_text: question,
+                    predicted_probability: prob,
+                    domain: None,
+                    resolution_criteria: res_crit,
+                    target_date,
+                    confidence_interval_low: ci_low,
+                    confidence_interval_high: ci_high,
+                    fpl_source: Some(fpl),
+                    simulation_results: sim_results_json,
+                    drivers: None,
+                    evidence: None,
+                    visibility: Some("private".into()),
+                    tags: None,
+                    portfolio_id: None,
+                    status: Some("draft".into()),
+                };
+                api.create_forecast(&req)
+                    .await
+                    .map(|resp| {
+                        let fid = resp
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        (fid, true)
+                    })
+                    .map_err(|e| e.to_string())
+            };
+
+            match outcome {
+                Ok((fid, created)) => {
+                    this.update(cx, |state, cx| {
+                        // Successful write — clear dirty so the
+                        // autosave loop doesn't immediately re-fire.
+                        // Timestamp it so the UI can show "Saved 4s
+                        // ago" if we add that indicator.
+                        state.dirty = false;
+                        state.last_autosave_at = Some(std::time::Instant::now());
+                        if created {
+                            state.forecast_id = Some(fid.clone());
+                            // Nudge the parent FermiConsole to refresh
+                            // its forecast lists so the new draft shows
+                            // up under Unassigned / Drafts immediately.
+                            state.pending_forecasts_refresh = true;
+                            state.messages.push(AssistantMessage {
+                                node: "save".into(),
+                                kind: MessageKind::Info,
+                                text: format!(
+                                    "💾 Saved as draft to server (ID: {}). Ctrl+P to publish.",
+                                    fid
+                                ),
+                            });
+                        } else {
+                            log::info!(
+                                "[save] backend PUT ok forecast_id={} prob={:.3}",
+                                fid,
+                                prob
+                            );
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => {
+                    log::warn!("[save] backend persist failed: {}", e);
+                    this.update(cx, |state, cx| {
+                        // Leave `dirty` set so the next autosave tick
+                        // retries. Don't clobber `last_autosave_at`.
+                        state.messages.push(AssistantMessage {
+                            node: "save".into(),
+                            kind: MessageKind::Warning,
+                            text: format!(
+                                "Saved locally, but backend save failed: {}. Work will not survive closing the composer.",
+                                e
+                            ),
+                        });
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
+    }
+
     pub fn save_forecast(&mut self, cx: &mut Context<Self>) {
         self.save_focused_driver(cx);
         self.regenerate_cached_fpl_if_safe();
@@ -7393,10 +7739,18 @@ impl CockpitState {
                 });
             }
         }
+
+        // Backend persistence. The local .fpl / .state.json / git leg
+        // above is a convenience snapshot, but the source of truth for
+        // "pick this forecast up on another device / after closing the
+        // composer" lives on the server. Without this call, Ctrl+S was
+        // orphaning work to disk-only — the exact bug reported.
+        self.persist_backend_save(cx);
+
         cx.notify();
     }
 
-    // ── Server lifecycle reconciliation ────────────────────────────────
+    // ── Server lifecycle reconciliation ──────────────────────────────────
 
     /// True when the server has resolved/voided this forecast — the cockpit
     /// must then block re-sims and new snapshots. Driven by the authoritative
