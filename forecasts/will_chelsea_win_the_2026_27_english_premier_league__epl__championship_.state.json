@@ -1,38 +1,40 @@
 {
-  "forecast_id": null,
+  "forecast_id": "83305cd1-c596-4254-8783-d0975b98795c",
   "current_version": 1,
-  "predicted_probability": 0.095,
-  "inside_view_explanation": "",
-  "forecast_confidence": 0.5,
+  "predicted_probability": 1.0801852998417594,
+  "inside_view_explanation": "Inside view: model evaluates to 1.080 (p5=0.636, p95=1.682). Key drivers: strength_factor, conditions, disruption. Most influential: strength_factor (51%), disruption (37%), conditions (16%).",
+  "forecast_confidence": 0.14,
   "versions": [
     {
       "version": 1,
       "timestamp": "2026-07-27 17:52",
-      "probability": 0.095,
-      "change_summary": "Initial: 9.5%, 3 drivers, 0 evidence"
+      "probability": 1.0801852998417594,
+      "change_summary": "Initial: 108.0%, 3 drivers, 0 evidence"
     }
   ],
-  "sim_results": null,
+  "sim_results": {
+    "mean": 1.0801852998417594,
+    "median": 1.039466320219671,
+    "p5": 0.6359087997828664,
+    "p95": 1.6817661329821108,
+    "std_dev": 0.3214151941796084,
+    "iterations": 10000
+  },
   "base_rate": null,
   "evidence": [],
   "agents": [],
   "driver_confidence": {},
   "polymarket": {
-    "event_id": "659518",
-    "market_id": "2771329",
-    "question": "Will Chelsea win the 2026-27 English Premier League (EPL) Championship?",
-    "market_price": 0.095,
-    "volume_24h": 1533.64,
-    "liquidity": 265752.4404,
-    "confidence": "Low",
+    "event_id": null,
+    "market_id": null,
+    "question": null,
+    "market_price": null,
+    "volume_24h": null,
+    "liquidity": null,
+    "confidence": null,
     "price_change_1w": null,
-    "url": "https://polymarket.com/event/659518",
-    "price_history": [
-      {
-        "t": 1785174741,
-        "p": 0.095
-      }
-    ]
+    "url": null,
+    "price_history": []
   },
   "workspace_id": null
 }

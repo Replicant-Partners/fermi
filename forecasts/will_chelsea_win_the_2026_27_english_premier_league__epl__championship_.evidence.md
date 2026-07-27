@@ -1,26 +1,55 @@
 # Will Chelsea win the 2026-27 English Premier League (EPL) Championship?
 
-**Probability:** 9.5% · **Version:** v1 · **Updated:** 2026-07-27 17:52 UTC
+**Probability:** 108.0% · **Version:** v1 · **Updated:** 2026-07-27 17:52 UTC
 
-**Confidence:** Medium (50%) · **Drivers:** 3 · **Evidence:** 0 · **Agents:** 0
-
----
-
-## Polymarket Crowd Price
-
-| Metric | Value |
-|---|---|
-| Crowd price | **9.5%** |
-| Fermi estimate | **9.5%** |
-| Divergence | +0.0pp above crowd (Consensus) |
-| 24h volume | $2K |
-| Market confidence | Low |
-
-[View on Polymarket](https://polymarket.com/event/659518)
+**Confidence:** Low (14%) · **Drivers:** 3 · **Evidence:** 0 · **Agents:** 0
 
 ---
 
-## 1. Strength of Case `continuous`
+## Inside View
+
+**Probability: 108.0%**
+
+Inside view: model evaluates to 1.080 (p5=0.636, p95=1.682). Key drivers: strength_factor, conditions, disruption. Most influential: strength_factor (51%), disruption (37%), conditions (16%).
+
+**Forecast Confidence:** Low (14%)
+
+---
+
+## Simulation Distribution
+
+**10000 iterations** · p5 = 63.6% · median = 103.9% · p95 = 168.2% · σ = 0.321
+
+```
+▁▃▅▇██▇▅▄▃▂▂▂▁▁▁▁▁▁▁
+```
+
+| Bin center | Count | % of sims |
+|---|---|---|
+| 45.6% | 81 | 0.8% |
+| 57.5% | 408 | 4.1% |
+| 69.3% | 863 | 8.6% |
+| 81.1% | 1339 | 13.4% |
+| 92.9% | 1599 | 16.0% |
+| 104.7% | 1606 | 16.1% |
+| 116.5% | 1355 | 13.6% |
+| 128.3% | 988 | 9.9% |
+| 140.1% | 626 | 6.3% |
+| 151.9% | 409 | 4.1% |
+| 163.7% | 252 | 2.5% |
+| 175.5% | 146 | 1.5% |
+| 187.3% | 127 | 1.3% |
+| 199.1% | 81 | 0.8% |
+| 210.9% | 62 | 0.6% |
+| 222.7% | 29 | 0.3% |
+| 234.5% | 14 | 0.1% |
+| 246.4% | 9 | 0.1% |
+| 258.2% | 4 | 0.0% |
+| 270.0% | 2 | 0.0% |
+
+---
+
+## 1. strength_factor `continuous`
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
@@ -32,7 +61,7 @@ _No evidence collected yet. Assign an agent to research this driver._
 
 ---
 
-## 2. Favorable Conditions `continuous`
+## 2. conditions `continuous`
 
 | p5 | p50 | p95 | unit |
 |---:|---:|---:|---|
@@ -44,7 +73,7 @@ _No evidence collected yet. Assign an agent to research this driver._
 
 ---
 
-## 3. Disruption Event `binary`
+## 3. disruption `binary`
 
 - **Probability:** 15%
 - **Impact multiplier:** ×1.5
