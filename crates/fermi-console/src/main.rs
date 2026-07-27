@@ -755,6 +755,11 @@ struct FermiConsole {
     /// active tab), which matches how the tab bars work in the
     /// composer's right pane.
     selected_team_tab: TeamTab,
+    /// Source filter chip state for the Dashboard's activity feed.
+    /// `All` is the default; `Mine` / `Team` gate on `ActivityItem`'s
+    /// source. Marketplace stays a placeholder until we ingest
+    /// marketplace publish events.
+    dashboard_activity_filter: ActivityFilter,
     /// The team selected in the left pane; drives the right-pane detail.
     selected_team_id: Option<String>,
     /// Loaded detail (team + members) for `selected_team_id`.
@@ -850,6 +855,34 @@ struct ActivityItem {
     /// (active_forecasts / resolved_forecasts). Powers the click-to-open
     /// behaviour on the Dashboard's Recent Activity feed.
     forecast_id: String,
+    /// Which source stream this item came from. Drives the source
+    /// filter chips on the Dashboard's activity feed. Historically all
+    /// items were `Mine` (own-forecast events); v0.8.11 adds Team
+    /// items sourced from `shared_with_me_forecasts`.
+    source: ActivitySource,
+}
+
+/// Which stream an ActivityItem came from. Team = a forecast belonging
+/// to a team the operator is a member of, but authored by someone else
+/// (i.e. work by teammates on shared surfaces). Marketplace stays a
+/// placeholder until we ingest marketplace publish events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActivitySource {
+    Mine,
+    Team,
+    #[allow(dead_code)]
+    Marketplace,
+}
+
+/// Chip filter over the Dashboard's activity feed. `All` shows every
+/// source; the other variants gate on `ActivityItem.source`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActivityFilter {
+    All,
+    Mine,
+    Team,
+    #[allow(dead_code)]
+    Marketplace,
 }
 
 impl FermiConsole {
@@ -1028,6 +1061,7 @@ impl FermiConsole {
             portfolio_team_shares: std::collections::HashMap::new(),
             portfolio_shares_in_flight: std::collections::HashSet::new(),
             selected_team_tab: TeamTab::Roster,
+            dashboard_activity_filter: ActivityFilter::All,
             selected_team_id: None,
             selected_team_detail: None,
             team_detail_loading: false,
@@ -1580,6 +1614,12 @@ impl FermiConsole {
         // wants it on first render, and the payload is small (bare
         // team headers), so we pull it up-front.
         self.fetch_teams(cx);
+        // Shared-with-me forecasts — previously fetched lazily on
+        // Portfolio panel's SharedWithMe bucket. Now feeds the
+        // Dashboard's activity feed Team-source stream too, so pull
+        // it eagerly. Idempotent; the ListForecasts response is
+        // small.
+        self.fetch_shared_with_me(cx);
     }
 
     /// Pull the current wallet snapshot. First fetch after sign-in
@@ -3908,6 +3948,7 @@ impl FermiConsole {
                     time: format_relative_time(&ts),
                     color: theme::GOLD,
                     forecast_id: f.id.clone(),
+                    source: ActivitySource::Mine,
                 },
                 is_low_signal: false,
                 family_key: String::new(),
@@ -3947,6 +3988,7 @@ impl FermiConsole {
                     time: format_relative_time(&ts),
                     color,
                     forecast_id: f.id.clone(),
+                    source: ActivitySource::Mine,
                 },
                 // Perfect-Brier calls are noise for a learning-oriented
                 // feed; drop when better content is available.
@@ -3991,9 +4033,117 @@ impl FermiConsole {
                     time: format_relative_time(&ts),
                     color: theme::CYAN,
                     forecast_id: f.id.clone(),
+                    source: ActivitySource::Mine,
                 },
                 is_low_signal: false,
                 family_key: String::new(),
+            });
+        }
+
+        // Team activity — events on forecasts shared with (or owned
+        // by) a team the operator is in, authored by someone else.
+        // The visibility layer already gave us the row via
+        // `shared_with_me_forecasts`; we filter to those with a
+        // team_id matching one of our teams and tag them Team-source
+        // so the Dashboard's Team filter chip has content.
+        //
+        // The status derivation matches the own-forecast branches
+        // (Resolved / Published / Revised / Draft), just with a
+        // "by teammate" framing in the text. Draft state is unusual
+        // for shared-with-me (drafts are typically private), but we
+        // handle it defensively.
+        let my_team_ids: std::collections::HashSet<String> =
+            self.teams.iter().map(|t| t.id.clone()).collect();
+        for f in &self.shared_with_me_forecasts {
+            let Some(ref tid) = f.team_id else { continue };
+            if !my_team_ids.contains(tid) {
+                continue;
+            }
+            let ts = f
+                .resolved_at
+                .clone()
+                .or_else(|| f.updated_at.clone())
+                .or_else(|| f.created_at.clone())
+                .unwrap_or_default();
+            if ts.is_empty() {
+                continue;
+            }
+            let (icon, color, text, is_low_signal, family_key): (
+                &'static str,
+                u32,
+                String,
+                bool,
+                String,
+            ) = if f.status == "resolved" {
+                let brier = f.brier_score.unwrap_or(0.5);
+                let outcome = if f.actual_outcome == Some(true) {
+                    "Yes"
+                } else {
+                    "No"
+                };
+                let color = if brier < 0.15 {
+                    theme::GREEN
+                } else if brier < 0.3 {
+                    theme::GOLD
+                } else {
+                    theme::ORANGE
+                };
+                (
+                    "✓",
+                    color,
+                    format!(
+                        "Team resolved {}: {} (Brier {:.2})",
+                        outcome,
+                        truncate(&f.question_text, 32),
+                        brier,
+                    ),
+                    brier < 0.05,
+                    activity_family_key(&f.question_text, f.actual_outcome),
+                )
+            } else if f.status == "draft" {
+                (
+                    "✎",
+                    theme::GOLD,
+                    format!(
+                        "Team draft: {} — {:.0}%",
+                        truncate(&f.question_text, 36),
+                        f.predicted_probability * 100.0,
+                    ),
+                    false,
+                    String::new(),
+                )
+            } else {
+                let was_revised = f.created_at.as_ref().map(|c| c != &ts).unwrap_or(false);
+                let (icon, verb) = if was_revised {
+                    ("→", "revised")
+                } else {
+                    ("◐", "published")
+                };
+                (
+                    icon,
+                    theme::BLUE,
+                    format!(
+                        "Team {}: {} — {:.0}%",
+                        verb,
+                        truncate(&f.question_text, 36),
+                        f.predicted_probability * 100.0,
+                    ),
+                    false,
+                    String::new(),
+                )
+            };
+            candidates.push(Candidate {
+                sort_key: ts.clone(),
+                item: ActivityItem {
+                    icon,
+                    text,
+                    time: format_relative_time(&ts),
+                    color,
+                    forecast_id: f.id.clone(),
+                    source: ActivitySource::Team,
+                },
+                is_low_signal,
+                family_key,
             });
         }
 
@@ -4037,16 +4187,19 @@ impl FermiConsole {
             i = j;
         }
 
-        // Pass 2: prefer signal over floor. Keep the top-8 while
-        // preferring non-low-signal rows. If the high-signal pool
-        // has fewer than 8 items, backfill with low-signal ones to
-        // avoid a near-empty feed.
+        // Pass 2: prefer signal over floor. Keep the top-15 while
+        // preferring non-low-signal rows (was 8 pre-multi-source; the
+        // wider cap gives the Mine / Team filter chips enough
+        // material to meaningfully filter without going stale). If
+        // the high-signal pool has fewer than 15 items, backfill with
+        // low-signal ones to avoid a near-empty feed.
+        const FEED_MAX: usize = 15;
         let (signal, floor): (Vec<Candidate>, Vec<Candidate>) =
             collapsed.into_iter().partition(|c| !c.is_low_signal);
         let mut final_items: Vec<ActivityItem> =
-            signal.into_iter().take(8).map(|c| c.item).collect();
-        if final_items.len() < 8 {
-            let need = 8 - final_items.len();
+            signal.into_iter().take(FEED_MAX).map(|c| c.item).collect();
+        if final_items.len() < FEED_MAX {
+            let need = FEED_MAX - final_items.len();
             final_items.extend(floor.into_iter().take(need).map(|c| c.item));
         }
 
@@ -6286,7 +6439,36 @@ impl FermiConsole {
     // "coming soon" tooltip so the future information architecture is
     // visible without pretending we have data we don't.
     fn render_dashboard_activity_feed(&self, cx: &Context<Self>) -> impl IntoElement {
-        let n = self.recent_activity.len();
+        let filter = self.dashboard_activity_filter;
+        // Filter feed by source. `All` shows every item; the other
+        // variants gate on `ActivityItem.source`. Marketplace stays
+        // empty until we ingest marketplace publish events.
+        let filtered: Vec<&ActivityItem> = self
+            .recent_activity
+            .iter()
+            .filter(|item| match filter {
+                ActivityFilter::All => true,
+                ActivityFilter::Mine => item.source == ActivitySource::Mine,
+                ActivityFilter::Team => item.source == ActivitySource::Team,
+                ActivityFilter::Marketplace => item.source == ActivitySource::Marketplace,
+            })
+            .collect();
+        let n = filtered.len();
+
+        // Counts per source — drives the disabled/enabled state and
+        // the numeric badge on each chip. Marketplace is always 0
+        // until we ingest events, so its chip stays disabled.
+        let mut mine_count = 0usize;
+        let mut team_count = 0usize;
+        for item in &self.recent_activity {
+            match item.source {
+                ActivitySource::Mine => mine_count += 1,
+                ActivitySource::Team => team_count += 1,
+                ActivitySource::Marketplace => {}
+            }
+        }
+        let total = self.recent_activity.len();
+
         div()
             .flex()
             .flex_col()
@@ -6324,25 +6506,49 @@ impl FermiConsole {
                                 },
                             )),
                     )
-                    // Source filter chips. "All" and "Mine" resolve to
-                    // the same content today; team + marketplace are
-                    // placeholders for future ingestion (see
-                    // roadmap P4). They render as disabled chips so
-                    // the shape is visible.
+                    // Source filter chips — now live. Mine + Team
+                    // gate on ActivityItem.source; Marketplace stays
+                    // a disabled placeholder until we ingest
+                    // marketplace publish events.
                     .child(
                         div()
                             .flex()
                             .gap(px(6.0))
-                            .child(activity_source_chip("All", true, false))
-                            .child(activity_source_chip("👤 Mine", false, false))
-                            .child(activity_source_chip("👥 Team", false, true))
+                            .child(activity_filter_chip(
+                                "act-chip-all",
+                                &format!("All ({})", total),
+                                ActivityFilter::All,
+                                filter,
+                                false,
+                                cx,
+                            ))
+                            .child(activity_filter_chip(
+                                "act-chip-mine",
+                                &format!("👤 Mine ({})", mine_count),
+                                ActivityFilter::Mine,
+                                filter,
+                                mine_count == 0,
+                                cx,
+                            ))
+                            .child(activity_filter_chip(
+                                "act-chip-team",
+                                &format!("👥 Team ({})", team_count),
+                                ActivityFilter::Team,
+                                filter,
+                                team_count == 0,
+                                cx,
+                            ))
+                            // Marketplace: no ingestion path yet
+                            // (surface P4 in the v0.8.6 plan). Kept
+                            // visible as a disabled chip so the
+                            // architecture is legible.
                             .child(activity_source_chip("✨ Marketplace", false, true)),
                     ),
             )
             .child(
                 div().flex().flex_col().p(px(8.0)).gap(px(2.0)).children(
-                    self.recent_activity
-                        .iter()
+                    filtered
+                        .into_iter()
                         .map(|item| self.render_activity_item(item, cx)),
                 ),
             )
@@ -6513,14 +6719,29 @@ impl FermiConsole {
     fn render_activity_item(&self, item: &ActivityItem, cx: &Context<Self>) -> impl IntoElement {
         let fid = item.forecast_id.clone();
         // Full team-affiliation set for the activity row's forecast
-        // — drives the multi-dot stack. Falls back to the empty vec
-        // when the forecast isn't one of our own (activity items are
-        // sourced from own-forecast lists today; team-source items
-        // arriving in a later change will still have a lookupable
-        // forecast because they reference shared_with_me).
+        // — drives the multi-dot stack. Spans own + shared so team
+        // activity items (source: Team, backed by shared_with_me)
+        // still show a dot from the owning team.
         let team_ids: Vec<String> = self
             .find_own_forecast(&item.forecast_id)
             .map(|f| self.team_ids_for_forecast(f))
+            .or_else(|| {
+                self.shared_with_me_forecasts
+                    .iter()
+                    .find(|f| f.id == item.forecast_id)
+                    .map(|f| {
+                        // Shared-with-me items don't get the shares
+                        // fan-out (that only runs on own forecasts),
+                        // so we can only surface the owning team_id
+                        // here. Better than no dot.
+                        f.team_id
+                            .as_ref()
+                            .filter(|s| !s.is_empty())
+                            .cloned()
+                            .into_iter()
+                            .collect()
+                    })
+            })
             .unwrap_or_default();
         div()
             .id(SharedString::from(format!("activity-{}", item.forecast_id)))
@@ -15636,6 +15857,49 @@ fn team_color(team_id: &str) -> u32 {
 /// non-interactive — because the underlying event streams aren't
 /// ingested yet. Rendering them anyway shows the operator the
 /// information architecture the console is growing into.
+/// Interactive filter chip for the Dashboard's activity feed. Sets
+/// `dashboard_activity_filter` on click; renders in the same visual
+/// language as `activity_source_chip` but with an accent border when
+/// active, a hover state when inactive, and dimming when disabled
+/// (no items in that source's stream).
+fn activity_filter_chip(
+    id: &'static str,
+    label: &str,
+    kind: ActivityFilter,
+    current: ActivityFilter,
+    disabled: bool,
+    cx: &Context<FermiConsole>,
+) -> impl IntoElement {
+    let active = kind == current;
+    let (bg_color, fg_color, border_color) = if disabled {
+        (theme::BG, theme::FG_FAINT, theme::FG_FAINT)
+    } else if active {
+        (theme::BG_HOVER, theme::FG, theme::CYAN)
+    } else {
+        (theme::BG, theme::FG_DIM, theme::FG_FAINT)
+    };
+    div()
+        .id(SharedString::from(id))
+        .px(px(8.0))
+        .py(px(2.0))
+        .rounded(px(10.0))
+        .border_1()
+        .border_color(rgb(border_color))
+        .bg(rgb(bg_color))
+        .text_size(px(10.0))
+        .text_color(rgb(fg_color))
+        .when(!disabled, |el| {
+            el.cursor_pointer().hover(|s| s.bg(theme::bg_hover()))
+        })
+        .when(!disabled, |el| {
+            el.on_click(cx.listener(move |this, _e, _w, cx| {
+                this.dashboard_activity_filter = kind;
+                cx.notify();
+            }))
+        })
+        .child(label.to_string())
+}
+
 fn activity_source_chip(label: &str, active: bool, disabled: bool) -> impl IntoElement {
     let (bg_color, fg_color, border_color) = if disabled {
         (theme::BG, theme::FG_FAINT, theme::FG_FAINT)
