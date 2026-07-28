@@ -82,10 +82,15 @@ async fn ensure_user_row(
                 // Most likely case: email UNIQUE conflict with a
                 // different user_id. Surface a clean error rather
                 // than the raw SQL so the operator can act on it.
-                log::warn!(
-                    "[ensure_user_row] backfill failed for user_id={}: {}",
-                    user.user_id,
-                    e
+                // Convention across this file is tracing::*, not
+                // log::*. Commit 70651ed introduced `log::` here but
+                // the top-level fermi crate doesn't depend on `log`,
+                // so the workspace stopped compiling. Switching to
+                // tracing matches the rest of the module.
+                tracing::warn!(
+                    user_id = %user.user_id,
+                    error = %e,
+                    "[ensure_user_row] backfill failed",
                 );
                 return Err((
                     StatusCode::PRECONDITION_FAILED,
@@ -94,10 +99,10 @@ async fn ensure_user_row(
                         .into(),
                 ));
             }
-            log::info!(
-                "[ensure_user_row] backfilled missing users row for user_id={} ({})",
-                user.user_id,
-                user.email
+            tracing::info!(
+                user_id = %user.user_id,
+                email = %user.email,
+                "[ensure_user_row] backfilled missing users row",
             );
             Ok(())
         }

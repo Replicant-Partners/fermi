@@ -585,6 +585,13 @@ pub struct CockpitState {
     /// per-row buttons to prevent double-submit.
     pub cascade_preview_loading: bool,
 
+    // ── Delete-forecast two-click confirm state (v0.8.11) ────────────
+    /// True after the operator clicks the action-bar Delete chip once.
+    /// Second click within 3 seconds fires the actual delete; the
+    /// timer auto-disarms this flag if the operator doesn't confirm.
+    /// Simple modal-less confirm pattern for a destructive action.
+    pub delete_forecast_armed: bool,
+
     // ── Polymarket Price History ──────────────────────────────────
     /// Time-series of crowd prices, sampled at `pm_poll_interval`.
     /// Each entry is (timestamp_epoch_secs, price 0.0–1.0).
@@ -941,6 +948,7 @@ impl CockpitState {
             cascade_preview_data: None,
             cascade_preview_trigger: None,
             cascade_preview_loading: false,
+            delete_forecast_armed: false,
             pm_price_history: Vec::new(),
             pm_poll_interval: None,
             pm_last_refresh_at: None,
@@ -1260,8 +1268,25 @@ impl CockpitState {
                 .await;
 
             // Bail if a newer keystroke has invalidated us.
+            //
+            // Bugfix (v0.8.11): the previous version returned here
+            // without resetting `pm_suggestions_loading`. That leaked
+            // a `true` value into the render state whenever a stale
+            // callback lost its seq race, leaving the type-ahead strip
+            // stuck on "🔮 SEARCHING POLYMARKET…" with no way for the
+            // operator to clear it (the observer-triggered next search
+            // returns early on line 1244 if the query hasn't changed).
+            // We now flip the flag off on the way out so a stale early-
+            // return still leaves the UI in a clean state.
             let still_current = this
-                .update(cx, |state, _| state.pm_suggest_seq == captured_seq)
+                .update(cx, |state, cx| {
+                    let current = state.pm_suggest_seq == captured_seq;
+                    if !current {
+                        state.pm_suggestions_loading = false;
+                        cx.notify();
+                    }
+                    current
+                })
                 .unwrap_or(false);
             if !still_current {
                 return;
@@ -1348,6 +1373,7 @@ impl CockpitState {
         }
 
         self.pm_event_id = Some(pm_event_id.clone());
+        let pm_market_id_owned = pm_market_id.clone();
         self.pm_market_id = Some(pm_market_id);
         self.pm_question = Some(question.clone());
         self.pm_market_price = Some(market_price);
@@ -1363,6 +1389,35 @@ impl CockpitState {
         // Linking a market changes the anchor probability and metadata
         // — flag for autosave so the linkage survives closing the composer.
         self.mark_dirty();
+
+        // Bugfix (v0.8.11): fire pm_link IMMEDIATELY when the forecast
+        // already exists on the server. The v0.8.10 fix only linked on
+        // first-create (in persist_backend_save / publish_forecast),
+        // leaving every orphaned pre-v0.8.10 forecast unable to be
+        // re-associated by any UI path — the operator could click a
+        // typeahead match all day and the linkage would never reach
+        // metadata.polymarket. Firing here covers the existing-forecast
+        // path; the create-path pm_link is still needed because on
+        // first-create the forecast_id doesn't exist yet at this call
+        // site. Idempotent server-side (POST /api/polymarket/link is
+        // just an UPDATE).
+        if let Some(fid) = self.forecast_id.clone() {
+            let api = self.api.clone();
+            let eid = pm_event_id.clone();
+            let mid = pm_market_id_owned;
+            tokio::spawn(async move {
+                match api.pm_link(&fid, &eid, &mid).await {
+                    Ok(_) => log::info!(
+                        "[pm-link] existing forecast={} event={} market={} — persisted",
+                        fid, eid, mid
+                    ),
+                    Err(e) => log::warn!(
+                        "[pm-link] existing forecast={} event={} market={}: {} — link stayed in RAM only",
+                        fid, eid, mid, e
+                    ),
+                }
+            });
+        }
         // Clear the type-ahead so the strip collapses once linked.
         self.pm_suggestions.clear();
         self.pm_suggest_dismissed = true;
@@ -1388,6 +1443,135 @@ impl CockpitState {
         self.pm_suggest_dismissed = true;
         self.pm_suggestions.clear();
         cx.notify();
+    }
+
+    /// Manually re-trigger the Polymarket type-ahead search for the
+    /// current question. Powers the "🔮 Search PM" action-bar chip that
+    /// unblocks operators who loaded an existing (orphaned) forecast
+    /// and want to associate it with a market post-hoc.
+    ///
+    /// The observer-driven search only fires when the question input
+    /// text actually changes, and it short-circuits on unchanged
+    /// queries (`pm_suggest_last_query`). Neither of those conditions
+    /// helps an operator who loads a saved forecast, sees an empty
+    /// / stuck strip, and just wants to try again. This method resets
+    /// all three suppression flags and calls `pm_typeahead_search`
+    /// directly.
+    ///
+    /// Also defensively clears `pm_suggestions_loading` in case the
+    /// v0.8.10 leak left it stuck true on this cockpit state — covers
+    /// forecasts opened before the bugfix in `pm_typeahead_search`
+    /// landed.
+    pub fn retry_pm_typeahead(&mut self, cx: &mut Context<Self>) {
+        // Read the current question from either the input widget or the
+        // parsed program; whichever the operator is looking at.
+        let query = {
+            let from_input = self.question_input.read(cx).text().to_string();
+            if !from_input.trim().is_empty() {
+                from_input
+            } else {
+                self.program
+                    .question()
+                    .map(|q| q.text.clone())
+                    .unwrap_or_default()
+            }
+        };
+        // Clear the three flags that would otherwise suppress the call.
+        self.pm_suggest_dismissed = false;
+        self.pm_suggest_last_query.clear();
+        self.pm_suggestions_loading = false;
+        self.pm_suggestions.clear();
+        cx.notify();
+        self.pm_typeahead_search(&query, cx);
+    }
+
+    /// Two-click confirm state for the action bar's Delete chip. The
+    /// first click flips this flag on + starts a 3-second timer to
+    /// flip it back off. A second click while it's on fires the
+    /// delete. Simple confirm affordance without a modal dialog.
+    pub fn arm_delete_forecast(&mut self, cx: &mut Context<Self>) {
+        if self.forecast_id.is_none() {
+            return;
+        }
+        if self.delete_forecast_armed {
+            self.confirm_delete_forecast(cx);
+            return;
+        }
+        self.delete_forecast_armed = true;
+        cx.notify();
+        // Auto-disarm after 3 seconds so the chip doesn't sit primed
+        // indefinitely (which would surprise an operator who navigates
+        // away and comes back).
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(3))
+                .await;
+            this.update(cx, |state, cx| {
+                if state.delete_forecast_armed {
+                    state.delete_forecast_armed = false;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Execute the delete. Called only after arm_delete_forecast has
+    /// been fired at least once (the two-click confirm). Fires the
+    /// DELETE /api/forecasts/:id endpoint, clears cockpit state, and
+    /// posts an assistant message so the operator has audit trail.
+    /// Failure surfaces via publish_status (same channel as save
+    /// errors) so the operator sees it in the header.
+    pub fn confirm_delete_forecast(&mut self, cx: &mut Context<Self>) {
+        let Some(fid) = self.forecast_id.clone() else {
+            return;
+        };
+        self.delete_forecast_armed = false;
+        self.publish_status = Some(format!("Deleting forecast {}…", short_id(&fid)));
+        cx.notify();
+
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.delete_forecast(&fid).await;
+            this.update(cx, |state, cx| match result {
+                Ok(()) => {
+                    log::info!("[delete] forecast={} deleted", fid);
+                    state.messages.push(AssistantMessage {
+                        node: "question".into(),
+                        kind: MessageKind::Info,
+                        text: format!(
+                            "🗑 Deleted forecast {}. Composer reset — Ctrl+N to start a new one.",
+                            short_id(&fid)
+                        ),
+                    });
+                    // Reset the composer to a clean state. Same pattern
+                    // as on_new_forecast: drop forecast_id, workspace_id,
+                    // program, all the ancillary caches.
+                    state.forecast_id = None;
+                    state.workspace_id = None;
+                    state.forecast_cascade_groups.clear();
+                    state.timeline_data = None;
+                    state.provenance_data = None;
+                    state.cascade_detail_group_id = None;
+                    state.pm_event_id = None;
+                    state.pm_market_id = None;
+                    state.pm_question = None;
+                    state.pm_market_price = None;
+                    state.pm_price_history.clear();
+                    state.publish_status = Some(format!("Deleted forecast {}", short_id(&fid)));
+                    state.dirty = false;
+                    cx.notify();
+                }
+                Err(e) => {
+                    log::warn!("[delete] forecast={} failed: {}", fid, e);
+                    state.publish_status = Some(format!("Failed to delete forecast: {}", e));
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Set the PM polling interval. Call after linking a Polymarket market.
@@ -10306,6 +10490,79 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
             "Ctrl+E",
             theme::FG_FAINT,
         ))
+        // v0.8.11: PM search retry chip. Visible only on unlinked
+        // forecasts — lets the operator manually re-fire the type-ahead
+        // when the observer-driven search returned empty (chip strip
+        // collapsed) or when a stale callback left the loading flag
+        // stuck ("🔮 SEARCHING POLYMARKET…" that never clears). Retry
+        // resets pm_suggest_dismissed / pm_suggest_last_query /
+        // pm_suggestions_loading before firing so all three suppression
+        // paths are cleared. No hotkey — rare, deliberate action.
+        .when(
+            state.forecast_id.is_some() && state.pm_event_id.is_none() && has_question,
+            |el| {
+                el.child(
+                    div()
+                        .id("action-chip-pm-search")
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .px(px(8.0))
+                        .py(px(3.0))
+                        .rounded(px(4.0))
+                        .border_1()
+                        .border_color(rgb(theme::PURPLE))
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::PURPLE))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::bg_hover()))
+                        .child(div().text_color(rgb(theme::PURPLE)).child("🔮"))
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child("Search PM"))
+                        .on_click(cx.listener(|this, _e, _w, cx| {
+                            this.retry_pm_typeahead(cx);
+                        })),
+                )
+            },
+        )
+        // v0.8.11: Delete-forecast chip. Two-click confirm pattern —
+        // first click primes the chip (label + border flip to red),
+        // second click within 3s fires DELETE /api/forecasts/:id.
+        // Auto-disarms after 3s if unconfirmed. Visible only after the
+        // forecast has a forecast_id (draft cockpits have nothing to
+        // delete server-side; Ctrl+N handles the local reset).
+        .when(state.forecast_id.is_some(), |el| {
+            let armed = state.delete_forecast_armed;
+            let (label, color) = if armed {
+                ("Click again to confirm", theme::RED)
+            } else {
+                ("Delete", theme::FG_FAINT)
+            };
+            el.child(
+                div()
+                    .id("action-chip-delete")
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .px(px(8.0))
+                    .py(px(3.0))
+                    .rounded(px(4.0))
+                    .border_1()
+                    .border_color(rgb(color))
+                    .text_size(px(10.0))
+                    .text_color(rgb(color))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::bg_hover()))
+                    .child(div().text_color(rgb(color)).child("🗑"))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(label.to_string()),
+                    )
+                    .on_click(cx.listener(|this, _e, _w, cx| {
+                        this.arm_delete_forecast(cx);
+                    })),
+            )
+        })
         .into_any_element()
 }
 
