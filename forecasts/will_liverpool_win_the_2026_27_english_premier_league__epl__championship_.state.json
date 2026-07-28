@@ -1,6 +1,6 @@
 {
   "forecast_id": null,
-  "current_version": 1,
+  "current_version": 2,
   "predicted_probability": 0.115,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
@@ -10,6 +10,12 @@
       "timestamp": "2026-07-28 00:41",
       "probability": 0.115,
       "change_summary": "Initial: 11.5%, 3 drivers, 0 evidence"
+    },
+    {
+      "version": 2,
+      "timestamp": "2026-07-28 00:41",
+      "probability": 0.115,
+      "change_summary": "11.5% (→), 3 drivers"
     }
   ],
   "sim_results": null,
