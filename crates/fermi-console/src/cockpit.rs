@@ -592,6 +592,33 @@ pub struct CockpitState {
     /// Simple modal-less confirm pattern for a destructive action.
     pub delete_forecast_armed: bool,
 
+    // ── Server-backed agent card cache (v0.8.13) ─────────────────
+    //
+    // The local `state.registry` is populated from `agents/curated/` on
+    // startup. When the operator's binary can't find that folder (packaged
+    // distributions, unexpected CWD, missing $AGENTS_DIR), the registry
+    // stays empty and the agent picker shows "No research agents found in
+    // registry." — exactly what Mario hit.
+    //
+    // The server keeps the same list at GET /api/agents?tag=fermi-orchestra.
+    // We fetch it lazily on first cockpit open (or on demand from the
+    // picker) and cache it here. `render_agent_picker` falls back to this
+    // list when `state.registry` returns zero cards, so the picker works
+    // regardless of the client's filesystem layout.
+    //
+    // Note: this only hydrates the *list* used by the picker's chip
+    // rendering. Execution still routes through `/api/agents/:id/execute`
+    // (the ABW SSE stream path), which resolves cards server-side — so
+    // Mario can both see AND run agents through this fallback.
+    pub server_agent_cards: Vec<JsonValue>,
+    /// True while the server-agents fetch is in flight; suppresses
+    /// double-firing when the picker opens rapidly.
+    pub server_agent_cards_loading: bool,
+    /// True once we've attempted at least one fetch (regardless of
+    /// outcome). Prevents the picker from re-firing when a legitimate
+    /// empty result comes back.
+    pub server_agent_cards_fetched: bool,
+
     // ── Polymarket Price History ──────────────────────────────────
     /// Time-series of crowd prices, sampled at `pm_poll_interval`.
     /// Each entry is (timestamp_epoch_secs, price 0.0–1.0).
@@ -949,6 +976,9 @@ impl CockpitState {
             cascade_preview_trigger: None,
             cascade_preview_loading: false,
             delete_forecast_armed: false,
+            server_agent_cards: Vec::new(),
+            server_agent_cards_loading: false,
+            server_agent_cards_fetched: false,
             pm_price_history: Vec::new(),
             pm_poll_interval: None,
             pm_last_refresh_at: None,
@@ -1445,6 +1475,52 @@ impl CockpitState {
         cx.notify();
     }
 
+    /// v0.8.13: hydrate the server-agents cache when the local
+    /// filesystem registry is empty. Called lazily from the picker
+    /// on first render if `state.registry.list_cards()` returned zero
+    /// fermi-orchestra cards. Idempotent — subsequent calls no-op
+    /// unless `server_agent_cards_fetched` has been reset by the caller.
+    ///
+    /// The response shape is whatever `GET /api/agents?tag=fermi-orchestra`
+    /// returns — we only extract `agent_id`, `display_alias`, and
+    /// `description` per card because that's all the picker renders.
+    pub fn load_server_agent_cards(&mut self, cx: &mut Context<Self>) {
+        if self.server_agent_cards_loading || self.server_agent_cards_fetched {
+            return;
+        }
+        self.server_agent_cards_loading = true;
+        cx.notify();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.list_agents().await;
+            this.update(cx, |state, cx| {
+                state.server_agent_cards_loading = false;
+                state.server_agent_cards_fetched = true;
+                match result {
+                    Ok(data) => {
+                        let arr = data
+                            .get("agents")
+                            .and_then(|v| v.as_array())
+                            .cloned()
+                            .or_else(|| data.as_array().cloned())
+                            .unwrap_or_default();
+                        log::info!(
+                            "[registry] hydrated {} agent cards from server (local filesystem returned 0)",
+                            arr.len()
+                        );
+                        state.server_agent_cards = arr;
+                    }
+                    Err(e) => {
+                        log::warn!("[registry] server hydrate failed: {}", e);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Manually re-trigger the Polymarket type-ahead search for the
     /// current question. Powers the "🔮 Search PM" action-bar chip that
     /// unblocks operators who loaded an existing (orphaned) forecast
@@ -1801,8 +1877,20 @@ impl CockpitState {
     pub fn orchestrate_question(&mut self, question: &str, cx: &mut Context<Self>) {
         let question = question.trim().to_string();
         if question.is_empty() {
+            log::warn!("[orchestrate] short-circuit: empty question (drivers not generated)");
             return;
         }
+        // v0.8.13: audit-log the entry point so we can see whether
+        // Mario's Ctrl+Enter actually reaches this method or is
+        // getting swallowed somewhere upstream. Pipe stderr to a file
+        // (`fermi-console 2>&1 | tee run.log`) and grep for
+        // `[orchestrate]` to trace the path end-to-end.
+        log::info!(
+            "[orchestrate] question=<{} chars>, current drivers={}, forecast_id={:?}",
+            question.chars().count(),
+            self.program.drivers().len(),
+            self.forecast_id,
+        );
 
         self.orchestration_running = true;
         self.messages.clear();
@@ -1868,6 +1956,12 @@ impl CockpitState {
         // Generate domain-appropriate driver decomposition
         // Each driver has agents embedded — this is the FPL way
         let (drivers, model_expr) = generate_decomposition(&question, &domain);
+        log::info!(
+            "[orchestrate] domain={} generated={} drivers={:?}",
+            domain,
+            drivers.len(),
+            drivers.iter().map(|d| d.name.as_str()).collect::<Vec<_>>()
+        );
         for driver in &drivers {
             self.program.add_driver(driver.clone());
         }
@@ -3669,10 +3763,24 @@ impl CockpitState {
             );
             run.error = Some(error.to_string());
         }
+        // v0.8.13: try to pull the human-facing message out of a
+        // nested Anthropic error payload. When it works, the banner
+        // reads "Anthropic credit balance is too low…" instead of
+        // "API error: {\"type\":\"error\",\"error\":{\"type\":\"error\"…}}".
+        // Falls back to the raw error unchanged when the pattern
+        // doesn't match, so nothing else is masked.
+        let friendly = extract_anthropic_error_message(error).unwrap_or_else(|| error.to_string());
+        // Also log the full untruncated error so operators piping stderr
+        // to a log file see the exact string (banners cap at ~140 chars).
+        log::error!(
+            "[fermi] agent={} failed (full error): {}",
+            agent_name,
+            error
+        );
         self.messages.push(AssistantMessage {
             node: format!("agent:{}", agent_name),
             kind: MessageKind::Error,
-            text: format!("Agent '{}' failed: {}", agent_name, error),
+            text: format!("Agent '{}' failed: {}", agent_name, friendly),
         });
         self.orchestration_running = false;
     }
@@ -3780,6 +3888,22 @@ impl CockpitState {
     pub fn open_agent_picker(&mut self, driver_name: &str, cx: &mut Context<Self>) {
         self.save_focused_driver(cx);
         self.agent_search_query.clear();
+        // v0.8.13: if the local filesystem registry is empty, fetch the
+        // server-backed agent list so the picker has something to show.
+        // Lazy — only fires once per cockpit session, and only when we
+        // need it. Cost: one API call, ~1KB response.
+        let local_empty = self
+            .registry
+            .list_cards()
+            .map(|cards| {
+                !cards
+                    .iter()
+                    .any(|c| c.metadata.tags.iter().any(|t| t == "fermi-orchestra"))
+            })
+            .unwrap_or(true);
+        if local_empty && !self.server_agent_cards_fetched {
+            self.load_server_agent_cards(cx);
+        }
         self.focused_node = FocusedNode::AgentPicker(driver_name.to_string());
         self.right_tab = RightTab::Edit;
 
@@ -10290,6 +10414,7 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
     let save_disabled = locked || !has_question;
 
     // ── Publish chip ────────────────────────────────────────────────
+    // ── Publish chip ───────────────────────────────────────────────────────────────────
     let is_active = state.forecast_status.as_deref() == Some("active");
     let (pub_icon, pub_label, pub_accent) = if locked {
         ("🔒", "Publish", theme::FG_DIM)
@@ -10300,7 +10425,66 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
     } else {
         ("", "Publish", theme::FG_FAINT)
     };
-    let pub_disabled = locked || !has_question || state.sim_results.is_none();
+    // v0.8.13: loosen the publish gate. Old gate required sim_results to
+    // be Some, which meant an operator who couldn't run agents (e.g.
+    // shared Anthropic account depleted) was stuck saving forever with
+    // no way to publish. New gate: allow publish whenever we have
+    // *something* to publish — a question, plus at least one of:
+    //   * a completed simulation (unchanged — the ideal case)
+    //   * a base rate set on the question
+    //   * at least one driver whose distribution has been meaningfully
+    //     specified (any of p5/p50/p95 non-zero, or a binary driver with
+    //     probability > 0)
+    // The forecast's own math will use whatever's set; if nothing's set
+    // the model produces the default prediction and the operator can
+    // improve it later. Publishing early is not destructive.
+    let has_meaningful_drivers = state.program.drivers().iter().any(|d| {
+        // Two positive signals per driver:
+        //   * A distribution is set (Triangular/Normal/etc.) AND at
+        //     least one of its numeric anchors is non-zero. We check
+        //     via the debug/display representation — the Distribution
+        //     enum wraps Expressions which are AST nodes, so a shallow
+        //     stringify + numeric scan is the cheapest way to answer
+        //     "has the operator touched this driver at all" without
+        //     depending on Expression internals.
+        //   * A binary probability > 0 (impact_multiplier is set too).
+        // If neither, we treat the driver as unfilled.
+        let non_zero_binary = d.probability.map(|p| p > 1e-9).unwrap_or(false);
+        let non_zero_continuous = d
+            .distribution
+            .as_ref()
+            .map(|dist| {
+                // Cheap: format the distribution, look for any digit
+                // that isn't 0/./,. If we find a non-zero digit the
+                // operator has set an anchor.
+                let s = format!("{:?}", dist);
+                s.chars().any(|c| c.is_ascii_digit() && c != '0')
+            })
+            .unwrap_or(false);
+        non_zero_binary || non_zero_continuous
+    });
+    let has_base_rate = state
+        .program
+        .question()
+        .and_then(|q| q.base_rate.as_ref())
+        .is_some();
+    let has_publishable_content =
+        state.sim_results.is_some() || has_base_rate || has_meaningful_drivers;
+    let pub_disabled = locked || !has_question || !has_publishable_content;
+    // Reason string surfaced next to the chip when disabled (removes
+    // the mystery of "why can't I publish" that Mario hit on the
+    // Man-United forecast). Written for a human, not for grep.
+    let pub_disabled_reason: Option<&'static str> = if !pub_disabled {
+        None
+    } else if locked {
+        Some("forecast is resolved")
+    } else if !has_question {
+        Some("add a question first")
+    } else if !has_publishable_content {
+        Some("simulate (⌘R), set a base rate, or set at least one driver")
+    } else {
+        None
+    };
 
     // Optional secondary background tint for the recommended-next chip,
     // so it stands out even at a glance without operator focus.
@@ -10459,7 +10643,22 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
         )
         .child(div().text_color(rgb(theme::FG_DIM)).child("Ctrl+P"));
 
-    div()
+    // v0.8.13: little inline hint that follows the Publish chip when it
+    // is disabled, explaining *why* the operator can't click it. This
+    // removes the mystery Mario hit on the Man-United forecast (chip
+    // grayed, click does nothing, no explanation). Placed inline so it
+    // sits right next to the chip's own "Ctrl+P" hotkey label.
+    let publish_disabled_hint = pub_disabled_reason.map(|reason| {
+        div()
+            .flex()
+            .items_center()
+            .px(px(6.0))
+            .text_size(px(10.0))
+            .text_color(rgb(theme::FG_FAINT))
+            .child(format!("— disabled: {}", reason))
+    });
+
+    let mut chip_row = div()
         .flex()
         .flex_wrap()
         .gap(px(8.0))
@@ -10467,7 +10666,11 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
         .child(research_chip)
         .child(simulate_chip)
         .child(save_chip)
-        .child(publish_chip)
+        .child(publish_chip);
+    if let Some(hint) = publish_disabled_hint {
+        chip_row = chip_row.child(hint);
+    }
+    chip_row = chip_row
         // Informational-only chips — dispatched at FermiConsole level.
         .child(action_chip_static(
             "new",
@@ -10489,7 +10692,8 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
             "Tabs",
             "Ctrl+E",
             theme::FG_FAINT,
-        ))
+        ));
+    chip_row
         // v0.8.11: PM search retry chip. Visible only on unlinked
         // forecasts — lets the operator manually re-fire the type-ahead
         // when the observer-driven search returned empty (chip strip
@@ -12641,8 +12845,18 @@ fn render_agent_picker(
         p95,
     );
 
-    // Get all available agents for the "Other agents" section
-    let available_agents: Vec<(String, String, Vec<String>)> = state
+    // Get all available agents for the "Other agents" section.
+    //
+    // Primary source: the local `state.registry` (populated from
+    // `agents/curated/` on startup).
+    //
+    // v0.8.13 fallback: when the local registry is empty (packaged
+    // client, unexpected CWD, missing $AGENTS_DIR), use the server-
+    // cached list from `/api/agents?tag=fermi-orchestra`. This is what
+    // fixes Mario's "No research agents found in registry." — execution
+    // still routes through the server SSE path, so the picker doesn't
+    // need the local `AgentCard` struct for anything but the chip label.
+    let local_agents: Vec<(String, String, Vec<String>)> = state
         .registry
         .list_cards()
         .unwrap_or_default()
@@ -12660,6 +12874,44 @@ fn render_agent_picker(
             )
         })
         .collect();
+
+    let available_agents: Vec<(String, String, Vec<String>)> = if !local_agents.is_empty() {
+        local_agents
+    } else {
+        state
+            .server_agent_cards
+            .iter()
+            .filter_map(|c| {
+                let id = c.get("agent_id").and_then(|v| v.as_str())?;
+                if id == "fermi" || id == recommended {
+                    return None;
+                }
+                // Server rows carry tags as a JSON array; keep only
+                // fermi-orchestra ones. Some tiers (e.g. tier=System)
+                // are also excluded server-side by the list_agents
+                // handler but we double-check here for safety.
+                let has_orchestra_tag = c
+                    .get("tags")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|t| t.as_str())
+                            .any(|t| t == "fermi-orchestra")
+                    })
+                    .unwrap_or(false);
+                if !has_orchestra_tag {
+                    return None;
+                }
+                let display = c
+                    .get("display_alias")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| c.get("description").and_then(|v| v.as_str()))
+                    .unwrap_or("")
+                    .to_string();
+                Some((id.to_string(), display, Vec::<String>::new()))
+            })
+            .collect()
+    };
 
     let recommended_desc = state
         .registry
@@ -19895,6 +20147,96 @@ fn shorten_question_for_provenance(q: &str) -> String {
 /// stays scannable.
 fn short_id(id: &str) -> String {
     id.split('-').next().unwrap_or(id).to_string()
+}
+
+/// v0.8.13: pull the human-facing message out of a nested Anthropic
+/// error payload so operators see a sentence, not a JSON wall.
+///
+/// Real errors we've seen from the executor stack:
+///
+///   ABW API: Server error: Execution failed: Execution failed:
+///   API error: {"type":"error","error":{"type":"error","error":
+///     {"type":"invalid_request_error",
+///      "message":"Your credit balance is too low…"},
+///      "request_id":"req_011CdV5TjaoqTfDxgpmB9irQ"}}
+///
+/// We do a substring hunt for `"message":"..."` inside the string — no
+/// need to strip layers of wrapping, since the payload is only
+/// serialised once at the innermost frame. If the marker isn't there
+/// we return `None` and the caller keeps the raw error.
+///
+/// The extractor is deliberately permissive: it handles literal \"
+/// escapes and the truncation we've seen where the outer wrapper cut
+/// off before the closing brace.
+fn extract_anthropic_error_message(raw: &str) -> Option<String> {
+    let marker = "\"message\":\"";
+    let start = raw.find(marker)?;
+    let after = &raw[start + marker.len()..];
+    // Walk the string, respecting `\"` escapes; stop at the first
+    // un-escaped closing quote.
+    let bytes = after.as_bytes();
+    let mut end = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            i += 2;
+            continue;
+        }
+        if bytes[i] == b'"' {
+            end = Some(i);
+            break;
+        }
+        i += 1;
+    }
+    let end = end?;
+    let message = &after[..end];
+    // Unescape the most common JSON escapes without pulling serde into
+    // the hot path (this runs on every error banner render).
+    let cleaned = message.replace("\\\"", "\"").replace("\\n", " ");
+    if cleaned.trim().is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
+#[cfg(test)]
+mod extractor_tests {
+    use super::extract_anthropic_error_message;
+
+    #[test]
+    fn extracts_credit_balance_error_from_nested_wrapping() {
+        let raw = r#"ABW API: Server error: Execution failed: Execution failed: API error: {"type":"error","error":{"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."},"request_id":"req_011CdV5TjaoqTfDxgpmB9irQ"}}"#;
+        let out = extract_anthropic_error_message(raw).expect("should extract");
+        assert!(
+            out.contains("Your credit balance is too low"),
+            "got: {}",
+            out
+        );
+        assert!(!out.contains("request_id"), "leaked outer JSON: {}", out);
+    }
+
+    #[test]
+    fn returns_none_when_no_message_field() {
+        let raw = "some totally unrelated error string with no json in it";
+        assert!(extract_anthropic_error_message(raw).is_none());
+    }
+
+    #[test]
+    fn handles_escaped_quotes_inside_message() {
+        let raw = r#"{"error":{"message":"He said \"no\" to the request"}}"#;
+        let out = extract_anthropic_error_message(raw).expect("should extract");
+        assert_eq!(out, r#"He said "no" to the request"#);
+    }
+
+    #[test]
+    fn survives_truncated_input_after_message_close() {
+        // Console banners truncate at ~140 chars; the message quote must
+        // still close cleanly before the truncation for us to extract it.
+        let raw = r#"{"error":{"type":"invalid_request_error","message":"Rate limit hit"},"request_id":"tru"#;
+        let out = extract_anthropic_error_message(raw).expect("should extract");
+        assert_eq!(out, "Rate limit hit");
+    }
 }
 
 /// Translate a raw backend error string into an operator-facing
