@@ -1,21 +1,15 @@
 {
   "forecast_id": null,
-  "current_version": 2,
+  "current_version": 1,
   "predicted_probability": 0.115,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-28 00:42",
+      "timestamp": "2026-07-28 00:45",
       "probability": 0.115,
-      "change_summary": "Initial: 11.5%, 0 drivers, 0 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-07-28 00:42",
-      "probability": 0.115,
-      "change_summary": "11.5% (→), 3 drivers"
+      "change_summary": "Initial: 11.5%, 3 drivers, 0 evidence"
     }
   ],
   "sim_results": null,
@@ -29,13 +23,13 @@
     "question": "Will Liverpool win the 2026-27 English Premier League (EPL) Championship?",
     "market_price": 0.115,
     "volume_24h": 183.733332,
-    "liquidity": 377003.2266,
+    "liquidity": 376968.3806,
     "confidence": "Low",
     "price_change_1w": null,
     "url": "https://polymarket.com/event/659518",
     "price_history": [
       {
-        "t": 1785199365,
+        "t": 1785199495,
         "p": 0.115
       }
     ]
