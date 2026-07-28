@@ -1,25 +1,19 @@
 {
   "forecast_id": null,
-  "current_version": 3,
+  "current_version": 2,
   "predicted_probability": 0.115,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-28 00:41",
+      "timestamp": "2026-07-28 00:42",
       "probability": 0.115,
-      "change_summary": "Initial: 11.5%, 3 drivers, 0 evidence"
+      "change_summary": "Initial: 11.5%, 0 drivers, 0 evidence"
     },
     {
       "version": 2,
-      "timestamp": "2026-07-28 00:41",
-      "probability": 0.115,
-      "change_summary": "11.5% (→), 3 drivers"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-07-28 00:41",
+      "timestamp": "2026-07-28 00:42",
       "probability": 0.115,
       "change_summary": "11.5% (→), 3 drivers"
     }
@@ -41,7 +35,7 @@
     "url": "https://polymarket.com/event/659518",
     "price_history": [
       {
-        "t": 1785199246,
+        "t": 1785199365,
         "p": 0.115
       }
     ]
