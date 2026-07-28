@@ -1,0 +1,44 @@
+{
+  "forecast_id": "96422874-3295-414f-951d-7d5db91007c2",
+  "current_version": 1,
+  "predicted_probability": 0.11500000208616255,
+  "inside_view_explanation": "",
+  "forecast_confidence": 0.5,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-07-28 00:47",
+      "probability": 0.11500000208616255,
+      "change_summary": "Initial: 11.5% base=12%, 3 drivers, 0 evidence"
+    }
+  ],
+  "sim_results": null,
+  "base_rate": {
+    "reference_class": "Polymarket crowd-implied probability (Will Manchester United win the 2026-27 English Premier League (EPL) Championship?)",
+    "historical_frequency": 0.115,
+    "sample_size": null,
+    "source": "Polymarket",
+    "reasoning": "Crowd price backed by $2K volume, $474K liquidity. Low confidence."
+  },
+  "evidence": [],
+  "agents": [],
+  "driver_confidence": {},
+  "polymarket": {
+    "event_id": "659518",
+    "market_id": "2771336",
+    "question": "Will Manchester United win the 2026-27 English Premier League (EPL) Championship?",
+    "market_price": 0.115,
+    "volume_24h": 2181.576659,
+    "liquidity": 473915.4436,
+    "confidence": "Low",
+    "price_change_1w": null,
+    "url": "https://polymarket.com/event/epl-2027-champion-20260701200428749",
+    "price_history": [
+      {
+        "t": 1785199603,
+        "p": 0.115
+      }
+    ]
+  },
+  "workspace_id": null
+}
