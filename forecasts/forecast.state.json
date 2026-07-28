@@ -1,15 +1,15 @@
 {
-  "forecast_id": "af592d26-c254-4b9b-b3d5-a6cde9b68cf1",
+  "forecast_id": null,
   "current_version": 1,
-  "predicted_probability": 0.29499998688697815,
+  "predicted_probability": 0.115,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-27 17:50",
-      "probability": 0.29499998688697815,
-      "change_summary": "Initial: 29.5%, 0 drivers, 0 evidence"
+      "timestamp": "2026-07-28 00:42",
+      "probability": 0.115,
+      "change_summary": "Initial: 11.5%, 0 drivers, 0 evidence"
     }
   ],
   "sim_results": null,
@@ -18,16 +18,21 @@
   "agents": [],
   "driver_confidence": {},
   "polymarket": {
-    "event_id": null,
-    "market_id": null,
-    "question": null,
-    "market_price": null,
-    "volume_24h": null,
-    "liquidity": null,
-    "confidence": null,
+    "event_id": "659518",
+    "market_id": "2771334",
+    "question": "Will Liverpool win the 2026-27 English Premier League (EPL) Championship?",
+    "market_price": 0.115,
+    "volume_24h": 183.733332,
+    "liquidity": 377003.2266,
+    "confidence": "Low",
     "price_change_1w": null,
-    "url": null,
-    "price_history": []
+    "url": "https://polymarket.com/event/659518",
+    "price_history": [
+      {
+        "t": 1785199365,
+        "p": 0.115
+      }
+    ]
   },
   "workspace_id": null
 }
