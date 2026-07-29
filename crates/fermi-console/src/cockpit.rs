@@ -20254,21 +20254,34 @@ mod extractor_tests {
 fn friendly_backend_save_error(raw: &str) -> String {
     let lower = raw.to_lowercase();
 
-    // Users-row FK violation (fixed in the backend by ensure_user_row,
-    // but keep this branch as a safety net for stale binaries and to
-    // rewrite the message on the way to the toast).
+    // v0.9.1: users-row FK violation on a server that's stuck between
+    // fixes. Backend ensure_user_row now self-heals via email match,
+    // so this branch only fires on truly-stale deployments that
+    // haven't picked up v0.9.1. Suggest waiting for a deploy rather
+    // than looping through OAuth (which was never the actual fix).
     if lower.contains("foreign key") && (lower.contains("owner_id") || lower.contains("users")) {
-        return "Backend save failed: your account isn't fully provisioned. \
-                Sign out and sign in again to complete setup, then retry."
+        return "Backend save failed: this server is running an older \
+                version that can't auto-provision your account. Wait \
+                for the next deploy or contact support."
             .to_string();
+    }
+
+    // v0.9.1: email UNIQUE conflict that the self-heal deliberately
+    // refused (email is claimed by a different, already-provisioned
+    // account). The server surfaces this as 409 CONFLICT with a
+    // specific phrase.
+    if lower.contains("already registered under a different account") {
+        return format!("Backend save failed: {}", raw);
     }
 
     // Server-signalled precondition failure — our ensure_user_row
     // helper returns this when it can't backfill (e.g. api-key
-    // principal with an orphan user_id).
+    // principal with an orphan user_id, or v0.9.1 self-heal failed
+    // for a non-email reason).
     if lower.contains("isn't fully provisioned")
         || lower.contains("isn't provisioned")
         || lower.contains("not fully provisioned")
+        || lower.contains("couldn't auto-heal")
     {
         return format!("Backend save failed: {}", raw);
     }

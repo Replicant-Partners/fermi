@@ -43,7 +43,7 @@ use sqlx::PgPool;
 /// Idempotent: fast-path SELECT returns immediately when the row
 /// already exists, so this adds one round trip per write handler in
 /// the happy path. Cheap given the existing charge_gas + INSERT flow.
-async fn ensure_user_row(
+pub(crate) async fn ensure_user_row(
     pool: &PgPool,
     principal: &AuthPrincipal,
 ) -> Result<(), (StatusCode, String)> {
@@ -79,23 +79,111 @@ async fn ensure_user_row(
             .execute(pool)
             .await;
             if let Err(e) = result {
-                // Most likely case: email UNIQUE conflict with a
-                // different user_id. Surface a clean error rather
-                // than the raw SQL so the operator can act on it.
-                // Convention across this file is tracing::*, not
-                // log::*. Commit 70651ed introduced `log::` here but
-                // the top-level fermi crate doesn't depend on `log`,
-                // so the workspace stopped compiling. Switching to
-                // tracing matches the rest of the module.
+                // v0.9.1 — self-heal the email-UNIQUE conflict case.
+                //
+                // When the operator has a STALE users row (created by
+                // a partial provisioning: legacy migration, deleted
+                // OAuth session, cross-env token, etc.) with their
+                // email but a null/legacy/mismatched user_id, the
+                // INSERT above hits users.email UNIQUE and fails. The
+                // old code path returned PRECONDITION_FAILED here
+                // ("sign out and sign in again") which is wrong —
+                // signing out doesn't heal the DB state, so the
+                // operator would loop through auth forever.
+                //
+                // Instead we detect the UNIQUE-on-email case and try
+                // an UPDATE that re-parents the stale row to the
+                // current OAuth session:
+                //
+                //   * Match by email (the unique constraint that just
+                //     collided) — confirms we're healing the SAME row
+                //     that blocked the INSERT.
+                //   * Guard: only heal rows that look legacy /
+                //     orphaned (user_id NULL, empty, or auth_provider
+                //     = 'legacy'). Never re-parent a row that's
+                //     already provisioned under a live user_id —
+                //     that would be a silent account takeover.
+                //   * If the guard passes, set user_id + auth_provider
+                //     + last_login_at from the current session.
+                //
+                // Only when the heal is inapplicable (email row is
+                // owned by a different provisioned user) do we return
+                // PRECONDITION_FAILED. The error message now names
+                // the actual failure mode rather than blaming the
+                // operator's session.
+                let err_str = e.to_string();
+                let is_email_conflict = err_str.contains("users_email")
+                    || (err_str.to_lowercase().contains("unique")
+                        && err_str.to_lowercase().contains("email"));
+                if is_email_conflict {
+                    let heal = sqlx::query(
+                        r#"UPDATE users
+                              SET user_id       = $1,
+                                  auth_provider = COALESCE(NULLIF(auth_provider, ''), $2, auth_provider),
+                                  display_name  = COALESCE(display_name, $3),
+                                  last_login_at = NOW(),
+                                  updated_at    = NOW()
+                            WHERE email = $4
+                              AND (user_id IS NULL
+                                   OR user_id = ''
+                                   OR auth_provider = 'legacy'
+                                   OR auth_provider IS NULL)"#,
+                    )
+                    .bind(&user.user_id)
+                    .bind(provider_str)
+                    .bind(&user.display_name)
+                    .bind(&user.email)
+                    .execute(pool)
+                    .await;
+                    match heal {
+                        Ok(res) if res.rows_affected() > 0 => {
+                            tracing::info!(
+                                user_id = %user.user_id,
+                                email = %user.email,
+                                "[ensure_user_row] healed stale users row via email match",
+                            );
+                            return Ok(());
+                        }
+                        Ok(_no_rows) => {
+                            // Email row exists but doesn't match the
+                            // legacy/orphan guard — it belongs to a
+                            // different, already-provisioned account.
+                            // Do NOT reparent (would be a takeover);
+                            // report the collision honestly.
+                            tracing::warn!(
+                                user_id = %user.user_id,
+                                email = %user.email,
+                                "[ensure_user_row] email already registered under a different provisioned user_id; refusing to reparent",
+                            );
+                            return Err((
+                                StatusCode::CONFLICT,
+                                format!(
+                                    "Your email ({}) is already registered under a \
+                                     different account. Contact support to merge \
+                                     or use a different email.",
+                                    user.email
+                                ),
+                            ));
+                        }
+                        Err(heal_err) => {
+                            tracing::warn!(
+                                user_id = %user.user_id,
+                                error = %heal_err,
+                                "[ensure_user_row] heal UPDATE failed",
+                            );
+                            // Fall through to the generic error below.
+                        }
+                    }
+                }
                 tracing::warn!(
                     user_id = %user.user_id,
                     error = %e,
-                    "[ensure_user_row] backfill failed",
+                    "[ensure_user_row] backfill failed (no heal path applied)",
                 );
                 return Err((
                     StatusCode::PRECONDITION_FAILED,
-                    "Your account isn't fully provisioned. Please sign out \
-                     and sign in again to complete setup."
+                    "Your account isn't fully provisioned and we couldn't \
+                     auto-heal it. Please contact support."
                         .into(),
                 ));
             }
