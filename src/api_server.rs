@@ -1676,22 +1676,17 @@ async fn main() {
             "/api/agents/:agent_id/eval/test-cases",
             post(handlers::eval::create_eval_test_case_handler),
         )
-        // v0.9.0 — Agent-owner secret management (marketplace API keys).
+        // v0.9.2 — Agent funding status (marketplace signal).
         //
-        // Owners attach an ANTHROPIC_API_KEY (or other provider key) to
-        // their agent so execution routes bill THEIR account, not the
-        // shared platform pool. Owner-gated: only the owner or an admin
-        // may read/write. Values are never returned by GET — only
-        // metadata (name, label, timestamps). See
-        // src/handlers/agent_secrets.rs for the full auth + scope story.
+        // Replaces v0.9.0's per-agent secrets endpoints, which turned out
+        // to overlap confusingly with ABW's profile page (the actual
+        // source of truth for owner-uploaded keys). This is read-only:
+        // owners upload keys on ABW; the console reads back whether an
+        // agent is executable. See src/handlers/agent_funding.rs for the
+        // full model + auth story.
         .route(
-            "/api/agents/:agent_id/secrets",
-            get(handlers::agent_secrets::list_agent_secrets_handler),
-        )
-        .route(
-            "/api/agents/:agent_id/secrets/:secret_name",
-            put(handlers::agent_secrets::upsert_agent_secret_handler)
-                .delete(handlers::agent_secrets::delete_agent_secret_handler),
+            "/api/agents/:agent_id/funding",
+            get(handlers::agent_funding::get_agent_funding_handler),
         )
         .route(
             "/api/agents/:agent_id/eval/test-cases/:test_case_id",
@@ -4122,28 +4117,39 @@ pub(crate) async fn resolve_agent(
         })
 }
 
-/// v0.9.0 — Agent-owner API key routing.
+/// v0.9.0 (revised in v0.9.2) — Agent-owner API key routing.
 ///
 /// Resolve the secrets a running agent should see, per the marketplace
-/// architecture: **agents carry their own funding, not users**.
+/// architecture: **agents carry their own funding, not users**. Keys
+/// are stored owner-side via ABW's profile page
+/// (`https://agent-bestiary.world/profile`), which writes to
+/// `user_secrets` with `scope='*'` (global across all the owner's
+/// agents). This function reads them back into the executor's
+/// ToolContext.
 ///
-///   - **System-tier agents** (Fermi, xaman_ek, other infra) are
-///     platform-owned and platform-funded. Return `None` so the
-///     executor falls through to `ANTHROPIC_API_KEY` in the process
-///     env — the platform's key.
-///   - **Third-party agents** (macro_forecaster, football_analyst,
-///     anything Mario publishes) belong to their `owner_id`. We look
-///     up the OWNER's secrets, scoped to this agent's name (or `*` for
-///     global-across-owner-agents) via `get_secrets_for_agent`. When
-///     the owner has stored a secret, the executor uses that key and
-///     Anthropic bills the owner — which is exactly the "agents are
-///     hired with economics folded in" model.
-///   - **Owner-owned agent with no secret set yet** returns `None` too.
-///     The executor's env-var fallback runs it on platform funds. This
-///     is deliberately soft in v0.9.0 so the release doesn't hard-break
-///     existing behaviour — v0.9.1 will tighten this into a clear
-///     `"agent owner has not funded this agent"` error once owners
-///     have started uploading keys via the new endpoints.
+/// Return value semantics (revised in v0.9.2 to enable executor
+/// tightening — the executor now distinguishes system from owner-owned
+/// via `Option<Some(_) vs None>`):
+///
+///   - **`None`** — the agent is either system-tier (platform-funded via
+///     env var) or unidentifiable as owner-owned (no encryptor, no
+///     owner_id). The executor treats `None` as "use the platform env
+///     fallback" — correct for Fermi, xaman_ek, and other infra agents.
+///   - **`Some(HashMap)`** — the agent is owner-owned. The map contains
+///     zero or more of the owner's globally-scoped secrets (v0.9.2 no
+///     longer collapses empty results into `None` — that's what unlocks
+///     the executor to hard-fail with an ABW-aware error instead of
+///     silently falling back to the platform key). When empty, the
+///     executor emits: *"Agent 'X' is not funded. Owner needs to set
+///     ANTHROPIC_API_KEY at https://agent-bestiary.world/profile"*.
+///
+/// Behavioural difference vs v0.9.0: an owner-owned agent whose owner
+/// hasn't uploaded a key USED to silently run on the platform env var
+/// (soft fallback). It now hard-fails with the ABW URL. Trade-off
+/// documented explicitly because it changes production behaviour: any
+/// deployment relying on the soft fallback to keep agents running
+/// needs to have owners set their keys on ABW's profile page before
+/// upgrading.
 ///
 /// Returns an owned `HashMap<name, plaintext>` because the executor
 /// path stores the resolved secrets on `ToolContext` (Arc-shared) and
@@ -4153,30 +4159,46 @@ pub(crate) async fn resolve_agent_owner_secrets(
     state: &AppState,
     agent: &Agent,
 ) -> Option<std::collections::HashMap<String, String>> {
-    // System-tier: platform funds via env var. Return None early so we
-    // don't touch the secrets table for these hot-path infra agents.
+    // System-tier: platform funds via env var. Return None so the
+    // executor uses its env fallback. Fermi, xaman_ek, other infra.
     if agent.tier.eq_ignore_ascii_case("system") {
         return None;
     }
+    // Encryptor / owner_id absence is a config / data issue, not a
+    // "this agent is owner-owned but unfunded" signal. Return None so
+    // the executor uses env — keeps the platform running even when
+    // the secrets primitive isn't configured (dev deploys).
     let encryptor = state.secret_encryptor.as_ref()?;
     let owner_id = agent.owner_id.as_ref()?;
+    // Owner-owned agent (we have both encryptor and owner_id): return
+    // Some(map) even when empty so the executor knows to hard-fail
+    // rather than silently use the platform key. This is the v0.9.2
+    // change from v0.9.0's soft-fallback behaviour.
     match fermi_auth::get_secrets_for_agent(&state.db, encryptor, owner_id, &agent.agent_name).await
     {
-        Ok(secrets) if !secrets.is_empty() => Some(secrets),
-        Ok(_empty) => None,
+        Ok(secrets) => Some(secrets),
         Err(e) => {
-            // Failure is soft — the executor still has the env fallback.
-            // Log so operators can spot misconfigured owners without
-            // the whole call failing opaquely.
+            // DB failure fetching secrets — log and return Some(empty)
+            // so the executor's error names the agent + points at
+            // ABW rather than falling back to platform key.
             tracing::warn!(
                 agent_name = %agent.agent_name,
                 owner_id = %owner_id,
                 error = %e,
-                "[secrets] failed to load owner secrets; executor will use env fallback",
+                "[secrets] failed to load owner secrets",
             );
-            None
+            Some(std::collections::HashMap::new())
         }
     }
+}
+
+/// Cached ABW profile URL used in executor error messages. Configurable
+/// via `ABW_PROFILE_URL` env var; defaults to the production URL. This
+/// keeps the string in one place so the error message can be updated
+/// deploy-side without a code change.
+pub(crate) fn abw_profile_url() -> String {
+    std::env::var("ABW_PROFILE_URL")
+        .unwrap_or_else(|_| "https://agent-bestiary.world/profile".to_string())
 }
 
 /// Build an AgentCard from a DB Agent record (for agents not in the filesystem registry)

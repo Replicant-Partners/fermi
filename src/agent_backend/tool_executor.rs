@@ -93,33 +93,50 @@ impl ToolAwareExecutor {
             .tool_registry
             .to_claude_tools_with_card(&context.agent_card);
 
-        // v0.9.0 — agent-owner API key routing.
+        // v0.9.2 — agent-owner API key routing (tightened).
         //
-        // Resolution order:
-        //   1. `tool_context.user_secrets["ANTHROPIC_API_KEY"]` —
-        //      populated by execute_agent_handler /
-        //      execute_agent_stream_handler from the AGENT OWNER's
-        //      stored secrets (or None for tier=System agents that
-        //      the platform funds). This is the marketplace path.
-        //   2. `std::env::var("ANTHROPIC_API_KEY")` — the platform's
-        //      shared key. Used by system agents and, transitionally,
-        //      by owner-owned agents whose owners haven't uploaded a
-        //      key yet. v0.9.1 will tighten this second case into a
-        //      hard "agent owner has not funded this agent" error.
-        //   3. Hard error.
-        let api_key = self
-            .tool_context
-            .user_secrets
-            .as_ref()
-            .and_then(|s| s.get("ANTHROPIC_API_KEY").cloned())
-            .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
-            .ok_or_else(|| {
+        // Resolution now branches on `tool_context.user_secrets`:
+        //
+        //   - **None** — the agent is system-tier (platform-funded, e.g.
+        //     Fermi, xaman_ek) or the secrets subsystem isn't configured.
+        //     Use the platform env `ANTHROPIC_API_KEY`.
+        //   - **Some(map)** — the agent is owner-owned. Key MUST come
+        //     from `map["ANTHROPIC_API_KEY"]`. No env fallback. If the
+        //     owner hasn't uploaded a key via ABW's profile page, we
+        //     hard-fail with a message that names the fix location.
+        //
+        // This is the behavioural change from v0.9.0 (soft-fallback) to
+        // v0.9.2 (hard-fail). Owner-owned agents whose owners haven't
+        // funded them used to silently run on the platform's shared
+        // Anthropic account; that was the outage class Mario hit.
+        // Now they refuse to run and tell the operator where to go.
+        let agent_id_for_error = context.agent_card.agent_id.as_str();
+        let api_key = match self.tool_context.user_secrets.as_ref() {
+            // System / unmanaged: platform env fallback.
+            None => std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
                 ExecutionError::ExecutionFailed(
-                    "No ANTHROPIC_API_KEY available: agent owner has not \
-                     funded this agent, and no platform fallback is set."
+                    "Platform ANTHROPIC_API_KEY not set. Contact the \
+                     platform administrator to configure it in the server \
+                     environment."
                         .to_string(),
                 )
-            })?;
+            })?,
+            // Owner-owned agent: read from owner's stored secrets. No
+            // env fallback — falling through to the platform key would
+            // recreate the shared-pool bottleneck the marketplace
+            // architecture is designed to avoid.
+            Some(secrets) => match secrets.get("ANTHROPIC_API_KEY").cloned() {
+                Some(key) => key,
+                None => {
+                    return Err(ExecutionError::ExecutionFailed(format!(
+                        "Agent '{}' is not funded. Its owner has not set \
+                         an ANTHROPIC_API_KEY on their ABW profile. Ask them \
+                         to configure it at https://agent-bestiary.world/profile.",
+                        agent_id_for_error
+                    )));
+                }
+            },
+        };
 
         let sp = context
             .agent_card
