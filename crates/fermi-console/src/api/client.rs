@@ -1325,9 +1325,32 @@ impl ApiClient {
     // ═══════════════════════════════════════════════════════════════
 
     /// Search Polymarket for events matching a query or URL slug.
+    /// Used by the composer's type-ahead — no explicit limit, server
+    /// picks a small default so the suggestion strip stays snappy.
     pub async fn pm_search(&self, query: &str) -> Result<JsonValue, ApiError> {
         self.post("/api/polymarket/search", &json!({ "query": query }))
             .await
+    }
+
+    /// Search Polymarket with an explicit result cap. Used by the
+    /// Dashboard's "Browse Polymarket" card where we want up to 10
+    /// results in a scrollable list.
+    ///
+    /// v0.9.3 bugfix: the Dashboard used to build its own inline
+    /// `reqwest::Client::new()` here, which shipped without our
+    /// `user_agent("fermi-console/0.1.0")` and without connect/pool
+    /// timeouts. Cloudflare's bot-detection heuristics on
+    /// `agent-bestiary.world` reject generic-reqwest user agents on
+    /// POST endpoints that echo external URLs in the body — which is
+    /// exactly what /api/polymarket/search does. Routing through the
+    /// pre-configured `self.http` (same client the composer typeahead
+    /// uses successfully) fixes the network error Mario saw.
+    pub async fn pm_search_full(&self, query: &str, limit: u32) -> Result<JsonValue, ApiError> {
+        self.post(
+            "/api/polymarket/search",
+            &json!({ "query": query, "limit": limit }),
+        )
+        .await
     }
 
     /// Link a Polymarket market to an existing Fermi forecast. Writes

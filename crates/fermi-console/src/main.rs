@@ -7290,67 +7290,75 @@ impl FermiConsole {
         let q = query.clone();
 
         cx.spawn(async move |this, cx| {
+            // v0.9.3: unified with the composer's typeahead code path.
+            // Previously this handler built its own reqwest::Client::new()
+            // inline — which shipped with the default generic user-agent
+            // and no connect timeouts. Cloudflare on agent-bestiary.world
+            // rejects that pattern on /api/polymarket/search (bot-detection
+            // heuristic on POST endpoints that echo external URLs in the
+            // body). Mario hit exactly that: 'Network error: error sending
+            // request'. Routing through ApiClient::pm_search_full uses the
+            // same pre-configured http client the typeahead already uses
+            // successfully — correct user-agent, correct timeouts, correct
+            // pool settings, and one less code path to maintain.
             let result: Result<Vec<serde_json::Value>, String> = async {
-                let handle = tokio::spawn(async move {
-                    let url = format!("{}/api/polymarket/search", api.base_url().await);
-                    let key = api.api_key().unwrap_or_default();
-                    let client = reqwest::Client::new();
-                    let resp = client
-                        .post(&url)
-                        .header("Authorization", format!("Bearer {}", key))
-                        .header("Content-Type", "application/json")
-                        .json(&serde_json::json!({"query": q, "limit": 10}))
-                        .timeout(std::time::Duration::from_secs(30))
-                        .send()
-                        .await
-                        .map_err(|e| format!("Network error: {}", e))?;
-
-                    let status = resp.status();
-                    if status == 401 {
-                        return Err("Not signed in — sign in first to search Polymarket".into());
+                let handle = tokio::spawn(async move { api.pm_search_full(&q, 10).await });
+                let inner = handle
+                    .await
+                    .map_err(|e| format!("Task error: {}", e))?;
+                match inner {
+                    Ok(data) => {
+                        let matches = data
+                            .get("matches")
+                            .and_then(|v| v.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                        Ok(matches)
                     }
-                    if status == 402 {
-                        return Err(
-                            "Insufficient credits — top up your ABW balance to search Polymarket"
-                                .into(),
-                        );
+                    Err(e) => {
+                        // Categorise the ApiError so operators see
+                        // actionable text (401 → sign-in, 402 → credits,
+                        // network → connection). Everything else falls
+                        // through with the Display formatting.
+                        let msg = match e {
+                            crate::api::client::ApiError::Http { status, ref message }
+                                if status == 401 =>
+                            {
+                                let _ = message;
+                                "Not signed in — sign in first to search Polymarket".to_string()
+                            }
+                            crate::api::client::ApiError::Http { status, ref message }
+                                if status == 402 =>
+                            {
+                                let _ = message;
+                                "Insufficient credits — top up your ABW balance to search Polymarket"
+                                    .to_string()
+                            }
+                            crate::api::client::ApiError::Http { status, ref message } => {
+                                format!(
+                                    "Server error {}: {}",
+                                    status,
+                                    message.chars().take(120).collect::<String>()
+                                )
+                            }
+                            crate::api::client::ApiError::Network(ref err) => {
+                                // Full debug format so operators see the
+                                // reqwest error kind (dns/connect/tls/
+                                // timeout/body) instead of just "error
+                                // sending request". Cloudflare-style WAF
+                                // rejections tend to show up as either
+                                // early-close or 502 upstream errors here.
+                                log::error!(
+                                    "[polymarket] pm_search network error: {:?}",
+                                    err
+                                );
+                                format!("Network error: {}", err)
+                            }
+                            other => format!("{}", other),
+                        };
+                        Err(msg)
                     }
-                    if !status.is_success() {
-                        let body = resp.text().await.unwrap_or_default();
-                        return Err(format!(
-                            "Server error {}: {}",
-                            status.as_u16(),
-                            body.chars().take(120).collect::<String>()
-                        ));
-                    }
-
-                    let bytes = resp
-                        .bytes()
-                        .await
-                        .map_err(|e| format!("Failed to read body: {}", e))?;
-                    let body = String::from_utf8_lossy(&bytes);
-                    log::debug!(
-                        "[polymarket] Raw response ({} bytes): {}",
-                        bytes.len(),
-                        body.chars().take(500).collect::<String>()
-                    );
-                    let data: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
-                        format!(
-                            "Bad response ({}): {}",
-                            e,
-                            body.chars().take(120).collect::<String>()
-                        )
-                    })?;
-                    let matches = data
-                        .get("matches")
-                        .and_then(|v| v.as_array())
-                        .cloned()
-                        .unwrap_or_default();
-                    Ok(matches)
-                })
-                .await
-                .map_err(|e| format!("Task error: {}", e))?;
-                handle
+                }
             }
             .await;
 
