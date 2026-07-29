@@ -1,0 +1,23 @@
+question "Will Aston Villa win the 2026-27 English Premier League (EPL) Championship?"
+
+driver strength_factor continuous {
+    distribution: triangular(0.5, 1, 1.5)
+    unit: "multiplier"
+    rationale: "How strong is the case for this outcome? 1.0 = neutral"
+}
+
+driver conditions continuous {
+    distribution: triangular(0.7, 1, 1.3)
+    unit: "multiplier"
+    rationale: "Are conditions favorable (>1) or unfavorable (<1)?"
+}
+
+driver disruption binary {
+    probability: 0.15p
+    impact_multiplier: 1.5
+    rationale: "Probability of a disruptive event that amplifies the outcome"
+}
+
+model: ((strength_factor * conditions) * (if disruption then 1.5 else 1))
+
+simulate 10000 iterations
