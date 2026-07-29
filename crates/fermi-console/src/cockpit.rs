@@ -1323,22 +1323,39 @@ impl CockpitState {
                 state.pm_suggestions_loading = false;
                 match result {
                     Ok(Ok(resp)) => {
+                        // v0.9.5 bugfix: server's `search_handler` returns
+                        // `{"matches": [...], "search_query": ..., ...}` —
+                        // NOT `{"results": [...]}`. This lookup used to read
+                        // `"results"`, silently found nothing, and left
+                        // `pm_suggestions` empty on every keystroke. The
+                        // render gate `!has_content` then collapsed the
+                        // strip, so the composer typeahead has never worked
+                        // since it shipped. The Dashboard path
+                        // (`FermiConsole::search_polymarket` in main.rs)
+                        // reads `.get("matches")` correctly, which is why
+                        // it produced results while this one didn't.
                         let arr = resp
-                            .get("results")
+                            .get("matches")
                             .and_then(|v| v.as_array())
-                            .or_else(|| resp.as_array())
                             .cloned()
                             .unwrap_or_default();
+                        // Info-level trace so a future silent-empty
+                        // regression is one `grep [pm-typeahead]` away.
+                        log::info!(
+                            "[pm-typeahead] query={:?} returned {} suggestions",
+                            trimmed,
+                            arr.len()
+                        );
                         state.pm_suggestions = arr.into_iter().take(5).collect();
                         state.pm_suggest_last_query = trimmed.clone();
                     }
                     Ok(Err(e)) => {
-                        log::warn!("[pm-typeahead] search failed: {}", e);
+                        log::warn!("[pm-typeahead] query={:?} search failed: {:?}", trimmed, e);
                         state.pm_suggestions.clear();
                         state.pm_suggest_last_query = trimmed.clone();
                     }
                     Err(e) => {
-                        log::warn!("[pm-typeahead] task join error: {}", e);
+                        log::warn!("[pm-typeahead] query={:?} task join error: {}", trimmed, e);
                     }
                 }
                 cx.notify();
@@ -16844,42 +16861,49 @@ fn render_pm_typeahead_strip(
         return div().into_any_element();
     }
 
-    // Header row: label + dismiss X
+    // v0.9.5 UX pass: composer typeahead now uses the same rich-row
+    // layout as the Dashboard's `render_pm_search_card` — price column
+    // + question/metadata + "Import →" pill — so operators see one
+    // consistent Polymarket widget across the console. Previously this
+    // was a flex-wrap chip pill with only a truncated title + %; too
+    // little info to pick between similar markets.
     let mut container = div()
         .flex()
         .flex_col()
-        .gap(px(4.0))
-        .px(px(8.0))
-        .py(px(6.0))
-        .rounded(px(6.0))
-        .bg(rgb(theme::BG))
+        .gap(px(8.0))
+        .px(px(12.0))
+        .py(px(10.0))
+        .rounded(px(8.0))
+        .bg(rgb(0x1A1A2E))
         .border_1()
         .border_color(rgb(theme::PURPLE))
+        // Header row: label + dismiss X (mirrors Dashboard header).
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(px(6.0))
+                .justify_between()
                 .child(
                     div()
-                        .text_size(px(9.0))
+                        .text_size(px(11.0))
                         .text_color(rgb(theme::PURPLE))
-                        .font_weight(FontWeight::SEMIBOLD)
+                        .font_weight(FontWeight::BOLD)
                         .child(if state.pm_suggestions_loading {
-                            "🔮 SEARCHING POLYMARKET…"
+                            "🔮 Searching Polymarket…"
                         } else {
-                            "🔮 POLYMARKET MATCHES"
+                            "🔮 Polymarket matches"
                         }),
                 )
-                .child(div().flex_grow())
                 .child(
                     div()
                         .id("pm-typeahead-dismiss")
-                        .px(px(4.0))
-                        .text_size(px(10.0))
-                        .text_color(rgb(theme::FG_DIM))
+                        .px(px(8.0))
+                        .py(px(2.0))
+                        .rounded(px(4.0))
+                        .text_size(px(12.0))
+                        .text_color(theme::fg_dim())
                         .cursor_pointer()
-                        .hover(|s| s.text_color(rgb(theme::RED)))
+                        .hover(|s| s.bg(theme::bg_hover()))
                         .on_click(cx.listener(|state, _, _, cx| {
                             state.dismiss_pm_typeahead(cx);
                         }))
@@ -16887,9 +16911,10 @@ fn render_pm_typeahead_strip(
                 ),
         );
 
-    // Chip rows — one clickable pill per match. Layout is flex-wrap so
-    // long titles break to a second line cleanly.
-    let mut chips = div().flex().flex_wrap().gap(px(6.0));
+    // Rich rows — one clickable row per match, mirroring the Dashboard.
+    // Vertical list (not flex-wrap) so each row can show price / question
+    // + event_title / vol / liq / confidence / end date consistently.
+    let mut rows = div().flex().flex_col().gap(px(6.0));
     for (i, result) in state.pm_suggestions.iter().enumerate() {
         let event_id = result
             .get("pm_event_id")
@@ -16905,9 +16930,11 @@ fn render_pm_typeahead_strip(
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        // "question" fallbacks: the PM search endpoint has shipped
-        // multiple shapes over time. Prefer the market title if we have
-        // one; otherwise use the event title.
+        // Skip malformed rows (no event id — can't link them).
+        if event_id.is_empty() {
+            continue;
+        }
+
         let question_text = result
             .get("question")
             .or_else(|| result.get("title"))
@@ -16915,37 +16942,60 @@ fn render_pm_typeahead_strip(
             .and_then(|v| v.as_str())
             .unwrap_or("(untitled market)")
             .to_string();
+        let event_title = result
+            .get("event_title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let price = result
             .get("market_price")
             .or_else(|| result.get("price"))
             .and_then(|v| v.as_f64());
+        let price_pct = result
+            .get("market_price_pct")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                price
+                    .map(|p| format!("{:.0}%", p * 100.0))
+                    .unwrap_or_else(|| "?".to_string())
+            });
         let volume = result
             .get("volume_24h")
             .or_else(|| result.get("volume"))
             .and_then(|v| v.as_f64());
+        let vol_fmt = result
+            .get("volume_24h_fmt")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let liquidity = result.get("liquidity").and_then(|v| v.as_f64());
+        let liq_fmt = result
+            .get("liquidity_fmt")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let confidence = result
-            .get("confidence")
+            .get("confidence_signal")
+            .or_else(|| result.get("confidence"))
             .and_then(|v| v.as_str())
             .map(str::to_string);
         let price_change_1w = result
             .get("price_change_1w")
             .or_else(|| result.get("change_1w"))
             .and_then(|v| v.as_f64());
+        let end_date = result
+            .get("end_date")
+            .and_then(|v| v.as_str())
+            .map(|s| s[..10.min(s.len())].to_string())
+            .unwrap_or_default();
 
-        // Skip malformed rows (no event id — can't link them).
-        if event_id.is_empty() {
-            continue;
-        }
-
-        let title_display = if question_text.chars().count() > 42 {
-            format!("{}…", question_text.chars().take(41).collect::<String>())
-        } else {
-            question_text.clone()
+        let conf_color = match confidence.as_deref() {
+            Some("Very High") => theme::GREEN,
+            Some("High") => theme::CYAN,
+            Some("Medium") => theme::GOLD,
+            _ => theme::FG_FAINT,
         };
-        let price_display = price
-            .map(|p| format!("{:.0}%", p * 100.0))
-            .unwrap_or_else(|| "?".to_string());
 
         // Clone captures for the click handler.
         let eid_click = event_id.clone();
@@ -16957,15 +17007,15 @@ fn render_pm_typeahead_strip(
         let conf_click = confidence.clone();
         let chg_click = price_change_1w;
 
-        chips = chips.child(
+        rows = rows.child(
             div()
                 .id(SharedString::from(format!("pm-sugg-{}", i)))
                 .flex()
                 .items_center()
-                .gap(px(6.0))
-                .px(px(8.0))
-                .py(px(3.0))
-                .rounded(px(4.0))
+                .gap(px(10.0))
+                .px(px(10.0))
+                .py(px(8.0))
+                .rounded(px(6.0))
                 .bg(rgb(theme::BG_ELEVATED))
                 .border_1()
                 .border_color(rgb(theme::FG_FAINT))
@@ -16984,22 +17034,102 @@ fn render_pm_typeahead_strip(
                         cx,
                     );
                 }))
+                // Price column (mirrors Dashboard row layout).
                 .child(
                     div()
-                        .text_size(px(11.0))
-                        .text_color(rgb(theme::FG))
-                        .child(title_display),
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .w(px(60.0))
+                        .child(
+                            div()
+                                .text_size(px(18.0))
+                                .text_color(rgb(theme::PURPLE))
+                                .font_weight(FontWeight::BOLD)
+                                .child(price_pct),
+                        )
+                        .when(price_change_1w.is_some(), |el| {
+                            let c = price_change_1w.unwrap();
+                            let (arrow, color) = if c > 0.005 {
+                                ("↑", theme::GREEN)
+                            } else if c < -0.005 {
+                                ("↓", theme::RED)
+                            } else {
+                                ("→", theme::FG_DIM)
+                            };
+                            el.child(
+                                div()
+                                    .text_size(px(8.0))
+                                    .text_color(rgb(color))
+                                    .child(format!("{}{:.1}pp", arrow, c * 100.0)),
+                            )
+                        }),
                 )
+                // Question + metadata.
+                .child(
+                    div()
+                        .flex_grow()
+                        .min_w(px(0.0))
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
+                        .child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(theme::fg())
+                                .child(question_text.clone()),
+                        )
+                        .when(
+                            !event_title.is_empty() && event_title != question_text,
+                            |el| {
+                                el.child(
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(theme::fg_faint())
+                                        .child(event_title.clone()),
+                                )
+                            },
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .gap(px(8.0))
+                                .text_size(px(9.0))
+                                .text_color(theme::fg_faint())
+                                .when(!vol_fmt.is_empty(), |el| {
+                                    el.child(format!("{} vol", vol_fmt))
+                                })
+                                .when(!liq_fmt.is_empty(), |el| {
+                                    el.child(format!("{} liq", liq_fmt))
+                                })
+                                .when(confidence.is_some(), |el| {
+                                    el.child(
+                                        div()
+                                            .text_color(rgb(conf_color))
+                                            .child(confidence.clone().unwrap_or_default()),
+                                    )
+                                })
+                                .when(!end_date.is_empty(), |el| {
+                                    el.child(format!("ends {}", end_date))
+                                }),
+                        ),
+                )
+                // Import pill (mirrors Dashboard).
                 .child(
                     div()
                         .text_size(px(10.0))
                         .text_color(rgb(theme::PURPLE))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(price_display),
+                        .px(px(10.0))
+                        .py(px(4.0))
+                        .rounded(px(4.0))
+                        .bg(rgb(0x1A1A2E))
+                        .border_1()
+                        .border_color(rgb(theme::PURPLE))
+                        .child("Import →"),
                 ),
         );
     }
-    container = container.child(chips);
+    container = container.child(rows);
 
     // "No matches" state when the search settled empty (last_query
     // is set, suggestions empty, not loading). Keeps the operator
