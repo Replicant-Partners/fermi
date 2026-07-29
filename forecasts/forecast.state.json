@@ -1,15 +1,15 @@
 {
   "forecast_id": null,
   "current_version": 1,
-  "predicted_probability": 0.115,
+  "predicted_probability": 0.0165,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-28 00:42",
-      "probability": 0.115,
-      "change_summary": "Initial: 11.5%, 0 drivers, 0 evidence"
+      "timestamp": "2026-07-29 19:29",
+      "probability": 0.0165,
+      "change_summary": "Initial: 1.7%, 0 drivers, 0 evidence"
     }
   ],
   "sim_results": null,
@@ -19,18 +19,18 @@
   "driver_confidence": {},
   "polymarket": {
     "event_id": "659518",
-    "market_id": "2771334",
-    "question": "Will Liverpool win the 2026-27 English Premier League (EPL) Championship?",
-    "market_price": 0.115,
-    "volume_24h": 183.733332,
-    "liquidity": 377003.2266,
+    "market_id": "2771325",
+    "question": "Will Aston Villa win the 2026-27 English Premier League (EPL) Championship?",
+    "market_price": 0.0165,
+    "volume_24h": 1100.29,
+    "liquidity": 259483.75845,
     "confidence": "Low",
     "price_change_1w": null,
     "url": "https://polymarket.com/event/659518",
     "price_history": [
       {
-        "t": 1785199365,
-        "p": 0.115
+        "t": 1785353379,
+        "p": 0.0165
       }
     ]
   },
