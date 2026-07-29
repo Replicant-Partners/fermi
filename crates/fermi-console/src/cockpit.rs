@@ -1256,21 +1256,12 @@ impl CockpitState {
         // polymarket.com/event/... URL, strip it down to just the
         // slug — the server's search handler resolves slugs directly
         // to a single result, so paste-to-import is essentially
-        // instantaneous.
-        let trimmed = if let Some(rest) = raw
-            .strip_prefix("https://polymarket.com/event/")
-            .or_else(|| raw.strip_prefix("http://polymarket.com/event/"))
-            .or_else(|| raw.strip_prefix("polymarket.com/event/"))
-        {
-            // Take up to the first '/' or '?' (drop market-slug or
-            // query params).
-            rest.split(|c: char| c == '/' || c == '?')
-                .next()
-                .unwrap_or(rest)
-                .to_string()
-        } else {
-            raw.to_string()
-        };
+        // instantaneous. v0.9.4: use the shared extract helper that
+        // handles locale-prefixed URLs (`/es/`, `/fr/`, `/de/`, etc.).
+        // Previously this only matched the bare `polymarket.com/event/`
+        // shape, so a Spanish URL would fall through to the raw-query
+        // path with the whole 70+ char URL as the fuzzy query.
+        let trimmed = crate::extract_polymarket_event_slug(raw).unwrap_or_else(|| raw.to_string());
         // Skip micro-queries — 3 chars is the minimum where PM's fuzzy
         // search returns anything useful. Also skip if the operator
         // dismissed the strip earlier in this session.

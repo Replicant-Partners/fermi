@@ -5673,6 +5673,18 @@ impl FermiConsole {
             };
 
         // Polymarket sync chip: shows count of PM-linked active
+        //
+        // NOTE (layout): the root of this panel MUST be a scroll
+        // container. The parent in `render` clips with
+        // `overflow_hidden`, and if we render a plain flex-col here,
+        // the default `flex-shrink: 1` on children squeezes lower
+        // rows (Teams strip, Activity feed) toward zero height when
+        // the window is short — the Teams strip visibly disappears
+        // between the Marketplace card and Recent Activity when the
+        // window isn't maximized. Every other main panel (Portfolio,
+        // Agent Fleet, Leaderboard, Teams) uses `.id(...)` +
+        // `.overflow_y_scroll()` for exactly this reason; the
+        // Dashboard was the odd one out.
         // forecasts and a click-to-refresh affordance. Duplicated from
         // the Portfolio panel so the operator can trigger a resolution
         // check from the Dashboard as well — both are places where
@@ -5712,9 +5724,11 @@ impl FermiConsole {
         };
 
         div()
+            .id("dashboard-scroll")
             .flex()
             .flex_col()
             .size_full()
+            .overflow_y_scroll()
             .p(px(24.0))
             .gap(px(20.0))
             .child(
@@ -5723,6 +5737,7 @@ impl FermiConsole {
                     .flex()
                     .items_center()
                     .justify_between()
+                    .flex_shrink_0()
                     .child(
                         div()
                             .text_size(px(22.0))
@@ -5784,20 +5799,21 @@ impl FermiConsole {
             // hunt through menus / other panels. Sits above the stats
             // cards where the operator's eye lands first.
             .when(self.connected, |el| {
-                el.child(self.render_dashboard_hero(cx))
+                el.child(div().flex_shrink_0().child(self.render_dashboard_hero(cx)))
             })
             // In-place Polymarket search. When the hero "From
             // Polymarket" / "Paste PM URL" buttons toggle
             // `pm_show_search`, this renders right below the hero —
             // no navigation away from the Dashboard.
             .when(self.connected && self.pm_show_search, |el| {
-                el.child(self.render_pm_search_card(cx))
+                el.child(div().flex_shrink_0().child(self.render_pm_search_card(cx)))
             })
             .child(
                 // Stats cards row
                 div()
                     .flex()
                     .gap(px(16.0))
+                    .flex_shrink_0()
                     .child(self.render_stat_card(
                         "Brier Score",
                         &if brier > 0.0 {
@@ -5855,6 +5871,7 @@ impl FermiConsole {
                         .flex()
                         .flex_row()
                         .gap(px(16.0))
+                        .flex_shrink_0()
                         .child(
                             div()
                                 .flex_grow()
@@ -5870,9 +5887,17 @@ impl FermiConsole {
                 )
             })
             .when(self.connected, |el| {
-                el.child(self.render_dashboard_teams_strip(cx))
+                el.child(
+                    div()
+                        .flex_shrink_0()
+                        .child(self.render_dashboard_teams_strip(cx)),
+                )
             })
-            .child(self.render_dashboard_activity_feed(cx))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .child(self.render_dashboard_activity_feed(cx)),
+            )
     }
 
     // ── Dashboard: Research card ───────────────────────────────────────────
@@ -7266,20 +7291,13 @@ impl FermiConsole {
         }
         // If the user pasted a Polymarket URL, extract the event slug.
         // URL format: https://polymarket.com/event/{slug}[/{market-slug}][?...]
-        let query = if let Some(rest) = raw
-            .trim()
-            .strip_prefix("https://polymarket.com/event/")
-            .or_else(|| raw.trim().strip_prefix("http://polymarket.com/event/"))
-            .or_else(|| raw.trim().strip_prefix("polymarket.com/event/"))
-        {
-            // Take only the first path segment (drop any sub-market path or query string)
-            rest.split(['/', '?', '#'])
-                .next()
-                .unwrap_or(rest)
-                .to_string()
-        } else {
-            raw.clone()
-        };
+        // Also handles locale-prefixed URLs: /es/event/..., /fr/event/...,
+        // /de/event/..., /pt/event/..., /ja/event/... etc. (v0.9.4 fix
+        // — Mario pasted a /es/ URL that fell through to the raw-query
+        // path because none of the strip_prefix branches matched, and
+        // the server got the full 74-char URL as a fuzzy query instead
+        // of the slug it needed).
+        let query = extract_polymarket_event_slug(raw.trim()).unwrap_or_else(|| raw.clone());
 
         self.pm_search_loading = true;
         self.pm_search_results.clear();
@@ -7290,17 +7308,15 @@ impl FermiConsole {
         let q = query.clone();
 
         cx.spawn(async move |this, cx| {
-            // v0.9.3: unified with the composer's typeahead code path.
-            // Previously this handler built its own reqwest::Client::new()
-            // inline — which shipped with the default generic user-agent
-            // and no connect timeouts. Cloudflare on agent-bestiary.world
-            // rejects that pattern on /api/polymarket/search (bot-detection
-            // heuristic on POST endpoints that echo external URLs in the
-            // body). Mario hit exactly that: 'Network error: error sending
-            // request'. Routing through ApiClient::pm_search_full uses the
-            // same pre-configured http client the typeahead already uses
-            // successfully — correct user-agent, correct timeouts, correct
-            // pool settings, and one less code path to maintain.
+            // v0.9.3 routed this through ApiClient::pm_search_full so
+            // both entry points share the pre-configured self.http
+            // client (correct user-agent, connect + pool timeouts).
+            // v0.9.4 keeps that routing — Ivan confirmed his Dashboard
+            // still works post-v0.9.3, so the change is neutral or
+            // beneficial on his side; the composer typeahead's
+            // separate quirks ("never worked as it ought") turn out
+            // not to be about the HTTP client, since v0.9.3 works
+            // with it. Diagnostic left open below.
             let result: Result<Vec<serde_json::Value>, String> = async {
                 let handle = tokio::spawn(async move { api.pm_search_full(&q, 10).await });
                 let inner = handle
@@ -7316,10 +7332,6 @@ impl FermiConsole {
                         Ok(matches)
                     }
                     Err(e) => {
-                        // Categorise the ApiError so operators see
-                        // actionable text (401 → sign-in, 402 → credits,
-                        // network → connection). Everything else falls
-                        // through with the Display formatting.
                         let msg = match e {
                             crate::api::client::ApiError::Http { status, ref message }
                                 if status == 401 =>
@@ -7342,12 +7354,6 @@ impl FermiConsole {
                                 )
                             }
                             crate::api::client::ApiError::Network(ref err) => {
-                                // Full debug format so operators see the
-                                // reqwest error kind (dns/connect/tls/
-                                // timeout/body) instead of just "error
-                                // sending request". Cloudflare-style WAF
-                                // rejections tend to show up as either
-                                // early-close or 502 upstream errors here.
                                 log::error!(
                                     "[polymarket] pm_search network error: {:?}",
                                     err
@@ -16022,6 +16028,158 @@ fn truncate(s: &str, max_chars: usize) -> String {
         "…".to_string()
     } else {
         format!("{}…", s.chars().take(max_chars - 1).collect::<String>())
+    }
+}
+
+/// Extract the event slug from a Polymarket URL, handling optional
+/// locale prefixes (`/es/`, `/fr/`, `/de/`, `/pt/`, `/ja/`, `/it/`,
+/// `/tr/`, `/vi/`, `/zh/`, `/th/`).
+///
+/// Returns `Some(slug)` when the input looks like a Polymarket event
+/// URL; returns `None` when the input is a raw search query the
+/// operator wants sent through unchanged.
+///
+/// v0.9.4 bugfix: Mario pasted
+///   https://polymarket.com/es/event/laliga-2027-champion-20260701200737375
+/// which the previous strip_prefix chain missed because it only knew
+/// about `polymarket.com/event/`. The full URL was then sent as the
+/// search query — inflating request bodies and producing junk
+/// server-side matches. Now the extractor covers Polymarket's known
+/// locale codes.
+///
+/// Both the composer typeahead (`cockpit.rs::pm_typeahead_search`) and
+/// the Dashboard search (`FermiConsole::search_polymarket`) call this
+/// helper so the URL-handling stays consistent across both paths.
+pub(crate) fn extract_polymarket_event_slug(raw: &str) -> Option<String> {
+    // Polymarket's supported locale codes as of 2026-07 — keep in
+    // sync with Polymarket's public site when they add languages.
+    const LOCALES: &[&str] = &[
+        "es", "fr", "de", "pt", "ja", "it", "tr", "vi", "zh", "th", "ko", "ru",
+    ];
+
+    let trimmed = raw.trim();
+
+    // Strip the URL scheme if present. We accept https / http / bare
+    // polymarket.com — all three shapes we've seen operators paste.
+    let after_scheme = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))
+        .unwrap_or(trimmed);
+    let after_host = after_scheme.strip_prefix("polymarket.com/")?;
+
+    // Optionally consume a `<locale>/` segment. If present, advance
+    // past it; if not, we're already at the `/event/` segment.
+    let after_locale = LOCALES
+        .iter()
+        .find_map(|loc| after_host.strip_prefix(&format!("{}/", loc)))
+        .unwrap_or(after_host);
+
+    let after_event = after_locale.strip_prefix("event/")?;
+    // Take up to the first `/`, `?`, or `#` — the sub-market path,
+    // query string, and fragment are all irrelevant to the slug.
+    let slug: String = after_event
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(after_event)
+        .to_string();
+    if slug.is_empty() {
+        None
+    } else {
+        Some(slug)
+    }
+}
+
+#[cfg(test)]
+mod slug_tests {
+    use super::extract_polymarket_event_slug;
+
+    #[test]
+    fn extracts_from_https_no_locale() {
+        assert_eq!(
+            extract_polymarket_event_slug("https://polymarket.com/event/foo-bar").as_deref(),
+            Some("foo-bar")
+        );
+    }
+
+    #[test]
+    fn extracts_from_https_with_spanish_locale() {
+        // The exact URL Mario pasted (paraphrased).
+        assert_eq!(
+            extract_polymarket_event_slug(
+                "https://polymarket.com/es/event/laliga-2027-champion-20260701200737375"
+            )
+            .as_deref(),
+            Some("laliga-2027-champion-20260701200737375")
+        );
+    }
+
+    #[test]
+    fn extracts_across_all_supported_locales() {
+        for loc in [
+            "es", "fr", "de", "pt", "ja", "it", "tr", "vi", "zh", "th", "ko", "ru",
+        ] {
+            let url = format!("https://polymarket.com/{}/event/some-slug", loc);
+            assert_eq!(
+                extract_polymarket_event_slug(&url).as_deref(),
+                Some("some-slug"),
+                "locale {} did not extract",
+                loc
+            );
+        }
+    }
+
+    #[test]
+    fn strips_sub_market_path_and_query() {
+        assert_eq!(
+            extract_polymarket_event_slug(
+                "https://polymarket.com/event/some-slug/sub-market?tid=abc#frag"
+            )
+            .as_deref(),
+            Some("some-slug")
+        );
+    }
+
+    #[test]
+    fn strips_sub_market_path_with_locale() {
+        assert_eq!(
+            extract_polymarket_event_slug(
+                "https://polymarket.com/fr/event/some-slug/sub-market?tid=abc"
+            )
+            .as_deref(),
+            Some("some-slug")
+        );
+    }
+
+    #[test]
+    fn accepts_bare_host_no_scheme() {
+        assert_eq!(
+            extract_polymarket_event_slug("polymarket.com/event/foo").as_deref(),
+            Some("foo")
+        );
+    }
+
+    #[test]
+    fn returns_none_for_plain_query() {
+        // A search phrase, not a URL — caller uses this as the raw
+        // query.
+        assert!(extract_polymarket_event_slug("epl 2027 champion").is_none());
+    }
+
+    #[test]
+    fn returns_none_for_unrelated_url() {
+        assert!(extract_polymarket_event_slug("https://example.com/event/foo").is_none());
+    }
+
+    #[test]
+    fn returns_none_for_locale_without_event_segment() {
+        // https://polymarket.com/es/markets/... — not an event URL.
+        assert!(extract_polymarket_event_slug("https://polymarket.com/es/markets/foo").is_none());
+    }
+
+    #[test]
+    fn returns_none_for_empty_slug() {
+        // Trailing slash with nothing after it.
+        assert!(extract_polymarket_event_slug("https://polymarket.com/event/").is_none());
     }
 }
 
