@@ -1,4 +1,12 @@
-question "Will Manchester City win the 2026-27 English Premier League (EPL) Championship?"
+question "Will Manchester City win the 2026-27 English Premier League (EPL) Championship?" {
+    base_rate {
+        reference_class: "Polymarket crowd-implied probability (Will Manchester City win the 2026-27 English Premier League (EPL) Championship?)"
+        historical_frequency: 0.295
+        source: "Polymarket"
+        reasoning: "Crowd price backed by $1K volume, $1.1M liquidity. Low confidence."
+        generated_by: polymarket
+    }
+}
 
 driver strength_factor continuous {
     distribution: triangular(0.5, 1, 1.5)

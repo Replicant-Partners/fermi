@@ -1,19 +1,25 @@
 {
-  "forecast_id": null,
+  "forecast_id": "f9f31aa6-590c-4568-b1f5-ac4b44996551",
   "current_version": 1,
-  "predicted_probability": 0.295,
+  "predicted_probability": 0.29499998688697815,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-28 00:49",
-      "probability": 0.295,
-      "change_summary": "Initial: 29.5%, 3 drivers, 0 evidence"
+      "timestamp": "2026-07-29 02:03",
+      "probability": 0.29499998688697815,
+      "change_summary": "Initial: 29.5% base=30%, 3 drivers, 0 evidence"
     }
   ],
   "sim_results": null,
-  "base_rate": null,
+  "base_rate": {
+    "reference_class": "Polymarket crowd-implied probability (Will Manchester City win the 2026-27 English Premier League (EPL) Championship?)",
+    "historical_frequency": 0.295,
+    "sample_size": null,
+    "source": "Polymarket",
+    "reasoning": "Crowd price backed by $1K volume, $1.1M liquidity. Low confidence."
+  },
   "evidence": [],
   "agents": [],
   "driver_confidence": {},
@@ -22,14 +28,14 @@
     "market_id": "2771335",
     "question": "Will Manchester City win the 2026-27 English Premier League (EPL) Championship?",
     "market_price": 0.295,
-    "volume_24h": 1131.284145,
-    "liquidity": 1105503.7758,
-    "confidence": "Low",
+    "volume_24h": 11916.53327,
+    "liquidity": 1108384.5942,
+    "confidence": "Medium",
     "price_change_1w": null,
-    "url": "https://polymarket.com/event/659518",
+    "url": "https://polymarket.com/event/epl-2027-champion-20260701200428749",
     "price_history": [
       {
-        "t": 1785199737,
+        "t": 1785290632,
         "p": 0.295
       }
     ]
