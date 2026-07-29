@@ -93,9 +93,33 @@ impl ToolAwareExecutor {
             .tool_registry
             .to_claude_tools_with_card(&context.agent_card);
 
-        let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
-            ExecutionError::ExecutionFailed("ANTHROPIC_API_KEY not set".to_string())
-        })?;
+        // v0.9.0 — agent-owner API key routing.
+        //
+        // Resolution order:
+        //   1. `tool_context.user_secrets["ANTHROPIC_API_KEY"]` —
+        //      populated by execute_agent_handler /
+        //      execute_agent_stream_handler from the AGENT OWNER's
+        //      stored secrets (or None for tier=System agents that
+        //      the platform funds). This is the marketplace path.
+        //   2. `std::env::var("ANTHROPIC_API_KEY")` — the platform's
+        //      shared key. Used by system agents and, transitionally,
+        //      by owner-owned agents whose owners haven't uploaded a
+        //      key yet. v0.9.1 will tighten this second case into a
+        //      hard "agent owner has not funded this agent" error.
+        //   3. Hard error.
+        let api_key = self
+            .tool_context
+            .user_secrets
+            .as_ref()
+            .and_then(|s| s.get("ANTHROPIC_API_KEY").cloned())
+            .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
+            .ok_or_else(|| {
+                ExecutionError::ExecutionFailed(
+                    "No ANTHROPIC_API_KEY available: agent owner has not \
+                     funded this agent, and no platform fallback is set."
+                        .to_string(),
+                )
+            })?;
 
         let sp = context
             .agent_card

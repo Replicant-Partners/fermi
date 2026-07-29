@@ -20,7 +20,8 @@ use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
 
 use crate::{
-    agent_output_to_episode, create_notification, resolve_agent, resolve_agent_card, AppState,
+    agent_output_to_episode, create_notification, resolve_agent, resolve_agent_card,
+    resolve_agent_owner_secrets, AppState,
 };
 
 // ─── Agent execution ───────────────────────────────────────────────
@@ -115,7 +116,12 @@ pub async fn execute_agent_handler(
         db: Some(state.db.clone()),
         gas_fees: Some(state.gas_fees.clone()),
         user_id: Some(principal.user_id()),
-        user_secrets: None,
+        // v0.9.0 — Agent-owner API key routing.
+        // Populate with the AGENT OWNER's secrets (not the caller's).
+        // System agents get None here → executor falls back to env var
+        // (platform funds). See resolve_agent_owner_secrets for the
+        // full rationale.
+        user_secrets: resolve_agent_owner_secrets(&state, &db_agent).await,
         eval_trigger: Some(Arc::new(crate::handlers::eval::EvalTriggerImpl {
             state: state.clone(),
         })),

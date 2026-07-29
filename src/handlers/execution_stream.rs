@@ -34,7 +34,8 @@ use fermi::gas::{charge_gas, check_low_balance};
 use fermi_auth::{credit_charge, get_or_create_wallet, AuthPrincipal};
 
 use crate::{
-    agent_output_to_episode, create_notification, resolve_agent, resolve_agent_card, AppState,
+    agent_output_to_episode, create_notification, resolve_agent, resolve_agent_card,
+    resolve_agent_owner_secrets, AppState,
 };
 
 #[derive(Debug, Deserialize)]
@@ -88,7 +89,10 @@ pub async fn execute_agent_stream_handler(
         card,
     )
     .await;
-    tracing::info!(elapsed_ms = t_kg.elapsed().as_millis() as u64, "kg_context_enrich");
+    tracing::info!(
+        elapsed_ms = t_kg.elapsed().as_millis() as u64,
+        "kg_context_enrich"
+    );
 
     let model = card.capabilities.model.clone();
 
@@ -142,7 +146,11 @@ pub async fn execute_agent_stream_handler(
             db: Some(state.db.clone()),
             gas_fees: Some(state.gas_fees.clone()),
             user_id: Some(caller_id.clone()),
-            user_secrets: None,
+            // v0.9.0 — Agent-owner API key routing.
+            // Same resolution as the non-streaming path in execution.rs:
+            // agent-owned key for third-party agents, env fallback
+            // (platform key) for tier=System.
+            user_secrets: resolve_agent_owner_secrets(&state, &db_agent).await,
             eval_trigger: Some(Arc::new(crate::handlers::eval::EvalTriggerImpl {
                 state: state.clone(),
             })),

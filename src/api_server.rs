@@ -1676,6 +1676,23 @@ async fn main() {
             "/api/agents/:agent_id/eval/test-cases",
             post(handlers::eval::create_eval_test_case_handler),
         )
+        // v0.9.0 — Agent-owner secret management (marketplace API keys).
+        //
+        // Owners attach an ANTHROPIC_API_KEY (or other provider key) to
+        // their agent so execution routes bill THEIR account, not the
+        // shared platform pool. Owner-gated: only the owner or an admin
+        // may read/write. Values are never returned by GET — only
+        // metadata (name, label, timestamps). See
+        // src/handlers/agent_secrets.rs for the full auth + scope story.
+        .route(
+            "/api/agents/:agent_id/secrets",
+            get(handlers::agent_secrets::list_agent_secrets_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/secrets/:secret_name",
+            put(handlers::agent_secrets::upsert_agent_secret_handler)
+                .delete(handlers::agent_secrets::delete_agent_secret_handler),
+        )
         .route(
             "/api/agents/:agent_id/eval/test-cases/:test_case_id",
             put(handlers::eval::update_eval_test_case_handler),
@@ -4103,6 +4120,63 @@ pub(crate) async fn resolve_agent(
                 format!("Agent '{}' not found: {}", agent_id, e),
             )
         })
+}
+
+/// v0.9.0 — Agent-owner API key routing.
+///
+/// Resolve the secrets a running agent should see, per the marketplace
+/// architecture: **agents carry their own funding, not users**.
+///
+///   - **System-tier agents** (Fermi, xaman_ek, other infra) are
+///     platform-owned and platform-funded. Return `None` so the
+///     executor falls through to `ANTHROPIC_API_KEY` in the process
+///     env — the platform's key.
+///   - **Third-party agents** (macro_forecaster, football_analyst,
+///     anything Mario publishes) belong to their `owner_id`. We look
+///     up the OWNER's secrets, scoped to this agent's name (or `*` for
+///     global-across-owner-agents) via `get_secrets_for_agent`. When
+///     the owner has stored a secret, the executor uses that key and
+///     Anthropic bills the owner — which is exactly the "agents are
+///     hired with economics folded in" model.
+///   - **Owner-owned agent with no secret set yet** returns `None` too.
+///     The executor's env-var fallback runs it on platform funds. This
+///     is deliberately soft in v0.9.0 so the release doesn't hard-break
+///     existing behaviour — v0.9.1 will tighten this into a clear
+///     `"agent owner has not funded this agent"` error once owners
+///     have started uploading keys via the new endpoints.
+///
+/// Returns an owned `HashMap<name, plaintext>` because the executor
+/// path stores the resolved secrets on `ToolContext` (Arc-shared) and
+/// we don't want to leak `state.db` / `state.secret_encryptor` into
+/// executor code.
+pub(crate) async fn resolve_agent_owner_secrets(
+    state: &AppState,
+    agent: &Agent,
+) -> Option<std::collections::HashMap<String, String>> {
+    // System-tier: platform funds via env var. Return None early so we
+    // don't touch the secrets table for these hot-path infra agents.
+    if agent.tier.eq_ignore_ascii_case("system") {
+        return None;
+    }
+    let encryptor = state.secret_encryptor.as_ref()?;
+    let owner_id = agent.owner_id.as_ref()?;
+    match fermi_auth::get_secrets_for_agent(&state.db, encryptor, owner_id, &agent.agent_name).await
+    {
+        Ok(secrets) if !secrets.is_empty() => Some(secrets),
+        Ok(_empty) => None,
+        Err(e) => {
+            // Failure is soft — the executor still has the env fallback.
+            // Log so operators can spot misconfigured owners without
+            // the whole call failing opaquely.
+            tracing::warn!(
+                agent_name = %agent.agent_name,
+                owner_id = %owner_id,
+                error = %e,
+                "[secrets] failed to load owner secrets; executor will use env fallback",
+            );
+            None
+        }
+    }
 }
 
 /// Build an AgentCard from a DB Agent record (for agents not in the filesystem registry)
