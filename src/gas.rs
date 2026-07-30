@@ -18,6 +18,16 @@ pub struct GasFees {
     pub agent_add: i32,
     pub execution_min: i32,
     pub execution_gas_pct: f64,
+    /// Fraction of the execution fee that flows to a community/curated
+    /// agent's owner on hire. Applied only when the agent has an
+    /// `owner_id` AND the caller is not the owner AND the tier is not
+    /// `system` (platform-funded agents get no royalty). Expressed as
+    /// a fraction (e.g. 0.85 = 85% to owner, 15% to platform). Applies
+    /// to the `base` execution fee only — the gas surcharge stays
+    /// with the platform since it covers infrastructure cost. See
+    /// `charge_execution_with_royalty` for the atomic charge-and-
+    /// route flow. v0.10.1.
+    pub execution_owner_royalty_pct: f64,
     pub consolidation_cycle: i32,
     pub file_write: i32,
     pub avatar_generate: i32,
@@ -69,6 +79,10 @@ impl GasFees {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.10),
+            execution_owner_royalty_pct: std::env::var("GAS_EXECUTION_OWNER_ROYALTY_PCT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.85),
             consolidation_cycle: env_or("GAS_CONSOLIDATION", 3),
             file_write: env_or("GAS_FILE_WRITE", 1),
             avatar_generate: env_or("GAS_AVATAR_GENERATE", 3),
@@ -133,6 +147,7 @@ impl Default for GasFees {
             agent_add: 2,
             execution_min: 1,
             execution_gas_pct: 0.10,
+            execution_owner_royalty_pct: 0.85,
             consolidation_cycle: 3,
             file_write: 1,
             avatar_generate: 3,
@@ -198,6 +213,129 @@ pub async fn charge_gas(
                 format!("Gas fee failed: {}", e),
             )
         })
+}
+
+/// Charge the caller for an agent execution and route the owner
+/// royalty in one call.
+///
+/// v0.10.1 credit-flow slice — completes the marketplace loop started
+/// in v0.9.0–v0.9.2 (agent-owner API key routing + marketplace
+/// substrate cleanup). Now that owner-owned agents run on the owner's
+/// keys, a portion of the caller's execution fee flows back to the
+/// owner as royalty. System-tier agents remain platform-funded (no
+/// royalty). Self-hires (caller == owner) skip the wash-transaction.
+///
+/// Flow:
+///   1. Debit `execution_fee` from `caller_wallet_id` (same total the
+///      caller has always paid — no price increase to this change).
+///   2. If eligible, deposit `execution_fee * royalty_pct` to the
+///      owner's user wallet (`user`-typed) with `tx_type="agent_royalty_in"`.
+///   3. Platform keeps the remainder (execution_fee minus the royalty).
+///
+/// **Not atomic.** Same pattern as `charge_and_distribute`: if the
+/// deposit fails after the charge succeeded, we log and move on — the
+/// platform absorbs the missed royalty for this call. Ledger
+/// reconciliation can catch persistent failures. In practice the
+/// deposit is a straightforward `credit_deposit_typed` and won't fail
+/// unless the DB itself is unhealthy.
+///
+/// Returns `(execution_fee_charged, royalty_paid_to_owner)`. If the
+/// caller lacks credits, the debit's PAYMENT_REQUIRED status
+/// propagates via the same shape `charge_gas` returns.
+///
+/// `royalty_pct` is typically `state.gas_fees.execution_owner_royalty_pct`.
+#[allow(clippy::too_many_arguments)]
+pub async fn charge_execution_with_royalty(
+    pool: &PgPool,
+    caller_wallet_id: Uuid,
+    caller_user_id: &str,
+    execution_fee: i32,
+    agent_owner_id: Option<&str>,
+    agent_tier: &str,
+    agent_id_str: &str,
+    tokens: i32,
+    episode_id: Option<&str>,
+    royalty_pct: f64,
+) -> std::result::Result<(i32, i32), (axum::http::StatusCode, String)> {
+    // 1. Debit the caller. Same tx_type/description shape as before
+    // (`execution_fee`) so existing ledger queries keep working.
+    charge_gas(
+        pool,
+        caller_wallet_id,
+        execution_fee,
+        "execution_fee",
+        &format!("Execute {} ({}tk)", agent_id_str, tokens),
+        episode_id,
+    )
+    .await?;
+
+    // 2. Decide whether a royalty flows. Three gates:
+    //    - Agent must have an owner (system agents lack one).
+    //    - Tier must not be "system" (platform-funded regardless).
+    //    - Caller must not BE the owner (skip self-hire round-trip).
+    let owner_id = match agent_owner_id {
+        Some(o) if !o.is_empty() => o,
+        _ => return Ok((execution_fee, 0)),
+    };
+    if agent_tier == "system" {
+        return Ok((execution_fee, 0));
+    }
+    if owner_id == caller_user_id {
+        return Ok((execution_fee, 0));
+    }
+
+    // 3. Compute royalty. Clamped so we always pay at least 1 credit
+    // when the split rounds down to zero (avoids owners feeling the
+    // marketplace is broken on small executions).
+    let royalty_pct = royalty_pct.clamp(0.0, 1.0);
+    let raw_amount = (execution_fee as f64 * royalty_pct) as i32;
+    let royalty = raw_amount.clamp(1, execution_fee);
+
+    // 4. Deposit to the owner's user wallet.
+    let owner_wallet = match get_or_create_wallet(pool, "user", owner_id).await {
+        Ok(w) => w,
+        Err(e) => {
+            tracing::warn!(
+                owner_id = %owner_id,
+                agent_id = %agent_id_str,
+                error = %e,
+                "[credit-flow] failed to resolve owner wallet — royalty NOT paid (platform absorbs)"
+            );
+            return Ok((execution_fee, 0));
+        }
+    };
+    if let Err(e) = credit_deposit_typed(
+        pool,
+        owner_wallet.wallet_id,
+        royalty,
+        "agent_royalty_in",
+        &format!(
+            "Royalty from {} — {} ({}tk)",
+            caller_user_id, agent_id_str, tokens
+        ),
+    )
+    .await
+    {
+        tracing::warn!(
+            owner_id = %owner_id,
+            agent_id = %agent_id_str,
+            error = %e,
+            "[credit-flow] failed to deposit royalty — platform absorbs"
+        );
+        return Ok((execution_fee, 0));
+    }
+
+    tracing::info!(
+        owner_id = %owner_id,
+        agent_id = %agent_id_str,
+        caller_id = %caller_user_id,
+        execution_fee = execution_fee,
+        royalty = royalty,
+        platform_cut = execution_fee - royalty,
+        "[credit-flow] royalty paid"
+    );
+
+    Ok((execution_fee, royalty))
 }
 
 /// Check wallet balance and return true if low

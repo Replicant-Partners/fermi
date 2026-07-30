@@ -7,8 +7,8 @@ use axum::{
 };
 use fermi::agent_backend::executor::AgentStatus;
 use fermi::agent_backend::kg_context::enrich_with_kg_context;
-use fermi::gas::{charge_gas, check_low_balance};
-use fermi_auth::{credit_charge, get_or_create_wallet, AuthPrincipal};
+use fermi::gas::{charge_execution_with_royalty, charge_gas, check_low_balance};
+use fermi_auth::{get_or_create_wallet, AuthPrincipal};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -232,22 +232,46 @@ pub async fn execute_agent_handler(
     let tokens = output.tokens_used.unwrap_or(0) as i32;
     let (execution_fee, gas_fee) = state.gas_fees.execution_fee(tokens);
 
-    // Charge execution fee (warning on failure — work is already done)
+    // v0.10.1 credit-flow: caller pays `execution_fee`, agent owner
+    // receives `execution_fee * execution_owner_royalty_pct` when the
+    // agent is community/curated with an owner distinct from the
+    // caller. System-tier agents (Fermi included) route 100% to the
+    // platform since they are platform-funded. See
+    // `charge_execution_with_royalty` for the gates.
+    //
+    // The old code path here was a warning-on-failure
+    // `credit_charge(…, "execution_fee", …)` — same total, same tx_type
+    // for the caller side, but no royalty leg. The wallet-error path
+    // stays soft-fail: the work has already been done and we don't
+    // want to double-bill on retry. When the royalty deposit fails
+    // the platform absorbs (logged, not raised).
     let ep_id_str = episode_id.to_string();
-    if let Err(e) = credit_charge(
+    let (_charged, royalty_paid) = match charge_execution_with_royalty(
         &state.db,
         wallet.wallet_id,
+        &caller_id,
         execution_fee,
-        "execution_fee",
-        &format!("Execute {} ({}tk)", agent_id, tokens),
+        db_agent.owner_id.as_deref(),
+        &db_agent.tier,
+        &agent_id,
+        tokens,
         Some(ep_id_str.as_str()),
+        state.gas_fees.execution_owner_royalty_pct,
     )
     .await
     {
-        eprintln!("Warning: failed to charge execution fee: {}", e);
-    }
+        Ok(pair) => pair,
+        Err((status, msg)) => {
+            eprintln!(
+                "Warning: failed to charge execution fee: {} ({})",
+                msg, status
+            );
+            (0, 0)
+        }
+    };
 
-    // Charge gas fee (hard error)
+    // Charge gas fee (hard error). Gas stays with the platform — it's
+    // the infrastructure surcharge, not the agent's fee.
     charge_gas(
         &state.db,
         wallet.wallet_id,
@@ -259,6 +283,18 @@ pub async fn execute_agent_handler(
     .await?;
 
     let total_charged = execution_fee + gas_fee;
+    // Debug trace so operators can grep `[credit-flow]` in a run log
+    // and see the full charge breakdown for any given execution.
+    if royalty_paid > 0 {
+        tracing::info!(
+            agent = %agent_id,
+            caller = %caller_id,
+            execution_fee = execution_fee,
+            gas_fee = gas_fee,
+            royalty_paid = royalty_paid,
+            "[credit-flow] hire settled"
+        );
+    }
 
     // 7. Fire notifications (execution failure, low balance)
     if matches!(output.status, AgentStatus::Failed | AgentStatus::Timeout) {

@@ -30,8 +30,8 @@ use fermi::agent_backend::tool_executor::ToolAwareExecutor;
 use fermi::agent_backend::tools::{ToolContext, ToolRegistry};
 use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
-use fermi::gas::{charge_gas, check_low_balance};
-use fermi_auth::{credit_charge, get_or_create_wallet, AuthPrincipal};
+use fermi::gas::{charge_execution_with_royalty, charge_gas, check_low_balance};
+use fermi_auth::{get_or_create_wallet, AuthPrincipal};
 
 use crate::{
     agent_output_to_episode, create_notification, resolve_agent, resolve_agent_card,
@@ -162,12 +162,16 @@ pub async fn execute_agent_stream_handler(
         ))
     };
 
-    // ── Build SSE stream ───────────────────────────────────────────
+    // ── Build SSE stream ──────────────────────────────────
     let state_clone = state.clone();
     let caller_clone = caller_id.clone();
     let wallet_id = wallet.wallet_id;
     let gas_fees = state.gas_fees.clone();
     let agent_id_clone = agent_id.clone();
+    // v0.10.1 credit-flow: capture the owner + tier at handler entry
+    // so the async stream closure can route the royalty on completion.
+    let agent_owner_id = db_agent.owner_id.clone();
+    let agent_tier = db_agent.tier.clone();
 
     let stream = async_stream::stream! {
         let start = Instant::now();
@@ -262,18 +266,34 @@ pub async fn execute_agent_stream_handler(
                 let ep_id_str = episode_id.map(|id| id.to_string()).unwrap_or_default();
                 let ep_ref = if ep_id_str.is_empty() { None } else { Some(ep_id_str.as_str()) };
 
-                if let Err(e) = credit_charge(
+                // v0.10.1 credit-flow: caller pays `execution_fee`,
+                // owner receives `execution_fee * royalty_pct` when the
+                // agent is community/curated with an owner distinct
+                // from the caller. Same gates as the non-streaming
+                // execute_agent_handler in handlers/execution.rs.
+                let royalty_paid = match charge_execution_with_royalty(
                     &state_clone.db,
                     wallet_id,
+                    &caller_clone,
                     execution_fee,
-                    "execution_fee",
-                    &format!("Execute {} ({}tk)", agent_id_clone, tokens),
+                    agent_owner_id.as_deref(),
+                    &agent_tier,
+                    &agent_id_clone,
+                    tokens,
                     ep_ref,
+                    gas_fees.execution_owner_royalty_pct,
                 )
                 .await
                 {
-                    eprintln!("Warning: failed to charge execution fee: {}", e);
-                }
+                    Ok((_charged, royalty)) => royalty,
+                    Err((status, msg)) => {
+                        eprintln!(
+                            "Warning: failed to charge execution fee: {} ({})",
+                            msg, status
+                        );
+                        0
+                    }
+                };
 
                 let _ = charge_gas(
                     &state_clone.db,
@@ -286,6 +306,16 @@ pub async fn execute_agent_stream_handler(
                 .await;
 
                 let total_charged = execution_fee + gas_fee_amount;
+                if royalty_paid > 0 {
+                    tracing::info!(
+                        agent = %agent_id_clone,
+                        caller = %caller_clone,
+                        execution_fee = execution_fee,
+                        gas_fee = gas_fee_amount,
+                        royalty_paid = royalty_paid,
+                        "[credit-flow] hire settled (stream)"
+                    );
+                }
 
                 // ── Event: evidence (for each finding) ─────────────
                 for ev in &output.evidence {
