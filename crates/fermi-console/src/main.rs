@@ -5,6 +5,7 @@
 
 mod api;
 mod charts;
+mod chat;
 mod cockpit;
 mod composer;
 mod text_input;
@@ -208,6 +209,8 @@ actions!(
         DismissUpdateModal,
         ShowShortcuts,
         DismissShortcuts,
+        ToggleFermiChat,
+        SendFermiChat,
     ]
 );
 
@@ -853,12 +856,21 @@ struct FermiConsole {
     /// Progress + error state for the download-and-install phase.
     update_download: updater::DownloadState,
     /// True when the operator has opened the keyboard-shortcuts help
-    /// modal (via Ctrl+/, the sidebar "❔ Shortcuts" chip, or the Help
+    /// modal (via Ctrl+/, the sidebar "❓ Shortcuts" chip, or the Help
     /// menu). Rendered as a full-window overlay listing every bound
     /// shortcut grouped by category — the entry point for anyone who
     /// doesn't yet know the console's hotkeys, which is currently a
     /// major usability wall.
     shortcuts_modal_showing: bool,
+
+    // ── Fermi Chat drawer (v0.10.0 Slice 1) ───────────────────
+    //
+    // Right-edge slide-in conversation with the Fermi agent. Per
+    // `docs/fermi/FERMI_CHAT_AND_AGENT_CREATION_DESIGN.md`, Fermi is
+    // just an ABW agent (`agents/curated/fermi/agent_card.json`) and
+    // this drawer is a UI pattern over the standard `execute_agent`
+    // endpoint against `agent_id="fermi"`. Toggle: `Ctrl+;`.
+    fermi_chat: chat::FermiChatState,
 }
 
 #[derive(Clone)]
@@ -1112,6 +1124,7 @@ impl FermiConsole {
             update_modal_showing: false,
             update_download: updater::DownloadState::Idle,
             shortcuts_modal_showing: false,
+            fermi_chat: chat::FermiChatState::new(cx),
         };
 
         // Try to load API key from environment (fallback for dev)
@@ -1500,6 +1513,343 @@ impl FermiConsole {
     fn on_show_shortcuts(&mut self, _: &ShowShortcuts, _w: &mut Window, cx: &mut Context<Self>) {
         self.shortcuts_modal_showing = true;
         cx.notify();
+    }
+
+    // ── Fermi Chat drawer (v0.10.0 Slice 1) ──────────────────────
+
+    /// Ctrl+; or sidebar chip — toggle the right-edge Fermi drawer.
+    /// State (drawer_open) is per-session; chat history persists
+    /// across toggle for the process lifetime (RAM only in Slice 1).
+    fn on_toggle_fermi_chat(
+        &mut self,
+        _: &ToggleFermiChat,
+        _w: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.fermi_chat.drawer_open = !self.fermi_chat.drawer_open;
+        cx.notify();
+    }
+
+    /// Send button (and, eventually, Enter-inside-input) — collects the
+    /// current input, builds a context envelope from where the operator
+    /// is right now, fires `execute_agent` for `agent_id="fermi"`, and
+    /// appends the assistant reply on completion. Errors surface as an
+    /// error-styled message rather than a toast so the chat transcript
+    /// stays self-contained (the operator can see what they asked, and
+    /// what went wrong, in one place).
+    fn on_send_fermi_chat(&mut self, _: &SendFermiChat, _w: &mut Window, cx: &mut Context<Self>) {
+        self.send_fermi_chat_from_input(cx);
+    }
+
+    fn send_fermi_chat_from_input(&mut self, cx: &mut Context<Self>) {
+        if self.fermi_chat.loading {
+            return;
+        }
+        let text = self.fermi_chat.input.read(cx).text().to_string();
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        let user_text = trimmed.to_string();
+
+        // Append the user message, clear the input, mark loading, kick off
+        // the async call.
+        self.fermi_chat
+            .messages
+            .push(chat::ChatMessage::user(user_text.clone()));
+        self.fermi_chat.input.update(cx, |input, cx| {
+            input.set_text("", cx);
+        });
+        self.fermi_chat.loading = true;
+        cx.notify();
+
+        let envelope = self.build_fermi_envelope(cx);
+        let wrapped = chat::wrap_query_with_envelope(&envelope, &user_text);
+        let api = self.api.clone();
+
+        cx.spawn(async move |this, cx| {
+            let result =
+                tokio::spawn(async move { api.execute_agent("fermi", &wrapped).await }).await;
+            let msg = match result {
+                Ok(Ok(agent_result)) => {
+                    let raw = serde_json::to_value(&agent_result).unwrap_or(JsonValue::Null);
+                    let reply = chat::extract_reply_text(&raw);
+                    log::info!(
+                        "[fermi-chat] agent responded — tokens={:?} credits={:?} status={:?}",
+                        agent_result.tokens_used,
+                        agent_result.credits_charged,
+                        agent_result.status
+                    );
+                    chat::ChatMessage::assistant(reply)
+                }
+                Ok(Err(e)) => {
+                    log::warn!("[fermi-chat] execute_agent error: {:?}", e);
+                    chat::ChatMessage::error(format!("Fermi is unreachable: {}", e))
+                }
+                Err(e) => {
+                    log::warn!("[fermi-chat] task join error: {}", e);
+                    chat::ChatMessage::error(format!("Chat task crashed: {}", e))
+                }
+            };
+            this.update(cx, |this, cx| {
+                this.fermi_chat.loading = false;
+                this.fermi_chat.messages.push(msg);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Build the JSON context envelope sent with every Fermi turn.
+    /// Fills in as much as we can from the operator's current state:
+    /// which panel, which forecast (if any), predicted probability,
+    /// drivers, Polymarket link, portfolio memberships, display name.
+    fn build_fermi_envelope(&self, cx: &mut Context<Self>) -> JsonValue {
+        let surface = match self.active_panel {
+            Panel::Dashboard => "dashboard",
+            Panel::Portfolio => "portfolio",
+            Panel::AgentFleet => "agent_fleet",
+            Panel::Composer => "composer",
+            Panel::Leaderboard => "leaderboard",
+            Panel::Teams => "teams",
+        };
+
+        // Cockpit context (only meaningful on the Composer panel, but
+        // still readable elsewhere — the operator may Ctrl+; from
+        // Portfolio to ask "about the forecast I last had open").
+        let mut forecast_id: Option<String> = None;
+        let mut forecast_question: Option<String> = None;
+        let mut predicted_probability: Option<f64> = None;
+        let mut drivers: Vec<(String, String, Option<String>)> = Vec::new();
+        let mut pm_link: Option<JsonValue> = None;
+        if let Some(ref cockpit_entity) = self.cockpit {
+            let cockpit_state = cockpit_entity.read(cx);
+            forecast_id = cockpit_state.forecast_id.clone();
+            if let Some(q) = cockpit_state.program.question() {
+                if !q.text.trim().is_empty() {
+                    forecast_question = Some(q.text.clone());
+                }
+            }
+            predicted_probability = Some(cockpit_state.predicted_probability);
+            // Build a `driver → [assigned agent names]` map from the
+            // program's agent statements (driver assignment lives on
+            // AgentStmt.driver_refs, not on DriverStmt).
+            let program = &cockpit_state.program;
+            let agents = program.agents();
+            drivers = program
+                .drivers()
+                .iter()
+                .map(|d| {
+                    let kind = match d.driver_type {
+                        fermi::ast::DriverType::Continuous => "continuous".to_string(),
+                        fermi::ast::DriverType::Binary => "binary".to_string(),
+                        fermi::ast::DriverType::Discrete => "discrete".to_string(),
+                    };
+                    // First assigned agent, or None if unassigned.
+                    let assigned = agents
+                        .iter()
+                        .find(|a| a.driver_refs.iter().any(|dn| dn == &d.name))
+                        .map(|a| a.name.clone());
+                    (d.name.clone(), kind, assigned)
+                })
+                .collect();
+            if let Some(ref eid) = cockpit_state.pm_event_id {
+                pm_link = Some(serde_json::json!({
+                    "event_id": eid,
+                    "market_id": cockpit_state.pm_market_id,
+                    "market_price": cockpit_state.pm_market_price,
+                    "question": cockpit_state.pm_question,
+                }));
+            }
+        }
+
+        let portfolios: Vec<String> = self.portfolios.iter().map(|p| p.title.clone()).collect();
+
+        chat::build_context_envelope(
+            surface,
+            forecast_id.as_deref(),
+            forecast_question.as_deref(),
+            predicted_probability,
+            &drivers,
+            pm_link,
+            &portfolios,
+            self.user_display_name.as_deref(),
+        )
+    }
+
+    /// Right-edge slide-in drawer. Renders the message list, empty
+    /// state, thinking indicator, and input row. Absolute-positioned
+    /// so opening it doesn't reflow the panel behind.
+    fn render_fermi_chat_drawer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_loading = self.fermi_chat.loading;
+        let has_messages = !self.fermi_chat.messages.is_empty();
+
+        // Body: empty state OR message list + optional thinking pill.
+        let body: AnyElement = if !has_messages && !is_loading {
+            div()
+                .flex_grow()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap(px(10.0))
+                .px(px(20.0))
+                .child(div().text_size(px(28.0)).child("🔮"))
+                .child(
+                    div()
+                        .text_size(px(14.0))
+                        .text_color(rgb(theme::PURPLE))
+                        .font_weight(FontWeight::BOLD)
+                        .child("Ask Fermi"),
+                )
+                .child(div().text_size(px(11.0)).text_color(theme::fg_dim()).child(
+                    "Decompose a forecast, pick agents for drivers, ask about the FPL \
+                             language, or get a base-rate suggestion. Fermi sees the forecast \
+                             you have open.",
+                ))
+                .into_any_element()
+        } else {
+            let mut list = div()
+                .id("fermi-chat-scroll")
+                .flex_grow()
+                .flex()
+                .flex_col()
+                .gap(px(8.0))
+                .px(px(10.0))
+                .py(px(10.0))
+                .overflow_y_scroll();
+            for m in &self.fermi_chat.messages {
+                list = list.child(chat::render_message(m));
+            }
+            if is_loading {
+                list = list.child(
+                    div()
+                        .px(px(10.0))
+                        .py(px(8.0))
+                        .rounded(px(6.0))
+                        .bg(rgb(0x1A1A2E))
+                        .border_1()
+                        .border_color(rgb(theme::PURPLE))
+                        .text_size(px(11.0))
+                        .text_color(rgb(theme::PURPLE))
+                        .child("🔮 Fermi is thinking…"),
+                );
+            }
+            list.into_any_element()
+        };
+
+        div()
+            .absolute()
+            .top(px(0.0))
+            .bottom(px(0.0))
+            .right(px(0.0))
+            .w(px(380.0))
+            .flex()
+            .flex_col()
+            .bg(theme::bg())
+            .border_l_1()
+            .border_color(rgb(theme::PURPLE))
+            .shadow_lg()
+            // Header
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .px(px(12.0))
+                    .py(px(10.0))
+                    .border_b_1()
+                    .border_color(rgb(theme::FG_FAINT))
+                    .bg(rgb(0x1A1A2E))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .child(div().text_size(px(14.0)).child("🔮"))
+                            .child(
+                                div()
+                                    .text_size(px(13.0))
+                                    .text_color(rgb(theme::PURPLE))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child("Fermi"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(theme::fg_faint())
+                                    .child("Ctrl+; to toggle"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("fermi-chat-close")
+                            .px(px(8.0))
+                            .py(px(2.0))
+                            .rounded(px(4.0))
+                            .text_size(px(12.0))
+                            .text_color(theme::fg_dim())
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::bg_hover()))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.fermi_chat.drawer_open = false;
+                                cx.notify();
+                            }))
+                            .child("✕"),
+                    ),
+            )
+            // Message list / empty state
+            .child(body)
+            // Input row
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.0))
+                    .px(px(10.0))
+                    .py(px(10.0))
+                    .border_t_1()
+                    .border_color(rgb(theme::FG_FAINT))
+                    .child(self.fermi_chat.input.clone())
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(theme::fg_faint())
+                                    .child(if is_loading {
+                                        "Waiting for Fermi…"
+                                    } else {
+                                        "Click Send · Ctrl+; to close"
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .id("fermi-chat-send")
+                                    .px(px(12.0))
+                                    .py(px(6.0))
+                                    .rounded(px(4.0))
+                                    .bg(if is_loading {
+                                        rgb(theme::FG_FAINT)
+                                    } else {
+                                        rgb(theme::PURPLE)
+                                    })
+                                    .text_color(rgb(theme::BG_DEEP))
+                                    .text_size(px(11.0))
+                                    .font_weight(FontWeight::BOLD)
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.85))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.send_fermi_chat_from_input(cx);
+                                    }))
+                                    .child(if is_loading { "…" } else { "Send" }),
+                            ),
+                    ),
+            )
     }
 
     fn on_dismiss_shortcuts(
@@ -5466,6 +5816,41 @@ impl FermiConsole {
                             }))
                             .child("⌨ Shortcuts · Ctrl+/"),
                     )
+                    // Fermi Chat chip (v0.10.0 Slice 1). Toggles the
+                    // right-edge Fermi drawer. Purple accent when the
+                    // drawer is open so the operator can tell at a
+                    // glance whether Fermi is already visible.
+                    .when(self.connected, |el| {
+                        let is_open = self.fermi_chat.drawer_open;
+                        el.child(
+                            div()
+                                .id("sidebar-fermi-chat-chip")
+                                .mt(px(6.0))
+                                .px(px(8.0))
+                                .py(px(4.0))
+                                .rounded(px(4.0))
+                                .bg(rgb(if is_open { 0x1A1A2E } else { theme::BG_HOVER }))
+                                .border_1()
+                                .border_color(rgb(if is_open {
+                                    theme::PURPLE
+                                } else {
+                                    theme::FG_FAINT
+                                }))
+                                .text_size(px(10.0))
+                                .text_color(rgb(if is_open {
+                                    theme::PURPLE
+                                } else {
+                                    theme::FG_DIM
+                                }))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(theme::bg_active()).text_color(theme::purple()))
+                                .on_click(cx.listener(|this, _, _w, cx| {
+                                    this.fermi_chat.drawer_open = !this.fermi_chat.drawer_open;
+                                    cx.notify();
+                                }))
+                                .child("💬 Fermi · Ctrl+;"),
+                        )
+                    })
                     // ⬆ Update-available badge (Sprint distribution).
                     // Only rendered when the background check has
                     // returned a strictly-newer release. Clicking
@@ -13436,6 +13821,7 @@ impl FermiConsole {
                 "Help",
                 vec![
                     ("Ctrl+/", "Show this shortcuts panel"),
+                    ("Ctrl+;", "Toggle Fermi chat drawer"),
                     ("Esc", "Dismiss any modal / overlay"),
                 ],
             ),
@@ -15879,6 +16265,11 @@ impl Render for FermiConsole {
         let shortcuts_overlay = self
             .shortcuts_modal_showing
             .then(|| self.render_shortcuts_modal(cx).into_any_element());
+        // Fermi Chat drawer (Ctrl+;). Right-edge slide-in; gated on
+        // both `drawer_open` AND `connected` so we don't render an
+        // active chat surface pre-signin.
+        let fermi_chat_overlay = (self.fermi_chat.drawer_open && self.connected)
+            .then(|| self.render_fermi_chat_drawer(cx).into_any_element());
         // First-run welcome modal (fires once, when we detect a fresh
         // onboarding grant on the wallet snapshot). Rendered on top of
         // whatever panel is otherwise visible.
@@ -15911,6 +16302,8 @@ impl Render for FermiConsole {
             .on_action(cx.listener(Self::on_dismiss_update_modal))
             .on_action(cx.listener(Self::on_show_shortcuts))
             .on_action(cx.listener(Self::on_dismiss_shortcuts))
+            .on_action(cx.listener(Self::on_toggle_fermi_chat))
+            .on_action(cx.listener(Self::on_send_fermi_chat))
             .relative()
             .flex()
             .size_full()
@@ -15976,6 +16369,8 @@ impl Render for FermiConsole {
             .children(update_overlay)
             // Keyboard shortcuts help modal (Ctrl+/)
             .children(shortcuts_overlay)
+            // Fermi Chat drawer (Ctrl+;)
+            .children(fermi_chat_overlay)
             // First-run welcome modal (post-signup)
             .children(welcome_overlay)
             // Toast notification overlay (bottom-right, auto-dismiss)
@@ -18741,6 +19136,11 @@ fn main() {
             // operators reach for on US layouts — also works.
             KeyBinding::new("secondary-/", ShowShortcuts, Some("FermiConsole")),
             KeyBinding::new("secondary-shift-/", ShowShortcuts, Some("FermiConsole")),
+            // Fermi Chat drawer (v0.10.0 Slice 1): Ctrl+; toggles the
+            // right-edge Fermi conversation. `;` and `:` bound so both
+            // shift states work on US layouts.
+            KeyBinding::new("secondary-;", ToggleFermiChat, Some("FermiConsole")),
+            KeyBinding::new("secondary-shift-;", ToggleFermiChat, Some("FermiConsole")),
             // Esc dismisses the shortcuts modal. Scoped to the whole
             // console for now — there's no other Escape consumer at
             // this level, and the handler is a no-op when the modal
