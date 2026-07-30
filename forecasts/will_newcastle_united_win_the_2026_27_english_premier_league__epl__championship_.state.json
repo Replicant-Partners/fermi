@@ -1,0 +1,38 @@
+{
+  "forecast_id": null,
+  "current_version": 1,
+  "predicted_probability": 0.01,
+  "inside_view_explanation": "",
+  "forecast_confidence": 0.5,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-07-30 18:10",
+      "probability": 0.01,
+      "change_summary": "Initial: 1.0%, 3 drivers, 0 evidence"
+    }
+  ],
+  "sim_results": null,
+  "base_rate": null,
+  "evidence": [],
+  "agents": [],
+  "driver_confidence": {},
+  "polymarket": {
+    "event_id": "659518",
+    "market_id": "2771337",
+    "question": "Will Newcastle United win the 2026-27 English Premier League (EPL) Championship?",
+    "market_price": 0.0045,
+    "volume_24h": 2706.41,
+    "liquidity": 247450.71638,
+    "confidence": "Low",
+    "price_change_1w": -0.001,
+    "url": "https://polymarket.com/event/659518",
+    "price_history": [
+      {
+        "t": 1785434999,
+        "p": 0.0045
+      }
+    ]
+  },
+  "workspace_id": null
+}
