@@ -3,6 +3,14 @@
 //! Built on GPUI (Zed's GPU-accelerated UI framework).
 //! Sprint 2: real API integration, portfolio panel with live data.
 
+// GPUI's macro-generated element chains + Slice-2 chat action-parsing
+// tests (plus the existing `slug_tests` in main.rs) push macro
+// expansion past the default 128-deep limit at test-build time.
+// `recursion_limit` must be an unconditional crate attribute (cfg_attr
+// doesn't apply to it), so we bump it globally — doesn't affect
+// runtime, only rustc's macro-expansion budget.
+#![recursion_limit = "4096"]
+
 mod api;
 mod charts;
 mod chat;
@@ -180,7 +188,56 @@ mod theme {
     }
 }
 
-// ─── Actions ──────────────────────────────────────────────────────────────────
+// ─── Fermi chat action-label formatter ──────────────────────────────
+
+/// Human-readable one-line label for an action chip. Kept as a free
+/// function (not on `ChatAction`) so `chat.rs` doesn't have to depend
+/// on FermiConsole panel names — the label is a console-side
+/// concern, not a chat-model concern. If the tool string is
+/// unrecognised we fall back to `{tool}({args})` in JSON — the
+/// operator still sees WHAT Fermi wanted to do, even for a novel
+/// tool the console can't dispatch yet.
+fn format_action_label(action: &chat::ChatAction) -> String {
+    match action.tool.as_str() {
+        "open_forecast" => {
+            let fid = action
+                .args
+                .get("forecast_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            // Short-form the UUID so the chip stays compact.
+            let short = if fid.len() > 12 { &fid[..12] } else { fid };
+            format!("🔍 Open forecast {}…", short)
+        }
+        "open_panel" => {
+            let panel = action
+                .args
+                .get("panel")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            format!("🧭 Open {} panel", panel)
+        }
+        "run_simulation" => "🎲 Run simulation".to_string(),
+        "search_polymarket" => {
+            let q = action
+                .args
+                .get("query")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let short = if q.chars().count() > 40 {
+                format!("{}…", q.chars().take(38).collect::<String>())
+            } else {
+                q.to_string()
+            };
+            format!("🔮 Search Polymarket — {:?}", short)
+        }
+        other => {
+            format!("⚡ {}({})", other, action.args)
+        }
+    }
+}
+
+// ─── Actions ───────────────────────────────────────────────────────────────────
 
 actions!(
     fermi_console,
@@ -1574,13 +1631,19 @@ impl FermiConsole {
                 Ok(Ok(agent_result)) => {
                     let raw = serde_json::to_value(&agent_result).unwrap_or(JsonValue::Null);
                     let reply = chat::extract_reply_text(&raw);
+                    // v0.10.2 Slice 2 — pull action proposals out of
+                    // the reply text so the chat pane can render them
+                    // as clickable chips. `cleaned` has the fenced
+                    // JSON stripped; `actions` is the parsed list.
+                    let (cleaned, actions) = chat::parse_actions(&reply);
                     log::info!(
-                        "[fermi-chat] agent responded — tokens={:?} credits={:?} status={:?}",
+                        "[fermi-chat] agent responded — tokens={:?} credits={:?} status={:?} actions={}",
                         agent_result.tokens_used,
                         agent_result.credits_charged,
-                        agent_result.status
+                        agent_result.status,
+                        actions.len()
                     );
-                    chat::ChatMessage::assistant(reply)
+                    chat::ChatMessage::assistant_with_actions(cleaned, actions)
                 }
                 Ok(Err(e)) => {
                     log::warn!("[fermi-chat] execute_agent error: {:?}", e);
@@ -1599,6 +1662,168 @@ impl FermiConsole {
             .ok();
         })
         .detach();
+    }
+
+    /// v0.10.2 Slice 2 — dispatch an action chip's click.
+    ///
+    /// The chip strip on assistant messages is populated by
+    /// `chat::parse_actions`, which extracts fenced ```action JSON
+    /// blocks from Fermi's reply. When the operator clicks Execute,
+    /// this method matches the `tool` string against a switch of
+    /// console-side handlers and mutates state accordingly.
+    ///
+    /// Actions the console understands today:
+    ///   - `open_forecast`   `{forecast_id}`
+    ///   - `open_panel`      `{panel: dashboard|portfolio|agent_fleet|composer|leaderboard|teams}`
+    ///   - `run_simulation`  `{}`  — requires an open composer
+    ///   - `search_polymarket` `{query}`  — opens Dashboard PM card + fires search
+    ///
+    /// Unknown tools log a warning and surface a chat-transcript
+    /// error message so the operator knows why the click did
+    /// nothing. Same shape as the reply-extraction fallback in
+    /// `chat::extract_reply_text` — be graceful when the LLM drifts.
+    fn execute_chat_action(
+        &mut self,
+        msg_index: usize,
+        action_index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        // Look up the action; refuse to re-fire if already executed or
+        // dismissed. Copy the tool + args out because the dispatch
+        // methods take &mut self and we can't hold a borrow into
+        // fermi_chat.messages while they mutate the console.
+        let (tool, args) = {
+            let Some(msg) = self.fermi_chat.messages.get_mut(msg_index) else {
+                return;
+            };
+            let Some(action) = msg.actions.get_mut(action_index) else {
+                return;
+            };
+            if action.executed || action.dismissed {
+                return;
+            }
+            action.executed = true;
+            (action.tool.clone(), action.args.clone())
+        };
+        cx.notify();
+
+        log::info!(
+            "[fermi-chat] executing action tool={:?} args={}",
+            tool,
+            args
+        );
+
+        match tool.as_str() {
+            "open_forecast" => {
+                let fid = args
+                    .get("forecast_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if fid.is_empty() {
+                    self.push_chat_action_error("open_forecast missing forecast_id", cx);
+                    return;
+                }
+                self.open_forecast(&fid, cx);
+            }
+            "open_panel" => {
+                let panel_str = args
+                    .get("panel")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                let panel = match panel_str.as_str() {
+                    "dashboard" => Panel::Dashboard,
+                    "portfolio" | "portfolios" => Panel::Portfolio,
+                    "agent_fleet" | "agents" | "fleet" => Panel::AgentFleet,
+                    "composer" | "forecast" => Panel::Composer,
+                    "leaderboard" => Panel::Leaderboard,
+                    "teams" | "team" => Panel::Teams,
+                    other => {
+                        self.push_chat_action_error(
+                            &format!("open_panel: unknown panel {:?}", other),
+                            cx,
+                        );
+                        return;
+                    }
+                };
+                self.navigate(panel, cx);
+            }
+            "run_simulation" => {
+                // Only meaningful with an open composer. If the
+                // composer isn't loaded, hop over first.
+                if self.cockpit.is_none() {
+                    self.push_chat_action_error(
+                        "run_simulation needs a forecast open in the composer first",
+                        cx,
+                    );
+                    return;
+                }
+                if self.active_panel != Panel::Composer {
+                    self.navigate(Panel::Composer, cx);
+                }
+                if let Some(ref cockpit) = self.cockpit {
+                    let cockpit = cockpit.clone();
+                    cockpit.update(cx, |c, cx| {
+                        if !c.sim_running {
+                            c.run_simulation(cx);
+                        }
+                    });
+                }
+            }
+            "search_polymarket" => {
+                let query = args
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if query.is_empty() {
+                    self.push_chat_action_error("search_polymarket missing query", cx);
+                    return;
+                }
+                self.navigate(Panel::Dashboard, cx);
+                self.pm_show_search = true;
+                self.pm_search_input.update(cx, |input, cx| {
+                    input.set_text(query.clone(), cx);
+                });
+                self.search_polymarket(cx);
+            }
+            other => {
+                self.push_chat_action_error(
+                    &format!(
+                        "Unknown tool {:?} — Fermi proposed an action the console doesn't handle",
+                        other
+                    ),
+                    cx,
+                );
+            }
+        }
+    }
+
+    fn dismiss_chat_action(
+        &mut self,
+        msg_index: usize,
+        action_index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(msg) = self.fermi_chat.messages.get_mut(msg_index) {
+            if let Some(action) = msg.actions.get_mut(action_index) {
+                if !action.executed {
+                    action.dismissed = true;
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// Push an inline error message into the chat transcript. Used
+    /// when an action chip click can't complete — keeps the failure
+    /// visible in the same place the operator was looking.
+    fn push_chat_action_error(&mut self, msg: &str, cx: &mut Context<Self>) {
+        self.fermi_chat
+            .messages
+            .push(chat::ChatMessage::error(msg.to_string()));
+        cx.notify();
     }
 
     /// Build the JSON context envelope sent with every Fermi turn.
@@ -1719,8 +1944,15 @@ impl FermiConsole {
                 .px(px(10.0))
                 .py(px(10.0))
                 .overflow_y_scroll();
-            for m in &self.fermi_chat.messages {
+            for (msg_index, m) in self.fermi_chat.messages.iter().enumerate() {
+                // Message bubble (pure render).
                 list = list.child(chat::render_message(m));
+                // Action chips beneath the bubble (interactive —
+                // needs cx.listener, hence rendered here rather than
+                // inside the pure `render_message` helper).
+                if !m.actions.is_empty() {
+                    list = list.child(self.render_action_chip_strip(msg_index, m, cx));
+                }
             }
             if is_loading {
                 list = list.child(
@@ -1850,6 +2082,146 @@ impl FermiConsole {
                             ),
                     ),
             )
+    }
+
+    /// Render the strip of action-proposal chips that sits directly
+    /// beneath an assistant message. Each `ChatAction` becomes a
+    /// clickable chip; Execute fires the client-side dispatch, the
+    /// small "×" dismisses without firing. Executed chips flip to a
+    /// muted "✓ Done" label; dismissed chips flip to a muted state
+    /// too. Neither can be re-fired — avoids double-dispatch and
+    /// keeps the transcript's history of what actually ran readable.
+    fn render_action_chip_strip(
+        &self,
+        msg_index: usize,
+        message: &chat::ChatMessage,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let mut strip = div().flex().flex_col().gap(px(4.0)).ml(px(8.0)).mr(px(8.0));
+        for (action_index, action) in message.actions.iter().enumerate() {
+            let label = format_action_label(action);
+            let subtitle = action.reason.clone();
+            let executed = action.executed;
+            let dismissed = action.dismissed;
+            let idle = !executed && !dismissed;
+
+            let chip_bg = if executed {
+                theme::BG_ELEVATED
+            } else if dismissed {
+                theme::BG_ELEVATED
+            } else {
+                0x1A1A2E
+            };
+            let chip_border = if executed {
+                theme::GREEN
+            } else if dismissed {
+                theme::FG_FAINT
+            } else {
+                theme::PURPLE
+            };
+            let chip_id =
+                SharedString::from(format!("fermi-action-{}-{}", msg_index, action_index));
+            let dismiss_id = SharedString::from(format!(
+                "fermi-action-dismiss-{}-{}",
+                msg_index, action_index
+            ));
+
+            let action_button = {
+                let mut b = div()
+                    .id(chip_id)
+                    .px(px(10.0))
+                    .py(px(4.0))
+                    .rounded(px(4.0))
+                    .text_size(px(10.0))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(rgb(if idle {
+                        theme::PURPLE
+                    } else if executed {
+                        theme::GREEN
+                    } else {
+                        theme::FG_DIM
+                    }))
+                    .border_1()
+                    .border_color(rgb(if idle { theme::PURPLE } else { theme::FG_FAINT }))
+                    .child(if executed {
+                        "✓ Done"
+                    } else if dismissed {
+                        "Dismissed"
+                    } else {
+                        "⚡ Execute"
+                    });
+                if idle {
+                    b = b
+                        .cursor_pointer()
+                        .hover(|s| s.opacity(0.85))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.execute_chat_action(msg_index, action_index, cx);
+                        }));
+                }
+                b
+            };
+
+            let dismiss_button = if idle {
+                div()
+                    .id(dismiss_id)
+                    .px(px(6.0))
+                    .py(px(4.0))
+                    .rounded(px(4.0))
+                    .text_size(px(10.0))
+                    .text_color(theme::fg_dim())
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(theme::red()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.dismiss_chat_action(msg_index, action_index, cx);
+                    }))
+                    .child("×")
+                    .into_any_element()
+            } else {
+                div().into_any_element()
+            };
+
+            let mut chip = div()
+                .flex()
+                .flex_col()
+                .gap(px(3.0))
+                .px(px(8.0))
+                .py(px(6.0))
+                .rounded(px(6.0))
+                .bg(rgb(chip_bg))
+                .border_1()
+                .border_color(rgb(chip_border))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(rgb(if dismissed { theme::FG_DIM } else { theme::FG }))
+                                .child(label),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(4.0))
+                                .child(action_button)
+                                .child(dismiss_button),
+                        ),
+                );
+
+            if let Some(reason) = subtitle {
+                chip = chip.child(
+                    div()
+                        .text_size(px(9.0))
+                        .text_color(theme::fg_faint())
+                        .child(reason),
+                );
+            }
+            strip = strip.child(chip);
+        }
+        strip
     }
 
     fn on_dismiss_shortcuts(

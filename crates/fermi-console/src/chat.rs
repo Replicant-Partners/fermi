@@ -8,19 +8,25 @@
 //! looking at right now" so Fermi can answer with situational
 //! awareness.
 //!
-//! **Slice 1 (this module):** RAM-only chat drawer.
-//!   - `Ctrl+;` toggles a right-edge slide-in drawer.
-//!   - Multi-turn message history in memory; lost on restart.
-//!   - Send-message flow: POST `/api/agents/fermi/execute` with the
-//!     envelope-prefixed query.
-//!   - Response's `metadata.reasoning` renders as an Assistant
-//!     message; failures render as a system-styled error message.
-//!   - **No tool dispatch** — Fermi's replies are text-only. Console-
-//!     scoped MCP tools (`open_forecast`, `run_simulation`, …) come
-//!     in Slice 2.
-//!   - **No persistence** — chat_messages plumbing comes in Slice 3.
-//!   - **No design mode** — the create-agent walk-through comes in
-//!     Slice 4.
+//! **Slice 1** shipped in v0.10.0: RAM-only chat drawer, `Ctrl+;`
+//! toggle, multi-turn message history in memory, `execute_agent`
+//! POST with envelope-prefixed query, `metadata.reasoning` extraction.
+//!
+//! **Slice 2 (v0.10.2):** action markers — Fermi can propose console
+//! actions (open a forecast, navigate to a panel, run a simulation)
+//! by embedding a fenced ```action JSON block in its reply. The
+//! client parses these markers out of the reply text, hides them
+//! from the transcript display, and renders each as a clickable
+//! chip: `⚡ Open forecast a3b7…`. Chips are *proposed*, not
+//! auto-executed — the operator retains agency ("click-to-cancel"
+//! is the natural affordance: don't click). Dispatch runs on the
+//! client side, so a wide range of UI-only actions is fair game
+//! without adding server-side tool handlers or looping the
+//! execute_agent LLM loop over tool_use rounds.
+//!
+//! Still to come:
+//!   - **Slice 3** — chat persistence (server-side history table).
+//!   - **Slice 4** — design mode (create-agent walk-through).
 //!
 //! Fields for later slices are already scaffolded here (`session_id`,
 //! `tool_call`, `tool_result`, `design_step`) so the shape doesn't
@@ -53,24 +59,70 @@ pub enum ChatRole {
     Error,
 }
 
+/// A single action proposal parsed from a fenced ```action block in
+/// Fermi's reply. Slice 2 renders these as clickable chips beneath
+/// the message; dispatch is client-side (`FermiConsole::execute_chat_action`).
+///
+/// The `tool` string is a stable identifier the dispatcher matches on.
+/// `args` is a free-form JSON object — each tool defines its own
+/// arg shape (see the docs on `execute_chat_action` in `main.rs`).
+/// `reason` is optional human text Fermi can supply to explain WHY
+/// it's proposing the action; rendered as a subtitle on the chip.
+#[derive(Debug, Clone)]
+pub struct ChatAction {
+    pub tool: String,
+    pub args: JsonValue,
+    pub reason: Option<String>,
+    /// Set true once the operator clicks the chip and dispatch runs,
+    /// so the UI can swap the button for a "✓ done" marker instead
+    /// of leaving the chip re-clickable (which would fire the action
+    /// again — usually harmless, occasionally confusing).
+    pub executed: bool,
+    /// Set true if the operator explicitly dismisses the proposal.
+    /// Also disables the button and greys the chip.
+    pub dismissed: bool,
+}
+
+impl ChatAction {
+    pub fn new(tool: impl Into<String>, args: JsonValue) -> Self {
+        Self {
+            tool: tool.into(),
+            args,
+            reason: None,
+            executed: false,
+            dismissed: false,
+        }
+    }
+}
+
 /// One entry in the chat transcript. Slice 1 uses `role`, `text`,
-/// `created_at`. Later slices fill in the rest.
+/// `created_at`; Slice 2 adds `actions` for the proposal chips.
+/// Later slices fill in the rest.
 #[derive(Debug, Clone)]
 pub struct ChatMessage {
     pub role: ChatRole,
     pub text: String,
     pub created_at: DateTime<Utc>,
 
-    // ── Slice 2 (tool dispatch) — currently unused ───────────────────
-    /// When `role=Assistant` fires a tool call, this captures the
-    /// name + args so the UI can render a compact chip.
+    // ── Slice 2 (tool dispatch) ─────────────────────────────
+    /// Action chips parsed from `\`\`\`action` fenced blocks in the
+    /// assistant's reply. Empty on user/error messages. Populated
+    /// from `parse_actions` after `extract_reply_text`.
+    pub actions: Vec<ChatAction>,
+
+    // ── Slice 2 (tool dispatch, deeper) — currently unused ──────────
+    /// When `role=Assistant` fires a server-side tool call, this
+    /// captures the name + args so the UI can render a compact
+    /// chip. Not yet wired since Slice 2 uses fenced action markers
+    /// (client-side dispatch) rather than the Anthropic tool_use
+    /// protocol (server-side dispatch inside the executor loop).
     #[allow(dead_code)]
     pub tool_call: Option<JsonValue>,
     /// When `role=Tool`, this captures the tool's result JSON.
     #[allow(dead_code)]
     pub tool_result: Option<JsonValue>,
 
-    // ── Slice 4 (design mode) — currently unused ─────────────────────
+    // ── Slice 4 (design mode) — currently unused ─────────────────
     /// 1–9 during the create-agent walk-through, so the UI can show
     /// a progress indicator without introducing a parallel
     /// "conversation kind" concept.
@@ -84,6 +136,7 @@ impl ChatMessage {
             role: ChatRole::User,
             text: text.into(),
             created_at: Utc::now(),
+            actions: Vec::new(),
             tool_call: None,
             tool_result: None,
             design_step: None,
@@ -95,6 +148,23 @@ impl ChatMessage {
             role: ChatRole::Assistant,
             text: text.into(),
             created_at: Utc::now(),
+            actions: Vec::new(),
+            tool_call: None,
+            tool_result: None,
+            design_step: None,
+        }
+    }
+
+    /// Assistant message with the reply text AND parsed action chips.
+    /// Actions are stripped from the visible text so the fenced JSON
+    /// doesn't clutter the transcript — the operator sees prose + a
+    /// chip strip, not raw JSON.
+    pub fn assistant_with_actions(text: String, actions: Vec<ChatAction>) -> Self {
+        Self {
+            role: ChatRole::Assistant,
+            text,
+            created_at: Utc::now(),
+            actions,
             tool_call: None,
             tool_result: None,
             design_step: None,
@@ -106,6 +176,7 @@ impl ChatMessage {
             role: ChatRole::Error,
             text: text.into(),
             created_at: Utc::now(),
+            actions: Vec::new(),
             tool_call: None,
             tool_result: None,
             design_step: None,
@@ -218,13 +289,51 @@ pub fn build_context_envelope(
 /// orchestra conductor — it already knows what to do with a
 /// `forecast_question` + `drivers` block. The tag + JSON prefix keeps
 /// the message parsable without training changes.
+///
+/// Slice 2 adds the ACTION-MARKER instruction block, which teaches
+/// Fermi to embed structured action proposals in its replies so the
+/// console can offer them as clickable chips. This is orthogonal to
+/// Anthropic's tool_use protocol — we intentionally stay in the
+/// LLM's text output rather than the server-executed tool loop, so
+/// the operator always sees + approves the action before it fires.
 pub fn wrap_query_with_envelope(envelope: &JsonValue, user_text: &str) -> String {
     let env_str = serde_json::to_string(envelope).unwrap_or_else(|_| "{}".into());
     format!(
-        "[fermi_console_context] {}\n\n[operator] {}",
-        env_str, user_text
+        "{}\n\n[fermi_console_context] {}\n\n[operator] {}",
+        ACTION_MARKER_INSTRUCTIONS, env_str, user_text
     )
 }
+
+/// The prompt segment that teaches Fermi to embed action markers.
+/// Prepended to every operator message so the LLM has the format in
+/// context each turn (system prompts aren't touched — we don't own
+/// Fermi's card wholesale, this segment lives alongside operator
+/// messages instead).
+///
+/// Kept intentionally concise: three short paragraphs and one
+/// example. LLMs follow this format reliably when it's this clear.
+const ACTION_MARKER_INSTRUCTIONS: &str = concat!(
+    "[fermi_console_actions] When you want to propose a console action ",
+    "(open a forecast, navigate a panel, run a simulation), embed a ",
+    "fenced JSON block using the ```action language tag. Each block ",
+    "is one action; you can include multiple blocks per reply. The ",
+    "console renders each as a clickable chip — the operator decides ",
+    "whether to fire it. Do NOT act without proposing first.\n\n",
+    "Available tools:\n",
+    "  - open_forecast          args: {\"forecast_id\": \"...\"}\n",
+    "  - open_panel             args: {\"panel\": \"dashboard\"|\"portfolio\"|\"agent_fleet\"|\"composer\"|\"leaderboard\"|\"teams\"}\n",
+    "  - run_simulation         args: {}\n",
+    "  - search_polymarket      args: {\"query\": \"...\"}\n\n",
+    "Include a `reason` field for the operator so the chip explains ",
+    "itself. Example:\n\n",
+    "```action\n",
+    "{\"tool\": \"open_forecast\", \"args\": {\"forecast_id\": \"a3b7f1e0-...\"}, \"reason\": \"You asked about Manchester City — this is the forecast you have on that.\"}\n",
+    "```\n\n",
+    "Rules: only propose actions the operator plausibly wants. Only ",
+    "use forecast_ids that appear in the context envelope you were ",
+    "given. If no action is relevant, just reply in prose without a ",
+    "fenced action block.",
+);
 
 // ── Response extraction ──────────────────────────────────────────────────
 
@@ -281,6 +390,221 @@ pub fn extract_reply_text(raw: &JsonValue) -> String {
          — try rephrasing.",
         status
     )
+}
+
+// ── Action parsing ───────────────────────────────────────────────────────────
+
+/// Extract fenced ```action JSON blocks from an assistant reply.
+/// Returns `(cleaned_text, actions)` where `cleaned_text` has the
+/// fenced blocks stripped (leaving surrounding prose intact) so the
+/// transcript shows readable prose, not raw JSON. Malformed blocks
+/// are left in place — that way a JSON typo becomes visible instead
+/// of silently disappearing.
+///
+/// Slice 2 lives on this parser being tolerant: we accept
+/// ```action, ```json:action, and ```fermi_action as aliases; we
+/// tolerate leading/trailing whitespace inside the block; and if the
+/// JSON parses but doesn't have a recognised `tool` field, we still
+/// keep it (the chip renders as "unknown", not lost).
+pub fn parse_actions(reply: &str) -> (String, Vec<ChatAction>) {
+    let mut actions = Vec::new();
+    let mut cleaned = String::with_capacity(reply.len());
+    let mut cursor = 0usize;
+
+    while cursor < reply.len() {
+        // Look for the next fenced block that starts with an action tag.
+        let Some((start, tag_len)) = find_action_fence_start(&reply[cursor..]) else {
+            cleaned.push_str(&reply[cursor..]);
+            break;
+        };
+        let abs_start = cursor + start;
+        // Copy everything before the fence to cleaned output.
+        cleaned.push_str(&reply[cursor..abs_start]);
+
+        // Find the closing ``` fence after the tag.
+        let body_start = abs_start + tag_len;
+        let Some(rel_end) = reply[body_start..].find("```") else {
+            // Unterminated block — leave as-is in the transcript so the
+            // operator can see the malformed input.
+            cleaned.push_str(&reply[abs_start..]);
+            break;
+        };
+        let body = reply[body_start..body_start + rel_end].trim();
+        let end_after_fence = body_start + rel_end + 3; // + "```"
+
+        // Try to parse body as JSON. On failure, leave the whole block
+        // in the visible transcript (nothing to render as a chip).
+        match serde_json::from_str::<JsonValue>(body) {
+            Ok(mut v) => {
+                // Support both `{"tool":..., "args":..., "reason":...}`
+                // and flat `{"tool":..., "forecast_id":..., "reason":...}`
+                // (some LLMs drift to the latter). Coerce flat shape
+                // into nested by moving unknown top-level keys into args.
+                let tool = v
+                    .get("tool")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                let reason = v.get("reason").and_then(|r| r.as_str()).map(str::to_string);
+                let args = if let Some(a) = v.get("args").cloned() {
+                    a
+                } else {
+                    // Flatten mode: strip the recognised keys and pass
+                    // the rest as args.
+                    if let Some(obj) = v.as_object_mut() {
+                        obj.remove("tool");
+                        obj.remove("reason");
+                    }
+                    v
+                };
+                let mut action = ChatAction::new(tool, args);
+                action.reason = reason;
+                actions.push(action);
+            }
+            Err(e) => {
+                log::warn!(
+                    "[fermi-chat] action block parse failed: {} — body={:?}",
+                    e,
+                    body
+                );
+                cleaned.push_str(&reply[abs_start..end_after_fence]);
+            }
+        }
+
+        cursor = end_after_fence;
+    }
+
+    // Collapse any triple-newline runs the removals produced.
+    let cleaned = compact_blank_lines(&cleaned).trim().to_string();
+    (cleaned, actions)
+}
+
+/// Find the byte offset + length of the opening fence of an action
+/// block. Recognises `\`\`\`action`, `\`\`\`json:action`, and
+/// `\`\`\`fermi_action`. Returns None if no such fence appears.
+fn find_action_fence_start(text: &str) -> Option<(usize, usize)> {
+    let candidates = ["```action", "```json:action", "```fermi_action"];
+    let mut best: Option<(usize, usize)> = None;
+    for tag in candidates {
+        if let Some(pos) = text.find(tag) {
+            let end = pos + tag.len();
+            // Consume the following newline if present, so the body
+            // starts on the next line and doesn't include the tag.
+            let after = if text[end..].starts_with('\n') {
+                end + 1
+            } else {
+                end
+            };
+            let tag_len = after - pos;
+            best = match best {
+                Some((p, _)) if p <= pos => best,
+                _ => Some((pos, tag_len)),
+            };
+        }
+    }
+    best
+}
+
+/// Collapse runs of blank lines produced by stripping fenced blocks
+/// out of the middle of a message.
+fn compact_blank_lines(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut blank_count = 0;
+    for line in s.split_inclusive('\n') {
+        if line.trim().is_empty() {
+            blank_count += 1;
+            if blank_count <= 1 {
+                out.push_str(line);
+            }
+        } else {
+            blank_count = 0;
+            out.push_str(line);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod action_parsing_tests {
+    use super::*;
+
+    #[test]
+    fn extracts_single_action_and_strips_from_text() {
+        let reply = "Sure! Let me open that forecast for you.\n\n\
+            ```action\n\
+            {\"tool\": \"open_forecast\", \"args\": {\"forecast_id\": \"abc-123\"}, \"reason\": \"You asked about it\"}\n\
+            ```\n\
+            Then we can run a simulation.";
+        let (text, actions) = parse_actions(reply);
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].tool, "open_forecast");
+        assert_eq!(
+            actions[0].args.get("forecast_id").and_then(|v| v.as_str()),
+            Some("abc-123")
+        );
+        assert_eq!(actions[0].reason.as_deref(), Some("You asked about it"));
+        assert!(
+            !text.contains("```"),
+            "cleaned text still has fence: {}",
+            text
+        );
+        assert!(text.contains("open that forecast"));
+        assert!(text.contains("run a simulation"));
+    }
+
+    #[test]
+    fn extracts_multiple_actions_in_one_reply() {
+        let reply = "Two things:\n\n\
+            ```action\n{\"tool\":\"open_panel\",\"args\":{\"panel\":\"portfolio\"}}\n```\n\
+            ```action\n{\"tool\":\"run_simulation\",\"args\":{}}\n```\n\n\
+            Done.";
+        let (_, actions) = parse_actions(reply);
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].tool, "open_panel");
+        assert_eq!(actions[1].tool, "run_simulation");
+    }
+
+    #[test]
+    fn tolerates_flat_shape_without_nested_args() {
+        // Some LLMs put args at the top level. Slice 2 coerces this
+        // into the nested shape.
+        let reply = "```action\n{\"tool\": \"open_forecast\", \"forecast_id\": \"xyz\"}\n```";
+        let (_, actions) = parse_actions(reply);
+        assert_eq!(actions.len(), 1);
+        assert_eq!(
+            actions[0].args.get("forecast_id").and_then(|v| v.as_str()),
+            Some("xyz")
+        );
+    }
+
+    #[test]
+    fn leaves_malformed_json_visible_in_transcript() {
+        let reply = "Hmm:\n```action\n{not valid json}\n```";
+        let (text, actions) = parse_actions(reply);
+        assert!(actions.is_empty());
+        assert!(
+            text.contains("```action"),
+            "malformed block should stay visible: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn accepts_json_action_alias() {
+        let reply =
+            "```json:action\n{\"tool\":\"open_panel\",\"args\":{\"panel\":\"composer\"}}\n```";
+        let (_, actions) = parse_actions(reply);
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].tool, "open_panel");
+    }
+
+    #[test]
+    fn no_action_blocks_returns_reply_unchanged() {
+        let reply = "Just some prose about forecasting methodology.";
+        let (text, actions) = parse_actions(reply);
+        assert_eq!(text, reply);
+        assert!(actions.is_empty());
+    }
 }
 
 // ── Rendering ───────────────────────────────────────────────────────────────
