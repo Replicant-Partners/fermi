@@ -1,4 +1,4 @@
-# Fermi Console v0.10.2 — users.user_id alignment fix
+# Fermi Console v0.10.3 — users.user_id alignment fix
 
 Bug-fix release. Every account except the lucky INSERT-path original
 (`ivan@axolotl.partners`) was hitting `foreign key violation` on
@@ -118,10 +118,10 @@ path.
 The old FK branch said *"this server is running an older version"*
 whenever it saw `foreign key + (owner_id | users)` — which was a
 lie any time the server actually was current but the users row was
-drifted. The v0.10.2 branch says:
+drifted. The v0.10.3 branch says:
 
 > *"Your users row and session don't line up (owner_id FK violation).
-> If the server is on v0.10.2+ this should have been auto-healed at
+> If the server is on v0.10.3+ this should have been auto-healed at
 > sign-in — sign out and back in, then retry."*
 
 The v0.9.1 CONFLICT and PRECONDITION passthroughs still fire first,

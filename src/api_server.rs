@@ -738,6 +738,14 @@ async fn run_migrations(db: &PgPool) {
         "migrations/158_forecast_sim_probability.sql",
         "migrations/159_pending_cascades_relationship_id_nullable.sql",
         "migrations/160_users_signup_app.sql",
+        // 161: backfill users.user_id for legacy / half-provisioned rows
+        // that made every account except the INSERT-path original get
+        // FK-violations on forecast/portfolio writes and 403s on invite
+        // accept. Root cause: sync_user_from_app's UPDATE branch never
+        // touched user_id, so rows with a NULL/empty user_id column
+        // stayed broken across sign-ins. Paired with the v0.10.3
+        // UPDATE-clause fix in oidc.rs. See RELEASE_NOTES_v0.10.3.md.
+        "migrations/161_backfill_users_user_id.sql",
     ];
 
     for file in &migration_files {

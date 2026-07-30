@@ -424,7 +424,23 @@ pub async fn sync_user_from_app(
     .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
 
     let record = if let Some(existing_user) = existing {
-        // Update existing user with latest info from provider
+        // Update existing user with latest info from provider.
+        //
+        // v0.10.3 — backfill `user_id` in the same UPDATE. Historical
+        // rows created before migration 093 could carry `user_id`
+        // NULL/'' (mig 004b tried to backfill from `id::text` but had
+        // holes, and later provider-first sign-ins hit the UPDATE
+        // branch below without ever setting `user_id`). Every
+        // downstream table with `owner_id REFERENCES users(user_id)`
+        // then trips FK on write because the session JWT `sub` we
+        // resolve at the tail of this function falls back to `id::text`
+        // — a value not stored in `user_id`. Setting `user_id` here
+        // (idempotent via COALESCE) makes the JWT `sub` and the FK
+        // target line up permanently after one successful sign-in.
+        //
+        // Kept as its own UPDATE clause (COALESCE(NULLIF(user_id,''), id::text))
+        // so signed-in users with a good `user_id` are untouched; only
+        // legacy holes get filled.
         sqlx::query_as::<_, UserRecord>(
             r#"
             UPDATE users
@@ -435,6 +451,7 @@ pub async fn sync_user_from_app(
                 github_username = COALESCE($5, github_username),
                 github_id = COALESCE($6, github_id),
                 google_id = COALESCE($7, google_id),
+                user_id = COALESCE(NULLIF(user_id, ''), id::text),
                 last_login_at = NOW(),
                 updated_at = NOW()
             WHERE id = $8
@@ -508,10 +525,28 @@ pub async fn sync_user_from_app(
     // simply won't see their pending invites until they sign in
     // again. We log via eprintln so the failure is visible in
     // Railway logs but doesn't propagate.
-    let resolved_user_id = record
-        .user_id
-        .clone()
-        .unwrap_or_else(|| record.id.to_string());
+    //
+    // v0.10.3: the UPDATE / INSERT above both guarantee `user_id` is
+    // non-null and non-empty by the time we reach here (UPDATE via
+    // COALESCE(NULLIF(user_id,''), id::text); INSERT via explicit
+    // new_user_id). The old `unwrap_or_else(id::text)` fallback
+    // silently created drift when `record.user_id` was empty string
+    // (Some("") skips the fallback), so the JWT sub disagreed with
+    // the FK target column forever. Fall back on `id::text` only if
+    // something upstream skipped both paths — that's a real invariant
+    // break and worth an eprintln so it's visible in logs.
+    let resolved_user_id = match record.user_id.as_deref() {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => {
+            eprintln!(
+                "[sync_user] BUG: users.user_id is NULL/empty after sync for id={} email={} — \
+                 falling back to id::text. The user_id backfill in the UPDATE clause \
+                 should have prevented this.",
+                record.id, record.email
+            );
+            record.id.to_string()
+        }
+    };
     match crate::invites::claim_pending_for_email(pool, &resolved_user_id, &record.email).await {
         Ok(0) => {}
         Ok(n) => eprintln!(

@@ -20375,22 +20375,11 @@ mod extractor_tests {
 fn friendly_backend_save_error(raw: &str) -> String {
     let lower = raw.to_lowercase();
 
-    // v0.9.1: users-row FK violation on a server that's stuck between
-    // fixes. Backend ensure_user_row now self-heals via email match,
-    // so this branch only fires on truly-stale deployments that
-    // haven't picked up v0.9.1. Suggest waiting for a deploy rather
-    // than looping through OAuth (which was never the actual fix).
-    if lower.contains("foreign key") && (lower.contains("owner_id") || lower.contains("users")) {
-        return "Backend save failed: this server is running an older \
-                version that can't auto-provision your account. Wait \
-                for the next deploy or contact support."
-            .to_string();
-    }
-
     // v0.9.1: email UNIQUE conflict that the self-heal deliberately
     // refused (email is claimed by a different, already-provisioned
     // account). The server surfaces this as 409 CONFLICT with a
-    // specific phrase.
+    // specific phrase. Checked BEFORE the FK branch below so we
+    // don't misclassify it as a stale-deploy.
     if lower.contains("already registered under a different account") {
         return format!("Backend save failed: {}", raw);
     }
@@ -20398,13 +20387,35 @@ fn friendly_backend_save_error(raw: &str) -> String {
     // Server-signalled precondition failure — our ensure_user_row
     // helper returns this when it can't backfill (e.g. api-key
     // principal with an orphan user_id, or v0.9.1 self-heal failed
-    // for a non-email reason).
+    // for a non-email reason). Checked BEFORE the FK branch below
+    // for the same reason.
     if lower.contains("isn't fully provisioned")
         || lower.contains("isn't provisioned")
         || lower.contains("not fully provisioned")
         || lower.contains("couldn't auto-heal")
     {
         return format!("Backend save failed: {}", raw);
+    }
+
+    // Raw FK violation on users(user_id). v0.9.1 assumed this only
+    // fires on servers running older than v0.9.1 (before
+    // ensure_user_row existed) — but in practice it also fires on
+    // v0.9.1+ servers when the users row exists with a `user_id`
+    // that doesn't match the session's JWT `sub`, and the heal's
+    // legacy-guard refuses to reparent. v0.10.3 fixes this at the
+    // source (sync_user_from_app now backfills user_id + migration
+    // 161 heals existing rows) so we no longer have to blame the
+    // deploy blindly. Surface the raw text with a hint pointing at
+    // the real class of failure.
+    if lower.contains("foreign key") && (lower.contains("owner_id") || lower.contains("users")) {
+        return format!(
+            "Backend save failed: your users row and session don't line up \
+             (owner_id FK violation). If the server is on v0.10.3+ this \
+             should have been auto-healed at sign-in — sign out and back \
+             in, then retry. If it persists, contact support with this \
+             text: {}",
+            raw
+        );
     }
 
     // Notebook FK — legacy fermi_forecasts.notebook_id points at a

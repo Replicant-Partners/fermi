@@ -749,32 +749,71 @@ async fn load_invite_by_token(
 /// Authority check for accept: the caller must be the rightful
 /// invitee.
 ///
-///   • If `invitee_user_id` is set: caller's `user_id()` must match.
-///   • Else (email-only): caller must be an `AuthPrincipal::User`
-///     whose `.email` matches `invitee_email` case-insensitively.
-///     ApiKey principals fail this branch — they don't carry email.
+///   • If `invitee_user_id` matches the caller's `user_id()` — accept.
+///   • Else if `invitee_email` matches the caller's `.email`
+///     case-insensitively — accept, and remember that the stored
+///     `invitee_user_id` is drifted (typically because
+///     `sync_user_from_app` back-filled it against an old resolved
+///     user_id before the v0.10.3 alignment). The caller demonstrably
+///     owns the mailbox the invite was sent to, so the intent is
+///     satisfied; the accept UPDATE downstream will rewrite
+///     `invitee_user_id` to the caller's current id.
+///   • Else (no invitee_user_id, email-only invite): caller must be
+///     an `AuthPrincipal::User` whose `.email` matches `invitee_email`
+///     case-insensitively. ApiKey principals fail this branch — they
+///     don't carry an email claim.
 ///
-/// The email-claim resolver in Sprint 2.3c will populate
-/// `invitee_user_id` on sign-in, so over time more invites flow
-/// through the cheap user_id branch.
+/// v0.10.3 rationale for the email-fallback on a mismatched
+/// `invitee_user_id`: pre-v0.10.3 sync_user_from_app could resolve a
+/// legacy user_id (empty string → users.id::text) that then got
+/// baked into `forecast_invites.invitee_user_id` at claim time. Later
+/// the same account signs in and JWT `sub` no longer matches, and the
+/// old strict user_id check returned 403 forever with no recovery
+/// path from the client. Mailbox ownership is the semantic invariant
+/// we care about anyway, so allowing it here is correct and safe.
 fn require_caller_is_invitee(
     row: &InviteAcceptRow,
     principal: &AuthPrincipal,
 ) -> Result<(), (StatusCode, String)> {
     let caller_user_id = principal.user_id();
+    let caller_email = match principal {
+        AuthPrincipal::User(u) => Some(u.email.to_lowercase()),
+        AuthPrincipal::ApiKey(_) => None,
+    };
+
     if let Some(ref uid) = row.invitee_user_id {
         if uid == &caller_user_id {
             return Ok(());
+        }
+        // Fallback: the stored invitee_user_id is drifted, but if the
+        // caller's email matches invitee_email we honour the accept.
+        // ApiKey callers can't demonstrate mailbox ownership — they
+        // stay locked out on user_id mismatch.
+        if let (Some(want), Some(have)) = (
+            row.invitee_email.as_deref().map(str::to_lowercase),
+            caller_email.as_deref(),
+        ) {
+            if want == have {
+                tracing::info!(
+                    invite_id = %row.id,
+                    stored_invitee_user_id = %uid,
+                    caller_user_id = %caller_user_id,
+                    caller_email = %have,
+                    "[require_caller_is_invitee] user_id drift, healed via email match",
+                );
+                return Ok(());
+            }
         }
         return Err((
             StatusCode::FORBIDDEN,
             "This invite was sent to a different user".into(),
         ));
     }
-    // Email-only invite — fall back to email match.
-    let email = match principal {
-        AuthPrincipal::User(u) => u.email.to_lowercase(),
-        AuthPrincipal::ApiKey(_) => {
+
+    // Email-only invite (invitee_user_id NULL) — email must match.
+    let email = match caller_email {
+        Some(e) => e,
+        None => {
             return Err((
                 StatusCode::FORBIDDEN,
                 "API-key callers cannot accept email-only invites (no email claim)".into(),
