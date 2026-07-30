@@ -1,6 +1,6 @@
 {
   "forecast_id": null,
-  "current_version": 1,
+  "current_version": 4,
   "predicted_probability": 0.01,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
@@ -10,6 +10,24 @@
       "timestamp": "2026-07-30 18:10",
       "probability": 0.01,
       "change_summary": "Initial: 1.0%, 3 drivers, 0 evidence"
+    },
+    {
+      "version": 2,
+      "timestamp": "2026-07-30 18:10",
+      "probability": 0.01,
+      "change_summary": "Updated forecast"
+    },
+    {
+      "version": 3,
+      "timestamp": "2026-07-30 18:10",
+      "probability": 0.01,
+      "change_summary": "Updated forecast"
+    },
+    {
+      "version": 4,
+      "timestamp": "2026-07-30 18:11",
+      "probability": 0.01,
+      "change_summary": "1.0% (→), 3 drivers"
     }
   ],
   "sim_results": null,
@@ -34,5 +52,5 @@
       }
     ]
   },
-  "workspace_id": null
+  "workspace_id": "b3daa786-9008-4b89-aa51-6d04fdf225c4"
 }
