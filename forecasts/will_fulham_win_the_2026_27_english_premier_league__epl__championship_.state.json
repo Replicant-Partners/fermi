@@ -1,6 +1,6 @@
 {
   "forecast_id": null,
-  "current_version": 2,
+  "current_version": 4,
   "predicted_probability": 0.01,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
@@ -14,6 +14,18 @@
     {
       "version": 2,
       "timestamp": "2026-07-31 03:01",
+      "probability": 0.01,
+      "change_summary": "1.0% (→), 3 drivers"
+    },
+    {
+      "version": 3,
+      "timestamp": "2026-07-31 03:01",
+      "probability": 0.01,
+      "change_summary": "Updated forecast"
+    },
+    {
+      "version": 4,
+      "timestamp": "2026-07-31 03:02",
       "probability": 0.01,
       "change_summary": "1.0% (→), 3 drivers"
     }
@@ -40,5 +52,5 @@
       }
     ]
   },
-  "workspace_id": null
+  "workspace_id": "cf5bf5c8-543a-4b41-b743-4f65cda9012a"
 }
