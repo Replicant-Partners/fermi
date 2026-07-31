@@ -1,21 +1,15 @@
 {
   "forecast_id": null,
-  "current_version": 2,
+  "current_version": 1,
   "predicted_probability": 0.01,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-31 03:17",
+      "timestamp": "2026-07-31 17:21",
       "probability": 0.01,
       "change_summary": "Initial: 1.0%, 3 drivers, 0 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-07-31 03:17",
-      "probability": 0.01,
-      "change_summary": "1.0% (→), 3 drivers"
     }
   ],
   "sim_results": null,
@@ -28,17 +22,17 @@
     "market_id": "2771333",
     "question": "Will Leeds United win the 2026-27 English Premier League (EPL) Championship?",
     "market_price": 0.0015,
-    "volume_24h": 400.01,
-    "liquidity": 216499.52701,
+    "volume_24h": 0.0,
+    "liquidity": 216973.05981,
     "confidence": "Low",
     "price_change_1w": null,
     "url": "https://polymarket.com/event/659518",
     "price_history": [
       {
-        "t": 1785467854,
+        "t": 1785518458,
         "p": 0.0015
       }
     ]
   },
-  "workspace_id": "3ccef5a9-18ba-4571-b102-1206a403ee3e"
+  "workspace_id": null
 }
