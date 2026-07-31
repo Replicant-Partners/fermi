@@ -123,14 +123,33 @@ pub async fn optional_auth_middleware(
     }
 
     if let Some(token_source) = extract_token(&req) {
+        // v0.10.10 fix. The old code validated JWTs only in the Bearer
+        // branch, with a comment saying "API key validation requires
+        // async and is skipped here." That comment was stale — this
+        // function IS async, and `api_keys::validate_api_key` is an
+        // async fn. The consequence of the skip was that API-key
+        // callers (every `ferm_...` token) got treated as anonymous
+        // on any route wired through `optional_auth_middleware` — which
+        // includes the whole public router, notably
+        // `GET /api/agents/:agent_id`. Owners hitting their own
+        // private drafts got 404 because their AuthPrincipal was never
+        // inserted into request extensions, and the handler correctly
+        // returned NOT_FOUND for the anon-on-private branch.
+        //
+        // Symmetric with `auth_middleware`'s Bearer branch: try JWT
+        // first (fast, no DB), fall back to API key.
         let principal = match token_source {
             TokenSource::Cookie(token) => {
                 validate_session_token(&token, &auth_state.jwt_secret).ok()
             }
             TokenSource::Bearer(token) => {
-                // Note: API key validation requires async and is skipped here.
-                // API key users should use the enforcing middleware routes.
-                validate_session_token(&token, &auth_state.jwt_secret).ok()
+                if let Ok(p) = validate_session_token(&token, &auth_state.jwt_secret) {
+                    Some(p)
+                } else {
+                    api_keys::validate_api_key(&auth_state.db, &token)
+                        .await
+                        .ok()
+                }
             }
         };
 
