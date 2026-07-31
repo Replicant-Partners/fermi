@@ -3087,6 +3087,15 @@ async fn main() {
             "/api/admin/rbac/heal",
             post(handlers::admin_rbac::admin_rbac_heal_handler),
         )
+        // v0.10.6: authenticated self-diagnostic. Any signed-in user
+        // can hit /api/rbac/self-check to get a definitive answer on
+        // whether their JWT sub aligns with users.user_id and, if
+        // not, exactly what class of drift they're looking at. See
+        // handlers::rbac_self_check for the response shape.
+        .route(
+            "/api/rbac/self-check",
+            get(handlers::rbac_self_check::rbac_self_check_handler),
+        )
         // Spec 23 demo cleanup — one-shot wipe of every workspace
         // spawned by the Fermi Forecast App + cascading rows across
         // BayesOps and forecast tables. Requires admin auth and an

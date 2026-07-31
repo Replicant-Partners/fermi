@@ -8423,13 +8423,51 @@ impl CockpitState {
                 }
                 Err(e) => {
                     log::warn!("[save] backend persist failed: {}", e);
+
+                    // v0.10.6: on a FK-shaped error, auto-fetch the
+                    // self-check diagnosis before deciding on the
+                    // toast text. If the endpoint is available and
+                    // gives us an actionable diagnosis, use it —
+                    // otherwise fall back to the generic rewriter.
+                    // Failure to reach /api/rbac/self-check is not
+                    // an error we surface (it just means the
+                    // deployed backend doesn't have the endpoint
+                    // yet); we degrade gracefully.
+                    let raw = e.to_string();
+                    let looks_like_fk = raw.to_lowercase().contains("foreign key")
+                        && (raw.to_lowercase().contains("owner_id")
+                            || raw.to_lowercase().contains("users"));
+                    let diagnosis_hint = if looks_like_fk {
+                        match api.rbac_self_check().await {
+                            Ok(resp) => Some(format_self_check_diagnosis(&resp)),
+                            Err(fetch_err) => {
+                                log::debug!(
+                                    "[save] self-check fetch failed (endpoint may not \
+                                     be deployed yet): {}",
+                                    fetch_err
+                                );
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    };
+
                     this.update(cx, |state, cx| {
                         // Leave `dirty` set so the next autosave tick
                         // retries. Don't clobber `last_autosave_at`.
+                        let text = match diagnosis_hint {
+                            Some(hint) => format!(
+                                "{}\n\n→ Diagnosis: {}",
+                                friendly_backend_save_error(&raw),
+                                hint
+                            ),
+                            None => friendly_backend_save_error(&raw),
+                        };
                         state.messages.push(AssistantMessage {
                             node: "save".into(),
                             kind: MessageKind::Warning,
-                            text: friendly_backend_save_error(&e.to_string()),
+                            text,
                         });
                         cx.notify();
                     })
@@ -20372,6 +20410,32 @@ mod extractor_tests {
 /// The categorisation is intentionally cautious: only well-known
 /// wire-format phrases get rewritten. Everything else falls through
 /// with the raw text so we don't accidentally hide a novel failure.
+/// v0.10.6: convert a `/api/rbac/self-check` response into a
+/// single-line human-readable diagnosis for the composer toast. The
+/// endpoint's `diagnosis` field is machine-readable
+/// (`aligned` | `stale_jwt` | `users_row_needs_backfill` |
+/// `users_row_missing`); this function turns each variant into a
+/// short sentence + the endpoint's `remediation` text.
+fn format_self_check_diagnosis(resp: &serde_json::Value) -> String {
+    let diagnosis = resp
+        .get("diagnosis")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let remediation = resp
+        .get("remediation")
+        .and_then(|v| v.as_str())
+        .unwrap_or("See /api/rbac/self-check for the full response.");
+    let server_commit = resp
+        .get("server_commit")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let server_version = resp
+        .get("server_version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    format!("[{diagnosis}] {remediation} (server v{server_version} @ {server_commit})")
+}
+
 fn friendly_backend_save_error(raw: &str) -> String {
     let lower = raw.to_lowercase();
 
@@ -20404,16 +20468,20 @@ fn friendly_backend_save_error(raw: &str) -> String {
     // that doesn't match the session's JWT `sub`, and the heal's
     // legacy-guard refuses to reparent. v0.10.3 fixes this at the
     // source (sync_user_from_app now backfills user_id + migration
-    // 161 heals existing rows) so we no longer have to blame the
-    // deploy blindly. Surface the raw text with a hint pointing at
-    // the real class of failure.
+    // 161 heals existing rows).
+    //
+    // v0.10.6: point the operator at the diagnostic endpoint that
+    // definitively says which class of drift they're looking at
+    // (stale JWT vs stale deploy vs missing users row). One curl
+    // gives them the answer + the exact remediation.
     if lower.contains("foreign key") && (lower.contains("owner_id") || lower.contains("users")) {
         return format!(
             "Backend save failed: your users row and session don't line up \
-             (owner_id FK violation). If the server is on v0.10.3+ this \
-             should have been auto-healed at sign-in — sign out and back \
-             in, then retry. If it persists, contact support with this \
-             text: {}",
+             (owner_id FK violation). Two likely causes: (1) your session \
+             JWT was minted before the v0.10.3 backfill — sign out and back \
+             in first; (2) the deployed backend is older than v0.10.3 — \
+             check GET /api/rbac/self-check for a definitive answer + \
+             remediation. Raw error: {}",
             raw
         );
     }

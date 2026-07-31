@@ -46,6 +46,7 @@ pub mod push;
 pub mod qr_codes;
 pub mod rabble_chat;
 pub mod rabble_workspace;
+pub mod rbac_self_check;
 pub mod relationships;
 pub mod shares;
 pub mod simops;

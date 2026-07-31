@@ -1664,6 +1664,15 @@ impl ApiClient {
         serde_json::from_str(&body).map_err(ApiError::Json)
     }
 
+    /// v0.10.6: authenticated self-diagnostic. Answers "does my JWT
+    /// sub align with users.user_id for this session, and if not,
+    /// what class of drift am I looking at?". Used by the composer's
+    /// FK-error handler to swap the raw error text for an actionable
+    /// remediation string.
+    pub async fn rbac_self_check(&self) -> Result<JsonValue, ApiError> {
+        self.get("/api/rbac/self-check").await
+    }
+
     // ─── BayesOps R-2 sparkline UX ────────────────────────────────────────
     //
     // Three calls power the per-driver sparkline affordance in the forecast
