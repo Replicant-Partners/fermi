@@ -6,7 +6,35 @@ use axum::{
     Json,
 };
 use fermi::gas::charge_gas;
-use fermi_auth::{get_or_create_wallet, AuthPrincipal};
+use fermi_auth::{get_or_create_wallet, rbac, AuthPrincipal, ObjectType, Visibility};
+
+// ─── Eval-scope authorization helper ───────────────────────────────
+//
+// Eval test-cases / runs against a curated (system-tier) agent are
+// open to any authenticated caller — that's the platform benchmark
+// affordance. For community-tier agents the caller must have Admin
+// (owner + platform admin). v0.10.5: substrate RBAC replaces the
+// hand-rolled `owner_id != user_id && tier != 'curated'` check that
+// lived at 6 sites in this file.
+async fn require_eval_authority(
+    state: &AppState,
+    principal: &AuthPrincipal,
+    agent: &Agent,
+) -> Result<(), (StatusCode, String)> {
+    if agent.tier == "curated" {
+        return Ok(());
+    }
+    rbac::require_admin_on(
+        &state.db,
+        principal,
+        ObjectType::Agent,
+        &agent.agent_id.to_string(),
+        agent.owner_id.as_deref().unwrap_or(""),
+        Visibility::Private,
+    )
+    .await
+    .map(|_| ())
+}
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -93,9 +121,7 @@ pub async fn create_eval_test_case_handler(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
     let db_agent = resolve_agent(&state, &agent_id).await?;
-    if db_agent.owner_id.as_deref() != Some(&user_id) && db_agent.tier != "curated" {
-        return Err((StatusCode::FORBIDDEN, "Not the agent owner".into()));
-    }
+    require_eval_authority(&state, &principal, &db_agent).await?;
     let tc = EvalTestCase {
         test_case_id: uuid::Uuid::new_v4(),
         agent_id: db_agent.agent_id,
@@ -123,9 +149,7 @@ pub async fn update_eval_test_case_handler(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
     let db_agent = resolve_agent(&state, &agent_id).await?;
-    if db_agent.owner_id.as_deref() != Some(&user_id) && db_agent.tier != "curated" {
-        return Err((StatusCode::FORBIDDEN, "Not the agent owner".into()));
-    }
+    require_eval_authority(&state, &principal, &db_agent).await?;
     let tc_id: uuid::Uuid = test_case_id
         .parse()
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid test_case_id".into()))?;
@@ -169,9 +193,7 @@ pub async fn delete_eval_test_case_handler(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
     let db_agent = resolve_agent(&state, &agent_id).await?;
-    if db_agent.owner_id.as_deref() != Some(&user_id) && db_agent.tier != "curated" {
-        return Err((StatusCode::FORBIDDEN, "Not the agent owner".into()));
-    }
+    require_eval_authority(&state, &principal, &db_agent).await?;
     let tc_id: uuid::Uuid = test_case_id
         .parse()
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid test_case_id".into()))?;
@@ -191,9 +213,7 @@ pub async fn trigger_eval_run_handler(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
     let db_agent = resolve_agent(&state, &agent_id).await?;
-    if db_agent.owner_id.as_deref() != Some(&user_id) && db_agent.tier != "curated" {
-        return Err((StatusCode::FORBIDDEN, "Not the agent owner".into()));
-    }
+    require_eval_authority(&state, &principal, &db_agent).await?;
     let agent_name = agent_id.clone();
     let (run_id, total_cases) =
         trigger_eval_run_core(&state, db_agent, agent_name, user_id, body.judge, body.tags).await?;
@@ -1301,9 +1321,7 @@ pub async fn generate_rubrics_handler(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
     let db_agent = resolve_agent(&state, &agent_id).await?;
-    if db_agent.owner_id.as_deref() != Some(&user_id) && db_agent.tier != "curated" {
-        return Err((StatusCode::FORBIDDEN, "Not the agent owner".into()));
-    }
+    require_eval_authority(&state, &principal, &db_agent).await?;
 
     let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
         (

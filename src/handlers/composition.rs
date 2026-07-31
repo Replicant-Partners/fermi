@@ -21,7 +21,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use agent_bestiary_memory::{CompositionVersion, WorkspaceMessage};
-use fermi_auth::AuthPrincipal;
+use fermi_auth::{rbac, AuthPrincipal, ObjectType, Visibility};
 
 use crate::AppState;
 
@@ -32,22 +32,28 @@ async fn require_workspace_owner_or_admin(
     principal: &AuthPrincipal,
     workspace_id: Uuid,
 ) -> Result<(), (StatusCode, String)> {
-    let row = sqlx::query(
-        "SELECT owner_id FROM teams WHERE id = $1",
-    )
-    .bind(workspace_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .ok_or((StatusCode::NOT_FOUND, "Workspace not found".into()))?;
+    let row = sqlx::query("SELECT owner_id FROM teams WHERE id = $1")
+        .bind(workspace_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Workspace not found".into()))?;
 
-    let owner_id: String = row.try_get("owner_id")
+    let owner_id: String = row
+        .try_get("owner_id")
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let user_id = principal.user_id();
-    if owner_id != user_id && !principal.can_admin() {
-        return Err((StatusCode::FORBIDDEN, "Workspace owner or admin required".into()));
-    }
+    // v0.10.5: substrate RBAC. Composition edits are Admin-scoped.
+    // Uses ObjectType::Team since teams IS the workspace table.
+    rbac::require_admin_on(
+        &state.db,
+        principal,
+        ObjectType::Team,
+        &workspace_id.to_string(),
+        &owner_id,
+        Visibility::Private,
+    )
+    .await?;
     Ok(())
 }
 
@@ -108,12 +114,7 @@ pub async fn reject_composition_version_handler(
     let user_id = principal.user_id();
     state
         .memory_store
-        .resolve_composition_version(
-            version_id,
-            &user_id,
-            false,
-            body.note.as_deref(),
-        )
+        .resolve_composition_version(version_id, &user_id, false, body.note.as_deref())
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -122,16 +123,14 @@ pub async fn reject_composition_version_handler(
     if let Some(note) = &body.note {
         if !note.is_empty() {
             // Look up the workspace's coordination_strategist_id
-            if let Ok(Some(row)) = sqlx::query(
-                "SELECT coordination_strategist_id FROM teams WHERE id = $1",
-            )
-            .bind(workspace_id)
-            .fetch_optional(&state.db)
-            .await
+            if let Ok(Some(row)) =
+                sqlx::query("SELECT coordination_strategist_id FROM teams WHERE id = $1")
+                    .bind(workspace_id)
+                    .fetch_optional(&state.db)
+                    .await
             {
-                let strategist_id: Option<Uuid> = row
-                    .try_get("coordination_strategist_id")
-                    .unwrap_or(None);
+                let strategist_id: Option<Uuid> =
+                    row.try_get("coordination_strategist_id").unwrap_or(None);
 
                 if let Some(sid) = strategist_id {
                     let episode = agent_bestiary_memory::Episode {
@@ -163,8 +162,8 @@ pub async fn reject_composition_version_handler(
                         authority_weight: 1.0,
                         dyad_id: None,
                         persona_version_at_write: None,
-                provider_used: None,
-                model_used: None,
+                        provider_used: None,
+                        model_used: None,
                     };
                     // Synthetic rejection episode — embedding intentionally NULL.
                     // Stamp source_ref so the row is identifiable for later cleanup.
@@ -205,11 +204,10 @@ pub async fn propose_composition_version_handler(
     Path(workspace_id): Path<Uuid>,
     Json(body): Json<ProposeRequest>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let member_ids: Option<Vec<Uuid>> = body.member_agent_ids.as_ref().map(|ids| {
-        ids.iter()
-            .filter_map(|s| Uuid::parse_str(s).ok())
-            .collect()
-    });
+    let member_ids: Option<Vec<Uuid>> = body
+        .member_agent_ids
+        .as_ref()
+        .map(|ids| ids.iter().filter_map(|s| Uuid::parse_str(s).ok()).collect());
 
     let diff_summary = if body.homophily_detected.unwrap_or(false) {
         format!("[homophily detected] {}", body.diff_summary)

@@ -5,7 +5,10 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use fermi_auth::{credit_charge, credit_deposit_typed, get_or_create_wallet, AuthPrincipal};
+use fermi_auth::{
+    credit_charge, credit_deposit_typed, get_or_create_wallet, rbac, AuthPrincipal, ObjectType,
+    Visibility,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -13,22 +16,32 @@ use uuid::Uuid;
 
 use crate::AppState;
 
-/// Verify the caller owns this agent (or is admin).
-fn require_owner_or_admin(
+/// v0.10.5: substrate RBAC. Wallet operations are Admin-only
+/// (financial actions on the agent's own credit balance). No share
+/// grants access.
+///
+/// Note: we pass `Visibility::Private` unconditionally because
+/// wallet access does not depend on the agent's public/private
+/// setting — an unpublished draft's wallet still needs owner-only
+/// access. The visibility parameter to `rbac::require_admin_on`
+/// only affects the "public grants View to everyone" branch, which
+/// is irrelevant for Admin-required calls.
+async fn require_admin_on_agent(
+    pool: &sqlx::PgPool,
+    principal: &AuthPrincipal,
+    agent_uuid: Uuid,
     owner_id: &Option<String>,
-    user_id: &str,
-    is_admin: bool,
 ) -> Result<(), (StatusCode, String)> {
-    if is_admin {
-        return Ok(());
-    }
-    match owner_id {
-        Some(oid) if oid == user_id => Ok(()),
-        _ => Err((
-            StatusCode::FORBIDDEN,
-            "You do not own this agent".to_string(),
-        )),
-    }
+    rbac::require_admin_on(
+        pool,
+        principal,
+        ObjectType::Agent,
+        &agent_uuid.to_string(),
+        owner_id.as_deref().unwrap_or(""),
+        Visibility::Private,
+    )
+    .await
+    .map(|_| ())
 }
 
 /// GET /api/agents/:id/wallet — agent wallet summary
@@ -58,7 +71,7 @@ pub async fn get_agent_wallet_handler(
     let agent_name: String = agent_row.try_get("agent_name").unwrap_or_default();
     let auto_collect_pct: i32 = agent_row.try_get("auto_collect_pct").unwrap_or(0);
 
-    require_owner_or_admin(&owner_id, &principal.user_id(), principal.can_admin())?;
+    require_admin_on_agent(&state.db, &principal, agent_uuid, &owner_id).await?;
 
     // Get or create agent wallet
     let wallet = get_or_create_wallet(&state.db, "agent", &agent_id)
@@ -144,7 +157,7 @@ pub async fn get_agent_earnings_handler(
             })?
             .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
 
-    require_owner_or_admin(&owner_id, &principal.user_id(), principal.can_admin())?;
+    require_admin_on_agent(&state.db, &principal, agent_uuid, &owner_id).await?;
 
     let limit = params.limit.min(200).max(1);
     let offset = params.offset.max(0);
@@ -229,7 +242,7 @@ pub async fn collect_handler(
     let agent_name: String = agent_row.try_get("agent_name").unwrap_or_default();
     let user_id = principal.user_id();
 
-    require_owner_or_admin(&owner_id, &user_id, principal.can_admin())?;
+    require_admin_on_agent(&state.db, &principal, agent_uuid, &owner_id).await?;
 
     let agent_wallet = get_or_create_wallet(&state.db, "agent", &agent_id)
         .await
@@ -363,7 +376,7 @@ pub async fn allocate_handler(
             })?
             .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
 
-    require_owner_or_admin(&owner_id, &principal.user_id(), principal.can_admin())?;
+    require_admin_on_agent(&state.db, &principal, agent_uuid, &owner_id).await?;
 
     let (tx_type, budget_column) = match body.service.as_str() {
         "dream_cycle" => ("agent_allocate_dream", Some("dreaming_budget_credits")),
@@ -474,7 +487,7 @@ pub async fn set_auto_collect_handler(
             })?
             .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
 
-    require_owner_or_admin(&owner_id, &principal.user_id(), principal.can_admin())?;
+    require_admin_on_agent(&state.db, &principal, agent_uuid, &owner_id).await?;
 
     if body.pct < 0 || body.pct > 100 {
         return Err((

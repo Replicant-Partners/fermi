@@ -758,6 +758,12 @@ async fn run_migrations(db: &PgPool) {
         // holds across ABW. Extend one SELECT block per new tenant
         // resource table with an owner column.
         "migrations/163_rbac_orphans_view.sql",
+        // 164: admin_bypass_events audit table. v0.10.5. Records every
+        // platform-admin bypass of a workflow gate (force-publish
+        // being the first). RBAC ownership bypass is implicit in the
+        // platform-admin role and NOT logged here — only quality-gate
+        // overrides land in this table.
+        "migrations/164_admin_bypass_events.sql",
     ];
 
     for file in &migration_files {

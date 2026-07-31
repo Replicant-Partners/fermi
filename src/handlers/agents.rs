@@ -7,7 +7,10 @@ use axum::{
     Json,
 };
 use fermi::gas::charge_gas;
-use fermi_auth::{credit_charge, get_or_create_wallet, AuthPrincipal};
+use fermi_auth::{
+    credit_charge, get_or_create_wallet, rbac, visibility::AccessLevel, AuthPrincipal, ObjectType,
+    Visibility,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -20,21 +23,37 @@ use crate::{
     GeminiRequest, GeminiResponse,
 };
 
-// ─── Shared visibility helpers ────────────────────────────────────
+// ─── Shared visibility helpers ────────────────────────────────
 
-/// Returns true if the caller is allowed to see this agent's detail.
-/// Owner sees any status; admin sees everything; everyone else only
-/// sees published + public agents.
-fn agent_visible_to_caller(agent: &Agent, caller_id: Option<&str>, is_admin: bool) -> bool {
-    if is_admin {
-        return true;
+/// Map an `Agent`'s persisted `visibility` + `status` to the substrate
+/// [`Visibility`] enum used by [`fermi_auth::rbac`].
+///
+/// An agent is only "reachable" as public when *both*
+/// `visibility = 'public'` and `status = 'published'` — a draft with
+/// `visibility='public'` is still author-only. This function bakes
+/// that rule in one place so every handler (list, detail, execute,
+/// wallet, funding) gets the same answer.
+fn agent_effective_visibility(agent: &Agent) -> Visibility {
+    if agent.status == "published" && agent.visibility == "public" {
+        Visibility::Public
+    } else if agent.visibility == "unlisted" {
+        Visibility::Shared
+    } else {
+        Visibility::Private
     }
-    if let Some(uid) = caller_id {
-        if agent.owner_id.as_deref() == Some(uid) {
-            return true;
-        }
+}
+
+/// Sync ACL check used by list filters. `visible_sync` is O(1) —
+/// admin / owner / public only, no share/team ACL. Detail endpoints
+/// use the async `rbac::require*` path which does the full ladder.
+///
+/// See `fermi_auth::rbac::visible_sync` for the semantics.
+fn agent_visible_to_caller(agent: &Agent, caller: Option<&AuthPrincipal>) -> bool {
+    let vis = agent_effective_visibility(agent);
+    match caller {
+        Some(p) => rbac::visible_sync(p, agent.owner_id.as_deref(), vis),
+        None => rbac::visible_sync_anon(vis),
     }
-    agent.status == "published" && agent.visibility == "public"
 }
 
 /// Build the rich agent JSON object served by both list_agents and
@@ -167,12 +186,11 @@ pub async fn list_agents(
     // Admins see everything (including drafts/private) so third-party
     // agents made by external users are discoverable in the catalogue for
     // moderation and support. Owners still see their own; everyone else
-    // sees only published + public rows.
-    let is_admin = caller
-        .as_ref()
-        .map(|Extension(p)| p.can_admin())
-        .unwrap_or(false);
-    let caller_id = caller.map(|Extension(p)| p.user_id());
+    // sees only published + public rows. Uses `rbac::visible_sync` —
+    // no per-agent DB roundtrip, since list filters can't afford the
+    // O(N) share/team lookup. Detail endpoints use the async
+    // `rbac::require_view` for the full ACL.
+    let caller_ref = caller.as_ref().map(|Extension(p)| p);
 
     // Batch-load workspace membership counts for all agents
     let workspace_counts: std::collections::HashMap<uuid::Uuid, i64> =
@@ -189,7 +207,7 @@ pub async fn list_agents(
         let real_agents: Vec<_> = db_agents
             .into_iter()
             .filter(|a| !a.agent_name.starts_with("test_agent_"))
-            .filter(|a| agent_visible_to_caller(a, caller_id.as_deref(), is_admin))
+            .filter(|a| agent_visible_to_caller(a, caller_ref))
             .collect();
 
         // Apply search filter
@@ -336,19 +354,35 @@ pub async fn get_agent_handler(
     caller: Option<Extension<AuthPrincipal>>,
     Path(agent_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let is_admin = caller
-        .as_ref()
-        .map(|Extension(p)| p.can_admin())
-        .unwrap_or(false);
-    let caller_id = caller.map(|Extension(p)| p.user_id());
-
     let agent = resolve_agent(&state, &agent_id).await?;
 
-    if !agent_visible_to_caller(&agent, caller_id.as_deref(), is_admin) {
-        return Err((
-            StatusCode::NOT_FOUND,
-            format!("Agent '{}' not found", agent_id),
-        ));
+    // v0.10.5: authenticated callers go through the full RBAC ladder
+    // (admin → owner → public → direct share → team share). Anonymous
+    // callers only see the public+published slice. Both branches
+    // return 404 (not 403) on denial so we don't leak existence of
+    // private agents through the response code.
+    let owner_id = agent.owner_id.clone().unwrap_or_default();
+    let vis = agent_effective_visibility(&agent);
+    match caller.as_ref() {
+        Some(Extension(p)) => {
+            rbac::require_view(
+                &state.db,
+                p,
+                ObjectType::Agent,
+                &agent.agent_id.to_string(),
+                &owner_id,
+                vis,
+            )
+            .await?;
+        }
+        None => {
+            if !rbac::visible_sync_anon(vis) {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    format!("Agent '{}' not found", agent_id),
+                ));
+            }
+        }
     }
 
     // Workspace count for this agent — keeps parity with list_agents.
@@ -1079,9 +1113,18 @@ pub async fn import_embeddings_handler(
         })?
         .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
 
-    if agent.owner_id.as_deref() != Some(&user_id) {
-        return Err((StatusCode::FORBIDDEN, "Not the agent owner".to_string()));
-    }
+    // v0.10.5: substrate RBAC. Embedding import writes to the agent's
+    // memory — Admin permission required (owner or platform admin).
+    rbac::require_admin_on(
+        &state.db,
+        &principal,
+        ObjectType::Agent,
+        &agent.agent_id.to_string(),
+        agent.owner_id.as_deref().unwrap_or(""),
+        agent_effective_visibility(&agent),
+    )
+    .await?;
+    let _ = user_id; // now unused directly; kept as a local for clarity below
 
     if req.episodes.is_empty() {
         return Err((StatusCode::BAD_REQUEST, "No episodes provided".to_string()));
@@ -1393,9 +1436,17 @@ pub async fn embeddings_export_consent_handler(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")))?
         .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
 
-    if agent.owner_id.as_deref() != Some(&user_id) {
-        return Err((StatusCode::FORBIDDEN, "Not the agent owner".to_string()));
-    }
+    // v0.10.5: substrate RBAC. Export consent is a sensitive action
+    // (issues a scoped one-shot token) — Admin required.
+    rbac::require_admin_on(
+        &state.db,
+        &principal,
+        ObjectType::Agent,
+        &agent.agent_id.to_string(),
+        agent.owner_id.as_deref().unwrap_or(""),
+        agent_effective_visibility(&agent),
+    )
+    .await?;
 
     const REQUIRED_PHRASE: &str = "i_understand_embeddings_are_invertible";
     if req.acknowledged_invertibility != REQUIRED_PHRASE {
@@ -1479,9 +1530,18 @@ pub async fn embeddings_export_handler(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")))?
         .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
 
-    if agent.owner_id.as_deref() != Some(&user_id) {
-        return Err((StatusCode::FORBIDDEN, "Not the agent owner".to_string()));
-    }
+    // v0.10.5: substrate RBAC. Bulk export of embeddings + source_text
+    // is data egress — Admin required.
+    rbac::require_admin_on(
+        &state.db,
+        &principal,
+        ObjectType::Agent,
+        &agent.agent_id.to_string(),
+        agent.owner_id.as_deref().unwrap_or(""),
+        agent_effective_visibility(&agent),
+    )
+    .await?;
+    let _ = user_id;
 
     let format = q.format.as_deref().unwrap_or("source_only");
     let include_vectors = match format {
@@ -1916,13 +1976,20 @@ pub async fn update_agent_handler(
 
     let user_id = principal.user_id();
 
-    // Owner check
-    if db_agent.owner_id.as_deref() != Some(&user_id) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Not the owner of this agent".to_string(),
-        ));
-    }
+    // v0.10.5: RBAC via substrate. Edit = owner, platform admin, or
+    // holder of an edit/admin share (once agent shares land in
+    // object_shares). Same semantics as the old hand-rolled check for
+    // now (no shares yet); the substrate makes future sharing
+    // features drop-in.
+    rbac::require_edit(
+        &state.db,
+        &principal,
+        ObjectType::Agent,
+        &db_agent.agent_id.to_string(),
+        db_agent.owner_id.as_deref().unwrap_or(""),
+        agent_effective_visibility(&db_agent),
+    )
+    .await?;
 
     // Capture pre-update version number for the activity-feed event (Doc 12 §
     // Capability 3). Snapshotting *after* the update means the previous max
@@ -2239,9 +2306,17 @@ pub async fn restore_agent_version_handler(
     let user_id = principal.user_id();
     let db_agent = resolve_agent(&state, &agent_id).await?;
 
-    if db_agent.owner_id.as_deref() != Some(&user_id) {
-        return Err((StatusCode::FORBIDDEN, "Not the owner".to_string()));
-    }
+    // v0.10.5: substrate RBAC. Restore is a write (rewinds state), so
+    // Edit permission is the minimum. Owner + admin both pass.
+    rbac::require_edit(
+        &state.db,
+        &principal,
+        ObjectType::Agent,
+        &db_agent.agent_id.to_string(),
+        db_agent.owner_id.as_deref().unwrap_or(""),
+        agent_effective_visibility(&db_agent),
+    )
+    .await?;
 
     // Capture pre-restore version number for the activity-feed event (Doc 12 §
     // Capability 3), same shape as update_agent_handler.
@@ -2325,13 +2400,18 @@ pub async fn delete_agent_handler(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db_agent = resolve_agent(&state, &agent_id).await?;
 
-    // Owner check
-    if db_agent.owner_id.as_deref() != Some(&principal.user_id()) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Not the owner of this agent".to_string(),
-        ));
-    }
+    // v0.10.5: substrate RBAC. Delete is destructive — Admin (owner
+    // or platform admin) required. No share/team can delete an agent,
+    // by design.
+    rbac::require_admin_on(
+        &state.db,
+        &principal,
+        ObjectType::Agent,
+        &db_agent.agent_id.to_string(),
+        db_agent.owner_id.as_deref().unwrap_or(""),
+        agent_effective_visibility(&db_agent),
+    )
+    .await?;
 
     state
         .memory_store

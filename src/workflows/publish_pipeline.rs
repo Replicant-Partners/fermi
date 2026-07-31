@@ -120,17 +120,31 @@ pub fn can_publish(checks: &[PublishCheck]) -> bool {
 }
 
 /// Run the full publish pipeline: check, charge, transition.
+///
+/// `force` is v0.10.5. When true, error-severity check failures do
+/// not block the publish. Only platform admins should set this;
+/// enforcement lives in the handler (not here), so callers must
+/// gate before threading `force = true` through. The returned
+/// `checks` vector still reports every check's status — forced
+/// publishes surface the skipped errors in the response body so the
+/// operator has a paper trail.
+///
+/// This function does not write to `admin_bypass_events`. The
+/// handler owns that audit surface because it knows the admin's
+/// `user_id`, the reason string, and the exact resource id. Keeps
+/// the workflow layer free of RBAC state.
 pub async fn publish_agent(
     pool: &PgPool,
     agent: &Agent,
     user_id: &str,
     gas_fees: &GasFees,
+    force: bool,
 ) -> Result<(TransitionResult, Vec<PublishCheck>), String> {
     let current = AgentLifecycleStatus::from_str(&agent.status)?;
     validate_transition(&current, &AgentLifecycleStatus::Published)?;
 
     let checks = run_publish_checks(agent);
-    if !can_publish(&checks) {
+    if !force && !can_publish(&checks) {
         return Err("Publish blocked by failing checks".into());
     }
 

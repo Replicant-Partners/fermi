@@ -26,7 +26,9 @@ use serde_json::{json, Value};
 use sqlx::Row;
 use uuid::Uuid;
 
-use fermi_auth::{credit_deposit, get_or_create_wallet, teams, AuthPrincipal};
+use fermi_auth::{
+    credit_deposit, get_or_create_wallet, rbac, teams, AuthPrincipal, ObjectType, Visibility,
+};
 
 use crate::{resolve_agent, AppState};
 
@@ -384,12 +386,17 @@ pub async fn update_app_handler_full(
     let caller_id = principal.user_id();
     let app = get_app_row(&state.db, &slug).await?;
     let owner_id = app["owner_user_id"].as_str().unwrap_or("");
-    if caller_id != owner_id && !principal.can_admin() {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Only the App owner can update it".into(),
-        ));
-    }
+    // v0.10.5: substrate RBAC. Admin (owner + platform admin).
+    rbac::require_admin_on(
+        &state.db,
+        &principal,
+        ObjectType::App,
+        &slug,
+        owner_id,
+        Visibility::Private,
+    )
+    .await?;
+    let _ = caller_id;
 
     // Build a SET clause from whichever fields are present.
     // We use direct SQL so we can patch any subset cleanly.
@@ -754,12 +761,17 @@ pub async fn publish_app_handler(
     let caller_id = principal.user_id();
     let app = get_app_row(&state.db, &slug).await?;
     let owner_id = app["owner_user_id"].as_str().unwrap_or("");
-    if caller_id != owner_id && !principal.can_admin() {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Only the App owner can publish it".into(),
-        ));
-    }
+    // v0.10.5: substrate RBAC. Publish is Admin.
+    rbac::require_admin_on(
+        &state.db,
+        &principal,
+        ObjectType::App,
+        &slug,
+        owner_id,
+        Visibility::Private,
+    )
+    .await?;
+    let _ = caller_id;
 
     sqlx::query(
         "UPDATE apps SET visibility = 'public', published_at = COALESCE(published_at, NOW()) WHERE slug = $1"
@@ -782,12 +794,17 @@ pub async fn archive_app_handler(
     let caller_id = principal.user_id();
     let app = get_app_row(&state.db, &slug).await?;
     let owner_id = app["owner_user_id"].as_str().unwrap_or("");
-    if caller_id != owner_id && !principal.can_admin() {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Only the App owner can archive it".into(),
-        ));
-    }
+    // v0.10.5: substrate RBAC. Archive is Admin.
+    rbac::require_admin_on(
+        &state.db,
+        &principal,
+        ObjectType::App,
+        &slug,
+        owner_id,
+        Visibility::Private,
+    )
+    .await?;
+    let _ = caller_id;
 
     sqlx::query("UPDATE apps SET archived_at = COALESCE(archived_at, NOW()) WHERE slug = $1")
         .bind(&slug)

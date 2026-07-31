@@ -6,15 +6,16 @@ use axum::{
     Json,
 };
 use fermi::gas::charge_gas;
-use fermi_auth::{credit_charge, get_or_create_wallet, AuthPrincipal};
+use fermi_auth::{
+    credit_charge, get_or_create_wallet, rbac, AuthPrincipal, ObjectType, Visibility,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
 use std::sync::Arc;
 
 use agent_bestiary_memory::{
-    ConsolidationLock, ConsolidationWorker, LLMProviderConfig,
-    LLMProviderFactory, ProviderType,
+    ConsolidationLock, ConsolidationWorker, LLMProviderConfig, LLMProviderFactory, ProviderType,
 };
 use fermi::agent_backend::executor::AgentExecutor;
 use fermi::agent_backend::ExecutionContext;
@@ -135,13 +136,18 @@ pub async fn topup_dreaming_budget_handler(
     let db_agent = resolve_agent(&state, &agent_id).await?;
     let user_id = principal.user_id();
 
-    // Only owner can top up
-    if db_agent.owner_id.as_deref() != Some(&user_id) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Only the agent owner can top up dream budget".into(),
-        ));
-    }
+    // v0.10.5: substrate RBAC. Dreaming top-up debits the caller's
+    // wallet and credits the agent's budget — Admin (owner or
+    // platform admin) only.
+    rbac::require_admin_on(
+        &state.db,
+        &principal,
+        ObjectType::Agent,
+        &db_agent.agent_id.to_string(),
+        db_agent.owner_id.as_deref().unwrap_or(""),
+        Visibility::Private,
+    )
+    .await?;
 
     let credits = body.credits.max(1).min(1000);
 
@@ -225,17 +231,20 @@ pub async fn consolidate_agent_handler(
         })?;
 
     if episodes.is_empty() {
-        return Ok((StatusCode::OK, Json(json!({
-            "status": "completed",
-            "agent_id": agent_id,
-            "result": {
-                "episodes_processed": 0,
-                "clusters_identified": 0,
-                "rules_extracted": 0,
-                "message": "No unconsolidated episodes found"
-            },
-            "dreaming_credits_remaining": remaining,
-        }))));
+        return Ok((
+            StatusCode::OK,
+            Json(json!({
+                "status": "completed",
+                "agent_id": agent_id,
+                "result": {
+                    "episodes_processed": 0,
+                    "clusters_identified": 0,
+                    "rules_extracted": 0,
+                    "message": "No unconsolidated episodes found"
+                },
+                "dreaming_credits_remaining": remaining,
+            })),
+        ));
     }
 
     // Only charge gas after confirming there's work to do
@@ -267,10 +276,7 @@ pub async fn consolidate_agent_handler(
 
     tokio::spawn(async move {
         let pool = Arc::new(spawn_state.db.clone());
-        let lock = Arc::new(ConsolidationLock::new(
-            pool,
-            format!("api-{}", job_id),
-        ));
+        let lock = Arc::new(ConsolidationLock::new(pool, format!("api-{}", job_id)));
         let worker = if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
             match LLMProviderFactory::create(&LLMProviderConfig {
                 provider_type: ProviderType::Anthropic,
@@ -313,19 +319,23 @@ pub async fn consolidate_agent_handler(
                 .await;
 
                 // Update job record if it exists
-                let _ = spawn_state.memory_store.update_consolidation_job(
-                    job_id,
-                    result.episodes_processed as i32,
-                    result.clusters_identified as i32,
-                    result.rules_extracted as i32,
-                    result.rules_verified as i32,
-                    result.rules_rejected as i32,
-                    result.entities_created as i32,
-                    result.facts_created as i32,
-                ).await;
-                let _ = spawn_state.memory_store.complete_consolidation_job(
-                    job_id, "completed", None
-                ).await;
+                let _ = spawn_state
+                    .memory_store
+                    .update_consolidation_job(
+                        job_id,
+                        result.episodes_processed as i32,
+                        result.clusters_identified as i32,
+                        result.rules_extracted as i32,
+                        result.rules_verified as i32,
+                        result.rules_rejected as i32,
+                        result.entities_created as i32,
+                        result.facts_created as i32,
+                    )
+                    .await;
+                let _ = spawn_state
+                    .memory_store
+                    .complete_consolidation_job(job_id, "completed", None)
+                    .await;
 
                 // Spawn dream narrator
                 let ep = result.episodes_processed;
@@ -339,7 +349,8 @@ pub async fn consolidate_agent_handler(
                 tokio::spawn(async move {
                     let narrator_id = "dream_narrator";
                     let card = match narrator_state.registry.get(narrator_id) {
-                        Ok(c) => c, Err(_) => return,
+                        Ok(c) => c,
+                        Err(_) => return,
                     };
                     let synopsis_input = format!(
                         "Agent \"{}\" just completed a consolidation cycle (dreaming). \
@@ -362,10 +373,16 @@ pub async fn consolidate_agent_handler(
                         statements: vec![ast::Statement::Agent(agent_stmt.clone())],
                     };
                     let context = ExecutionContext {
-                        program, agent_card: card,
-                        creature_id: None, cognition_tier: None,
+                        program,
+                        agent_card: card,
+                        creature_id: None,
+                        cognition_tier: None,
                     };
-                    if let Ok(output) = narrator_state.registry.execute_agent(&agent_stmt, &context).await {
+                    if let Ok(output) = narrator_state
+                        .registry
+                        .execute_agent(&agent_stmt, &context)
+                        .await
+                    {
                         let narrative = output.metadata.reasoning.unwrap_or_default();
                         if !narrative.is_empty() {
                             let _ = sqlx::query(
@@ -373,16 +390,21 @@ pub async fn consolidate_agent_handler(
                                  WHERE agent_id = $2 AND snapshot_id = (\
                                    SELECT snapshot_id FROM ontology_snapshots \
                                    WHERE agent_id = $2 ORDER BY version DESC LIMIT 1)",
-                            ).bind(&narrative).bind(spawn_agent_id).execute(&narrator_state.db).await;
+                            )
+                            .bind(&narrative)
+                            .bind(spawn_agent_id)
+                            .execute(&narrator_state.db)
+                            .await;
                         }
                     }
                 });
             }
             Err(e) => {
                 tracing::error!(agent_id = %spawn_agent_id, error = %e, "consolidation failed");
-                let _ = spawn_state.memory_store.complete_consolidation_job(
-                    job_id, "failed", Some(e.to_string())
-                ).await;
+                let _ = spawn_state
+                    .memory_store
+                    .complete_consolidation_job(job_id, "failed", Some(e.to_string()))
+                    .await;
             }
         }
     });
@@ -407,18 +429,29 @@ pub async fn get_consolidation_job_handler(
     Path((agent_id, job_id_str)): Path<(String, String)>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db_agent = resolve_agent(&state, &agent_id).await?;
-    let user_id = principal.user_id();
-    if db_agent.owner_id.as_deref() != Some(&user_id) && !principal.can_admin() {
-        return Err((StatusCode::FORBIDDEN, "Not the agent owner".into()));
-    }
-    let job_id: uuid::Uuid = job_id_str.parse()
+    let _user_id = principal.user_id();
+    // v0.10.5: substrate RBAC. Consolidation job details are
+    // owner-scoped read — View permission via owner + platform admin.
+    // No public/shared branch because job telemetry can leak agent
+    // internals.
+    rbac::require_view(
+        &state.db,
+        &principal,
+        ObjectType::Agent,
+        &db_agent.agent_id.to_string(),
+        db_agent.owner_id.as_deref().unwrap_or(""),
+        Visibility::Private,
+    )
+    .await?;
+    let job_id: uuid::Uuid = job_id_str
+        .parse()
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid job_id".into()))?;
 
     let row = sqlx::query(
         "SELECT job_id, status, episodes_processed, clusters_identified, rules_extracted,
                 rules_verified, rules_rejected, entities_created, facts_created,
                 error_message, started_at, completed_at
-         FROM consolidation_jobs WHERE job_id = $1 AND agent_id = $2"
+         FROM consolidation_jobs WHERE job_id = $1 AND agent_id = $2",
     )
     .bind(job_id)
     .bind(db_agent.agent_id)

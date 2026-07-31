@@ -25,7 +25,8 @@ pub use oidc::{
 pub use rbac::{
     require as rbac_require, require_admin_on as rbac_require_admin_on,
     require_edit as rbac_require_edit, require_platform_admin as rbac_require_platform_admin,
-    require_view as rbac_require_view, RbacResult,
+    require_view as rbac_require_view, visible_sync as rbac_visible_sync,
+    visible_sync_anon as rbac_visible_sync_anon, RbacResult,
 };
 pub use secrets::{
     delete_secret, get_secret, get_secret_audit_log, get_secrets_for_agent, list_secrets,

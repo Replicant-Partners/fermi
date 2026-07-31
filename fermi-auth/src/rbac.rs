@@ -52,6 +52,42 @@ use crate::error::AuthError;
 use crate::types::{AuthPrincipal, ObjectType, Permission, Visibility};
 use crate::visibility::{can_access, AccessLevel};
 
+/// Sync-only ACL check — no DB roundtrip, no share/team access.
+///
+/// Returns `true` iff the principal is a platform admin, is the
+/// resource's owner, or the resource is `Visibility::Public`. Use
+/// this in list filters where the async [`require`] would issue
+/// O(N) queries against `object_shares` + `team_members`.
+///
+/// The tradeoff: rows the caller can reach only via a share or team
+/// grant will not appear in `list_*` responses if you use
+/// `visible_sync` alone. To surface those, follow up with a targeted
+/// share/team query for the caller, or route detail endpoints
+/// through [`require`] (which does the full ACL) so shared items
+/// are still reachable by direct URL.
+pub fn visible_sync(
+    principal: &AuthPrincipal,
+    owner_id: Option<&str>,
+    visibility: Visibility,
+) -> bool {
+    if principal.can_admin() {
+        return true;
+    }
+    let user_id = principal.user_id();
+    if let Some(oid) = owner_id {
+        if oid == user_id {
+            return true;
+        }
+    }
+    visibility == Visibility::Public
+}
+
+/// Same as [`visible_sync`] but for anonymous callers — only public
+/// resources are visible.
+pub fn visible_sync_anon(visibility: Visibility) -> bool {
+    visibility == Visibility::Public
+}
+
 /// Result of an RBAC check. `Ok(())` means the caller has at least the
 /// requested permission. Errors are `(StatusCode, String)` ready to
 /// return from an axum handler.
