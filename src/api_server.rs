@@ -764,6 +764,17 @@ async fn run_migrations(db: &PgPool) {
         // platform-admin role and NOT logged here — only quality-gate
         // overrides land in this table.
         "migrations/164_admin_bypass_events.sql",
+        // 165: v0.10.9 root-cause fix. Realigns the fermi_forecasts /
+        // _portfolios / _notebooks owner_id FKs from users(id) (the
+        // UUID PK, where they'd drifted on this deploy) back to
+        // users(user_id) (the TEXT column mig 094 originally declared).
+        // Every non-legacy user was hitting FK violation on save
+        // because sync_user_from_app's INSERT branch mints a fresh
+        // Uuid::new_v4() for user_id, distinct from the row's PK id.
+        // Rebases existing owner_id values from id::text → user_id via
+        // JOIN so the new FK is satisfied by every existing row.
+        // See RELEASE_NOTES_v0.10.9.md.
+        "migrations/165_fermi_forecasts_owner_fk_realign.sql",
     ];
 
     for file in &migration_files {
