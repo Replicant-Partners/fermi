@@ -203,6 +203,17 @@ async fn fetch_orphans_for_target(
     // Compose the SELECT with the target's identifiers substituted
     // in. The identifiers come from a hard-coded const array — no
     // format-string injection surface from request bodies.
+    //
+    // v0.10.8: cast `t.{owner}::text` in the WHERE clause too.
+    // Reason: on this deploy `fermi_forecasts.owner_id` (and its
+    // portfolio/notebook siblings, plus `ar_beacons.creator_id`)
+    // are stored as UUID, not TEXT — an old schema-drift artifact
+    // that predates the v0.9.1 rework. `u.user_id` is TEXT.
+    // Postgres refuses `text = uuid` at parse time, which caused
+    // v0.10.7 to silently skip those four resources (`
+    // skipped_resources` field in the response). Explicit
+    // ::text on both sides normalises the comparison for TEXT-
+    // stored and UUID-stored owner columns alike.
     let created_expr = target.created_col.unwrap_or("NULL::timestamptz");
     let sql = format!(
         "SELECT {pk}::text AS row_id, \
@@ -213,7 +224,7 @@ async fn fetch_orphans_for_target(
           WHERE t.{owner} IS NOT NULL \
             AND NOT EXISTS ( \
                 SELECT 1 FROM public.users u \
-                 WHERE u.user_id = t.{owner} \
+                 WHERE u.user_id = t.{owner}::text \
             ) \
           ORDER BY {created} NULLS LAST \
           LIMIT $1",
@@ -308,7 +319,28 @@ pub async fn admin_rbac_orphans_handler(
     })))
 }
 
-// ═══════════════════════════════════════════════════════════════════
+/// v0.10.8: query information_schema for a column's Postgres type
+/// so `admin_rbac_reassign_handler` + `admin_rbac_heal_handler` can
+/// pick the right cast expression when writing to UUID-typed owner
+/// columns. Returns `"text"` when the column can't be found — that's
+/// the safe default (no cast) and mirrors what mig 094 declared.
+async fn owner_column_type(pool: &sqlx::PgPool, table: &str, col: &str) -> String {
+    let ty: Option<String> = sqlx::query_scalar(
+        "SELECT data_type FROM information_schema.columns \
+          WHERE table_schema = 'public' \
+            AND table_name = $1 \
+            AND column_name = $2",
+    )
+    .bind(table)
+    .bind(col)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    ty.unwrap_or_else(|| "text".to_string())
+}
+
+// ══════════════════════════════════════════════════════════════════
 // POST /api/admin/rbac/reassign
 // ═══════════════════════════════════════════════════════════════════
 
@@ -377,13 +409,24 @@ pub async fn admin_rbac_reassign_handler(
     // roll back the whole batch, and the response can name which
     // rows landed vs failed.
     //
-    // The pk column type varies by table (some UUID, some TEXT); we
-    // rely on Postgres's implicit text→uuid cast plus the row_id
-    // being valid. If it isn't, per-row error is returned.
+    // v0.10.8: some resource tables have `owner_col` stored as UUID
+    // (schema-drift artifact on this deploy — fermi_forecasts,
+    // fermi_portfolios, fermi_notebooks, ar_beacons). Postgres won't
+    // implicit-cast text→uuid on parameter bind, so a plain `SET
+    // {owner} = $2` fails when $2 is a text user_id and the column
+    // is UUID. We detect the column type via information_schema and
+    // pick the right cast expression: no-op for TEXT, `::uuid` for
+    // UUID.
+    let owner_type = owner_column_type(&state.db, table, owner_col).await;
+    let owner_cast: &str = if owner_type.eq_ignore_ascii_case("uuid") {
+        "::uuid"
+    } else {
+        ""
+    };
     let mut results: Vec<Value> = Vec::with_capacity(req.row_ids.len());
     let update_sql = format!(
-        "UPDATE public.{} SET {} = $2 WHERE {}::text = $1 RETURNING {}::text AS pk",
-        table, owner_col, pk_col, pk_col
+        "UPDATE public.{} SET {} = $2{} WHERE {}::text = $1 RETURNING {}::text AS pk",
+        table, owner_col, owner_cast, pk_col, pk_col
     );
 
     for row_id in &req.row_ids {
@@ -484,11 +527,13 @@ pub async fn admin_rbac_heal_handler(
             .await
             .unwrap_or(0);
 
-        // Count id::text-drift rows.
+        // Count id::text-drift rows. Cast t.{col}::text on both
+        // comparisons for UUID/TEXT owner-column parity (see
+        // owner_column_type + v0.10.8 release notes).
         let idcast_count_sql = format!(
             "SELECT COUNT(*) FROM public.{} t \
-              WHERE EXISTS (SELECT 1 FROM public.users u WHERE t.{} = u.id::text) \
-                AND NOT EXISTS (SELECT 1 FROM public.users u2 WHERE u2.user_id = t.{})",
+              WHERE EXISTS (SELECT 1 FROM public.users u WHERE t.{}::text = u.id::text) \
+                AND NOT EXISTS (SELECT 1 FROM public.users u2 WHERE u2.user_id = t.{}::text)",
             table, col, col
         );
         let idcast_count: i64 = sqlx::query_scalar(&idcast_count_sql)
@@ -510,16 +555,25 @@ pub async fn admin_rbac_heal_handler(
                     empty_healed = rs.len() as i64;
                 }
             }
-            // id::text → users.user_id.
+            // id::text → users.user_id. As with the count query,
+            // cast t.{col}::text everywhere for TEXT/UUID column
+            // parity, and cast u.user_id back to the target column's
+            // type on assignment.
             if idcast_count > 0 {
+                let owner_type = owner_column_type(&state.db, table, col).await;
+                let set_cast: &str = if owner_type.eq_ignore_ascii_case("uuid") {
+                    "::uuid"
+                } else {
+                    ""
+                };
                 let sql = format!(
-                    "UPDATE public.{} t SET {} = u.user_id \
+                    "UPDATE public.{} t SET {} = (u.user_id){} \
                      FROM public.users u \
-                     WHERE t.{} = u.id::text \
-                       AND t.{} <> u.user_id \
-                       AND NOT EXISTS (SELECT 1 FROM public.users u2 WHERE u2.user_id = t.{}) \
+                     WHERE t.{}::text = u.id::text \
+                       AND t.{}::text <> u.user_id \
+                       AND NOT EXISTS (SELECT 1 FROM public.users u2 WHERE u2.user_id = t.{}::text) \
                      RETURNING 1",
-                    table, col, col, col, col
+                    table, col, set_cast, col, col, col
                 );
                 let rows = sqlx::query(&sql).fetch_all(&state.db).await;
                 if let Ok(rs) = rows {
