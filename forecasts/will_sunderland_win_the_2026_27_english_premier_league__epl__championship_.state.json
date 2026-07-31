@@ -1,0 +1,38 @@
+{
+  "forecast_id": null,
+  "current_version": 1,
+  "predicted_probability": 0.01,
+  "inside_view_explanation": "",
+  "forecast_confidence": 0.5,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-07-31 03:13",
+      "probability": 0.01,
+      "change_summary": "Initial: 1.0%, 3 drivers, 0 evidence"
+    }
+  ],
+  "sim_results": null,
+  "base_rate": null,
+  "evidence": [],
+  "agents": [],
+  "driver_confidence": {},
+  "polymarket": {
+    "event_id": "659518",
+    "market_id": "2771340",
+    "question": "Will Sunderland win the 2026-27 English Premier League (EPL) Championship?",
+    "market_price": 0.0015,
+    "volume_24h": 0.0,
+    "liquidity": 226230.96427,
+    "confidence": "Low",
+    "price_change_1w": null,
+    "url": "https://polymarket.com/event/659518",
+    "price_history": [
+      {
+        "t": 1785467617,
+        "p": 0.0015
+      }
+    ]
+  },
+  "workspace_id": null
+}
