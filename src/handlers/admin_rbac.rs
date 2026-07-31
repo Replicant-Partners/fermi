@@ -54,6 +54,208 @@ pub struct OrphansQuery {
     pub limit: Option<i64>,
 }
 
+/// One entry in the audit target registry — what a resource looks
+/// like on-disk. Kept as a static array so the audit is
+/// self-documenting AND survives partial-schema deploys (a table
+/// or column that doesn't exist on this deploy is logged and
+/// skipped, not fatal).
+///
+/// `label_col` is the column we return as the resource's
+/// human-readable identifier (or `COALESCE(a, b)` when more than
+/// one option makes sense). `created_col` is `NULL` for tables
+/// without a canonical created_at (e.g. `agents` uses
+/// `updated_at` but we surface NULL to keep the shape uniform).
+struct AuditTarget {
+    resource: &'static str,
+    table: &'static str,
+    pk_col: &'static str,
+    owner_col: &'static str,
+    label_expr: &'static str,
+    created_col: Option<&'static str>,
+}
+
+const AUDIT_TARGETS: &[AuditTarget] = &[
+    AuditTarget {
+        resource: "agents",
+        table: "agents",
+        pk_col: "agent_id",
+        owner_col: "user_id",
+        label_expr: "agent_name",
+        created_col: None,
+    },
+    AuditTarget {
+        resource: "teams",
+        table: "teams",
+        pk_col: "id",
+        owner_col: "owner_id",
+        label_expr: "name",
+        created_col: Some("created_at"),
+    },
+    AuditTarget {
+        resource: "apps",
+        table: "apps",
+        pk_col: "id",
+        owner_col: "owner_user_id",
+        label_expr: "slug",
+        created_col: Some("created_at"),
+    },
+    AuditTarget {
+        resource: "fermi_forecasts",
+        table: "fermi_forecasts",
+        pk_col: "id",
+        owner_col: "owner_id",
+        label_expr: "question_text",
+        created_col: Some("created_at"),
+    },
+    AuditTarget {
+        resource: "fermi_portfolios",
+        table: "fermi_portfolios",
+        pk_col: "id",
+        owner_col: "owner_id",
+        label_expr: "title",
+        created_col: Some("created_at"),
+    },
+    AuditTarget {
+        resource: "fermi_notebooks",
+        table: "fermi_notebooks",
+        pk_col: "id",
+        owner_col: "owner_id",
+        label_expr: "title",
+        created_col: Some("created_at"),
+    },
+    AuditTarget {
+        resource: "creatures",
+        table: "creatures",
+        pk_col: "creature_id",
+        owner_col: "owner_id",
+        label_expr: "COALESCE(specimen_name, scientific_name)",
+        created_col: Some("created_at"),
+    },
+    AuditTarget {
+        resource: "creature_collections",
+        table: "creature_collections",
+        pk_col: "collection_id",
+        owner_col: "owner_id",
+        label_expr: "name",
+        created_col: Some("created_at"),
+    },
+    AuditTarget {
+        resource: "creature_flights",
+        table: "creature_flights",
+        pk_col: "flight_id",
+        owner_col: "owner_id",
+        label_expr: "COALESCE(location_name, h3_cell)",
+        created_col: Some("started_at"),
+    },
+    AuditTarget {
+        resource: "swarm_events",
+        table: "swarm_events",
+        pk_col: "swarm_id",
+        owner_col: "creator_id",
+        label_expr: "name",
+        created_col: Some("created_at"),
+    },
+    AuditTarget {
+        resource: "swarm_sessions",
+        table: "swarm_sessions",
+        pk_col: "session_id",
+        owner_col: "owner_id",
+        label_expr: "name",
+        created_col: Some("started_at"),
+    },
+    AuditTarget {
+        resource: "sosa_platforms",
+        table: "sosa_platforms",
+        pk_col: "platform_id",
+        owner_col: "owner_id",
+        label_expr: "name",
+        created_col: Some("created_at"),
+    },
+    AuditTarget {
+        resource: "observation_sessions",
+        table: "observation_sessions",
+        pk_col: "session_id",
+        owner_col: "owner_id",
+        label_expr: "name",
+        created_col: Some("started_at"),
+    },
+    AuditTarget {
+        resource: "ar_beacons",
+        table: "ar_beacons",
+        pk_col: "beacon_id",
+        owner_col: "creator_id",
+        label_expr: "COALESCE(location_name, h3_cell)",
+        created_col: Some("created_at"),
+    },
+];
+
+/// Query one audit target. Returns the orphan rows found, or `None`
+/// if the table/column doesn't exist on this deploy (logged as a
+/// warning but not fatal). This is what makes v0.10.7's rewrite
+/// robust against the mig-163 CREATE-VIEW failure mode: any single
+/// broken target skips itself instead of taking the whole endpoint
+/// down.
+async fn fetch_orphans_for_target(
+    pool: &sqlx::PgPool,
+    target: &AuditTarget,
+    per_target_limit: i64,
+) -> Option<Vec<Value>> {
+    // Compose the SELECT with the target's identifiers substituted
+    // in. The identifiers come from a hard-coded const array — no
+    // format-string injection surface from request bodies.
+    let created_expr = target.created_col.unwrap_or("NULL::timestamptz");
+    let sql = format!(
+        "SELECT {pk}::text AS row_id, \
+                {owner}::text AS owner_ref, \
+                ({label})::text AS label, \
+                {created} AS created_at \
+           FROM public.{table} t \
+          WHERE t.{owner} IS NOT NULL \
+            AND NOT EXISTS ( \
+                SELECT 1 FROM public.users u \
+                 WHERE u.user_id = t.{owner} \
+            ) \
+          ORDER BY {created} NULLS LAST \
+          LIMIT $1",
+        pk = target.pk_col,
+        owner = target.owner_col,
+        label = target.label_expr,
+        created = created_expr,
+        table = target.table,
+    );
+
+    match sqlx::query(&sql)
+        .bind(per_target_limit)
+        .fetch_all(pool)
+        .await
+    {
+        Ok(rows) => {
+            let mut out = Vec::with_capacity(rows.len());
+            for r in &rows {
+                out.push(json!({
+                    "resource":   target.resource,
+                    "row_id":     r.try_get::<Option<String>, _>("row_id").ok().flatten(),
+                    "owner_col":  target.owner_col,
+                    "owner_ref":  r.try_get::<Option<String>, _>("owner_ref").ok().flatten(),
+                    "label":      r.try_get::<Option<String>, _>("label").ok().flatten(),
+                    "created_at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")
+                        .ok().flatten().map(|t| t.to_rfc3339()),
+                }));
+            }
+            Some(out)
+        }
+        Err(e) => {
+            tracing::warn!(
+                resource = target.resource,
+                table = target.table,
+                error = %e,
+                "[rbac.orphans] skipping target — query failed (missing column/table on this deploy?)",
+            );
+            None
+        }
+    }
+}
+
 pub async fn admin_rbac_orphans_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
@@ -62,72 +264,47 @@ pub async fn admin_rbac_orphans_handler(
     rbac::require_platform_admin(&principal)?;
 
     let limit = q.limit.unwrap_or(500).clamp(1, 5000);
+    // Cap per-target to avoid one massively-drifted resource
+    // starving the others. `limit` still gates the returned
+    // total after aggregation.
+    let per_target_limit = limit.min(1000);
 
-    let (sql, has_filter) = match q.resource {
-        Some(_) => (
-            "SELECT resource, row_id, owner_col, owner_ref, label, created_at
-               FROM public.rbac_orphans
-              WHERE resource = $1
-              ORDER BY resource, created_at NULLS LAST
-              LIMIT $2",
-            true,
-        ),
-        None => (
-            "SELECT resource, row_id, owner_col, owner_ref, label, created_at
-               FROM public.rbac_orphans
-              ORDER BY resource, created_at NULLS LAST
-              LIMIT $1",
-            false,
-        ),
-    };
-
-    let query = if has_filter {
-        sqlx::query(sql)
-            .bind(q.resource.as_deref().unwrap_or(""))
-            .bind(limit)
-    } else {
-        sqlx::query(sql).bind(limit)
-    };
-
-    let rows = query
-        .fetch_all(&state.db)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    let mut out: Vec<Value> = Vec::with_capacity(rows.len());
-    // Per-resource counts for a quick health readout.
+    let mut all_orphans: Vec<Value> = Vec::new();
     let mut counts: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
+    let mut skipped: Vec<String> = Vec::new();
 
-    for r in &rows {
-        let resource: String = r.try_get("resource").unwrap_or_default();
-        *counts.entry(resource.clone()).or_insert(0) += 1;
-
-        out.push(json!({
-            "resource": resource,
-            "row_id":    r.try_get::<String, _>("row_id").unwrap_or_default(),
-            "owner_col": r.try_get::<String, _>("owner_col").unwrap_or_default(),
-            "owner_ref": r.try_get::<Option<String>, _>("owner_ref").ok().flatten(),
-            "label":     r.try_get::<Option<String>, _>("label").ok().flatten(),
-            "created_at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")
-                .ok().flatten().map(|t| t.to_rfc3339()),
-        }));
+    for target in AUDIT_TARGETS {
+        if let Some(ref resource_filter) = q.resource {
+            if resource_filter.as_str() != target.resource {
+                continue;
+            }
+        }
+        match fetch_orphans_for_target(&state.db, target, per_target_limit).await {
+            Some(rows) => {
+                counts.insert(target.resource.to_string(), rows.len() as i64);
+                all_orphans.extend(rows);
+            }
+            None => {
+                skipped.push(target.resource.to_string());
+            }
+        }
     }
 
-    // Also compute an overall count so a caller doesn't have to
-    // paginate to check "is the invariant clean?" — a bare
-    // `total_orphans = 0` is the trust signal.
-    let total_orphans: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM public.rbac_orphans")
-            .fetch_one(&state.db)
-            .await
-            .unwrap_or_default();
+    // Truncate to `limit` after aggregation so the response body
+    // stays bounded regardless of how much drift a single tenant
+    // has accumulated.
+    let total_orphans = all_orphans.len() as i64;
+    if all_orphans.len() as i64 > limit {
+        all_orphans.truncate(limit as usize);
+    }
 
     Ok(Json(json!({
-        "total_orphans": total_orphans,
-        "returned":       out.len(),
-        "limit":          limit,
-        "by_resource":    counts,
-        "orphans":        out,
+        "total_orphans":    total_orphans,
+        "returned":         all_orphans.len(),
+        "limit":            limit,
+        "by_resource":      counts,
+        "skipped_resources": skipped,
+        "orphans":          all_orphans,
     })))
 }
 
@@ -166,8 +343,10 @@ pub async fn admin_rbac_reassign_handler(
     // both unknown resource strings and resources we haven't mapped
     // yet (e.g. Capability). No format-string injection risk because
     // the three identifiers come from the enum, not user input.
-    let object_type = ObjectType::from_str(&req.resource)
-        .ok_or((StatusCode::BAD_REQUEST, format!("unknown resource '{}'", req.resource)))?;
+    let object_type = ObjectType::from_str(&req.resource).ok_or((
+        StatusCode::BAD_REQUEST,
+        format!("unknown resource '{}'", req.resource),
+    ))?;
     let (table, pk_col, owner_col) = object_type.owner_table().ok_or((
         StatusCode::BAD_REQUEST,
         format!(
@@ -179,13 +358,12 @@ pub async fn admin_rbac_reassign_handler(
     // Verify the new owner exists — a typo would silently orphan the
     // row we're trying to fix (which is the exact bug we're solving).
     if let Some(ref uid) = req.new_owner_user_id {
-        let exists: Option<String> = sqlx::query_scalar(
-            "SELECT user_id FROM public.users WHERE user_id = $1",
-        )
-        .bind(uid)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let exists: Option<String> =
+            sqlx::query_scalar("SELECT user_id FROM public.users WHERE user_id = $1")
+                .bind(uid)
+                .fetch_optional(&state.db)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         if exists.is_none() {
             return Err((
                 StatusCode::BAD_REQUEST,
@@ -300,10 +478,7 @@ pub async fn admin_rbac_heal_handler(
         }
 
         // Count empty-string rows.
-        let empty_count_sql = format!(
-            "SELECT COUNT(*) FROM public.{} WHERE {} = ''",
-            table, col
-        );
+        let empty_count_sql = format!("SELECT COUNT(*) FROM public.{} WHERE {} = ''", table, col);
         let empty_count: i64 = sqlx::query_scalar(&empty_count_sql)
             .fetch_one(&state.db)
             .await
