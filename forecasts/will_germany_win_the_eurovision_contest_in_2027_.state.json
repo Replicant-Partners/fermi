@@ -1,0 +1,33 @@
+{
+  "forecast_id": null,
+  "current_version": 1,
+  "predicted_probability": 0.5,
+  "inside_view_explanation": "",
+  "forecast_confidence": 0.5,
+  "versions": [
+    {
+      "version": 1,
+      "timestamp": "2026-07-31 17:22",
+      "probability": 0.5,
+      "change_summary": "Initial: 50.0%, 3 drivers, 0 evidence"
+    }
+  ],
+  "sim_results": null,
+  "base_rate": null,
+  "evidence": [],
+  "agents": [],
+  "driver_confidence": {},
+  "polymarket": {
+    "event_id": null,
+    "market_id": null,
+    "question": null,
+    "market_price": null,
+    "volume_24h": null,
+    "liquidity": null,
+    "confidence": null,
+    "price_change_1w": null,
+    "url": null,
+    "price_history": []
+  },
+  "workspace_id": null
+}
