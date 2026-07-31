@@ -5,6 +5,7 @@
 //! live in api_server.rs as pub(crate) functions.
 
 pub mod admin;
+pub mod admin_rbac;
 pub mod agent_funding;
 pub mod agent_wallet;
 pub mod agents;

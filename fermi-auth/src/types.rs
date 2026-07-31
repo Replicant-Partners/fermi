@@ -153,6 +153,32 @@ pub enum ObjectType {
     /// object_shares CHECK constraint (migration 117 didn't take); the
     /// enum keeps it for code-level use until that's fixed separately.
     Workspace,
+    // ─── v0.10.4 substrate additions ────────────────────────────────
+    //
+    // These variants are consumed by `fermi_auth::rbac::require` so
+    // every tenant app's owner check can go through the same helper.
+    // They are NOT (yet) in the `object_shares.object_type` CHECK
+    // constraint — an `object_shares` row with these values would be
+    // rejected by the DB. Extend the CHECK constraint (mig 157
+    // pattern) when a specific resource needs share/team ACL beyond
+    // owner+admin.
+    /// Rabble creature (owner-only or admin; no shares yet).
+    Creature,
+    /// Team / workspace primary resource. Not to be confused with
+    /// `Workspace` (which was reserved for a separate mig-117 flow).
+    Team,
+    /// Rabble swarm event / creature gathering.
+    SwarmEvent,
+    /// simOps / Rabble swarm telemetry session.
+    SwarmSession,
+    /// SOSA sensor platform.
+    SosaPlatform,
+    /// SOSA observation session.
+    ObservationSession,
+    /// AR beacon (spatial tenant).
+    ArBeacon,
+    /// Apps directory entry (owner_user_id).
+    App,
 }
 
 impl ObjectType {
@@ -166,6 +192,14 @@ impl ObjectType {
             ObjectType::Repo => "repo",
             ObjectType::File => "file",
             ObjectType::Workspace => "workspace",
+            ObjectType::Creature => "creature",
+            ObjectType::Team => "team",
+            ObjectType::SwarmEvent => "swarm_event",
+            ObjectType::SwarmSession => "swarm_session",
+            ObjectType::SosaPlatform => "sosa_platform",
+            ObjectType::ObservationSession => "observation_session",
+            ObjectType::ArBeacon => "ar_beacon",
+            ObjectType::App => "app",
         }
     }
 
@@ -180,6 +214,46 @@ impl ObjectType {
             "repo" => Some(ObjectType::Repo),
             "file" => Some(ObjectType::File),
             "workspace" => Some(ObjectType::Workspace),
+            "creature" => Some(ObjectType::Creature),
+            "team" => Some(ObjectType::Team),
+            "swarm_event" => Some(ObjectType::SwarmEvent),
+            "swarm_session" => Some(ObjectType::SwarmSession),
+            "sosa_platform" => Some(ObjectType::SosaPlatform),
+            "observation_session" => Some(ObjectType::ObservationSession),
+            "ar_beacon" => Some(ObjectType::ArBeacon),
+            "app" => Some(ObjectType::App),
+            _ => None,
+        }
+    }
+
+    /// The tenant resource table this object type is stored in. Used
+    /// by the RBAC substrate to map `ObjectType` → SQL for admin
+    /// diagnostics + reassign flows (`POST /api/admin/rbac/reassign`).
+    ///
+    /// Returns `(table_name, primary_key_column, owner_column)`.
+    ///
+    /// Extend this when a new tenant resource lands. If a variant is
+    /// used only for `object_shares` ACL (never as a first-class owned
+    /// resource that can be reassigned), return `None`.
+    pub fn owner_table(&self) -> Option<(&'static str, &'static str, &'static str)> {
+        match self {
+            ObjectType::Agent => Some(("agents", "agent_id", "user_id")),
+            ObjectType::Team => Some(("teams", "id", "owner_id")),
+            ObjectType::Forecast => Some(("fermi_forecasts", "id", "owner_id")),
+            ObjectType::Portfolio => Some(("fermi_portfolios", "id", "owner_id")),
+            ObjectType::Creature => Some(("creatures", "creature_id", "owner_id")),
+            ObjectType::SwarmEvent => Some(("swarm_events", "swarm_id", "creator_id")),
+            ObjectType::SwarmSession => Some(("swarm_sessions", "session_id", "owner_id")),
+            ObjectType::SosaPlatform => Some(("sosa_platforms", "platform_id", "owner_id")),
+            ObjectType::ObservationSession => {
+                Some(("observation_sessions", "session_id", "owner_id"))
+            }
+            ObjectType::ArBeacon => Some(("ar_beacons", "beacon_id", "creator_id")),
+            ObjectType::App => Some(("apps", "id", "owner_user_id")),
+            // Types without a canonical owned-resource table:
+            // Capability, Index, Repo, File, Workspace — either
+            // per-owner via a separate table not modelled here, or
+            // reserved for future use.
             _ => None,
         }
     }

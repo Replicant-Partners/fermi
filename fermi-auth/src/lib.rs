@@ -5,6 +5,7 @@ pub mod invites;
 pub mod jwt;
 pub mod middleware;
 pub mod oidc;
+pub mod rbac;
 pub mod secrets;
 pub mod siwe;
 pub mod teams;
@@ -20,6 +21,11 @@ pub use oidc::{
     github_fetch_user_info, google_exchange_code, google_fetch_user_info, sync_user,
     sync_user_from_app, CallbackParams, GitHubOAuthConfig, GoogleOAuthConfig, OAuthConfig,
     UserInfoResponse,
+};
+pub use rbac::{
+    require as rbac_require, require_admin_on as rbac_require_admin_on,
+    require_edit as rbac_require_edit, require_platform_admin as rbac_require_platform_admin,
+    require_view as rbac_require_view, RbacResult,
 };
 pub use secrets::{
     delete_secret, get_secret, get_secret_audit_log, get_secrets_for_agent, list_secrets,

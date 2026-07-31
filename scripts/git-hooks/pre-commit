@@ -2,10 +2,13 @@
 # Pre-commit hook: runs the linters that protect against the bug classes
 # we've actually hit.
 #
-#   1. Migration lint   (PgBouncer-safety: BEGIN/COMMIT, multi-statement
-#                        ADD CONSTRAINT, idempotency)
-#   2. Schema lint      (qualified column refs in Rust SQL strings that
-#                        no migration ever declared)
+#   1. Migration lint       (PgBouncer-safety: BEGIN/COMMIT, multi-statement
+#                            ADD CONSTRAINT, idempotency)
+#   2. Schema lint          (qualified column refs in Rust SQL strings that
+#                            no migration ever declared)
+#   3. Owner-column lint    (v0.10.4 substrate: any new migration that
+#                            adds a user-reference column must FK to
+#                            users(user_id) or add to the allowlist)
 #
 # Each runs independently — a failure in one doesn't suppress the other.
 #
@@ -23,6 +26,10 @@ staged_migrations=$(git diff --cached --name-only --diff-filter=ACM \
                     | grep 'migrations/.*\.sql$' || true)
 if [ -n "$staged_migrations" ]; then
     ./scripts/lint-migrations.sh $staged_migrations || failed=1
+    # v0.10.4 substrate lint — always runs full-tree scan because it
+    # only flags migrations >= 162 and the fix might live in a
+    # cross-file allowlist edit, not a staged file.
+    ./scripts/lint-owner-columns.sh || failed=1
 fi
 
 # ─── 2. Schema-consistency lint (only when .rs files are staged) ──────

@@ -746,6 +746,18 @@ async fn run_migrations(db: &PgPool) {
         // stayed broken across sign-ins. Paired with the v0.10.3
         // UPDATE-clause fix in oidc.rs. See RELEASE_NOTES_v0.10.3.md.
         "migrations/161_backfill_users_user_id.sql",
+        // 162: v0.10.4 substrate. Adds FK NOT VALID from every
+        // resource-owner column across all tenant apps (Fermi, Rabble,
+        // simOps, SOSA, AR) to users(user_id). Enforces the invariant
+        // for new writes without blocking deploy on existing drift.
+        // Also heals two recoverable drift classes (empty-string and
+        // id::text). See RELEASE_NOTES_v0.10.4.md.
+        "migrations/162_rbac_substrate_fk.sql",
+        // 163: rbac_orphans view. Single-query cross-table drift audit
+        // powering /api/admin/rbac/orphans. Zero rows = RBAC invariant
+        // holds across ABW. Extend one SELECT block per new tenant
+        // resource table with an owner column.
+        "migrations/163_rbac_orphans_view.sql",
     ];
 
     for file in &migration_files {
@@ -3053,6 +3065,21 @@ async fn main() {
         .route(
             "/api/admin/agent-ownership-reassign",
             post(handlers::admin::admin_agent_ownership_reassign_handler),
+        )
+        // v0.10.4 substrate: tenant-agnostic RBAC surface. Replaces
+        // per-resource `agent-ownership-*` boilerplate. See
+        // `handlers::admin_rbac` and RELEASE_NOTES_v0.10.4.md.
+        .route(
+            "/api/admin/rbac/orphans",
+            get(handlers::admin_rbac::admin_rbac_orphans_handler),
+        )
+        .route(
+            "/api/admin/rbac/reassign",
+            post(handlers::admin_rbac::admin_rbac_reassign_handler),
+        )
+        .route(
+            "/api/admin/rbac/heal",
+            post(handlers::admin_rbac::admin_rbac_heal_handler),
         )
         // Spec 23 demo cleanup — one-shot wipe of every workspace
         // spawned by the Fermi Forecast App + cascading rows across
