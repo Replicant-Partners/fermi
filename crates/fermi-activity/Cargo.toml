@@ -1,0 +1,19 @@
+[package]
+name = "fermi-activity"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Structured, coalescing activity-event model for the Fermi Console's system-interaction inspector"
+
+# Deliberately GPUI-free. The console's `activity_log` module owns all
+# rendering; this crate owns only the event model and the ring buffer.
+#
+# The split is not cosmetic: `fermi-console` is a bin crate whose GPUI
+# element chains blow rustc's stack during macro expansion under
+# `--test` (hence the `#![recursion_limit = "4096"]` in its main.rs),
+# so *any* unit test placed inside it is unrunnable in practice. Keeping
+# the logic that's worth testing in a crate that compiles in seconds is
+# what makes it testable at all.
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+serde_json = "1"

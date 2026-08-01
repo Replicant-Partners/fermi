@@ -36,8 +36,9 @@ use fermi::ast::{
     GeneratedBy, ModelStmt, Program, QuestionStmt, Schedule, SimulateStmt, Statement,
 };
 
+use crate::activity_log::{LogEvent, LogSource, Remedy, Severity};
 use crate::api::client::{
-    AgentExecutionResult, ApiClient, CreateForecastRequest, ForecastSchedule, Invite,
+    AgentExecutionResult, ApiClient, ApiError, CreateForecastRequest, ForecastSchedule, Invite,
     InviteRequest, ShareEntry, ShareRequest, Team, UpsertScheduleRequest,
 };
 use crate::text_input::TextInput;
@@ -333,6 +334,32 @@ pub struct CockpitState {
     // ── Assistant Messages ─────────────────────────────────────────
     pub messages: Vec<AssistantMessage>,
 
+    /// How many entries of `messages` the parent `FermiConsole` has
+    /// already mirrored into the app-level Activity log.
+    ///
+    /// A watermark rather than a `pending_*` queue specifically so the
+    /// 92 existing `messages.push(AssistantMessage { .. })` call sites
+    /// need no changes: the parent's `cx.observe` handler drains
+    /// `messages[activity_watermark..]` on every notify tick. Reset to
+    /// 0 wherever `messages` is cleared, and self-heals if it ever
+    /// exceeds the vector length.
+    pub activity_watermark: usize,
+
+    /// Structurally-rich events queued for the parent's Activity log.
+    ///
+    /// The generic mirror above can only carry what `AssistantMessage`
+    /// holds (node, kind, one string). Call sites that have genuinely
+    /// richer information — an HTTP status, a server diagnosis, a raw
+    /// response body, an actionable remedy — push a fully-formed
+    /// `LogEvent` here *instead of* relying on the mirror, and mark
+    /// their `AssistantMessage` index in `activity_suppressed` so the
+    /// same failure doesn't produce two rows.
+    pub pending_activity: Vec<LogEvent>,
+
+    /// Indices into `messages` that already have a richer counterpart
+    /// in `pending_activity`. The mirror skips these.
+    pub activity_suppressed: HashSet<usize>,
+
     // ── Agent Picker State ─────────────────────────────────────────
     pub agent_search_query: String,
 
@@ -447,6 +474,13 @@ pub struct CockpitState {
     /// parent's `open_invite_share_modal` consumes. Drained on the
     /// same observe tick as `pending_toasts`.
     pub pending_invite_share: Option<(JsonValue, String, String)>,
+
+    /// Signal to the parent FermiConsole that it should open the
+    /// Fermi panel on its Activity tab. Set by the banner's event
+    /// chip; the cockpit can't reach the parent's drawer state
+    /// directly, so it queues the intent the same way
+    /// `pending_invite_share` does. Cleared by the observe handler.
+    pub pending_open_activity: bool,
 
     /// Signal to the parent FermiConsole that it should refetch
     /// active/resolved/draft forecast lists on the next observe tick.
@@ -905,6 +939,12 @@ impl CockpitState {
                 kind: MessageKind::Suggestion,
                 text: "Type a forecast question to begin. The FPL Assistant will analyze it and suggest a Fermi decomposition.".into(),
             }],
+            // Start at 1 so the seeded welcome suggestion above doesn't
+            // get mirrored into the Activity log — it's UI copy, not a
+            // system interaction.
+            activity_watermark: 1,
+            pending_activity: Vec::new(),
+            activity_suppressed: HashSet::new(),
             agent_search_query: String::new(),
             sim_results: None,
             sim_running: false,
@@ -948,6 +988,7 @@ impl CockpitState {
             schedules_loading: false,
             pending_toasts: Vec::new(),
             pending_invite_share: None,
+            pending_open_activity: false,
             pending_forecasts_refresh: false,
             cockpit_portfolios: Vec::new(),
             cockpit_portfolios_loading: false,
@@ -1363,6 +1404,42 @@ impl CockpitState {
             .ok();
         })
         .detach();
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // Activity log plumbing
+    // ══════════════════════════════════════════════════════════════
+
+    /// Reset the banner message list *and* the Activity mirror's
+    /// bookkeeping. Always use this instead of `messages.clear()` — a
+    /// bare clear would leave `activity_watermark` pointing past the
+    /// end of the vector and silently swallow the next batch of
+    /// events until the self-heal in the parent's drain kicked in.
+    pub fn clear_messages(&mut self) {
+        self.messages.clear();
+        self.activity_watermark = 0;
+        self.activity_suppressed.clear();
+    }
+
+    /// Push a banner message that also carries a structurally-rich
+    /// counterpart to the Activity log.
+    ///
+    /// The banner still gets a plain `AssistantMessage` (so the
+    /// collapsed top strip and the driver cards keep working exactly
+    /// as before), but the Activity panel gets the full event —
+    /// detail prose, context key/values, raw payload, remedy — and
+    /// the generic mirror is told to skip this index so the failure
+    /// doesn't render twice.
+    pub fn push_rich(&mut self, node: impl Into<String>, kind: MessageKind, event: LogEvent) {
+        let node = node.into();
+        let banner_text = event.summary.clone();
+        self.activity_suppressed.insert(self.messages.len());
+        self.messages.push(AssistantMessage {
+            node: node.clone(),
+            kind,
+            text: banner_text,
+        });
+        self.pending_activity.push(event.with_node(node));
     }
 
     /// Attach a Polymarket market to the current forecast. Sets all
@@ -1901,7 +1978,7 @@ impl CockpitState {
         );
 
         self.orchestration_running = true;
-        self.messages.clear();
+        self.clear_messages();
         self.agent_runs.clear();
         self.sim_results = None;
         self.sim_error = None;
@@ -7747,7 +7824,7 @@ impl CockpitState {
     // ═══════════════════════════════════════════════════════════════
 
     pub fn load_forecast(&mut self, path: &str, cx: &mut Context<Self>) {
-        self.messages.clear();
+        self.clear_messages();
         let state_path = path.replace(".fpl", ".state.json");
 
         // Reset all forecast-scoped state before loading the new one. Without
@@ -8279,9 +8356,19 @@ impl CockpitState {
             |s| serde_json::json!({ "mean": s.mean, "median": s.median, "p5": s.p5, "p95": s.p95 }),
         );
         let existing_fid = self.forecast_id.clone();
+        // Snapshotted out of the branch below so the failure path can
+        // report which endpoint was attempted, and against which id.
+        // Previously the error branch had neither, so "backend save
+        // failed" gave no clue whether it was a create or an update.
+        let created_attempt = existing_fid.is_none();
+        let fid_for_log = existing_fid.clone();
 
         cx.spawn(async move |this, cx| {
-            let outcome: Result<(String, bool), String> = if let Some(fid) = existing_fid {
+            // Error type stays `ApiError` rather than being flattened
+            // to `String` here: the Activity log wants the discrete
+            // HTTP status and the transient/permanent classification,
+            // both of which `to_string()` destroys.
+            let outcome: Result<(String, bool), ApiError> = if let Some(fid) = existing_fid {
                 // PUT — don't touch `status`. This keeps published
                 // forecasts published and draft forecasts draft.
                 let mut updates = serde_json::Map::new();
@@ -8304,10 +8391,7 @@ impl CockpitState {
                     updates.insert("simulation_results".into(), v.clone());
                 }
                 let body = serde_json::Value::Object(updates);
-                api.update_forecast(&fid, &body)
-                    .await
-                    .map(|_| (fid, false))
-                    .map_err(|e| e.to_string())
+                api.update_forecast(&fid, &body).await.map(|_| (fid, false))
             } else {
                 // POST — first-time save, land it as a private draft so
                 // it's discoverable in the Portfolio panel's
@@ -8330,17 +8414,14 @@ impl CockpitState {
                     portfolio_id: None,
                     status: Some("draft".into()),
                 };
-                api.create_forecast(&req)
-                    .await
-                    .map(|resp| {
-                        let fid = resp
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        (fid, true)
-                    })
-                    .map_err(|e| e.to_string())
+                api.create_forecast(&req).await.map(|resp| {
+                    let fid = resp
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    (fid, true)
+                })
             };
 
             match outcome {
@@ -8434,6 +8515,9 @@ impl CockpitState {
                     // deployed backend doesn't have the endpoint
                     // yet); we degrade gracefully.
                     let raw = e.to_string();
+                    let http_status = e.status();
+                    let error_kind = e.kind();
+                    let transient = e.is_transient();
                     let looks_like_fk = raw.to_lowercase().contains("foreign key")
                         && (raw.to_lowercase().contains("owner_id")
                             || raw.to_lowercase().contains("users"));
@@ -8456,19 +8540,55 @@ impl CockpitState {
                     this.update(cx, |state, cx| {
                         // Leave `dirty` set so the next autosave tick
                         // retries. Don't clobber `last_autosave_at`.
-                        let text = match diagnosis_hint {
-                            Some(hint) => format!(
-                                "{}\n\n→ Diagnosis: {}",
-                                friendly_backend_save_error(&raw),
-                                hint
-                            ),
-                            None => friendly_backend_save_error(&raw),
-                        };
-                        state.messages.push(AssistantMessage {
-                            node: "save".into(),
-                            kind: MessageKind::Warning,
-                            text,
-                        });
+                        //
+                        // That retry is exactly why this event must
+                        // coalesce: a persistently-failing save fires
+                        // this branch every autosave tick, and the old
+                        // banner rendered each one as its own line.
+                        // `summary` deliberately excludes the raw error
+                        // so repeats collapse onto one row.
+                        let diagnosis = classify_backend_save_error(&raw);
+                        let mut detail = diagnosis.detail.clone();
+                        if let Some(hint) = diagnosis_hint.as_deref() {
+                            detail.push_str("\n\n→ Server self-check: ");
+                            detail.push_str(hint);
+                        }
+
+                        let mut event = LogEvent::new(
+                            Severity::Error,
+                            LogSource::Save,
+                            diagnosis.summary.clone(),
+                        )
+                        .with_detail(detail)
+                        .with_context(
+                            "operation",
+                            if created_attempt {
+                                "POST /api/forecasts"
+                            } else {
+                                "PUT /api/forecasts/:id"
+                            },
+                        )
+                        .with_context("error_kind", error_kind)
+                        .with_context(
+                            "http_status",
+                            http_status.map(|s| s.to_string()).unwrap_or_default(),
+                        )
+                        .with_context("forecast_id", fid_for_log.clone().unwrap_or_default())
+                        .with_context("transient", if transient { "yes" } else { "no" })
+                        .with_context("local_draft", "retained — autosave will retry")
+                        .with_payload(serde_json::json!({ "raw_error": raw }));
+
+                        // A transient failure outranks the taxonomy's
+                        // static advice: retrying really is the move.
+                        if let Some(remedy) = if transient {
+                            Some(Remedy::Retry)
+                        } else {
+                            diagnosis.remedy.clone()
+                        } {
+                            event = event.with_remedy(remedy);
+                        }
+
+                        state.push_rich("save", MessageKind::Warning, event);
                         cx.notify();
                     })
                     .ok();
@@ -9673,7 +9793,7 @@ impl Render for CockpitState {
                 this.focus_driver(&name, cx);
             }))
             // ── Fermi Banner (top, always visible) ────────────────
-            .child(render_fermi_banner(&self.messages, &self.agent_runs))
+            .child(render_fermi_banner(self, cx))
             // ── Locked banner: server resolved/voided this forecast ──
             .when(self.is_locked(), |el| el.child(render_locked_banner(self, cx)))
             // ── Main content (left + right panels) ────────────────
@@ -14716,14 +14836,6 @@ fn render_editor_panel(
 // Note: render_editor_panel is kept but render_right_panel is the new entry point.
 // render_editor_panel is used as fallback within render_right_panel.
 
-fn render_assistant_panel(messages: &[AssistantMessage]) -> impl IntoElement {
-    // Legacy — kept for compatibility but Fermi banner is now the primary display.
-    div()
-}
-
-/// Fermi Banner — persistent top strip showing live agent activity.
-/// Always visible, shows the most recent messages + latest finding.
-/// Replaces the buried "FPL Assistant" panel.
 /// Banner shown when the server has resolved/voided this forecast. Makes the
 /// settled state — and the fact that re-sims / new snapshots are disabled —
 /// explicit, so the operator doesn't have to carry that context. Includes a
@@ -14790,41 +14902,44 @@ fn render_locked_banner(state: &CockpitState, cx: &mut Context<CockpitState>) ->
         )
 }
 
-fn render_fermi_banner(
-    messages: &[AssistantMessage],
-    agent_runs: &[AgentExecution],
-) -> impl IntoElement {
-    let running_count = agent_runs
-        .iter()
-        .filter(|r| r.status == AgentRunStatus::Running)
-        .count();
+/// Single-line ambient status strip.
+///
+/// This used to render up to three lines — a status line plus the two
+/// most recent non-`Info` messages, each truncated at 120–150 chars —
+/// which made it simultaneously the console's only error surface and
+/// a bad one: repeated autosave failures filled all three slots with
+/// the same chopped sentence and pushed everything else out.
+///
+/// The full, untruncated, expandable history now lives in the Fermi
+/// panel's Activity tab. What's left here is what a status strip
+/// should be: current state, plus a counter that gets you to the
+/// detail. Clicking anywhere on the strip opens the Activity tab.
+fn render_fermi_banner(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl IntoElement {
+    let messages = &state.messages;
+    let agent_runs = &state.agent_runs;
+
     let running_names: Vec<String> = agent_runs
         .iter()
         .filter(|r| r.status == AgentRunStatus::Running)
         .map(|r| base_agent_name(&r.agent_name).to_string())
         .collect();
 
-    // Get the 2 most recent non-info messages (findings, suggestions, warnings)
-    let recent: Vec<&AssistantMessage> = messages
+    // Problems still outstanding in this composer session. The
+    // app-level ActivityLog holds the authoritative count, but the
+    // cockpit can't see it, and this local tally is the one that
+    // matters for "did something just go wrong on *this* forecast".
+    let problem_count = messages
         .iter()
-        .rev()
-        .filter(|m| m.kind != MessageKind::Info)
-        .take(2)
-        .collect();
+        .filter(|m| matches!(m.kind, MessageKind::Warning | MessageKind::Error))
+        .count();
 
-    // Latest finding (from SSE stream or evidence)
-    let latest_finding: Option<&AssistantMessage> =
-        messages.iter().rev().find(|m| m.kind == MessageKind::Tip);
-
-    // Status indicator
-    let (status_icon, status_text, status_color) = if running_count > 0 {
+    let (status_icon, status_text, status_color) = if !running_names.is_empty() {
         (
             "⟳",
             format!("Researching: {}", running_names.join(", ")),
             theme::GOLD,
         )
-    } else if !messages.is_empty() {
-        let last = messages.last().unwrap();
+    } else if let Some(last) = messages.last() {
         let (icon, color) = match last.kind {
             MessageKind::Suggestion => ("💡", theme::CYAN),
             MessageKind::Warning => ("⚠", theme::GOLD),
@@ -14832,7 +14947,9 @@ fn render_fermi_banner(
             MessageKind::Error => ("✗", theme::RED),
             MessageKind::Tip => ("🦊", theme::GREEN),
         };
-        (icon, last.text.chars().take(120).collect(), color)
+        // Still truncated — but this is now a glance-target, not the
+        // only place the text exists.
+        (icon, last.text.chars().take(140).collect(), color)
     } else {
         (
             "🦊",
@@ -14841,89 +14958,62 @@ fn render_fermi_banner(
         )
     };
 
+    let chip_color = if problem_count > 0 {
+        theme::GOLD
+    } else {
+        theme::FG_DIM
+    };
+    let chip_label = if problem_count > 0 {
+        format!("⚠ {} · Activity ↗", problem_count)
+    } else {
+        "Activity ↗".to_string()
+    };
+
     div()
         .id("fermi-banner")
         .w_full()
         .px(px(16.0))
-        .py(px(6.0))
+        .py(px(5.0))
         .bg(rgb(0x171D2A))
         .border_b_1()
         .border_color(rgb(theme::FG_FAINT))
         .flex()
-        .flex_col()
-        .gap(px(3.0))
-        // Top line: Fermi label + status + running agents
+        .items_center()
+        .gap(px(8.0))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(theme::BG_ELEVATED)))
+        .on_click(cx.listener(|this, _, _w, cx| {
+            this.pending_open_activity = true;
+            cx.notify();
+        }))
         .child(
             div()
-                .flex()
-                .items_center()
-                .gap(px(8.0))
-                .child(
-                    div()
-                        .text_size(px(11.0))
-                        .text_color(rgb(theme::CYAN))
-                        .font_weight(FontWeight::BOLD)
-                        .child("🦊 Fermi"),
-                )
-                .child(
-                    div()
-                        .text_size(px(10.0))
-                        .text_color(rgb(status_color))
-                        .child(format!("{} {}", status_icon, status_text)),
-                ),
+                .flex_shrink_0()
+                .text_size(px(11.0))
+                .text_color(rgb(theme::CYAN))
+                .font_weight(FontWeight::BOLD)
+                .child("🦊 Fermi"),
         )
-        // Bottom line: latest finding or recent suggestion
-        .when(!recent.is_empty(), |el| {
-            let msg = recent[0];
-            let (icon, color) = match msg.kind {
-                MessageKind::Suggestion => ("💡", theme::CYAN),
-                MessageKind::Warning => ("⚠", theme::GOLD),
-                MessageKind::Error => ("✗", theme::RED),
-                MessageKind::Tip => ("🔍", theme::GREEN),
-                _ => ("ℹ", theme::FG_DIM),
-            };
-            el.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.0))
-                    .child(div().text_size(px(9.0)).w(px(14.0)).child(icon.to_string()))
-                    .child(
-                        div()
-                            .flex_grow()
-                            .min_w(px(0.0))
-                            .text_size(px(10.0))
-                            .text_color(rgb(color))
-                            .child(msg.text.chars().take(150).collect::<String>()),
-                    ),
-            )
-        })
-        // Second recent message if different from first
-        .when(recent.len() > 1, |el| {
-            let msg = recent[1];
-            let (icon, color) = match msg.kind {
-                MessageKind::Suggestion => ("💡", theme::CYAN),
-                MessageKind::Warning => ("⚠", theme::GOLD),
-                MessageKind::Error => ("✗", theme::RED),
-                MessageKind::Tip => ("🔍", theme::GREEN),
-                _ => ("ℹ", theme::FG_DIM),
-            };
-            el.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.0))
-                    .child(div().text_size(px(9.0)).w(px(14.0)).child(icon.to_string()))
-                    .child(
-                        div()
-                            .flex_grow()
-                            .min_w(px(0.0))
-                            .text_size(px(9.0))
-                            .text_color(rgb(color))
-                            .child(msg.text.chars().take(120).collect::<String>()),
-                    ),
-            )
-        })
+        .child(
+            div()
+                .flex_grow()
+                .min_w(px(0.0))
+                .text_size(px(10.0))
+                .text_color(rgb(status_color))
+                .child(format!("{} {}", status_icon, status_text)),
+        )
+        .child(
+            div()
+                .flex_shrink_0()
+                .px(px(6.0))
+                .py(px(1.0))
+                .rounded(px(3.0))
+                .border_1()
+                .border_color(rgb(chip_color))
+                .text_size(px(9.0))
+                .text_color(rgb(chip_color))
+                .child(chip_label),
+        )
 }
 
 /// Forecast Index — the key visualization section shown above drivers.
@@ -20439,7 +20529,41 @@ fn format_self_check_diagnosis(resp: &serde_json::Value) -> String {
     format!("[{diagnosis}] {remediation} (server v{server_version} @ {server_commit})")
 }
 
-fn friendly_backend_save_error(raw: &str) -> String {
+/// Structured classification of a backend save/publish failure.
+///
+/// Before v0.10.15 this taxonomy existed but produced a single
+/// `String` in which the summary, the raw wire error, and the
+/// remediation advice were all concatenated. That string was then fed
+/// to `render_fermi_banner`, which truncated it at 150 characters —
+/// so the remediation half, the most actionable part, was reliably
+/// invisible. Splitting the three concerns lets the Activity panel
+/// show a scannable one-liner that expands into the full diagnosis,
+/// and turns the advice into a clickable [`Remedy`].
+pub struct SaveErrorDiagnosis {
+    /// One line. Safe to truncate, stable enough to coalesce on —
+    /// deliberately excludes the raw error so retries of the same
+    /// failure collapse into a single row.
+    pub summary: String,
+    /// Full prose: what went wrong, why, and the raw wire text.
+    pub detail: String,
+    /// The suggested next step, if we recognised the failure.
+    pub remedy: Option<Remedy>,
+}
+
+/// Translate a raw backend error string into a structured operator
+/// diagnosis. Two goals:
+///   * Hide the raw SQL / sqlx wire format from the summary — seeing
+///     "insert or update on table 'fermi_forecasts' violates foreign
+///     key constraint" is worse than useless when what the operator
+///     needs to do is sign out and back in. It stays available in
+///     `detail`.
+///   * Preserve enough context to reach us with useful diagnostics if
+///     the message doesn't match any known pattern.
+///
+/// The categorisation is intentionally cautious: only well-known
+/// wire-format phrases get rewritten. Everything else falls through
+/// with the raw text so we don't accidentally hide a novel failure.
+pub fn classify_backend_save_error(raw: &str) -> SaveErrorDiagnosis {
     let lower = raw.to_lowercase();
 
     // v0.9.1: email UNIQUE conflict that the self-heal deliberately
@@ -20448,7 +20572,19 @@ fn friendly_backend_save_error(raw: &str) -> String {
     // specific phrase. Checked BEFORE the FK branch below so we
     // don't misclassify it as a stale-deploy.
     if lower.contains("already registered under a different account") {
-        return format!("Backend save failed: {}", raw);
+        return SaveErrorDiagnosis {
+            summary: "Backend save failed: your email is claimed by a different account"
+                .to_string(),
+            detail: format!(
+                "The server refused to link this session to an existing users row \
+                 because the email is already registered under another, \
+                 already-provisioned account. This is a deliberate refusal by the \
+                 self-heal path, not a transient error — retrying will not help.\n\n\
+                 Raw error: {}",
+                raw
+            ),
+            remedy: Some(Remedy::CopyDiagnostics),
+        };
     }
 
     // Server-signalled precondition failure — our ensure_user_row
@@ -20461,7 +20597,17 @@ fn friendly_backend_save_error(raw: &str) -> String {
         || lower.contains("not fully provisioned")
         || lower.contains("couldn't auto-heal")
     {
-        return format!("Backend save failed: {}", raw);
+        return SaveErrorDiagnosis {
+            summary: "Backend save failed: your account isn't fully provisioned".to_string(),
+            detail: format!(
+                "The server's ensure_user_row helper could not backfill a users row \
+                 for this principal. Common cause: an API-key principal whose \
+                 user_id doesn't resolve to a real account.\n\n\
+                 Raw error: {}",
+                raw
+            ),
+            remedy: Some(Remedy::RunSelfCheck),
+        };
     }
 
     // Raw FK violation on users(user_id). v0.9.1 assumed this only
@@ -20478,15 +20624,21 @@ fn friendly_backend_save_error(raw: &str) -> String {
     // (stale JWT vs stale deploy vs missing users row). One curl
     // gives them the answer + the exact remediation.
     if lower.contains("foreign key") && (lower.contains("owner_id") || lower.contains("users")) {
-        return format!(
-            "Backend save failed: your users row and session don't line up \
-             (owner_id FK violation). Two likely causes: (1) your session \
-             JWT was minted before the v0.10.3 backfill — sign out and back \
-             in first; (2) the deployed backend is older than v0.10.3 — \
-             check GET /api/rbac/self-check for a definitive answer + \
-             remediation. Raw error: {}",
-            raw
-        );
+        return SaveErrorDiagnosis {
+            summary: "Backend save failed: users row and session don't line up (owner_id FK)"
+                .to_string(),
+            detail: format!(
+                "Two likely causes:\n\
+                 (1) your session JWT was minted before the v0.10.3 backfill — \
+                 sign out and back in to remint it;\n\
+                 (2) the deployed backend is older than v0.10.3 — GET \
+                 /api/rbac/self-check gives a definitive answer plus the exact \
+                 remediation.\n\n\
+                 Raw error: {}",
+                raw
+            ),
+            remedy: Some(Remedy::SignOut),
+        };
     }
 
     // Notebook FK — legacy fermi_forecasts.notebook_id points at a
@@ -20494,29 +20646,55 @@ fn friendly_backend_save_error(raw: &str) -> String {
     // notebook_id but old drafts might; surface a hint the operator
     // can act on.
     if lower.contains("foreign key") && lower.contains("notebook_id") {
-        return "Backend save failed: this forecast's notebook is missing. \
-                Reset the composer (Ctrl+N) and paste your work into a new \
-                forecast."
-            .to_string();
+        return SaveErrorDiagnosis {
+            summary: "Backend save failed: this forecast's notebook is missing".to_string(),
+            detail: format!(
+                "This draft carries a legacy notebook_id pointing at a notebook the \
+                 server no longer has. New forecasts don't set notebook_id, so a \
+                 fresh composer will save cleanly.\n\n\
+                 Raw error: {}",
+                raw
+            ),
+            remedy: Some(Remedy::ResetComposer),
+        };
     }
 
     // Generic FK violation — tell the operator what happened without
-    // dumping the SQL.
+    // dumping the SQL into the summary.
     if lower.contains("foreign key") {
-        return format!(
-            "Backend save failed: a referenced row is missing on the server. \
-             Try refreshing (Ctrl+R) and retry. Details: {}",
-            raw
-        );
+        return SaveErrorDiagnosis {
+            summary: "Backend save failed: a referenced row is missing on the server".to_string(),
+            detail: format!(
+                "A foreign key the save depends on didn't resolve. Refreshing \
+                 (Ctrl+R) and retrying often clears this when the referenced row \
+                 was created concurrently.\n\n\
+                 Raw error: {}",
+                raw
+            ),
+            remedy: Some(Remedy::Retry),
+        };
     }
 
     // Unknown — fall through with the raw text so we can still
-    // diagnose. This is the last-resort branch.
-    format!(
-        "Saved locally, but backend save failed: {}. Work will not survive \
-         closing the composer.",
-        raw
-    )
+    // diagnose. This is the last-resort branch. The raw error goes in
+    // the summary here (and only here) because without a
+    // classification it's the only signal we have; the Activity panel
+    // renders summaries in full, so nothing is lost.
+    SaveErrorDiagnosis {
+        summary: format!("Saved locally, but backend save failed: {}", raw),
+        detail: "This failure didn't match any known pattern. Your work is in the \
+                 local draft but will not survive closing the composer — copy the \
+                 diagnostics and re-save before navigating away."
+            .to_string(),
+        remedy: Some(Remedy::CopyDiagnostics),
+    }
+}
+
+/// Flat-string form, kept for the inline `publish_status` chip which
+/// has no room for structure. New call sites should prefer
+/// [`classify_backend_save_error`].
+fn friendly_backend_save_error(raw: &str) -> String {
+    classify_backend_save_error(raw).summary
 }
 
 /// Trim an RFC-3339 timestamp to the minute for compact display. If the

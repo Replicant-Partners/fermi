@@ -11,6 +11,7 @@
 // runtime, only rustc's macro-expansion budget.
 #![recursion_limit = "4096"]
 
+mod activity_log;
 mod api;
 mod charts;
 mod chat;
@@ -268,6 +269,7 @@ actions!(
         DismissShortcuts,
         ToggleFermiChat,
         SendFermiChat,
+        ShowActivity,
     ]
 );
 
@@ -883,6 +885,16 @@ struct FermiConsole {
     // (message, icon, color)
     toast: Option<(String, &'static str, u32)>,
 
+    // ── Activity log (v0.10.15) ─────────────────────────────
+    //
+    // Durable, structured sink for every system interaction worth
+    // inspecting. App-scoped rather than cockpit-scoped on purpose:
+    // auth, RBAC, updater and team failures all happen outside (or
+    // before) any `CockpitState`, and those are precisely the ones
+    // that used to disappear into a 3-second toast. Rendered by the
+    // Fermi panel's Activity tab.
+    activity: activity_log::ActivityLog,
+
     // ── Wallet state ─────────────────────────────────────────────────────
     //
     // Cached wallet snapshot from `/api/wallet`. Fetched on connect
@@ -946,6 +958,28 @@ struct ActivityItem {
     /// items were `Mine` (own-forecast events); v0.8.11 adds Team
     /// items sourced from `shared_with_me_forecasts`.
     source: ActivitySource,
+}
+
+/// Everything the parent `FermiConsole` pulls off a `CockpitState` on
+/// one observe tick.
+///
+/// This was previously an anonymous 3-tuple. Naming it became
+/// worthwhile once the Activity log added three more fields — a
+/// 6-tuple of `Vec`s, `Option`s and `bool`s at the call site is a
+/// mis-ordering bug waiting to happen.
+struct CockpitDrain {
+    /// Agent-completion notices to surface as toasts.
+    toasts: Vec<String>,
+    /// `(invite_json, target_label, recipient)` for the share modal.
+    invite_share: Option<(JsonValue, String, String)>,
+    /// Parent should refetch its forecast lists.
+    refresh_forecasts: bool,
+    /// Operator clicked the banner — open the Activity tab.
+    open_activity: bool,
+    /// Banner messages not yet mirrored into the Activity log.
+    mirrored: Vec<cockpit::AssistantMessage>,
+    /// Fully-structured events from `CockpitState::push_rich`.
+    rich: Vec<activity_log::LogEvent>,
 }
 
 /// Which stream an ActivityItem came from. Team = a forecast belonging
@@ -1174,6 +1208,7 @@ impl FermiConsole {
             inbox_sheet_showing: false,
             inbox_action_in_flight: std::collections::HashSet::new(),
             toast: None,
+            activity: activity_log::ActivityLog::new(),
             wallet: None,
             welcome_modal_showing: false,
             available_update: None,
@@ -1338,8 +1373,48 @@ impl FermiConsole {
         .detach();
     }
 
+    // ── Activity log ─────────────────────────────────────────
+
+    /// Record an event and re-render. The single entry point so every
+    /// ingest path (toasts, the cockpit mirror, direct call sites)
+    /// goes through the same coalescing.
+    fn log_event(&mut self, event: activity_log::LogEvent, cx: &mut Context<Self>) {
+        self.activity.push(event);
+        cx.notify();
+    }
+
+    /// Infer a severity from the glyph + colour a `show_toast` caller
+    /// passed.
+    ///
+    /// This is a bridge, not a design: the 23 existing call sites
+    /// encode intent as `("✗", theme::RED)` rather than as a severity,
+    /// and rewriting all of them was a bigger change than the value it
+    /// would add right now. Colour is the stronger signal — the codebase
+    /// is consistent about RED for failure and GREEN for success — so we
+    /// key on it first and fall back to the glyph.
+    fn severity_from_toast(icon: &str, color: u32) -> activity_log::Severity {
+        use activity_log::Severity;
+        match color {
+            theme::RED => Severity::Error,
+            theme::GOLD | theme::ORANGE => Severity::Warn,
+            theme::GREEN => Severity::Success,
+            _ => match icon {
+                "✗" | "✕" => Severity::Error,
+                "⚠" => Severity::Warn,
+                "✓" => Severity::Success,
+                _ => Severity::Info,
+            },
+        }
+    }
+
     /// Show a transient toast notification. Auto-dismisses after 3 seconds.
     /// `icon` is a short emoji/symbol, `color` is a theme constant.
+    ///
+    /// Every toast is also appended to the Activity log. Before this,
+    /// a toast was the *entire* lifetime of an event — 3 seconds and
+    /// then gone, with no way to recover what it said. That was fine
+    /// for "Invite link copied" and actively harmful for "Auth
+    /// failed: …".
     fn show_toast(
         &mut self,
         message: impl Into<String>,
@@ -1347,7 +1422,13 @@ impl FermiConsole {
         color: u32,
         cx: &mut Context<Self>,
     ) {
-        self.toast = Some((message.into(), icon, color));
+        let message = message.into();
+        self.activity.push(activity_log::LogEvent::new(
+            Self::severity_from_toast(icon, color),
+            activity_log::LogSource::System,
+            message.clone(),
+        ));
+        self.toast = Some((message, icon, color));
         cx.notify();
         // Schedule dismissal after 3 s.
         cx.spawn(async move |this, cx| {
@@ -1584,6 +1665,192 @@ impl FermiConsole {
         cx: &mut Context<Self>,
     ) {
         self.fermi_chat.drawer_open = !self.fermi_chat.drawer_open;
+        if self.fermi_chat.drawer_open && self.fermi_chat.tab == chat::FermiPanelTab::Activity {
+            self.activity.mark_seen();
+        }
+        cx.notify();
+    }
+
+    /// Ctrl+' — jump straight to the Activity tab. Distinct binding
+    /// from Ctrl+; because "show me what just broke" and "ask Fermi a
+    /// question" are different intents and shouldn't cost a second
+    /// click to disambiguate.
+    fn on_show_activity(&mut self, _: &ShowActivity, _w: &mut Window, cx: &mut Context<Self>) {
+        self.open_activity_panel(cx);
+    }
+
+    /// Open the Fermi panel on the Activity tab and clear the unseen
+    /// badge. Shared by the keybinding, the sidebar chip, and the
+    /// cockpit banner's click-through.
+    fn open_activity_panel(&mut self, cx: &mut Context<Self>) {
+        self.fermi_chat.drawer_open = true;
+        self.fermi_chat.tab = chat::FermiPanelTab::Activity;
+        self.activity.mark_seen();
+        cx.notify();
+    }
+
+    /// Switch tabs within the already-open panel.
+    fn set_fermi_tab(&mut self, tab: chat::FermiPanelTab, cx: &mut Context<Self>) {
+        self.fermi_chat.tab = tab;
+        if tab == chat::FermiPanelTab::Activity {
+            self.activity.mark_seen();
+        }
+        cx.notify();
+    }
+
+    /// Apply an event's suggested remedy.
+    ///
+    /// The remedies map onto affordances the console already has —
+    /// what was missing was the wiring from "the error knows what to
+    /// do" to "the operator can click it". `SignOut` is deliberately
+    /// not automatic: it discards session state, so we surface the
+    /// instruction and let the operator choose.
+    fn apply_remedy(&mut self, seq: u64, cx: &mut Context<Self>) {
+        use activity_log::Remedy;
+        let Some(event) = self.activity.get(seq) else {
+            return;
+        };
+        let Some(remedy) = event.remedy.clone() else {
+            return;
+        };
+        let plain = event.to_plain_text();
+
+        match remedy {
+            Remedy::Retry => {
+                if let Some(cockpit) = self.cockpit.clone() {
+                    cockpit.update(cx, |state, cx| {
+                        state.save_forecast(cx);
+                    });
+                    self.show_toast("Retrying save…", "↻", theme::CYAN, cx);
+                } else {
+                    self.show_toast("Nothing to retry — no composer open", "⚠", theme::GOLD, cx);
+                }
+            }
+            Remedy::SignOut => {
+                self.show_toast(
+                    "Sign out from the sidebar, then sign back in to remint your session",
+                    "⇥",
+                    theme::GOLD,
+                    cx,
+                );
+            }
+            Remedy::RunSelfCheck => self.run_rbac_self_check(cx),
+            Remedy::ResetComposer => {
+                self.show_toast(
+                    "Press Ctrl+N for a clean composer, then paste your work in",
+                    "⌫",
+                    theme::GOLD,
+                    cx,
+                );
+            }
+            Remedy::CopyDiagnostics => {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(plain));
+                self.show_toast("Diagnostics copied", "⧉", theme::CYAN, cx);
+            }
+        }
+    }
+
+    /// Fetch `/api/rbac/self-check` and log the verdict as its own
+    /// event.
+    ///
+    /// The cockpit already called this endpoint on FK-shaped save
+    /// failures, but only ever appended its answer to a string the
+    /// banner then truncated. Exposing it as an operator-triggerable
+    /// action, with the response landing in the log as structured
+    /// context, is the difference between having a diagnostic and
+    /// being able to use one.
+    fn run_rbac_self_check(&mut self, cx: &mut Context<Self>) {
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = tokio::spawn(async move { api.rbac_self_check().await }).await;
+            this.update(cx, |this, cx| {
+                let event = match result {
+                    Ok(Ok(resp)) => {
+                        let diagnosis = resp
+                            .get("diagnosis")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        let aligned = diagnosis == "aligned";
+                        activity_log::LogEvent::new(
+                            if aligned {
+                                activity_log::Severity::Success
+                            } else {
+                                activity_log::Severity::Warn
+                            },
+                            activity_log::LogSource::Auth,
+                            format!("RBAC self-check: {}", diagnosis),
+                        )
+                        .with_detail(
+                            resp.get("remediation")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("No remediation supplied by the server."),
+                        )
+                        .with_context(
+                            "server_version",
+                            resp.get("server_version")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default(),
+                        )
+                        .with_context(
+                            "server_commit",
+                            resp.get("server_commit")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default(),
+                        )
+                        .with_payload(resp)
+                    }
+                    Ok(Err(e)) => activity_log::LogEvent::new(
+                        activity_log::Severity::Error,
+                        activity_log::LogSource::Auth,
+                        "RBAC self-check failed",
+                    )
+                    .with_detail(format!(
+                        "Could not reach GET /api/rbac/self-check. On an older \
+                         deployment this endpoint may not exist yet, which is \
+                         itself diagnostic — it means the backend predates \
+                         v0.10.6.\n\nRaw error: {}",
+                        e
+                    ))
+                    .with_context("error_kind", e.kind())
+                    .with_context(
+                        "http_status",
+                        e.status().map(|s| s.to_string()).unwrap_or_default(),
+                    ),
+                    Err(e) => activity_log::LogEvent::new(
+                        activity_log::Severity::Error,
+                        activity_log::LogSource::Auth,
+                        "RBAC self-check task crashed",
+                    )
+                    .with_detail(e.to_string()),
+                };
+                this.log_event(event, cx);
+                this.open_activity_panel(cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Hand an event to the Chat tab as a pre-filled question.
+    ///
+    /// This is the reason Chat and Activity share one panel rather
+    /// than being two surfaces: the natural next move after reading a
+    /// failure is to ask about it, and that should not require
+    /// re-typing the error.
+    fn ask_fermi_about_event(&mut self, seq: u64, cx: &mut Context<Self>) {
+        let Some(event) = self.activity.get(seq) else {
+            return;
+        };
+        let prompt = format!(
+            "The console logged this event. What does it mean and what should I do?\n\n\
+             ```\n{}```",
+            event.to_plain_text()
+        );
+        self.fermi_chat.input.update(cx, |input, cx| {
+            input.set_text(&prompt, cx);
+        });
+        self.fermi_chat.tab = chat::FermiPanelTab::Chat;
         cx.notify();
     }
 
@@ -1627,6 +1894,40 @@ impl FermiConsole {
         cx.spawn(async move |this, cx| {
             let result =
                 tokio::spawn(async move { api.execute_agent("fermi", &wrapped).await }).await;
+            // Chat failures previously lived only in the transcript,
+            // which meant they vanished the moment the operator
+            // switched tabs or the drawer was reset. They're API
+            // failures like any other — log them.
+            let log_event = match &result {
+                Ok(Ok(_)) => None,
+                Ok(Err(e)) => Some(
+                    activity_log::LogEvent::new(
+                        activity_log::Severity::Error,
+                        activity_log::LogSource::Chat,
+                        "Fermi chat request failed",
+                    )
+                    .with_detail(e.to_string())
+                    .with_context("error_kind", e.kind())
+                    .with_context(
+                        "http_status",
+                        e.status().map(|s| s.to_string()).unwrap_or_default(),
+                    )
+                    .with_context("agent_id", "fermi")
+                    .with_remedy(if e.is_transient() {
+                        activity_log::Remedy::Retry
+                    } else {
+                        activity_log::Remedy::CopyDiagnostics
+                    }),
+                ),
+                Err(e) => Some(
+                    activity_log::LogEvent::new(
+                        activity_log::Severity::Error,
+                        activity_log::LogSource::Chat,
+                        "Fermi chat task crashed",
+                    )
+                    .with_detail(e.to_string()),
+                ),
+            };
             let msg = match result {
                 Ok(Ok(agent_result)) => {
                     let raw = serde_json::to_value(&agent_result).unwrap_or(JsonValue::Null);
@@ -1657,6 +1958,9 @@ impl FermiConsole {
             this.update(cx, |this, cx| {
                 this.fermi_chat.loading = false;
                 this.fermi_chat.messages.push(msg);
+                if let Some(event) = log_event {
+                    this.activity.push(event);
+                }
                 cx.notify();
             })
             .ok();
@@ -1903,10 +2207,12 @@ impl FermiConsole {
         )
     }
 
-    /// Right-edge slide-in drawer. Renders the message list, empty
-    /// state, thinking indicator, and input row. Absolute-positioned
-    /// so opening it doesn't reflow the panel behind.
+    /// Right-edge slide-in panel. Two tabs: Chat (conversation with
+    /// the Fermi agent) and Activity (structured log of what the
+    /// system actually did). Absolute-positioned so opening it
+    /// doesn't reflow the panel behind.
     fn render_fermi_chat_drawer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let on_activity = self.fermi_chat.tab == chat::FermiPanelTab::Activity;
         let is_loading = self.fermi_chat.loading;
         let has_messages = !self.fermi_chat.messages.is_empty();
 
@@ -1971,12 +2277,24 @@ impl FermiConsole {
             list.into_any_element()
         };
 
+        // On the Activity tab the chat body is replaced wholesale and
+        // the composer row is hidden — an input box under a log reads
+        // as "filter", which it isn't.
+        let body = if on_activity {
+            self.render_activity_tab(cx).into_any_element()
+        } else {
+            body
+        };
+
         div()
             .absolute()
             .top(px(0.0))
             .bottom(px(0.0))
             .right(px(0.0))
-            .w(px(380.0))
+            // Wider on Activity: rows carry a timestamp, a source
+            // chip, and untruncated summaries, which 380px squeezes
+            // into unreadable ribbons.
+            .w(px(if on_activity { 460.0 } else { 380.0 }))
             .flex()
             .flex_col()
             .bg(theme::bg())
@@ -2011,7 +2329,7 @@ impl FermiConsole {
                                 div()
                                     .text_size(px(9.0))
                                     .text_color(theme::fg_faint())
-                                    .child("Ctrl+; to toggle"),
+                                    .child("Ctrl+; · Ctrl+'"),
                             ),
                     )
                     .child(
@@ -2031,56 +2349,384 @@ impl FermiConsole {
                             .child("✕"),
                     ),
             )
-            // Message list / empty state
+            // Tab strip — Chat | Activity
+            .child(self.render_fermi_tab_strip(cx))
+            // Message list / empty state / activity log
             .child(body)
-            // Input row
+            // Input row (Chat only)
+            .when(!on_activity, |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.0))
+                        .px(px(10.0))
+                        .py(px(10.0))
+                        .border_t_1()
+                        .border_color(rgb(theme::FG_FAINT))
+                        .child(self.fermi_chat.input.clone())
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(theme::fg_faint())
+                                        .child(if is_loading {
+                                            "Waiting for Fermi…"
+                                        } else {
+                                            "Click Send · Ctrl+; to close"
+                                        }),
+                                )
+                                .child(
+                                    div()
+                                        .id("fermi-chat-send")
+                                        .px(px(12.0))
+                                        .py(px(6.0))
+                                        .rounded(px(4.0))
+                                        .bg(if is_loading {
+                                            rgb(theme::FG_FAINT)
+                                        } else {
+                                            rgb(theme::PURPLE)
+                                        })
+                                        .text_color(rgb(theme::BG_DEEP))
+                                        .text_size(px(11.0))
+                                        .font_weight(FontWeight::BOLD)
+                                        .cursor_pointer()
+                                        .hover(|s| s.opacity(0.85))
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.send_fermi_chat_from_input(cx);
+                                        }))
+                                        .child(if is_loading { "…" } else { "Send" }),
+                                ),
+                        ),
+                )
+            })
+    }
+
+    /// The panel's Chat | Activity selector. Mirrors the visual
+    /// language of the cockpit's right-hand `render_tab_bar` so the
+    /// two tab strips read as the same control.
+    fn render_fermi_tab_strip(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let active = self.fermi_chat.tab;
+        let problems = self.activity.problem_count();
+
+        let tab = |label: &'static str,
+                   id: &'static str,
+                   which: chat::FermiPanelTab,
+                   badge: Option<String>,
+                   cx: &mut Context<Self>| {
+            let is_active = active == which;
+            let mut el = div()
+                .id(id)
+                .flex()
+                .items_center()
+                .gap(px(5.0))
+                .px(px(12.0))
+                .py(px(6.0))
+                .cursor_pointer()
+                .border_b_2()
+                .border_color(if is_active {
+                    rgb(theme::PURPLE)
+                } else {
+                    rgb(theme::BG)
+                })
+                .text_size(px(11.0))
+                .text_color(if is_active {
+                    rgb(theme::PURPLE)
+                } else {
+                    rgb(theme::FG_DIM)
+                })
+                .when(is_active, |s| s.font_weight(FontWeight::BOLD))
+                .hover(|s| s.text_color(theme::purple()))
+                .on_click(cx.listener(move |this, _, _, cx| this.set_fermi_tab(which, cx)))
+                .child(label);
+            if let Some(badge) = badge {
+                el = el.child(
+                    div()
+                        .px(px(4.0))
+                        .rounded(px(6.0))
+                        .bg(rgb(theme::RED))
+                        .text_size(px(8.0))
+                        .text_color(rgb(theme::BG_DEEP))
+                        .font_weight(FontWeight::BOLD)
+                        .child(badge),
+                );
+            }
+            el
+        };
+
+        div()
+            .flex()
+            .items_center()
+            .border_b_1()
+            .border_color(rgb(theme::FG_FAINT))
+            .child(tab(
+                "Chat",
+                "fermi-tab-chat",
+                chat::FermiPanelTab::Chat,
+                None,
+                cx,
+            ))
+            .child(tab(
+                "Activity",
+                "fermi-tab-activity",
+                chat::FermiPanelTab::Activity,
+                (problems > 0).then(|| problems.to_string()),
+                cx,
+            ))
+    }
+
+    /// The Activity tab: filter bar, event list, and per-event
+    /// expansion.
+    ///
+    /// Newest-first, because when something breaks the operator wants
+    /// the newest row at eye level without scrolling. Rows collapse to
+    /// one scannable line and expand into detail + context + payload +
+    /// remedy — nothing here is truncated the way the old top banner
+    /// truncated everything at 150 characters.
+    fn render_activity_tab(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use activity_log::LogFilter;
+
+        let total = self.activity.len();
+        let problems = self.activity.problem_count();
+        let active_filter = self.activity.filter;
+        let events = self.activity.visible();
+
+        let filter_chip =
+            |label: String, id: &'static str, which: LogFilter, cx: &mut Context<Self>| {
+                let is_active = active_filter == which;
+                div()
+                    .id(id)
+                    .px(px(8.0))
+                    .py(px(2.0))
+                    .rounded(px(3.0))
+                    .cursor_pointer()
+                    .bg(if is_active {
+                        rgb(theme::BG_ACTIVE)
+                    } else {
+                        rgb(theme::BG_ELEVATED)
+                    })
+                    .text_size(px(9.0))
+                    .text_color(if is_active {
+                        rgb(theme::CYAN)
+                    } else {
+                        rgb(theme::FG_DIM)
+                    })
+                    .hover(|s| s.bg(theme::bg_hover()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.activity.filter = which;
+                        cx.notify();
+                    }))
+                    .child(label)
+            };
+
+        let toolbar = div()
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .px(px(10.0))
+            .py(px(6.0))
+            .border_b_1()
+            .border_color(rgb(theme::FG_FAINT))
+            .child(filter_chip(
+                format!("All {}", total),
+                "activity-filter-all",
+                LogFilter::All,
+                cx,
+            ))
+            .child(filter_chip(
+                format!("Problems {}", problems),
+                "activity-filter-problems",
+                LogFilter::Problems,
+                cx,
+            ))
+            .child(div().flex_grow())
             .child(
                 div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.0))
-                    .px(px(10.0))
-                    .py(px(10.0))
-                    .border_t_1()
+                    .id("activity-copy-all")
+                    .px(px(6.0))
+                    .py(px(2.0))
+                    .rounded(px(3.0))
+                    .cursor_pointer()
+                    .text_size(px(9.0))
+                    .text_color(rgb(theme::FG_DIM))
+                    .hover(|s| s.bg(theme::bg_hover()).text_color(theme::cyan()))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let dump = this.activity.to_plain_text();
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(dump));
+                        this.show_toast("Activity log copied", "⧉", theme::CYAN, cx);
+                    }))
+                    .child("⧉ Copy all"),
+            )
+            .child(
+                div()
+                    .id("activity-clear")
+                    .px(px(6.0))
+                    .py(px(2.0))
+                    .rounded(px(3.0))
+                    .cursor_pointer()
+                    .text_size(px(9.0))
+                    .text_color(rgb(theme::FG_DIM))
+                    .hover(|s| s.bg(theme::bg_hover()).text_color(theme::red()))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.activity.clear();
+                        cx.notify();
+                    }))
+                    .child("Clear"),
+            );
+
+        let list: AnyElement = if events.is_empty() {
+            div()
+                .flex_grow()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap(px(8.0))
+                .px(px(20.0))
+                .child(div().text_size(px(24.0)).child("📜"))
+                .child(div().text_size(px(12.0)).text_color(theme::fg_dim()).child(
+                    if active_filter == LogFilter::Problems && total > 0 {
+                        "No warnings or errors — switch to All to see everything."
+                    } else {
+                        "Nothing yet. Saves, agent runs, API calls and errors \
+                             will appear here as they happen."
+                    },
+                ))
+                .into_any_element()
+        } else {
+            let mut list = div()
+                .id("activity-scroll")
+                .flex_grow()
+                .flex()
+                .flex_col()
+                .gap(px(3.0))
+                .px(px(8.0))
+                .py(px(8.0))
+                .overflow_y_scroll();
+            for event in events {
+                let seq = event.seq;
+                let expanded = self.activity.expanded.contains(&seq);
+                let expandable = event.has_detail();
+
+                // Pure body from activity_log, wrapped here with the
+                // click target — same split as chat::render_message /
+                // render_action_chip_strip.
+                let mut row = activity_log::render_event(event, expanded)
+                    .id(SharedString::from(format!("activity-row-{}", seq)))
+                    .when(expandable, |el| {
+                        el.cursor_pointer()
+                            .hover(|s| s.bg(theme::bg_hover()))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.activity.toggle_expanded(seq);
+                                cx.notify();
+                            }))
+                    });
+
+                if expanded {
+                    row = row.child(self.render_activity_actions(event, cx));
+                }
+                list = list.child(row);
+            }
+            list.into_any_element()
+        };
+
+        div()
+            .flex_grow()
+            .flex()
+            .flex_col()
+            .min_h(px(0.0))
+            .child(toolbar)
+            .child(list)
+    }
+
+    /// Action strip under an expanded event: the suggested remedy (if
+    /// the classifier identified one), a copy button, and a hand-off
+    /// to the Chat tab.
+    fn render_activity_actions(
+        &self,
+        event: &activity_log::LogEvent,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let seq = event.seq;
+        let remedy = event.remedy.clone();
+
+        let mut strip = div()
+            .flex()
+            .flex_wrap()
+            .gap(px(4.0))
+            .ml(px(62.0))
+            .mt(px(6.0));
+
+        // The classifier's suggested fix, promoted from prose to a
+        // button. Rendered first and accented so it reads as the
+        // primary action.
+        if let Some(remedy) = remedy {
+            strip = strip.child(
+                div()
+                    .id(SharedString::from(format!("activity-remedy-{}", seq)))
+                    .px(px(8.0))
+                    .py(px(3.0))
+                    .rounded(px(3.0))
+                    .cursor_pointer()
+                    .bg(rgb(0x1A1A2E))
+                    .border_1()
+                    .border_color(rgb(theme::PURPLE))
+                    .text_size(px(10.0))
+                    .text_color(rgb(theme::PURPLE))
+                    .hover(|s| s.bg(theme::bg_hover()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.apply_remedy(seq, cx);
+                    }))
+                    .child(remedy.label()),
+            );
+        }
+
+        strip
+            .child(
+                div()
+                    .id(SharedString::from(format!("activity-copy-{}", seq)))
+                    .px(px(8.0))
+                    .py(px(3.0))
+                    .rounded(px(3.0))
+                    .cursor_pointer()
+                    .bg(rgb(theme::BG_ELEVATED))
+                    .border_1()
                     .border_color(rgb(theme::FG_FAINT))
-                    .child(self.fermi_chat.input.clone())
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .text_size(px(9.0))
-                                    .text_color(theme::fg_faint())
-                                    .child(if is_loading {
-                                        "Waiting for Fermi…"
-                                    } else {
-                                        "Click Send · Ctrl+; to close"
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .id("fermi-chat-send")
-                                    .px(px(12.0))
-                                    .py(px(6.0))
-                                    .rounded(px(4.0))
-                                    .bg(if is_loading {
-                                        rgb(theme::FG_FAINT)
-                                    } else {
-                                        rgb(theme::PURPLE)
-                                    })
-                                    .text_color(rgb(theme::BG_DEEP))
-                                    .text_size(px(11.0))
-                                    .font_weight(FontWeight::BOLD)
-                                    .cursor_pointer()
-                                    .hover(|s| s.opacity(0.85))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.send_fermi_chat_from_input(cx);
-                                    }))
-                                    .child(if is_loading { "…" } else { "Send" }),
-                            ),
-                    ),
+                    .text_size(px(10.0))
+                    .text_color(rgb(theme::FG_DIM))
+                    .hover(|s| s.text_color(theme::cyan()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let Some(event) = this.activity.get(seq) else {
+                            return;
+                        };
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                            event.to_plain_text(),
+                        ));
+                        this.show_toast("Event copied", "⧉", theme::CYAN, cx);
+                    }))
+                    .child("⧉ Copy"),
+            )
+            .child(
+                div()
+                    .id(SharedString::from(format!("activity-ask-{}", seq)))
+                    .px(px(8.0))
+                    .py(px(3.0))
+                    .rounded(px(3.0))
+                    .cursor_pointer()
+                    .bg(rgb(theme::BG_ELEVATED))
+                    .border_1()
+                    .border_color(rgb(theme::FG_FAINT))
+                    .text_size(px(10.0))
+                    .text_color(rgb(theme::FG_DIM))
+                    .hover(|s| s.text_color(theme::purple()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.ask_fermi_about_event(seq, cx);
+                    }))
+                    .child("🔮 Ask Fermi"),
             )
     }
 
@@ -5472,19 +6118,73 @@ impl FermiConsole {
             // cockpit stashes intent here and the observe callback picks
             // it up on the next tick.
             cx.observe(&cockpit_entity, |this, cockpit_ref, cx| {
-                let (toasts, invite_share, refresh_forecasts): (
-                    Vec<String>,
-                    Option<(JsonValue, String, String)>,
-                    bool,
-                ) = cockpit_ref.update(cx, |state, _| {
+                let drained = cockpit_ref.update(cx, |state, _| {
                     let refresh = state.pending_forecasts_refresh;
                     state.pending_forecasts_refresh = false;
-                    (
-                        std::mem::take(&mut state.pending_toasts),
-                        state.pending_invite_share.take(),
-                        refresh,
-                    )
+                    let open_activity = state.pending_open_activity;
+                    state.pending_open_activity = false;
+
+                    // Mirror any banner messages the parent hasn't seen
+                    // into the app-level Activity log. A watermark over
+                    // the existing `messages` vector means none of the
+                    // 92 `messages.push(..)` call sites in cockpit.rs
+                    // needed to change.
+                    //
+                    // Self-heal if the watermark is past the end — that
+                    // means `messages` was cleared (new forecast /
+                    // re-orchestration) since the last drain.
+                    let n = state.messages.len();
+                    if state.activity_watermark > n {
+                        state.activity_watermark = 0;
+                    }
+                    let mirrored: Vec<cockpit::AssistantMessage> = state.messages
+                        [state.activity_watermark..]
+                        .iter()
+                        .enumerate()
+                        // Skip anything a `push_rich` call site already
+                        // queued a fuller version of, so a save failure
+                        // is one row and not two.
+                        .filter(|(offset, _)| {
+                            !state
+                                .activity_suppressed
+                                .contains(&(state.activity_watermark + offset))
+                        })
+                        .map(|(_, m)| m.clone())
+                        .collect();
+                    state.activity_watermark = n;
+
+                    CockpitDrain {
+                        toasts: std::mem::take(&mut state.pending_toasts),
+                        invite_share: state.pending_invite_share.take(),
+                        refresh_forecasts: refresh,
+                        open_activity,
+                        mirrored,
+                        rich: std::mem::take(&mut state.pending_activity),
+                    }
                 });
+
+                let CockpitDrain {
+                    toasts,
+                    invite_share,
+                    refresh_forecasts,
+                    open_activity,
+                    mirrored,
+                    rich,
+                } = drained;
+
+                // Generic mirror first, then the rich events, so a
+                // rich event always sorts after the plainer messages
+                // that led up to it.
+                for msg in mirrored {
+                    this.activity.push(activity_log::from_cockpit_message(msg));
+                }
+                for event in rich {
+                    this.activity.push(event);
+                }
+                if open_activity {
+                    this.open_activity_panel(cx);
+                }
+
                 for msg in toasts {
                     this.show_toast(msg, "✓", theme::GREEN, cx);
                 }
@@ -6194,6 +6894,12 @@ impl FermiConsole {
                     // glance whether Fermi is already visible.
                     .when(self.connected, |el| {
                         let is_open = self.fermi_chat.drawer_open;
+                        // Unseen warnings/errors since the operator
+                        // last looked at the Activity tab. This is the
+                        // passive signal that replaces "a toast flashed
+                        // for three seconds while you were reading
+                        // something else".
+                        let unseen = self.activity.unseen_problems;
                         el.child(
                             div()
                                 .id("sidebar-fermi-chat-chip")
@@ -6201,9 +6907,14 @@ impl FermiConsole {
                                 .px(px(8.0))
                                 .py(px(4.0))
                                 .rounded(px(4.0))
+                                .flex()
+                                .items_center()
+                                .gap(px(5.0))
                                 .bg(rgb(if is_open { 0x1A1A2E } else { theme::BG_HOVER }))
                                 .border_1()
-                                .border_color(rgb(if is_open {
+                                .border_color(rgb(if unseen > 0 {
+                                    theme::RED
+                                } else if is_open {
                                     theme::PURPLE
                                 } else {
                                     theme::FG_FAINT
@@ -6218,9 +6929,26 @@ impl FermiConsole {
                                 .hover(|s| s.bg(theme::bg_active()).text_color(theme::purple()))
                                 .on_click(cx.listener(|this, _, _w, cx| {
                                     this.fermi_chat.drawer_open = !this.fermi_chat.drawer_open;
+                                    if this.fermi_chat.drawer_open
+                                        && this.fermi_chat.tab == chat::FermiPanelTab::Activity
+                                    {
+                                        this.activity.mark_seen();
+                                    }
                                     cx.notify();
                                 }))
-                                .child("💬 Fermi · Ctrl+;"),
+                                .child("💬 Fermi · Ctrl+;")
+                                .when(unseen > 0, |el| {
+                                    el.child(
+                                        div()
+                                            .px(px(4.0))
+                                            .rounded(px(6.0))
+                                            .bg(rgb(theme::RED))
+                                            .text_size(px(8.0))
+                                            .text_color(rgb(theme::BG_DEEP))
+                                            .font_weight(FontWeight::BOLD)
+                                            .child(unseen.to_string()),
+                                    )
+                                }),
                         )
                     })
                     // ⬆ Update-available badge (Sprint distribution).
@@ -14193,7 +14921,8 @@ impl FermiConsole {
                 "Help",
                 vec![
                     ("Ctrl+/", "Show this shortcuts panel"),
-                    ("Ctrl+;", "Toggle Fermi chat drawer"),
+                    ("Ctrl+;", "Toggle Fermi panel"),
+                    ("Ctrl+'", "Open Fermi panel → Activity log"),
                     ("Esc", "Dismiss any modal / overlay"),
                 ],
             ),
@@ -16676,6 +17405,7 @@ impl Render for FermiConsole {
             .on_action(cx.listener(Self::on_dismiss_shortcuts))
             .on_action(cx.listener(Self::on_toggle_fermi_chat))
             .on_action(cx.listener(Self::on_send_fermi_chat))
+            .on_action(cx.listener(Self::on_show_activity))
             .relative()
             .flex()
             .size_full()
@@ -19513,6 +20243,11 @@ fn main() {
             // shift states work on US layouts.
             KeyBinding::new("secondary-;", ToggleFermiChat, Some("FermiConsole")),
             KeyBinding::new("secondary-shift-;", ToggleFermiChat, Some("FermiConsole")),
+            // Ctrl+' opens the same panel straight onto the Activity
+            // tab — the "what just happened" key, adjacent to the
+            // "ask about it" key.
+            KeyBinding::new("secondary-'", ShowActivity, Some("FermiConsole")),
+            KeyBinding::new("secondary-shift-'", ShowActivity, Some("FermiConsole")),
             // Esc dismisses the shortcuts modal. Scoped to the whole
             // console for now — there's no other Escape consumer at
             // this level, and the handler is a no-op when the modal

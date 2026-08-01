@@ -3601,6 +3601,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fermi-activity"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde_json",
+]
+
+[[package]]
 name = "fermi-auth"
 version = "0.1.0"
 dependencies = [
@@ -3628,13 +3636,14 @@ dependencies = [
 
 [[package]]
 name = "fermi-console"
-version = "0.10.16"
+version = "0.10.17"
 dependencies = [
  "anyhow",
  "chrono",
  "env_logger",
  "eventsource-client",
  "fermi",
+ "fermi-activity",
  "futures",
  "gpui",
  "image",

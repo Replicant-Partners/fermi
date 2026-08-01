@@ -47,6 +47,50 @@ pub enum ApiError {
 }
 
 impl ApiError {
+    /// HTTP status, when the failure came from a response rather than
+    /// the transport or the deserializer.
+    ///
+    /// `ApiError` carries this already but every call site flattened
+    /// the whole error to `e.to_string()`, so the status was only ever
+    /// available as substring-matchable prose. The Activity log wants
+    /// it as a discrete context field.
+    pub fn status(&self) -> Option<u16> {
+        match self {
+            ApiError::Http { status, .. } => Some(*status),
+            ApiError::NotAuthenticated => Some(401),
+            ApiError::Forbidden(_) => Some(403),
+            ApiError::NotFound(_) => Some(404),
+            ApiError::RateLimited { .. } => Some(429),
+            ApiError::Server(_) => Some(500),
+            ApiError::Network(_) | ApiError::Json(_) => None,
+        }
+    }
+
+    /// Short, stable classification for grouping and telemetry.
+    /// Deliberately not `Display` — this is a key, not a sentence.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            ApiError::Http { .. } => "http",
+            ApiError::Network(_) => "network",
+            ApiError::Json(_) => "deserialize",
+            ApiError::NotAuthenticated => "unauthenticated",
+            ApiError::Forbidden(_) => "forbidden",
+            ApiError::NotFound(_) => "not_found",
+            ApiError::RateLimited { .. } => "rate_limited",
+            ApiError::Server(_) => "server",
+        }
+    }
+
+    /// True for failures that are plausibly worth retrying unchanged.
+    /// 4xx (other than 429) means the request itself is wrong, so a
+    /// bare retry will fail identically.
+    pub fn is_transient(&self) -> bool {
+        matches!(
+            self,
+            ApiError::Network(_) | ApiError::RateLimited { .. } | ApiError::Server(_)
+        )
+    }
+
     fn from_status(status: u16, body: &str) -> Self {
         match status {
             401 => ApiError::NotAuthenticated,

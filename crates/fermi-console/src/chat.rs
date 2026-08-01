@@ -194,6 +194,14 @@ pub struct FermiChatState {
     pub input: Entity<TextInput>,
     pub loading: bool,
     pub drawer_open: bool,
+    /// Which tab of the Fermi panel is showing. The panel is the
+    /// console's one right-edge surface for "talking to the system":
+    /// [`FermiPanelTab::Chat`] asks Fermi questions,
+    /// [`FermiPanelTab::Activity`] inspects what the system actually
+    /// did. They share a panel deliberately — seeing an error and
+    /// asking Fermi about it should be one click, not a context
+    /// switch.
+    pub tab: FermiPanelTab,
 
     // ── Slice 3 (persistence) — currently unused ─────────────────────
     /// Server-side session key. `None` means "no persisted history";
@@ -213,9 +221,19 @@ impl FermiChatState {
             input,
             loading: false,
             drawer_open: false,
+            tab: FermiPanelTab::Chat,
             session_id: None,
         }
     }
+}
+
+/// The two faces of the right-edge Fermi panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FermiPanelTab {
+    /// Conversational surface over `execute_agent("fermi", ..)`.
+    Chat,
+    /// Structured, inspectable log of system interactions.
+    Activity,
 }
 
 // ── Context envelope ─────────────────────────────────────────────────────

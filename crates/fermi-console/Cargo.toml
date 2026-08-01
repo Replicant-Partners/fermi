@@ -1,6 +1,6 @@
 [package]
 name = "fermi-console"
-version = "0.10.16"
+version = "0.10.17"
 edition = "2021"
 description = "MMOG-style forecasting command center built on GPUI"
 license = "MIT"
@@ -56,6 +56,10 @@ open = "5"
 
 # FPL parser and executor (local simulation)
 fermi = { path = "../.." }
+
+# Activity-log event model (GPUI-free so its tests actually build —
+# see crates/fermi-activity/Cargo.toml).
+fermi-activity = { path = "../fermi-activity" }
 
 # BayesOps posterior types — needed to discriminate FittedDistribution
 # variants when surfacing learnable-driver status badges in the UI.

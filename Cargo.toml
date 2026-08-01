@@ -20,6 +20,7 @@ members = [
     "agent-bestiary/coherence/crates/coherence-protocols",
     "fermi-auth",
     "fermi-lsp", "crates/fermi-console",
+    "crates/fermi-activity",
     "crates/simops",
     "crates/posterior",
     "crates/posterior-reg",
