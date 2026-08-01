@@ -15,9 +15,17 @@ pub async fn fork_agent(
     include_embeddings: bool,
     gas_fees: &GasFees,
 ) -> Result<ForkResult, String> {
-    // 1. Load source agent
+    // 1. Load source agent.
+    //
+    // v0.10.16: `agents.owner_id` has never existed — the owner
+    // column is `agents.user_id` (mig-006). The prior SELECT
+    // referenced `owner_id` directly, so this query 500'd on every
+    // fork attempt with `column "owner_id" does not exist`. Alias
+    // `user_id AS owner_id` keeps the Rust struct field name stable
+    // so downstream royalty-payment logic on `source.owner_id`
+    // doesn't need to change. Sibling fix: eval_brier.rs (v0.10.15).
     let source = sqlx::query_as::<_, SourceAgent>(
-        "SELECT agent_id, agent_name, owner_id, status, description, system_prompt, \
+        "SELECT agent_id, agent_name, user_id AS owner_id, status, description, system_prompt, \
          agent_type, model, temperature, executor_type, tags, fork_pricing, fork_count, \
          version, visibility, llm_provider, embedding_provider, embedding_model, embedding_dimension \
          FROM agents WHERE agent_id = $1"
@@ -94,15 +102,39 @@ pub async fn fork_agent(
         }
     }
 
-    // 7. Create new agent (fork)
+    // 7. Create new agent (fork).
+    //
+    // v0.10.16: derive the fork name and validate its shape against
+    // the platform-wide slug rule. If the source has a legacy name
+    // (contains `-` or `/` — predates d0f94e8, 2026-05-23), the
+    // derived name inherits the bad shape and would land another
+    // un-routable agent in the DB. Refuse with a detailed 400 so
+    // the forker knows exactly why and what to ask the source
+    // owner to do first. See the deferred rename-migration audit
+    // in RELEASE_NOTES_v0.10.15.md.
     let new_id = Uuid::new_v4();
     let fork_name = format!("{}_fork_{}", source.agent_name, source.fork_count + 1);
+    if let Err(msg) = crate::slug::validate(&fork_name) {
+        return Err(format!(
+            "Cannot fork `{source_name}`: the derived fork name `{fork_name}` fails the \
+             platform slug rule ({msg}). This happens when the source agent has a legacy \
+             name that predates the URL-safety rule enforced since 2026-05-23 (commit \
+             d0f94e8). Legacy names contain characters (`-` or `/`) that would produce \
+             un-routable URLs on the fork. Ask an admin to rename `{source_name}` to a \
+             snake_case name first, then retry the fork.",
+            source_name = source.agent_name,
+            fork_name = fork_name,
+            msg = msg,
+        ));
+    }
     let fork_desc = source.description.as_deref().unwrap_or("").to_string();
     let fork_prompt = source.system_prompt.clone();
     let tags = source.tags.clone();
 
+    // v0.10.16: `agents.owner_id` → `agents.user_id`, same fix as
+    // the SELECT above. Was: INSERT INTO agents (..., owner_id, ...).
     sqlx::query(
-        "INSERT INTO agents (agent_id, agent_name, owner_id, description, system_prompt, \
+        "INSERT INTO agents (agent_id, agent_name, user_id, description, system_prompt, \
          agent_type, model, temperature, executor_type, tags, status, visibility, tier, \
          forked_from, version, llm_provider, embedding_provider, embedding_model, embedding_dimension) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'draft', 'private', 'community', \

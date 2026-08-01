@@ -8,8 +8,8 @@ use axum::{
 };
 use fermi::gas::charge_gas;
 use fermi_auth::{
-    credit_charge, credit_charge_purchased_only, credit_deposit_typed, get_or_create_wallet,
-    teams, AuthPrincipal,
+    credit_charge, credit_charge_purchased_only, credit_deposit_typed, get_or_create_wallet, teams,
+    AuthPrincipal,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -167,7 +167,8 @@ pub async fn get_workspace_handler(
             row.try_get::<i32, _>("workspace_budget").unwrap_or(0),
             row.try_get::<i32, _>("workspace_spent").unwrap_or(0),
             row.try_get::<Option<String>, _>("mission").unwrap_or(None),
-            row.try_get::<Option<uuid::Uuid>, _>("coordination_strategist_id").unwrap_or(None),
+            row.try_get::<Option<uuid::Uuid>, _>("coordination_strategist_id")
+                .unwrap_or(None),
         ),
         None => (0, 0, None, None),
     };
@@ -327,6 +328,18 @@ pub async fn create_workspace_agent_handler(
     Path(workspace_id): Path<String>,
     Json(req): Json<CreateAgentRequest>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    // v0.10.16: slug validation. The sibling handlers
+    // `create_agent_handler` and `import_agent_handler` have called
+    // `fermi::slug::validate_http` since d0f94e8 (2026-05-23), but
+    // this workspace-scoped creation path never did. Result: any
+    // workspace member could POST `{"agent_name": "efra-ai/whatever"}`
+    // and land an un-routable agent in the DB (axum's tree router
+    // splits on `/`, so /agent/:slug can't reach a name containing
+    // `/`; `-` in a name conflicts with the platform-wide snake_case
+    // rule). This is the live bypass that produced Mario's legacy
+    // `efra-ai/*` agents. Closed here so no new bad-shape names land.
+    fermi::slug::validate_http("agent_name", &req.agent_name)?;
+
     // Verify the user is a member of this workspace
     let ws_uuid: uuid::Uuid = workspace_id
         .parse()
@@ -393,8 +406,8 @@ pub async fn create_workspace_agent_handler(
         persona_version: 1,
         fermi_contract: None,
         model_params: serde_json::Value::Object(serde_json::Map::new()),
-                valence: None,
-            output_contract: None,
+        valence: None,
+        output_contract: None,
     };
 
     let agent_id = state.memory_store.create_agent(&agent).await.map_err(|e| {
@@ -587,8 +600,6 @@ pub async fn charge_workspace_gas(
     Ok(charged)
 }
 
-
-
 // ─── Shared helpers (used by messages + coherence) ──────────────────
 
 /// Parse @agent_name mentions from message content.
@@ -679,14 +690,16 @@ pub async fn set_composition_identity_handler(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::NOT_FOUND, "Workspace not found".into()))?;
 
-    let owner_id: String = owner_row.try_get("owner_id")
+    let owner_id: String = owner_row
+        .try_get("owner_id")
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     if owner_id != user_id && !principal.can_admin() {
         return Err((StatusCode::FORBIDDEN, "Owner or admin required".into()));
     }
 
     // Resolve strategist name → UUID
-    let strategist_uuid: Option<uuid::Uuid> = if let Some(ref sid) = body.coordination_strategist_id {
+    let strategist_uuid: Option<uuid::Uuid> = if let Some(ref sid) = body.coordination_strategist_id
+    {
         if sid.is_empty() {
             None
         } else if let Ok(uuid) = sid.parse::<uuid::Uuid>() {
@@ -804,7 +817,6 @@ pub async fn fork_workspace_to_app_draft_handler(
     })))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -838,7 +850,10 @@ mod tests {
     #[test]
     fn parse_at_mention_accepts_dotted_agent_name() {
         let parsed = parse_at_mention("@foo.bar.v2 hello");
-        assert_eq!(parsed, Some(("foo.bar.v2".to_string(), "hello".to_string())));
+        assert_eq!(
+            parsed,
+            Some(("foo.bar.v2".to_string(), "hello".to_string()))
+        );
     }
 
     #[test]
