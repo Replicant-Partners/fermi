@@ -1,9 +1,16 @@
 [package]
 name = "fermi-console"
-version = "0.10.17"
+version = "0.10.18"
 edition = "2021"
 description = "MMOG-style forecasting command center built on GPUI"
 license = "MIT"
+
+# Library target holding the GPUI-free modules, so their tests can
+# actually run. The bin target can't be tested at all: rustc segfaults
+# expanding GPUI's element chains under `--test`. See src/lib.rs.
+[lib]
+name = "fermi_console"
+path = "src/lib.rs"
 
 [[bin]]
 name = "fermi-console"

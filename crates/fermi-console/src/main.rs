@@ -18,7 +18,11 @@ mod chat;
 mod cockpit;
 mod composer;
 mod text_input;
-mod updater;
+
+// `updater` lives in the lib target (src/lib.rs), not here, so its
+// tests can actually run — rustc segfaults expanding this binary's
+// GPUI element chains under `--test`. Same module, one definition.
+use fermi_console::updater;
 
 use api::client::{
     ApiClient, ApiConfig, CalibrationData, CreatePortfolioRequest, CreateTeamRequest, Forecast,

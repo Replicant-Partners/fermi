@@ -9,8 +9,10 @@
 //! any distribution infrastructure of our own is:
 //!
 //! 1. Publish releases on GitHub with a predictable asset name.
-//! 2. On app launch, query the public `releases/latest` API.
-//! 3. If the tag is newer than `env!("CARGO_PKG_VERSION")`, surface a
+//! 2. On app launch, list the public `releases` API and pick the
+//!    highest *version* (see [`check_latest`] for why not
+//!    `releases/latest`).
+//! 3. If that tag is newer than `env!("CARGO_PKG_VERSION")`, surface a
 //!    non-blocking "Update available" affordance with release notes
 //!    pulled straight from the release body.
 //! 4. On confirm: download the fresh binary next to `current_exe()`,
@@ -113,8 +115,6 @@ impl Default for DownloadState {
 struct GhRelease {
     tag_name: String,
     #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
     body: Option<String>,
     #[serde(default)]
     published_at: Option<String>,
@@ -149,9 +149,34 @@ pub fn is_disabled() -> bool {
     !cfg!(target_os = "linux")
 }
 
-/// Query GitHub for the latest release and return it iff the tag is
+/// How many releases to consider. GitHub returns newest-published
+/// first; 30 is the API default page size and is many months of our
+/// release cadence, so the highest version is certainly within it.
+const RELEASE_PAGE_SIZE: u32 = 30;
+
+/// Query GitHub and return the best available release iff it is
 /// strictly newer than `current_version`. Returns `Ok(None)` in the
 /// common case (no update available) so the UI can `if let Some(_)`.
+///
+/// # Why we list releases instead of using `releases/latest`
+///
+/// `GET /releases/latest` does **not** mean "highest version" — it
+/// returns whichever non-prerelease release was *published most
+/// recently*. Those differ whenever releases don't publish in version
+/// order, which happens routinely:
+///
+/// * Pushing several tags together (`git push origin v1 v2 v3`) starts
+///   concurrent CI runs. Whichever build finishes last owns the
+///   pointer. This bit us for real on v0.10.15–17: v0.10.17's build was
+///   fastest and published at 13:44:29, v0.10.16's finished 84 seconds
+///   later at 13:45:53, so every client was told v0.10.16 was current
+///   and the newest release was invisible.
+/// * Back-porting a fix to an older line after a newer line shipped.
+/// * Re-running a failed older release workflow.
+///
+/// Trusting the pointer therefore risks both missing an upgrade and
+/// advertising a *downgrade*. Listing and choosing by version makes the
+/// answer independent of publish timing.
 ///
 /// Deliberately silent on transient network failure — a tester on a
 /// bad Wi-Fi shouldn't see a scary "update check failed" toast every
@@ -163,7 +188,11 @@ pub async fn check_latest(current_version: &str) -> Result<Option<ReleaseInfo>> 
         return Ok(None);
     }
 
-    let url = format!("https://api.github.com/repos/{}/releases/latest", repo());
+    let url = format!(
+        "https://api.github.com/repos/{}/releases?per_page={}",
+        repo(),
+        RELEASE_PAGE_SIZE
+    );
     log::debug!("[updater] GET {}", url);
 
     let client = reqwest::Client::builder()
@@ -186,46 +215,99 @@ pub async fn check_latest(current_version: &str) -> Result<Option<ReleaseInfo>> 
         bail!("GitHub releases API returned {}", resp.status());
     }
 
-    let release: GhRelease = resp.json().await.context("failed to parse release JSON")?;
+    let releases: Vec<GhRelease> = resp
+        .json()
+        .await
+        .context("failed to parse release list JSON")?;
+    log::debug!("[updater] {} release(s) returned", releases.len());
 
-    if release.draft {
-        log::debug!("[updater] latest release is a draft — ignoring");
+    let Some(best) = pick_best_release(&releases, current_version) else {
+        log::debug!("[updater] up to date (current={})", current_version);
         return Ok(None);
-    }
+    };
 
-    let version = release.tag_name.trim_start_matches('v').to_string();
-    if !is_newer(&version, current_version) {
-        log::debug!(
-            "[updater] up to date (latest={}, current={})",
-            version,
-            current_version
-        );
-        return Ok(None);
-    }
-
-    // Find the bare-binary asset (the one the install script uses).
-    let asset = release
+    // `pick_best_release` only returns candidates that already have the
+    // asset, so this lookup cannot fail — but resolve it by name rather
+    // than smuggling an index out of the selector.
+    let asset = best
         .assets
         .iter()
         .find(|a| a.name == BINARY_ASSET_NAME)
         .ok_or_else(|| {
             anyhow!(
                 "release {} has no {} asset — check the release workflow",
-                release.tag_name,
+                best.tag_name,
                 BINARY_ASSET_NAME
             )
         })?;
 
+    log::info!(
+        "[updater] update available: {} (current {})",
+        best.tag_name,
+        current_version
+    );
+
     Ok(Some(ReleaseInfo {
-        version,
-        tag: release.tag_name.clone(),
-        notes: release
+        version: strip_v(&best.tag_name),
+        tag: best.tag_name.clone(),
+        notes: best
             .body
+            .clone()
             .unwrap_or_else(|| "(no release notes)".to_string()),
-        published_at: release.published_at.unwrap_or_default(),
+        published_at: best.published_at.clone().unwrap_or_default(),
         download_url: asset.browser_download_url.clone(),
         size_bytes: asset.size,
     }))
+}
+
+/// Strip a leading `v` from a tag to get a bare version.
+fn strip_v(tag: &str) -> String {
+    tag.trim_start_matches('v').to_string()
+}
+
+/// Choose the highest-version installable release that beats
+/// `current_version`, or `None` if we're already current.
+///
+/// Skips, in order:
+///   * drafts and pre-releases — not for testers;
+///   * releases missing [`BINARY_ASSET_NAME`] — a partially-failed
+///     workflow publishes the release before uploading assets, and
+///     offering an update we can't download is worse than offering
+///     none. Falling through to the next-highest keeps the updater
+///     working while a broken release sits at the top.
+///
+/// Pure and total over its input so it can be tested without network.
+fn pick_best_release<'a>(
+    releases: &'a [GhRelease],
+    current_version: &str,
+) -> Option<&'a GhRelease> {
+    releases
+        .iter()
+        .filter(|r| {
+            if r.draft || r.prerelease {
+                return false;
+            }
+            if !r.assets.iter().any(|a| a.name == BINARY_ASSET_NAME) {
+                log::debug!(
+                    "[updater] skipping {} — no {} asset",
+                    r.tag_name,
+                    BINARY_ASSET_NAME
+                );
+                return false;
+            }
+            is_newer(&strip_v(&r.tag_name), current_version)
+        })
+        // Max by version, not by position: the list arrives ordered by
+        // publish time, which is precisely the ordering we can't trust.
+        .max_by(|a, b| {
+            let (a_core, a_pre) = split_semver(&strip_v(&a.tag_name));
+            let (b_core, b_pre) = split_semver(&strip_v(&b.tag_name));
+            // Release sorts above pre-release at equal cores, matching
+            // `is_newer`'s semantics: empty suffix wins.
+            a_core
+                .cmp(&b_core)
+                .then_with(|| a_pre.is_empty().cmp(&b_pre.is_empty()))
+        })
 }
 
 /// Naive `x.y.z[-suffix]` comparison. We only care about strict > for
@@ -449,5 +531,121 @@ mod tests {
         // "v0" parses to 0 via unwrap_or(0).
         assert_eq!(parts, [0, 10, 5]);
         assert_eq!(pre, "alpha.2");
+    }
+
+    #[test]
+    fn numeric_not_lexicographic_ordering() {
+        // The classic string-compare bug: "0.10.0" < "0.9.0" as text.
+        assert!(is_newer("0.10.0", "0.9.0"));
+        assert!(!is_newer("0.9.0", "0.10.0"));
+        assert!(is_newer("0.10.17", "0.10.9"));
+    }
+
+    // ── pick_best_release ────────────────────────────────────────
+
+    /// Build a release carrying the platform asset the updater needs.
+    fn rel(tag: &str) -> GhRelease {
+        GhRelease {
+            tag_name: tag.to_string(),
+            body: Some(format!("notes for {}", tag)),
+            published_at: Some("2026-08-01T00:00:00Z".to_string()),
+            prerelease: false,
+            draft: false,
+            assets: vec![GhAsset {
+                name: BINARY_ASSET_NAME.to_string(),
+                browser_download_url: format!("https://example.test/{}/bin", tag),
+                size: 42_000_000,
+            }],
+        }
+    }
+
+    /// A release whose workflow published the release but never
+    /// uploaded the binary.
+    fn rel_without_asset(tag: &str) -> GhRelease {
+        GhRelease {
+            assets: vec![],
+            ..rel(tag)
+        }
+    }
+
+    #[test]
+    fn picks_highest_version_regardless_of_publish_order() {
+        // This is the exact production incident that motivated the fix:
+        // v0.10.15/16/17 were tagged together, v0.10.17's build finished
+        // FIRST, so GitHub listed v0.10.16 as most-recently-published and
+        // `/releases/latest` returned it. The list arrives newest-published
+        // first, which is this order.
+        let releases = vec![rel("v0.10.16"), rel("v0.10.15"), rel("v0.10.17")];
+        let best = pick_best_release(&releases, "0.10.14").expect("an update exists");
+        assert_eq!(
+            best.tag_name, "v0.10.17",
+            "must choose by version, not by publish position"
+        );
+    }
+
+    #[test]
+    fn does_not_offer_a_downgrade() {
+        // Client already on the highest version: a stale "latest"
+        // pointer at v0.10.16 must not drag it backwards.
+        let releases = vec![rel("v0.10.16"), rel("v0.10.17")];
+        assert!(pick_best_release(&releases, "0.10.17").is_none());
+    }
+
+    #[test]
+    fn back_ported_patch_does_not_mask_newer_line() {
+        // A 0.9.x fix published today, long after 0.10.x shipped.
+        // `/releases/latest` would return v0.9.6; we must not.
+        let releases = vec![rel("v0.9.6"), rel("v0.10.2"), rel("v0.9.5")];
+        let best = pick_best_release(&releases, "0.9.5").expect("an update exists");
+        assert_eq!(best.tag_name, "v0.10.2");
+    }
+
+    #[test]
+    fn skips_releases_without_the_platform_asset() {
+        // Top release exists but its workflow died before uploading the
+        // binary. Offering it would hand the user an undownloadable
+        // update; fall through to the newest one we can actually install.
+        let releases = vec![rel_without_asset("v0.10.18"), rel("v0.10.17")];
+        let best = pick_best_release(&releases, "0.10.14").expect("an installable update exists");
+        assert_eq!(best.tag_name, "v0.10.17");
+    }
+
+    #[test]
+    fn skips_drafts_and_prereleases() {
+        let mut draft = rel("v0.11.0");
+        draft.draft = true;
+        let mut pre = rel("v0.10.20");
+        pre.prerelease = true;
+        let releases = vec![draft, pre, rel("v0.10.17")];
+        let best = pick_best_release(&releases, "0.10.14").expect("a stable update exists");
+        assert_eq!(best.tag_name, "v0.10.17");
+    }
+
+    #[test]
+    fn empty_release_list_is_not_an_error() {
+        assert!(pick_best_release(&[], "0.10.14").is_none());
+    }
+
+    #[test]
+    fn all_releases_unusable_yields_none() {
+        // Nothing installable and nothing newer — must not panic or
+        // fabricate a candidate.
+        let releases = vec![rel_without_asset("v0.10.18"), rel("v0.10.1")];
+        assert!(pick_best_release(&releases, "0.10.17").is_none());
+    }
+
+    #[test]
+    fn selected_release_carries_its_own_notes_and_url() {
+        // Guards against an index/borrow mix-up handing back one
+        // release's metadata attached to another's version.
+        let releases = vec![rel("v0.10.16"), rel("v0.10.17"), rel("v0.10.15")];
+        let best = pick_best_release(&releases, "0.10.14").unwrap();
+        assert_eq!(best.tag_name, "v0.10.17");
+        assert_eq!(best.body.as_deref(), Some("notes for v0.10.17"));
+        assert_eq!(
+            best.assets[0].browser_download_url,
+            "https://example.test/v0.10.17/bin"
+        );
+        assert_eq!(strip_v(&best.tag_name), "0.10.17");
     }
 }
