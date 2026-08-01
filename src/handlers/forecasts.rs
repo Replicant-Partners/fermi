@@ -533,7 +533,7 @@ pub async fn get_forecast_handler(
     let row = sqlx::query(
         "SELECT f.*, f.owner_id::text AS owner_id_text, u.name AS owner_display_name
          FROM fermi_forecasts f
-         LEFT JOIN users u ON u.id = f.owner_id
+         LEFT JOIN users u ON u.user_id = f.owner_id
          WHERE f.id = $1",
     )
     .bind(&forecast_id)
@@ -758,7 +758,7 @@ pub async fn list_forecasts_handler(
                 f.tags, f.created_at, f.updated_at, f.resolved_at,
                 u.name AS owner_display_name
          FROM fermi_forecasts f
-         LEFT JOIN users u ON u.id = f.owner_id
+         LEFT JOIN users u ON u.user_id = f.owner_id
          WHERE {}
          ORDER BY {} {} NULLS LAST
          LIMIT {} OFFSET {}",
@@ -2308,7 +2308,7 @@ pub async fn leaderboard_handler(
                         MAX(f.resolved_at) AS last_resolved_at,
                         ROW_NUMBER() OVER (ORDER BY AVG(f.brier_score) ASC) AS rank
                  FROM fermi_forecasts f
-                 JOIN users u ON u.id = f.owner_id
+                 JOIN users u ON u.user_id = f.owner_id
                  WHERE f.status = 'resolved' AND f.brier_score IS NOT NULL
                  GROUP BY f.owner_id, u.name
                  HAVING COUNT(*) >= $1
@@ -2493,7 +2493,7 @@ pub async fn public_forecasts_handler(
                 f.tags, f.created_at, f.resolved_at,
                 u.name AS owner_display_name
          FROM fermi_forecasts f
-         LEFT JOIN users u ON u.id = f.owner_id
+         LEFT JOIN users u ON u.user_id = f.owner_id
          WHERE {}
          ORDER BY {} {} NULLS LAST
          LIMIT {} OFFSET {}",
