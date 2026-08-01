@@ -1,14 +1,14 @@
 {
-  "forecast_id": null,
+  "forecast_id": "c95b0b58-8fef-4758-930f-9060f923f853",
   "current_version": 1,
-  "predicted_probability": 0.01,
+  "predicted_probability": 0.009999999776482582,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-08-01 01:34",
-      "probability": 0.01,
+      "timestamp": "2026-08-01 11:20",
+      "probability": 0.009999999776482582,
       "change_summary": "Initial: 1.0%, 3 drivers, 0 evidence"
     }
   ],
@@ -22,14 +22,14 @@
     "market_id": "2771328",
     "question": "Will Brighton win the 2026-27 English Premier League (EPL) Championship?",
     "market_price": 0.0025,
-    "volume_24h": 15959.613333,
-    "liquidity": 229247.96647,
+    "volume_24h": 31927.219999000004,
+    "liquidity": 240652.45167,
     "confidence": "Medium",
     "price_change_1w": null,
-    "url": "https://polymarket.com/event/659518",
+    "url": "https://polymarket.com/event/epl-2027-champion-20260701200428749",
     "price_history": [
       {
-        "t": 1785548068,
+        "t": 1785583223,
         "p": 0.0025
       }
     ]
