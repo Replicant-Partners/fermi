@@ -10665,14 +10665,17 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
         .when(next == NextAction::Publish, |el| el.bg(rgb(primary_bg)))
         .when(pub_disabled, |el| el.opacity(0.5))
         .when(!pub_disabled, |el| {
-            // Chip click fires direct publish with `private` visibility.
-            // Ctrl+P still opens the full commit sheet at the FermiConsole
-            // level (with visibility picker + share targets). Trade-off
-            // documented rather than mystery-behaviour.
+            // v0.10.14: chip click dispatches `PublishForecast` (the same
+            // action Ctrl+P triggers) instead of firing a direct-publish
+            // as `private`. One publish path, one visibility picker,
+            // zero surprise. The pre-v0.10.14 fast-path silently shipped
+            // forecasts as private without ever surfacing the picker
+            // — fine when auth was broken (nothing published anyway),
+            // observably wrong once RBAC was fixed in v0.10.13.
             el.cursor_pointer()
                 .hover(|s| s.bg(theme::bg_hover()))
-                .on_click(cx.listener(|this, _e, _w, cx| {
-                    this.publish_forecast("private".into(), cx);
+                .on_click(cx.listener(|_this, _e, window, cx| {
+                    window.dispatch_action(Box::new(crate::PublishForecast), cx);
                 }))
         })
         .when(!pub_icon.is_empty(), |el| {
