@@ -413,13 +413,19 @@ pub async fn create_forecast_handler(
         .and_then(|s| Uuid::parse_str(s).ok());
 
     sqlx::query(
+        // v0.10.13: dropped `$2::uuid` cast on owner_id. Post-mig-165 the
+        // column is TEXT (was UUID pre-drift), so binding a text
+        // user_id directly matches. The cast was harmless before —
+        // Postgres coerced text → uuid → text on assign — but broke
+        // for non-UUID-shaped user_ids and was a source of drift
+        // between the write and read paths.
         "INSERT INTO fermi_forecasts
          (id, owner_id, question_text, domain, resolution_criteria, target_date,
           predicted_probability, confidence_interval_low, confidence_interval_high,
           fpl_source, notebook_id, simulation_results, iterations,
           drivers, evidence, agents_used,
           status, visibility, team_id, workspace_id, tags, created_at, updated_at)
-         VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
                  $14, $15, $16, $17, $18, $19, $20, $21, NOW(), NOW())",
     )
     .bind(&forecast_id)
@@ -669,7 +675,7 @@ pub async fn list_forecasts_handler(
     // (via team_members) was already there from Wave 1.
     bind_idx += 1;
     conditions.push(format!(
-        "(f.owner_id = ${idx}::uuid \
+        "(f.owner_id = ${idx} \
           OR f.visibility IN ('shared', 'public') \
           OR (f.team_id IS NOT NULL \
               AND EXISTS (SELECT 1 FROM team_members m \
@@ -716,12 +722,12 @@ pub async fn list_forecasts_handler(
     match q.scope.as_deref() {
         Some("mine") => {
             bind_idx += 1;
-            conditions.push(format!("f.owner_id = ${}::uuid", bind_idx));
+            conditions.push(format!("f.owner_id = ${}", bind_idx));
             binds.push(user_id.clone());
         }
         Some("shared") => {
             bind_idx += 1;
-            conditions.push(format!("f.owner_id <> ${}::uuid", bind_idx));
+            conditions.push(format!("f.owner_id <> ${}", bind_idx));
             binds.push(user_id.clone());
         }
         _ => {}
@@ -1607,8 +1613,9 @@ pub async fn create_portfolio_handler(
     let team_id: Option<Uuid> = req.team_id.as_ref().and_then(|s| Uuid::parse_str(s).ok());
 
     sqlx::query(
-        "INSERT INTO fermi_portfolios (id, title, description, owner_id, visibility, team_id, domain, created_at, updated_at)
-         VALUES ($1, $2, $3, $4::uuid, $5, $6, $7, NOW(), NOW())",
+        // v0.10.13: dropped `$4::uuid` cast on owner_id (see fermi_forecasts note).
+         "INSERT INTO fermi_portfolios (id, title, description, owner_id, visibility, team_id, domain, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())",
     )
     .bind(&portfolio_id)
     .bind(&req.title)
@@ -1653,7 +1660,7 @@ pub async fn list_portfolios_handler(
                  JOIN fermi_forecasts f ON f.id = pf.forecast_id
                  WHERE pf.portfolio_id = p.id AND f.brier_score IS NOT NULL) AS avg_brier
          FROM fermi_portfolios p
-         WHERE p.owner_id = $1::uuid
+         WHERE p.owner_id = $1
             OR p.visibility IN ('shared', 'public')
             OR (p.team_id IS NOT NULL
                 AND EXISTS (SELECT 1 FROM team_members m
@@ -2390,7 +2397,7 @@ pub async fn my_stats_handler(
             COUNT(DISTINCT DATE(created_at)) FILTER (WHERE created_at > NOW() - INTERVAL '30 days') AS active_days_30d,
             array_agg(DISTINCT domain) FILTER (WHERE domain IS NOT NULL) AS domains
          FROM fermi_forecasts
-         WHERE owner_id = $1::uuid",
+         WHERE owner_id = $1",
     )
     .bind(&user_id)
     .fetch_one(pool)
@@ -2405,7 +2412,7 @@ pub async fn my_stats_handler(
             WHERE status = 'resolved' AND brier_score IS NOT NULL
             GROUP BY owner_id
             HAVING COUNT(*) >= 5
-        ) ranked WHERE owner_id = $1::uuid",
+        ) ranked WHERE owner_id = $1",
     )
     .bind(&user_id)
     .fetch_optional(pool)

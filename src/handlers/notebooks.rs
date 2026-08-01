@@ -149,10 +149,11 @@ pub async fn create_notebook_handler(
     .bind(notebook_id)
     .bind(&req.title)
     .bind(&req.description)
-    .bind(
-        Uuid::parse_str(&user_id)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?,
-    )
+    // v0.10.13: fermi_notebooks.owner_id is TEXT post-mig-165 (FKs
+    // users(user_id)). principal.user_id() already returns TEXT so we
+    // bind it directly — parsing to Uuid produced text=uuid mismatches
+    // for OAuth users whose users.id ≠ users.user_id.
+    .bind(&user_id)
     .bind(&visibility)
     .bind(&req.team_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()))
     .bind(&req.org_id)
@@ -210,11 +211,14 @@ pub async fn get_notebook_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .ok_or((StatusCode::NOT_FOUND, "Notebook not found".to_string()))?;
 
-    let owner_id: Uuid = row.get("owner_id");
+    // v0.10.13: fermi_notebooks.owner_id is TEXT post-mig-165 — was
+    // decoding as Uuid, which silently worked for legacy users where
+    // users.id == users.user_id but broke OAuth-minted users.
+    let owner_id: String = row.get("owner_id");
     let visibility: String = row.get("visibility");
 
     // Access control
-    if visibility == "private" && owner_id.to_string() != user_id {
+    if visibility == "private" && owner_id != user_id {
         return Err((StatusCode::FORBIDDEN, "Access denied".to_string()));
     }
 
@@ -224,7 +228,7 @@ pub async fn get_notebook_handler(
         description: row.get("description"),
         permissions: NotebookPermissions {
             visibility,
-            owner_id: owner_id.to_string(),
+            owner_id: owner_id.clone(),
             team_id: row.get::<Option<Uuid>, _>("team_id").map(|u| u.to_string()),
             org_id: row.get("org_id"),
         },
@@ -403,11 +407,13 @@ pub async fn execute_notebook_handler(
         .ok_or((StatusCode::NOT_FOUND, "Notebook not found".to_string()))?;
 
     let cells: Vec<JsonValue> = notebook.get("cells");
-    let owner_id: Uuid = notebook.get("owner_id");
+    // v0.10.13: fermi_notebooks.owner_id is TEXT post-mig-165 (see
+    // get_notebook_handler note).
+    let owner_id: String = notebook.get("owner_id");
 
     // Access control: owner or shared/public
     // (simplified - you may want to check visibility)
-    if owner_id.to_string() != user_id {
+    if owner_id != user_id {
         return Err((StatusCode::FORBIDDEN, "Access denied".to_string()));
     }
 
@@ -706,9 +712,12 @@ pub async fn fpl_execute_handler(
 
     // Parse FPL.
     let lexer = Lexer::new(&req.fpl_source);
-    let tokens = lexer
-        .tokenize()
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Tokenization failed: {:?}", e)))?;
+    let tokens = lexer.tokenize().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Tokenization failed: {:?}", e),
+        )
+    })?;
 
     let parser = Parser::new(tokens);
     let program = parser
@@ -722,9 +731,12 @@ pub async fn fpl_execute_handler(
         Executor::new(iterations)
     };
 
-    let results = executor
-        .execute(&program)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Execution failed: {}", e)))?;
+    let results = executor.execute(&program).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Execution failed: {}", e),
+        )
+    })?;
 
     let elapsed_ms = start_time.elapsed().as_millis() as i64;
 

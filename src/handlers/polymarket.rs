@@ -843,12 +843,17 @@ pub async fn import_handler(
     // Use the market price as the initial probability anchor
     let initial_prob = market_match.market_price.clamp(0.01, 0.99);
 
+    // v0.10.13: dropped `$2::uuid` cast on owner_id. Post-mig-165
+    // fermi_forecasts.owner_id is TEXT and FKs users(user_id) — the
+    // principal's user_id() returns TEXT so binding it directly is now
+    // the correct type. Casting to ::uuid on a TEXT column produces
+    // `operator does not exist: text = uuid` for downstream reads.
     sqlx::query(
         "INSERT INTO fermi_forecasts (
             id, owner_id, question_text, predicted_probability,
             domain, status, visibility,
             tags, metadata, target_date
-        ) VALUES ($1, $2::uuid, $3, $4, $5, 'active', 'private', $6, $7, $8::timestamptz)",
+        ) VALUES ($1, $2, $3, $4, $5, 'active', 'private', $6, $7, $8::timestamptz)",
     )
     .bind(&forecast_id)
     .bind(&user_id)
@@ -1086,12 +1091,14 @@ pub async fn check_resolutions_handler(
     let user_id = principal.user_id();
 
     // Find all active forecasts with PM links that haven't resolved yet
+    // v0.10.13: `f.owner_id = $1` (was `$1::uuid`) — owner_id is TEXT
+    // post-mig-165.
     let forecasts = sqlx::query(
         "SELECT f.id, f.predicted_probability, f.question_text,
                 f.metadata->'polymarket'->>'pm_event_id' AS pm_event_id,
                 f.metadata->'polymarket'->>'pm_market_id' AS pm_market_id
          FROM fermi_forecasts f
-         WHERE f.owner_id = $1::uuid
+         WHERE f.owner_id = $1
            AND f.status = 'active'
            AND f.metadata->'polymarket' IS NOT NULL
            AND f.metadata->'polymarket'->>'pm_market_id' IS NOT NULL",
@@ -1169,6 +1176,7 @@ pub async fn check_resolutions_handler(
                 let brier = (fermi_prob as f64 - if actual_outcome { 1.0 } else { 0.0 }).powi(2);
 
                 // Resolve the forecast
+                // v0.10.13: owner_id = $7 (was `$7::uuid`) — TEXT post-mig-165
                 let resolve_result = sqlx::query(
                     "UPDATE fermi_forecasts
                      SET status = 'resolved',
@@ -1179,7 +1187,7 @@ pub async fn check_resolutions_handler(
                          resolution_notes = $4,
                          metadata = metadata || $5::jsonb,
                          updated_at = NOW()
-                     WHERE id = $6 AND owner_id = $7::uuid AND status = 'active'",
+                     WHERE id = $6 AND owner_id = $7 AND status = 'active'",
                 )
                 .bind(actual_outcome)
                 .bind(brier as f32)
