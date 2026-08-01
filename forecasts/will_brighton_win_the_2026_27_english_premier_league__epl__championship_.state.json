@@ -1,29 +1,23 @@
 {
   "forecast_id": "c95b0b58-8fef-4758-930f-9060f923f853",
-  "current_version": 2,
-  "predicted_probability": 1.074431901522129,
-  "inside_view_explanation": "Inside view: model evaluates to 1.074 (p5=0.644, p95=1.655). Key drivers: strength_factor, conditions, disruption. Most influential: strength_factor (48%), disruption (38%), conditions (20%).",
+  "current_version": 1,
+  "predicted_probability": 1.0766247777798756,
+  "inside_view_explanation": "Inside view: model evaluates to 1.077 (p5=0.635, p95=1.655). Key drivers: strength_factor, conditions, disruption. Most influential: strength_factor (53%), disruption (34%), conditions (18%).",
   "forecast_confidence": 0.14,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-08-01 11:20",
-      "probability": 0.009999999776482582,
-      "change_summary": "Initial: 1.0%, 3 drivers, 0 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-08-01 11:20",
-      "probability": 1.074431901522129,
-      "change_summary": "107.4% (+106pp), 3 drivers"
+      "timestamp": "2026-08-01 11:21",
+      "probability": 1.0766247777798756,
+      "change_summary": "Initial: 107.7%, 3 drivers, 0 evidence"
     }
   ],
   "sim_results": {
-    "mean": 1.074431901522129,
-    "median": 1.0349407161549284,
-    "p5": 0.6435282902882843,
-    "p95": 1.6554991420822527,
-    "std_dev": 0.31425226114666127,
+    "mean": 1.0766247777798756,
+    "median": 1.0354173895046137,
+    "p5": 0.6353597094186009,
+    "p95": 1.6549987640988195,
+    "std_dev": 0.3140895489772769,
     "iterations": 10000
   },
   "base_rate": null,
@@ -42,7 +36,7 @@
     "url": "https://polymarket.com/event/epl-2027-champion-20260701200428749",
     "price_history": [
       {
-        "t": 1785583223,
+        "t": 1785583265,
         "p": 0.0025
       }
     ]
