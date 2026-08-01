@@ -1,33 +1,15 @@
 {
   "forecast_id": null,
-  "current_version": 4,
+  "current_version": 1,
   "predicted_probability": 0.01,
   "inside_view_explanation": "",
   "forecast_confidence": 0.5,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-07-31 03:01",
+      "timestamp": "2026-08-01 03:46",
       "probability": 0.01,
       "change_summary": "Initial: 1.0%, 3 drivers, 0 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-07-31 03:01",
-      "probability": 0.01,
-      "change_summary": "1.0% (→), 3 drivers"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-07-31 03:01",
-      "probability": 0.01,
-      "change_summary": "Updated forecast"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-07-31 03:02",
-      "probability": 0.01,
-      "change_summary": "1.0% (→), 3 drivers"
     }
   ],
   "sim_results": null,
@@ -40,17 +22,17 @@
     "market_id": "2771332",
     "question": "Will Fulham win the 2026-27 English Premier League (EPL) Championship?",
     "market_price": 0.0015,
-    "volume_24h": 1500.0,
-    "liquidity": 229883.90364,
-    "confidence": "Low",
+    "volume_24h": 25821.92000000001,
+    "liquidity": 231633.97604,
+    "confidence": "Medium",
     "price_change_1w": null,
     "url": "https://polymarket.com/event/659518",
     "price_history": [
       {
-        "t": 1785466868,
+        "t": 1785555995,
         "p": 0.0015
       }
     ]
   },
-  "workspace_id": "cf5bf5c8-543a-4b41-b743-4f65cda9012a"
+  "workspace_id": null
 }
