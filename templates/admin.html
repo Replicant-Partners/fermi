@@ -1069,6 +1069,13 @@
         )
           return;
         try {
+          // v0.10.15: mirrors the fix in agent_detail.html — if the
+          // publish-readiness checks fail, offer the admin bypass path
+          // (?force=true&reason=…) rather than punting to the owner.
+          // The backend has supported this since v0.10.5 and audits
+          // every force to admin_bypass_events.
+          let force = false;
+          let reason = null;
           const checksRes = await fetch(
             `/api/agents/${encodeURIComponent(agentId)}/publish-checks`,
           );
@@ -1077,22 +1084,34 @@
             if (!checks.can_publish) {
               const failing = (checks.checks || [])
                 .filter((c) => !c.passed && c.severity === "Error")
-                .map((c) => c.message)
-                .join("; ");
-              alert(
-                `Cannot publish: ${failing || "failing checks"}.\n\nAsk the owner to fix these before publishing.`,
+                .map((c) => `• ${c.message}`)
+                .join("\n");
+              reason = prompt(
+                `"${agentId}" fails publish checks:\n\n${failing}\n\n` +
+                  `As admin you can force-publish on the owner's behalf.\n` +
+                  `Enter a short justification (logged to admin_bypass_events),\n` +
+                  `or press Cancel to abort.`,
+                "",
               );
-              return;
+              if (reason === null) return; // admin cancelled
+              reason = reason.trim();
+              if (!reason) {
+                alert("A justification is required to force-publish. Aborted.");
+                return;
+              }
+              force = true;
             }
           }
-          const res = await fetch(
-            `/api/agents/${encodeURIComponent(agentId)}/publish`,
-            { method: "POST" },
-          );
+          const url = force
+            ? `/api/agents/${encodeURIComponent(agentId)}/publish?force=true&reason=${encodeURIComponent(reason)}`
+            : `/api/agents/${encodeURIComponent(agentId)}/publish`;
+          const res = await fetch(url, { method: "POST" });
           if (res.ok) {
             const data = await res.json();
             showToast(
-              `Published "${agentId}"${data.published_by_admin ? " (as admin)" : ""}`,
+              `${data.force_used ? "Force-" : ""}Published "${agentId}"${
+                data.published_by_admin ? " (as admin)" : ""
+              }`,
             );
             loadAgents(document.getElementById("agent-search").value);
           } else {

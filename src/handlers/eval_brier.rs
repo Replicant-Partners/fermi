@@ -80,6 +80,14 @@ impl BrierLookup for BrierLookupSqlx {
         // Strategy 1 is preferred when we have the agent name.
         let row = if let Some(ref name) = agent_name {
             sqlx::query_as::<_, (f64, i64, chrono::DateTime<chrono::Utc>)>(
+                // v0.10.15: `agents.owner_id` never existed — the
+                // column is `agents.user_id` (mig-006). This subquery
+                // was silently 500'ing whenever the agent_name lookup
+                // succeeded but no forecast carried the name in
+                // `agents_used`. Flagged in v0.10.13 as a v0.10.14
+                // candidate; v0.10.14 shipped the chip-publish UX
+                // instead. Both `f.owner_id` (mig-165) and
+                // `agents.user_id` (mig-006) are TEXT.
                 r#"SELECT
                      AVG(f.brier_score) AS avg_brier,
                      COUNT(*)::int8    AS n_resolved,
@@ -89,7 +97,7 @@ impl BrierLookup for BrierLookupSqlx {
                      AND f.brier_score IS NOT NULL
                      AND (f.agents_used @> $2::jsonb
                           OR f.owner_id IN (
-                            SELECT owner_id FROM agents WHERE agent_id = $1
+                            SELECT user_id FROM agents WHERE agent_id = $1
                           ))"#,
             )
             .bind(agent_id)
@@ -99,13 +107,19 @@ impl BrierLookup for BrierLookupSqlx {
             .map_err(|e| EvalError::Provider(e.to_string()))?
         } else {
             // Fallback: just use owner_id relationship
+            // v0.10.15: same fix as above — `agents.owner_id` doesn't
+            // exist; the owner column on agents is `user_id`. This
+            // fallback branch fires when we can't resolve the agent
+            // name at all, so it's the path that gets hit for
+            // orphan-owner or freshly-created agents. Type parity:
+            // both sides TEXT after mig-006 / mig-165.
             sqlx::query_as::<_, (f64, i64, chrono::DateTime<chrono::Utc>)>(
                 r#"SELECT
                      AVG(f.brier_score) AS avg_brier,
                      COUNT(*)::int8    AS n_resolved,
                      MAX(f.resolved_at) AS last_resolved
                    FROM fermi_forecasts f
-                   JOIN agents a ON a.owner_id = f.owner_id
+                   JOIN agents a ON a.user_id = f.owner_id
                    WHERE a.agent_id = $1
                      AND f.status = 'resolved'
                      AND f.brier_score IS NOT NULL"#,

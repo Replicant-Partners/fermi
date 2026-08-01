@@ -4166,6 +4166,32 @@ pub(crate) async fn resolve_agent(
     state: &AppState,
     agent_id: &str,
 ) -> Result<Agent, (StatusCode, String)> {
+    // v0.10.15: the URL param is nominally `agent_id`, but historically
+    // this resolver only accepted `agent_name`. Scripts/audit tools
+    // that address an agent by its actual UUID (e.g. the RBAC-orphan
+    // reports emitted by /api/admin/rbac/orphans) got 404s even for
+    // agents they'd just seen listed. Try UUID first when the input
+    // parses cleanly — no valid `agent_name` satisfies the slug rule
+    // AND parses as a UUID (slug rejects `-`), so this is a clean
+    // split with zero risk of accidental collision.
+    if let Ok(uuid) = uuid::Uuid::parse_str(agent_id) {
+        match state.memory_store.get_agent(uuid).await {
+            Ok(Some(agent)) => return Ok(agent),
+            Ok(None) => {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    format!("Agent with id '{}' not found", agent_id),
+                ));
+            }
+            Err(e) => {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Lookup by id failed: {}", e),
+                ));
+            }
+        }
+    }
+
     state
         .memory_store
         .get_agent_by_name(agent_id)
