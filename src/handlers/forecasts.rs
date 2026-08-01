@@ -531,7 +531,7 @@ pub async fn get_forecast_handler(
     let pool = &state.db;
 
     let row = sqlx::query(
-        "SELECT f.*, f.owner_id::text AS owner_id_text, u.name AS owner_display_name
+        "SELECT f.*, f.owner_id::text AS owner_id_text, COALESCE(u.display_name, u.name, u.email, u.user_id) AS owner_display_name
          FROM fermi_forecasts f
          LEFT JOIN users u ON u.user_id = f.owner_id
          WHERE f.id = $1",
@@ -756,7 +756,7 @@ pub async fn list_forecasts_handler(
         "SELECT f.id, f.owner_id::text AS owner_id, f.question_text, f.domain, f.predicted_probability,
                 f.status, f.brier_score, f.actual_outcome, f.target_date, f.visibility,
                 f.tags, f.created_at, f.updated_at, f.resolved_at,
-                u.name AS owner_display_name
+                COALESCE(u.display_name, u.name, u.email, u.user_id) AS owner_display_name
          FROM fermi_forecasts f
          LEFT JOIN users u ON u.user_id = f.owner_id
          WHERE {}
@@ -2299,7 +2299,7 @@ pub async fn leaderboard_handler(
         Err(_) => {
             // Fallback: live query (slower but works before first REFRESH)
             sqlx::query(
-                "SELECT f.owner_id::text AS owner_id, u.name AS display_name,
+                "SELECT f.owner_id::text AS owner_id, COALESCE(u.display_name, u.name, u.email, u.user_id) AS display_name,
                         COUNT(*) AS total_resolved,
                         AVG(f.brier_score) AS avg_brier_score,
                         MIN(f.brier_score) AS best_brier_score,
@@ -2310,7 +2310,7 @@ pub async fn leaderboard_handler(
                  FROM fermi_forecasts f
                  JOIN users u ON u.user_id = f.owner_id
                  WHERE f.status = 'resolved' AND f.brier_score IS NOT NULL
-                 GROUP BY f.owner_id, u.name
+                 GROUP BY f.owner_id, u.display_name, u.name, u.email, u.user_id
                  HAVING COUNT(*) >= $1
                  ORDER BY avg_brier_score ASC
                  LIMIT $2 OFFSET $3",
@@ -2491,7 +2491,7 @@ pub async fn public_forecasts_handler(
         "SELECT f.id, f.owner_id::text AS owner_id, f.question_text, f.domain, f.predicted_probability,
                 f.status, f.brier_score, f.actual_outcome, f.target_date,
                 f.tags, f.created_at, f.resolved_at,
-                u.name AS owner_display_name
+                COALESCE(u.display_name, u.name, u.email, u.user_id) AS owner_display_name
          FROM fermi_forecasts f
          LEFT JOIN users u ON u.user_id = f.owner_id
          WHERE {}
