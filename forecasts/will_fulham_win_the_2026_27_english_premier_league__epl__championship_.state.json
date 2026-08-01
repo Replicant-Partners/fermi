@@ -1,18 +1,25 @@
 {
-  "forecast_id": null,
+  "forecast_id": "f1fb305b-5647-4c90-825f-f34c0ef275c2",
   "current_version": 1,
-  "predicted_probability": 0.01,
-  "inside_view_explanation": "",
-  "forecast_confidence": 0.5,
+  "predicted_probability": 1.072310840088314,
+  "inside_view_explanation": "Inside view: model evaluates to 1.072 (p5=0.642, p95=1.659). Key drivers: strength_factor, conditions, disruption. Most influential: strength_factor (53%), disruption (34%), conditions (19%).",
+  "forecast_confidence": 0.14,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-08-01 03:46",
-      "probability": 0.01,
-      "change_summary": "Initial: 1.0%, 3 drivers, 0 evidence"
+      "timestamp": "2026-08-01 08:48",
+      "probability": 1.072310840088314,
+      "change_summary": "Initial: 107.2%, 3 drivers, 0 evidence"
     }
   ],
-  "sim_results": null,
+  "sim_results": {
+    "mean": 1.072310840088314,
+    "median": 1.0315134966055917,
+    "p5": 0.6419953741269757,
+    "p95": 1.6588136105824112,
+    "std_dev": 0.3135039580306884,
+    "iterations": 10000
+  },
   "base_rate": null,
   "evidence": [],
   "agents": [],
@@ -23,13 +30,13 @@
     "question": "Will Fulham win the 2026-27 English Premier League (EPL) Championship?",
     "market_price": 0.0015,
     "volume_24h": 25821.92000000001,
-    "liquidity": 231633.97604,
+    "liquidity": 231633.96977,
     "confidence": "Medium",
     "price_change_1w": null,
-    "url": "https://polymarket.com/event/659518",
+    "url": "https://polymarket.com/event/epl-2027-champion-20260701200428749",
     "price_history": [
       {
-        "t": 1785555995,
+        "t": 1785556274,
         "p": 0.0015
       }
     ]
