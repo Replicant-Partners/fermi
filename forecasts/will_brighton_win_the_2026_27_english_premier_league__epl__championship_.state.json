@@ -1,15 +1,27 @@
 {
   "forecast_id": "c95b0b58-8fef-4758-930f-9060f923f853",
-  "current_version": 1,
-  "predicted_probability": 0.009999999776482582,
-  "inside_view_explanation": "",
-  "forecast_confidence": 0.5,
+  "current_version": 3,
+  "predicted_probability": 1.0773247473705176,
+  "inside_view_explanation": "Inside view: model evaluates to 1.077 (p5=0.644, p95=1.665). Key drivers: strength_factor, conditions, disruption. Most influential: strength_factor (53%), disruption (30%), conditions (19%).",
+  "forecast_confidence": 0.14,
   "versions": [
     {
       "version": 1,
       "timestamp": "2026-08-02 11:17",
       "probability": 0.009999999776482582,
       "change_summary": "Initial: 1.0%, 3 drivers, 0 evidence"
+    },
+    {
+      "version": 2,
+      "timestamp": "2026-08-02 11:17",
+      "probability": 0.009999999776482582,
+      "change_summary": "Updated forecast"
+    },
+    {
+      "version": 3,
+      "timestamp": "2026-08-02 11:18",
+      "probability": 1.0773247473705176,
+      "change_summary": "107.7% (+107pp), 3 drivers"
     }
   ],
   "sim_results": null,
@@ -34,5 +46,5 @@
       }
     ]
   },
-  "workspace_id": null
+  "workspace_id": "65fe611d-c8f0-4e2f-a279-c7f6ef221ecf"
 }
