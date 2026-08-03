@@ -799,6 +799,18 @@ async fn run_migrations(db: &PgPool) {
         // originated in Mo's Resolve Forecast dialog. See
         // RELEASE_NOTES_v0.10.19.md.
         "migrations/167_fermi_leaderboard_float8_minmax.sql",
+        // 168: v0.10.23 hotfix. GIN index on
+        // fermi_forecasts.agents_used. The v0.10.20 legacy-slug
+        // audit endpoint timed out client-side because it ran one
+        // JSONB-containment COUNT per legacy name (~43 sequential
+        // seq-scans of fermi_forecasts). This index makes every
+        // `agents_used @>` query O(log n) instead of O(n) — also
+        // speeds up eval_brier's Brier lookup and the calibration
+        // handler. Combined with the handler rewrite in v0.10.23
+        // the audit endpoint returns in milliseconds.
+        // (v0.10.21/v0.10.22 were parallel forecast-save work,
+        // unrelated to this hotfix.)
+        "migrations/168_fermi_forecasts_agents_used_gin.sql",
     ];
 
     for file in &migration_files {

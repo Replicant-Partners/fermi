@@ -2274,21 +2274,49 @@ pub async fn admin_legacy_agent_slugs_handler(
     // 3. Count `fermi_forecasts.agents_used` JSONB references per
     //    legacy name. Pure informational — renames only happen after
     //    the operator eyeballs the report. `agents_used` stores an
-    //    array of `{agent_name: "..."}` objects, so the containment
-    //    query is `@> jsonb_build_array(jsonb_build_object('agent_name', $1))`.
-    //    (Same shape used by eval_brier.rs, get_agent_calibration_handler.)
+    //    array of `{agent_name: "..."}` objects.
+    //
+    //    v0.10.23: was one COUNT per legacy name (N+1). With 43
+    //    legacy names and no GIN index, that's 43 sequential seq-scans
+    //    of `fermi_forecasts` — blew past the abw-cli 60s client
+    //    timeout. Rewritten as one query: unnest the legacy-name
+    //    array once, LEFT JOIN against the JSONB containment, GROUP
+    //    BY. Combined with mig-168 (GIN index on `agents_used`) the
+    //    endpoint returns in milliseconds even at 10x current scale.
     let mut forecast_ref_counts: std::collections::HashMap<String, i64> =
         std::collections::HashMap::new();
-    for (_agent_id, old_name, _new, _coll) in &proposals {
-        let n: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM fermi_forecasts \
-             WHERE agents_used @> jsonb_build_array(jsonb_build_object('agent_name', $1::text))",
+    if !proposals.is_empty() {
+        let legacy_names: Vec<String> = proposals
+            .iter()
+            .map(|(_id, old, _new, _coll)| old.clone())
+            .collect();
+
+        // One round trip, one seq-scan (or one GIN lookup per name
+        // when mig-168 is present). LEFT JOIN so names with zero
+        // references still appear in the result set with count 0.
+        let rows = sqlx::query(
+            r#"SELECT ln.name AS name, COUNT(f.id)::int8 AS refs
+                 FROM unnest($1::text[]) AS ln(name)
+                 LEFT JOIN fermi_forecasts f
+                        ON f.agents_used @> jsonb_build_array(
+                             jsonb_build_object('agent_name', ln.name))
+                GROUP BY ln.name"#,
         )
-        .bind(old_name)
-        .fetch_one(&state.db)
+        .bind(&legacy_names)
+        .fetch_all(&state.db)
         .await
-        .unwrap_or(0);
-        forecast_ref_counts.insert(old_name.clone(), n);
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("count agents_used refs: {}", e),
+            )
+        })?;
+
+        for row in rows {
+            let name: String = row.try_get("name").unwrap_or_default();
+            let refs: i64 = row.try_get("refs").unwrap_or(0);
+            forecast_ref_counts.insert(name, refs);
+        }
     }
 
     // 4. If applying, execute renames + JSONB backfill in ONE
