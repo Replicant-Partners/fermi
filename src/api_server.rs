@@ -811,6 +811,17 @@ async fn run_migrations(db: &PgPool) {
         // (v0.10.21/v0.10.22 were parallel forecast-save work,
         // unrelated to this hotfix.)
         "migrations/168_fermi_forecasts_agents_used_gin.sql",
+        // 169: v0.10.25 hotfix. Realigns the 4 mig-049 tables'
+        // FKs on agents(agent_id) to ON DELETE CASCADE, matching
+        // every other FK on that column across the platform.
+        // mig-049 (agent_alignments, pairwise_coherence,
+        // knowledge_transfers, agent_interaction_policies)
+        // declared them without ON DELETE, defaulting to NO ACTION
+        // — which blocks the v0.10.25 test-cruft cleanup path.
+        // Semantically these SHOULD cascade: alignments and
+        // coherence scores are derived from the agents; when the
+        // agent goes away, the derived rows are meaningless.
+        "migrations/169_akp_foundation_fks_cascade.sql",
     ];
 
     for file in &migration_files {
@@ -3109,6 +3120,18 @@ async fn main() {
             "/api/admin/agents/legacy-slugs",
             get(handlers::admin::admin_legacy_agent_slugs_handler)
                 .post(handlers::admin::admin_legacy_agent_slugs_handler),
+        )
+        // v0.10.25: safety-gated DELETE of orphan test-fixture rows
+        // (`test_agent_<uuid>` and similar) with dry-run, prefix
+        // filter, grace period, and audit trail. Cascades to every
+        // FK on agents(agent_id) — mig-169 aligns the last four
+        // (mig-049) so this path can't be blocked. Every deletion
+        // is logged to admin_bypass_events with a full row snapshot.
+        // See RELEASE_NOTES_v0.10.25.md.
+        .route(
+            "/api/admin/agents/cleanup-test-cruft",
+            get(handlers::admin::admin_cleanup_test_cruft_handler)
+                .post(handlers::admin::admin_cleanup_test_cruft_handler),
         )
         // Admin view over third-party Apps — lists every app across every
         // visibility level (private/unlisted/public) with owner display

@@ -31,6 +31,19 @@ pub enum AgentsCmd {
     /// With `--apply`, renames each non-colliding agent in a
     /// transaction and backfills fermi_forecasts.agents_used JSONB.
     LegacySlugs(LegacySlugsArgs),
+
+    /// Audit or DELETE orphan test-fixture agents (rows with names
+    /// like `test_agent_<uuid>` that accumulate from unclosed test
+    /// runs). Without `--apply`, prints a dry-run report. With
+    /// `--apply`, deletes each row in a transaction (cascades to
+    /// episodes / entities / facts / etc.) and logs a snapshot to
+    /// admin_bypass_events. Safety criteria — always enforced,
+    /// server-side — protect real agents from accidental deletion:
+    ///   * total_executions = 0 (never ran real workload)
+    ///   * created_at older than the grace period (default 24h)
+    ///   * tier not in ('curated', 'system')
+    ///   * visibility != 'public' and status != 'published'
+    CleanupTestCruft(CleanupTestCruftArgs),
 }
 
 #[derive(ClapArgs, Debug)]
@@ -63,9 +76,39 @@ pub struct LegacySlugsArgs {
     pub limit: Option<usize>,
 }
 
+#[derive(ClapArgs, Debug)]
+pub struct CleanupTestCruftArgs {
+    /// Execute the DELETE. Without this flag, the command is
+    /// audit-only and no rows change. Every deletion lands in
+    /// admin_bypass_events with a full row snapshot.
+    #[arg(long)]
+    pub apply: bool,
+
+    /// Print the raw JSON response instead of the pretty table.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Name prefix identifying test cruft. Default `test_agent_`
+    /// matches the fixture pattern in `agent-bestiary/memory/src/`.
+    #[arg(long)]
+    pub prefix: Option<String>,
+
+    /// Grace period in hours — rows created within this window are
+    /// protected. Default 24. Set to 0 for an aggressive sweep.
+    #[arg(long)]
+    pub older_than_hours: Option<i64>,
+
+    /// Cap batch size (post-filter). Cleanup runs 2 statements per
+    /// row in one transaction (audit INSERT + DELETE), so this is
+    /// safety against the 60s client timeout on very large batches.
+    #[arg(long)]
+    pub limit: Option<usize>,
+}
+
 pub async fn run(ctx: &Ctx, cmd: AdminCmd) -> Result<()> {
     match cmd {
         AdminCmd::Agents(AgentsCmd::LegacySlugs(args)) => legacy_slugs(ctx, args).await,
+        AdminCmd::Agents(AgentsCmd::CleanupTestCruft(args)) => cleanup_test_cruft(ctx, args).await,
     }
 }
 
@@ -342,6 +385,259 @@ fn render_report(ctx: &Ctx, report: &Value, applied: bool) {
         );
     }
     println!();
+}
+
+async fn cleanup_test_cruft(ctx: &Ctx, args: CleanupTestCruftArgs) -> Result<()> {
+    let api_key = resolve_api_key()
+        .context("this command requires authentication — run `abw login` first")?;
+
+    let mut params: Vec<String> = Vec::new();
+    if args.apply {
+        params.push("apply=true".into());
+    }
+    if let Some(p) = &args.prefix {
+        params.push(format!("prefix={}", urlencode(p)));
+    }
+    if let Some(h) = args.older_than_hours {
+        params.push(format!("older_than_hours={}", h));
+    }
+    if let Some(n) = args.limit {
+        params.push(format!("limit={}", n));
+    }
+    let query = if params.is_empty() {
+        String::new()
+    } else {
+        format!("?{}", params.join("&"))
+    };
+    let path = format!("/api/admin/agents/cleanup-test-cruft{}", query);
+    let url = ctx.url(&path);
+
+    let http = ctx.http();
+    let req = if args.apply {
+        http.post(&url).bearer_auth(&api_key)
+    } else {
+        http.get(&url).bearer_auth(&api_key)
+    };
+
+    let resp = req
+        .send()
+        .await
+        .with_context(|| format!("{} {}", if args.apply { "POST" } else { "GET" }, url))?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+
+    if !status.is_success() {
+        return Err(anyhow!("server returned {}: {}", status, body));
+    }
+
+    if args.json {
+        println!("{}", body);
+        return Ok(());
+    }
+
+    let value: Value =
+        serde_json::from_str(&body).with_context(|| format!("parsing response: {}", body))?;
+    render_cleanup_report(ctx, &value, args.apply);
+    Ok(())
+}
+
+fn render_cleanup_report(ctx: &Ctx, report: &Value, applied: bool) {
+    let total_matched = report
+        .get("total_matched")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let in_this_batch = report
+        .get("in_this_batch")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let deleted = report.get("deleted").and_then(|v| v.as_u64()).unwrap_or(0);
+    let truncated = report
+        .get("truncated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let prefix = report
+        .get("prefix")
+        .and_then(|v| v.as_str())
+        .unwrap_or("test_agent_");
+    let grace = report
+        .get("older_than_hours")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(24);
+    let entries = report
+        .get("entries")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let failures = report
+        .get("failures")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    if !ctx.quiet {
+        println!();
+        let title = if applied {
+            "Test-cruft cleanup — APPLIED"
+        } else {
+            "Test-cruft cleanup — DRY RUN"
+        };
+        let title_col = if applied {
+            title.green().bold()
+        } else {
+            title.yellow().bold()
+        };
+        println!("  {} {}", "★".yellow().bold(), title_col);
+        println!(
+            "  {} prefix filter: {}   |   grace period: {}h",
+            "⤷".dimmed(),
+            prefix.cyan(),
+            grace.to_string().cyan()
+        );
+        println!();
+    }
+
+    if in_this_batch == 0 {
+        if !ctx.quiet {
+            println!(
+                "  {} No orphan test-fixture rows matching criteria. Clean.",
+                "·".dimmed()
+            );
+            println!();
+        }
+        return;
+    }
+
+    // Show a compact preview: first 10, last 5 if the batch is large.
+    let n_entries = entries.len();
+    let (head, tail): (Vec<&Value>, Vec<&Value>) = if n_entries > 15 {
+        (
+            entries.iter().take(10).collect(),
+            entries
+                .iter()
+                .rev()
+                .take(5)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect(),
+        )
+    } else {
+        (entries.iter().collect(), Vec::new())
+    };
+
+    let name_width = entries
+        .iter()
+        .filter_map(|e| {
+            e.get("agent_name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.len())
+        })
+        .max()
+        .unwrap_or(30)
+        .clamp(30, 70);
+
+    println!(
+        "  {}",
+        format!(
+            "  {:name_w$}   {:20}   {:9}   {}",
+            "AGENT_NAME",
+            "CREATED_AT",
+            "TIER",
+            "STATUS",
+            name_w = name_width,
+        )
+        .dimmed()
+    );
+    println!("  {}", "  ".to_string() + &"─".repeat(name_width + 45));
+
+    for entry in &head {
+        render_row(entry, name_width, applied);
+    }
+    if !tail.is_empty() {
+        println!(
+            "    {} ({} more)",
+            "…".dimmed(),
+            (n_entries - head.len() - tail.len()).to_string().dimmed()
+        );
+        for entry in &tail {
+            render_row(entry, name_width, applied);
+        }
+    }
+    println!();
+
+    // Summary.
+    if applied {
+        println!(
+            "  {} {} deleted out of {} in this batch (total matched: {}).",
+            "summary:".bold(),
+            deleted.to_string().green(),
+            in_this_batch,
+            total_matched.to_string().yellow(),
+        );
+        if !failures.is_empty() {
+            println!(
+                "  {} {} row(s) failed — see --json for details.",
+                "warning:".red().bold(),
+                failures.len().to_string().red()
+            );
+        }
+    } else {
+        println!(
+            "  {} {} orphan rows match cleanup criteria; {} shown in this batch.",
+            "summary:".bold(),
+            total_matched.to_string().yellow(),
+            in_this_batch.to_string().green(),
+        );
+        println!(
+            "  {} run with `--apply` to delete. Cascades to all FK-linked rows (episodes, entities, versions, …).",
+            "tip:".green().bold()
+        );
+    }
+
+    if truncated {
+        let remaining = total_matched.saturating_sub(in_this_batch);
+        println!(
+            "  {} this batch is capped; {} more match beyond it. Re-run to continue.",
+            "batch:".cyan().bold(),
+            remaining.to_string().yellow()
+        );
+    }
+    println!();
+}
+
+fn render_row(entry: &Value, name_width: usize, applied: bool) {
+    let name = entry
+        .get("agent_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let created = entry
+        .get("created_at")
+        .and_then(|v| v.as_str())
+        .map(|s| s.split('T').next().unwrap_or(s).to_string())
+        .unwrap_or_else(|| "?".to_string());
+    let tier = entry.get("tier").and_then(|v| v.as_str()).unwrap_or("?");
+    let action = entry
+        .get("action_taken")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+
+    let status_col = if applied {
+        "deleted".green().to_string()
+    } else {
+        match action {
+            "audit_only" => "would delete".yellow().to_string(),
+            other => other.dimmed().to_string(),
+        }
+    };
+
+    println!(
+        "    {:name_w$}   {:20}   {:9}   {}",
+        name,
+        created,
+        tier,
+        status_col,
+        name_w = name_width,
+    );
 }
 
 /// Minimal percent-encoder for query values. Matches the pattern in

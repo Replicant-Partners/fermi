@@ -5,7 +5,9 @@ use crate::{
     HitlAction, MarketplaceListing, MarketplaceTransaction, MemoryError, Result, SemanticRule,
     ShoppingProfile, TimelineEntry, TwoReviewerRequest, VerificationStatus, WorkspaceMessage,
 };
-use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool, Postgres, Row, Transaction};
+use sqlx::{
+    postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool, Postgres, Row, Transaction,
+};
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -303,8 +305,14 @@ impl MemoryStore {
                 .try_get::<Option<i32>, _>("persona_version_at_write")
                 .ok()
                 .flatten(),
-            provider_used: row.try_get::<Option<String>, _>("provider_used").ok().flatten(),
-            model_used: row.try_get::<Option<String>, _>("model_used").ok().flatten(),
+            provider_used: row
+                .try_get::<Option<String>, _>("provider_used")
+                .ok()
+                .flatten(),
+            model_used: row
+                .try_get::<Option<String>, _>("model_used")
+                .ok()
+                .flatten(),
         })
     }
 
@@ -359,8 +367,14 @@ impl MemoryStore {
                     .try_get::<Option<i32>, _>("persona_version_at_write")
                     .ok()
                     .flatten(),
-                provider_used: row.try_get::<Option<String>, _>("provider_used").ok().flatten(),
-                model_used: row.try_get::<Option<String>, _>("model_used").ok().flatten(),
+                provider_used: row
+                    .try_get::<Option<String>, _>("provider_used")
+                    .ok()
+                    .flatten(),
+                model_used: row
+                    .try_get::<Option<String>, _>("model_used")
+                    .ok()
+                    .flatten(),
             });
         }
 
@@ -857,10 +871,7 @@ impl MemoryStore {
     /// the version log was created after the agent itself); callers should
     /// treat that as "version unknown" and pass NULL to `produced_by_*`
     /// columns rather than fabricating a number.
-    pub async fn get_current_agent_version(
-        &self,
-        agent_id: Uuid,
-    ) -> Result<Option<AgentVersion>> {
+    pub async fn get_current_agent_version(&self, agent_id: Uuid) -> Result<Option<AgentVersion>> {
         let row = sqlx::query(
             "SELECT version_id, agent_id, version_number, description, system_prompt, tags, model, temperature, visibility, display_alias, changed_by, created_at
              FROM agent_versions
@@ -1100,8 +1111,14 @@ impl MemoryStore {
                     .try_get::<Option<i32>, _>("persona_version_at_write")
                     .ok()
                     .flatten(),
-                provider_used: row.try_get::<Option<String>, _>("provider_used").ok().flatten(),
-                model_used: row.try_get::<Option<String>, _>("model_used").ok().flatten(),
+                provider_used: row
+                    .try_get::<Option<String>, _>("provider_used")
+                    .ok()
+                    .flatten(),
+                model_used: row
+                    .try_get::<Option<String>, _>("model_used")
+                    .ok()
+                    .flatten(),
             };
 
             results.push((episode, distance));
@@ -1178,8 +1195,14 @@ impl MemoryStore {
                     .try_get::<Option<i32>, _>("persona_version_at_write")
                     .ok()
                     .flatten(),
-                provider_used: row.try_get::<Option<String>, _>("provider_used").ok().flatten(),
-                model_used: row.try_get::<Option<String>, _>("model_used").ok().flatten(),
+                provider_used: row
+                    .try_get::<Option<String>, _>("provider_used")
+                    .ok()
+                    .flatten(),
+                model_used: row
+                    .try_get::<Option<String>, _>("model_used")
+                    .ok()
+                    .flatten(),
             };
 
             results.push((episode, distance));
@@ -1245,8 +1268,14 @@ impl MemoryStore {
                     .try_get::<Option<i32>, _>("persona_version_at_write")
                     .ok()
                     .flatten(),
-                provider_used: row.try_get::<Option<String>, _>("provider_used").ok().flatten(),
-                model_used: row.try_get::<Option<String>, _>("model_used").ok().flatten(),
+                provider_used: row
+                    .try_get::<Option<String>, _>("provider_used")
+                    .ok()
+                    .flatten(),
+                model_used: row
+                    .try_get::<Option<String>, _>("model_used")
+                    .ok()
+                    .flatten(),
             });
         }
 
@@ -1413,27 +1442,33 @@ impl MemoryStore {
     /// Embeddings must already be set on each rule (provenance pre-applied by caller).
     /// Spec 21 Phase 3.3. Chunks at 500 rows to stay within Postgres param limit.
     pub async fn store_semantic_rules_batch(&self, rules: &[SemanticRule]) -> Result<usize> {
-        if rules.is_empty() { return Ok(0); }
+        if rules.is_empty() {
+            return Ok(0);
+        }
         let mut total = 0usize;
         for chunk in rules.chunks(500) {
             let mut qb = sqlx::QueryBuilder::new(
                 "INSERT INTO semantic_rules \
                  (rule_id, agent_id, rule_content, rule_description, confidence_score, \
                   verification_status, verification_method, source_episode_cluster, \
-                  episode_count, embedding, is_active) "
+                  episode_count, embedding, is_active) ",
             );
             qb.push_values(chunk.iter(), |mut b, r| {
                 b.push_bind(r.rule_id)
-                 .push_bind(r.agent_id)
-                 .push_bind(&r.rule_content)
-                 .push_bind(&r.rule_description)
-                 .push_bind(r.confidence_score)
-                 .push_bind(r.verification_status.to_string())
-                 .push_bind(&r.verification_method)
-                 .push_bind(&r.source_episode_cluster)
-                 .push_bind(r.episode_count)
-                 .push_bind(r.embedding.as_ref().map(|e| pgvector::Vector::from(e.clone())))
-                 .push_bind(r.is_active);
+                    .push_bind(r.agent_id)
+                    .push_bind(&r.rule_content)
+                    .push_bind(&r.rule_description)
+                    .push_bind(r.confidence_score)
+                    .push_bind(r.verification_status.to_string())
+                    .push_bind(&r.verification_method)
+                    .push_bind(&r.source_episode_cluster)
+                    .push_bind(r.episode_count)
+                    .push_bind(
+                        r.embedding
+                            .as_ref()
+                            .map(|e| pgvector::Vector::from(e.clone())),
+                    )
+                    .push_bind(r.is_active);
             });
             qb.push(" ON CONFLICT (rule_id) DO NOTHING");
             total += qb.build().execute(&self.pool).await?.rows_affected() as usize;
@@ -1443,7 +1478,9 @@ impl MemoryStore {
 
     /// Batch insert for entities. Spec 21 Phase 3.3.
     pub async fn store_entities_batch(&self, entities: &[Entity]) -> Result<usize> {
-        if entities.is_empty() { return Ok(0); }
+        if entities.is_empty() {
+            return Ok(0);
+        }
         let mut total = 0usize;
         for chunk in entities.chunks(200) {
             let mut qb = sqlx::QueryBuilder::new(
@@ -1453,16 +1490,20 @@ impl MemoryStore {
             );
             qb.push_values(chunk.iter(), |mut b, e| {
                 b.push_bind(e.entity_id)
-                 .push_bind(e.agent_id)
-                 .push_bind(&e.entity_name)
-                 .push_bind(&e.entity_type)
-                 .push_bind(&e.summary)
-                 .push_bind(e.t_valid)
-                 .push_bind(e.t_invalid)
-                 .push_bind(&e.source_episodes)
-                 .push_bind(e.extraction_confidence)
-                 .push_bind(e.embedding.as_ref().map(|v| pgvector::Vector::from(v.clone())))
-                 .push_bind(&e.properties);
+                    .push_bind(e.agent_id)
+                    .push_bind(&e.entity_name)
+                    .push_bind(&e.entity_type)
+                    .push_bind(&e.summary)
+                    .push_bind(e.t_valid)
+                    .push_bind(e.t_invalid)
+                    .push_bind(&e.source_episodes)
+                    .push_bind(e.extraction_confidence)
+                    .push_bind(
+                        e.embedding
+                            .as_ref()
+                            .map(|v| pgvector::Vector::from(v.clone())),
+                    )
+                    .push_bind(&e.properties);
             });
             qb.push(" ON CONFLICT (entity_id) DO NOTHING");
             total += qb.build().execute(&self.pool).await?.rows_affected() as usize;
@@ -1753,10 +1794,7 @@ impl MemoryStore {
     /// Store an entity.
     ///
     /// **Spec 22 deprecation**: writes NULL embedding-provenance columns.
-    #[deprecated(
-        since = "0.2.0",
-        note = "use `store_entity_with_provenance` (Spec 22)"
-    )]
+    #[deprecated(since = "0.2.0", note = "use `store_entity_with_provenance` (Spec 22)")]
     pub async fn store_entity(&self, entity: Entity) -> Result<()> {
         #[allow(deprecated)]
         self.store_entity_inner(entity, None, None, true, "legacy_no_provenance")
@@ -2131,8 +2169,14 @@ impl MemoryStore {
                     .try_get::<Option<i32>, _>("persona_version_at_write")
                     .ok()
                     .flatten(),
-                provider_used: row.try_get::<Option<String>, _>("provider_used").ok().flatten(),
-                model_used: row.try_get::<Option<String>, _>("model_used").ok().flatten(),
+                provider_used: row
+                    .try_get::<Option<String>, _>("provider_used")
+                    .ok()
+                    .flatten(),
+                model_used: row
+                    .try_get::<Option<String>, _>("model_used")
+                    .ok()
+                    .flatten(),
             });
         }
 
@@ -2191,8 +2235,14 @@ impl MemoryStore {
                     .try_get::<Option<i32>, _>("persona_version_at_write")
                     .ok()
                     .flatten(),
-                provider_used: row.try_get::<Option<String>, _>("provider_used").ok().flatten(),
-                model_used: row.try_get::<Option<String>, _>("model_used").ok().flatten(),
+                provider_used: row
+                    .try_get::<Option<String>, _>("provider_used")
+                    .ok()
+                    .flatten(),
+                model_used: row
+                    .try_get::<Option<String>, _>("model_used")
+                    .ok()
+                    .flatten(),
             });
         }
 
@@ -2683,24 +2733,20 @@ impl MemoryStore {
 
             // Apply member_agent_ids to teams if present
             if let Some(ids) = member_agent_ids {
-                sqlx::query(
-                    "UPDATE teams SET member_weights = $1 WHERE id = $2",
-                )
-                .bind(serde_json::to_value(&ids).unwrap_or_default())
-                .bind(workspace_id)
-                .execute(&self.pool)
-                .await?;
+                sqlx::query("UPDATE teams SET member_weights = $1 WHERE id = $2")
+                    .bind(serde_json::to_value(&ids).unwrap_or_default())
+                    .bind(workspace_id)
+                    .execute(&self.pool)
+                    .await?;
             }
 
             // Apply member_weights to composition_versions row (also persisted on teams)
             if let Some(weights) = member_weights {
-                sqlx::query(
-                    "UPDATE teams SET member_weights = $1 WHERE id = $2",
-                )
-                .bind(weights)
-                .bind(workspace_id)
-                .execute(&self.pool)
-                .await?;
+                sqlx::query("UPDATE teams SET member_weights = $1 WHERE id = $2")
+                    .bind(weights)
+                    .bind(workspace_id)
+                    .execute(&self.pool)
+                    .await?;
             }
         } else {
             sqlx::query(
@@ -3502,10 +3548,7 @@ impl MemoryStore {
 
     /// Insert a correction row. Returns the assigned `correction_id`
     /// (overrides the value on the input struct if it was zero).
-    pub async fn create_episode_correction(
-        &self,
-        correction: &EpisodeCorrection,
-    ) -> Result<Uuid> {
+    pub async fn create_episode_correction(&self, correction: &EpisodeCorrection) -> Result<Uuid> {
         let row = sqlx::query(
             r#"
             INSERT INTO episode_corrections (
@@ -3681,8 +3724,9 @@ impl MemoryStore {
         limit: i64,
     ) -> Result<Vec<TimelineEntry>> {
         let rows = match after {
-            Some(checkpoint) => sqlx::query(
-                r#"SELECT entry_id, agent_id, episode_id, run_id,
+            Some(checkpoint) => {
+                sqlx::query(
+                    r#"SELECT entry_id, agent_id, episode_id, run_id,
                           persona_version, dyad_id, session_id,
                           provenance, dim_scores, drift_norm,
                           within_version_cosine, anomaly_flags, created_at
@@ -3693,14 +3737,16 @@ impl MemoryStore {
                      )
                    ORDER BY created_at ASC
                    LIMIT $3"#,
-            )
-            .bind(agent_id)
-            .bind(checkpoint)
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await?,
-            None => sqlx::query(
-                r#"SELECT entry_id, agent_id, episode_id, run_id,
+                )
+                .bind(agent_id)
+                .bind(checkpoint)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await?
+            }
+            None => {
+                sqlx::query(
+                    r#"SELECT entry_id, agent_id, episode_id, run_id,
                           persona_version, dyad_id, session_id,
                           provenance, dim_scores, drift_norm,
                           within_version_cosine, anomaly_flags, created_at
@@ -3708,11 +3754,12 @@ impl MemoryStore {
                    WHERE agent_id = $1
                    ORDER BY created_at ASC
                    LIMIT $2"#,
-            )
-            .bind(agent_id)
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await?,
+                )
+                .bind(agent_id)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await?
+            }
         };
         rows.iter().map(row_to_timeline_entry).collect()
     }
@@ -3851,10 +3898,7 @@ impl MemoryStore {
 
     /// HITL queue read path — events flagged `requires_review` and not
     /// yet `resolved_at`. Phase 4 consumes this.
-    pub async fn list_pending_anomaly_events(
-        &self,
-        limit: i64,
-    ) -> Result<Vec<AnomalyEvent>> {
+    pub async fn list_pending_anomaly_events(&self, limit: i64) -> Result<Vec<AnomalyEvent>> {
         let rows = sqlx::query(
             r#"SELECT event_id, agent_id, episode_id, run_id, dyad_id,
                       kind, severity, payload, requires_review,
@@ -3920,7 +3964,8 @@ impl MemoryStore {
         .bind(agent_id)
         .fetch_optional(&self.pool)
         .await?;
-        row.map(|r| row_to_agent_observability_state(&r)).transpose()
+        row.map(|r| row_to_agent_observability_state(&r))
+            .transpose()
     }
 
     /// Read the embedding mean for a specific persona_version of an
@@ -4032,11 +4077,7 @@ impl MemoryStore {
     /// Mark an anomaly event resolved. Called after a HITL action is
     /// recorded; the anomaly's `resolved_at` / `resolved_by` are
     /// updated so the queue stops surfacing it.
-    pub async fn resolve_anomaly_event(
-        &self,
-        event_id: Uuid,
-        reviewer_id: &str,
-    ) -> Result<()> {
+    pub async fn resolve_anomaly_event(&self, event_id: Uuid, reviewer_id: &str) -> Result<()> {
         sqlx::query(
             r#"UPDATE anomaly_events
                SET resolved_at = NOW(), resolved_by = $2
@@ -4093,10 +4134,7 @@ impl MemoryStore {
 
     /// Create a pending two-reviewer-consensus request.
     /// Returns the new `request_id`.
-    pub async fn create_two_reviewer_request(
-        &self,
-        req: &TwoReviewerRequest,
-    ) -> Result<Uuid> {
+    pub async fn create_two_reviewer_request(&self, req: &TwoReviewerRequest) -> Result<Uuid> {
         let row = sqlx::query(
             r#"INSERT INTO two_reviewer_requests (
                 request_id, anomaly_event_id, agent_id,
@@ -4490,6 +4528,17 @@ mod tests {
         MemoryStore::new(&database_url).await.unwrap()
     }
 
+    /// v0.10.25: post-test teardown helper. Call at the end of every
+    /// test that upserts a `test_agent()` row. CASCADE handles the
+    /// FK-linked tables (episodes, entities, versions, …) so we don't
+    /// need to know the full FK graph here.
+    async fn cleanup_test_agent(store: &MemoryStore, agent_id: Uuid) {
+        let _ = sqlx::query("DELETE FROM agents WHERE agent_id = $1")
+            .bind(agent_id)
+            .execute(store.pool())
+            .await;
+    }
+
     fn test_agent() -> Agent {
         Agent {
             agent_id: Uuid::new_v4(),
@@ -4510,7 +4559,12 @@ mod tests {
             dreaming_credits_used: 0,
             dreaming_budget_reset_at: None,
             system_prompt: None,
-            visibility: "public".to_string(),
+            // v0.10.25: `"private"` (was `"public"`). Test fixtures
+            // shouldn't be marked public — that's what makes them
+            // pollute the catalogue in prod. Fresh test rows are now
+            // hidden from `admin_list_agents` reads without needing
+            // the `NOT LIKE 'test_agent_%'` filter.
+            visibility: "private".to_string(),
             owner_id: None,
             tags: vec![],
             education_budget_credits: 0,
@@ -4580,8 +4634,8 @@ mod tests {
             authority_weight: 0.5,
             dyad_id: None,
             persona_version_at_write: None,
-                provider_used: None,
-                model_used: None,
+            provider_used: None,
+            model_used: None,
         };
 
         let episode_id = store.store_episode(episode.clone()).await.unwrap();
@@ -4590,6 +4644,7 @@ mod tests {
         assert_eq!(retrieved.episode_id, episode.episode_id);
         assert_eq!(retrieved.query, episode.query);
         println!("✅ Episode storage and retrieval works!");
+        cleanup_test_agent(&store, agent_id).await;
     }
 
     #[tokio::test]
@@ -4656,6 +4711,7 @@ mod tests {
             "   Top result: {} (distance: {})",
             results[0].0.query, results[0].1
         );
+        cleanup_test_agent(&store, agent_id).await;
     }
 
     #[tokio::test]
@@ -4723,6 +4779,7 @@ mod tests {
         }
 
         println!("✅ Mark episodes as consolidated works!");
+        cleanup_test_agent(&store, agent.agent_id).await;
     }
 
     #[tokio::test]
@@ -4781,6 +4838,7 @@ mod tests {
         println!("   Job ID: {}", job_id);
         println!("   Episodes processed: {}", job.episodes_processed);
         println!("   Duration: {} ms", job.duration_ms.unwrap());
+        cleanup_test_agent(&store, agent.agent_id).await;
     }
 
     #[tokio::test]
@@ -4849,6 +4907,7 @@ mod tests {
         assert_eq!(rules.len(), 0);
 
         println!("✅ Semantic rule lifecycle works!");
+        cleanup_test_agent(&store, agent.agent_id).await;
     }
 
     #[tokio::test]
@@ -4943,5 +5002,6 @@ mod tests {
         assert_eq!(entities_after.len(), 1); // Only datacenter remains
 
         println!("✅ Entity and fact storage works!");
+        cleanup_test_agent(&store, agent.agent_id).await;
     }
 }

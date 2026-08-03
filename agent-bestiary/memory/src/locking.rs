@@ -167,6 +167,19 @@ mod tests {
             .unwrap()
     }
 
+    /// v0.10.25: post-test teardown. Every test in this module used
+    /// to leave its `test_agent_<uuid>` row behind, which is how the
+    /// prod DB accumulated 565 orphan rows by v0.10.24. Call this at
+    /// the end of every test to clean up. CASCADE handles related
+    /// tables (locks, episodes, etc.) so we don't need to know the
+    /// full FK graph here.
+    async fn cleanup_test_agent(pool: &PgPool, agent_id: Uuid) {
+        let _ = sqlx::query("DELETE FROM agents WHERE agent_id = $1")
+            .bind(agent_id)
+            .execute(pool)
+            .await;
+    }
+
     #[tokio::test]
     async fn test_lock_acquire_and_release() {
         let pool = Arc::new(get_test_pool().await);
@@ -201,6 +214,7 @@ mod tests {
         assert!(info.is_none(), "Lock should be removed");
 
         println!("✅ Lock acquire and release works!");
+        cleanup_test_agent(&pool, agent_id).await;
     }
 
     #[tokio::test]
@@ -241,6 +255,7 @@ mod tests {
         lock2.release(agent_id).await.unwrap();
 
         println!("✅ Lock prevents concurrent access!");
+        cleanup_test_agent(&pool, agent_id).await;
     }
 
     #[tokio::test]
@@ -294,6 +309,7 @@ mod tests {
         lock2.release(agent_id).await.unwrap();
 
         println!("✅ Lock expiry works!");
+        cleanup_test_agent(&pool, agent_id).await;
     }
 
     #[tokio::test]
@@ -356,5 +372,7 @@ mod tests {
         assert!(row2.is_none(), "Lock 2 should be cleaned up");
 
         println!("✅ Cleanup expired locks works! Cleaned: {}", cleaned);
+        cleanup_test_agent(&pool, agent_id1).await;
+        cleanup_test_agent(&pool, agent_id2).await;
     }
 }

@@ -163,7 +163,11 @@ impl ConsolidationWorker {
                     "source_episode_cluster": rule.source_episode_cluster,
                 });
                 self.store
-                    .store_semantic_rule_with_provenance(rule, provenance.as_ref(), Some(source_ref))
+                    .store_semantic_rule_with_provenance(
+                        rule,
+                        provenance.as_ref(),
+                        Some(source_ref),
+                    )
                     .await?;
             }
         }
@@ -435,7 +439,11 @@ impl ConsolidationWorker {
 
         // Convert to SemanticRule objects with provenance
         for llm_rule in llm_rules {
-            let provenance = self.embedder.generate_provenanced(&llm_rule.rule).await.ok();
+            let provenance = self
+                .embedder
+                .generate_provenanced(&llm_rule.rule)
+                .await
+                .ok();
             let embedding = provenance.as_ref().map(|p| p.vector.clone());
 
             let rule = SemanticRule {
@@ -532,8 +540,7 @@ impl ConsolidationWorker {
                     .to_string();
 
                 if entity_name.len() > 3 {
-                    let provenance =
-                        self.embedder.generate_provenanced(&entity_name).await.ok();
+                    let provenance = self.embedder.generate_provenanced(&entity_name).await.ok();
                     let embedding = provenance.as_ref().map(|p| p.vector.clone());
 
                     let entity = Entity {
@@ -641,8 +648,11 @@ impl ConsolidationWorker {
                 }
                 seen.insert(key);
 
-                let provenance =
-                    self.embedder.generate_provenanced(&llm_entity.name).await.ok();
+                let provenance = self
+                    .embedder
+                    .generate_provenanced(&llm_entity.name)
+                    .await
+                    .ok();
                 let embedding = provenance.as_ref().map(|p| p.vector.clone());
 
                 all_entities.push((
@@ -852,7 +862,11 @@ impl ConsolidationWorker {
 
         let mut rules: Vec<(SemanticRule, Option<ProvenancedEmbedding>)> = Vec::new();
         for llm_rule in llm_rules {
-            let provenance = self.embedder.generate_provenanced(&llm_rule.rule).await.ok();
+            let provenance = self
+                .embedder
+                .generate_provenanced(&llm_rule.rule)
+                .await
+                .ok();
             let embedding = provenance.as_ref().map(|p| p.vector.clone());
 
             rules.push((
@@ -974,7 +988,7 @@ mod tests {
             capability_gates: serde_json::Value::Object(serde_json::Map::new()),
             persona_version: 1,
             fermi_contract: None,
-                    output_contract: None,
+            output_contract: None,
             model_params: serde_json::Value::Object(serde_json::Map::new()),
             valence: None,
         };
@@ -1035,5 +1049,13 @@ mod tests {
         println!("   Clusters identified: {}", result.clusters_identified);
         println!("   Rules extracted: {}", result.rules_extracted);
         println!("   Entities created: {}", result.entities_created);
+
+        // v0.10.25: teardown so this test doesn't accumulate
+        // `test_agent_<uuid>` rows in the shared DB. CASCADE handles
+        // episodes, entities, semantic_rules, consolidation_jobs, etc.
+        let _ = sqlx::query("DELETE FROM agents WHERE agent_id = $1")
+            .bind(agent.agent_id)
+            .execute(store.pool())
+            .await;
     }
 }

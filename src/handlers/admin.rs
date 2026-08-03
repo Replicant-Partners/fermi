@@ -2558,3 +2558,240 @@ pub async fn admin_legacy_agent_slugs_handler(
         "truncated": limited,
     })))
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// v0.10.25 — Cleanup orphan test-fixture agents
+//
+// The 5 leaking test fixtures in agent-bestiary/memory/src/ have
+// been inserting `test_agent_<uuid>` rows into the shared DB
+// without cleanup since forever. v0.10.20's legacy-slug audit
+// surfaced 565 of them. Renaming preserves garbage; the right
+// remedy is DELETE, gated by strong safety criteria so we never
+// touch a real agent.
+//
+// Endpoint: /api/admin/agents/cleanup-test-cruft
+//   GET                     — dry-run
+//   POST                    — dry-run
+//   POST ?apply=true        — execute DELETE (cascades to episodes,
+//                             semantic_rules, entities/facts,
+//                             ontology_snapshots, workspace_agents,
+//                             agent_versions, eval_*, dyad_*,
+//                             observability_*, hitl_actions, and
+//                             all mig-049 tables after mig-169).
+//
+// Safety criteria — a row is eligible for deletion ONLY when ALL
+// of these hold:
+//
+//   * `agent_name LIKE '<prefix>%'` (default prefix: `test_agent_`)
+//   * `total_executions = 0`         (never ran real workload)
+//   * `created_at < NOW() - INTERVAL '<older_than_hours> hours'`
+//                                     (default: 24h grace period)
+//   * `tier NOT IN ('curated','system')`  (never touch platform agents)
+//
+// Deliberately NOT gated on `visibility` or `status` — the leaking
+// test fixtures in `agent-bestiary/memory/src/` create rows with
+// `visibility = 'public'` (either explicitly in the test_agent()
+// factory or via the mig-010 default), so a visibility check would
+// PROTECT the exact rows we want to clean up. The remaining four
+// gates (explicit prefix + zero executions + grace period + tier
+// exclusion) are sufficient defense-in-depth.
+//
+// Every deletion is logged to admin_bypass_events with the
+// `{agent_id, agent_name, tier, created_at}` snapshot as details.
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Deserialize)]
+pub struct CleanupTestCruftQuery {
+    #[serde(default)]
+    pub apply: bool,
+    /// Name prefix identifying test cruft. Default `test_agent_`
+    /// matches the fixture pattern in `agent-bestiary/memory/src/`.
+    /// Change with care — too-permissive prefixes (e.g. `test`)
+    /// could match legitimate agents named `testing_advisor` etc.
+    #[serde(default)]
+    pub prefix: Option<String>,
+    /// Grace period in hours. Rows created within this window are
+    /// protected — they might be an actively-running test suite
+    /// that hasn't torn down yet. Default 24.
+    #[serde(default)]
+    pub older_than_hours: Option<i64>,
+    /// Cap batch size. Cleanup runs 2 statements per row in one
+    /// transaction (DELETE + audit INSERT), so this is safety
+    /// against the 60s client timeout on very large batches.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+pub async fn admin_cleanup_test_cruft_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Query(q): Query<CleanupTestCruftQuery>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin(&principal)?;
+    let admin_user_id = principal.user_id();
+
+    let prefix = q
+        .prefix
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("test_agent_")
+        .to_string();
+    let older_than_hours = q.older_than_hours.unwrap_or(24).max(0);
+    let like_pattern = format!("{}%", prefix);
+
+    // 1. Find candidate rows. Every safety predicate is baked into
+    //    the SELECT so the caller can't accidentally bypass one by
+    //    tweaking a query param. `INTERVAL '$1 hours'` isn't a
+    //    Postgres literal we can bind directly; use `make_interval`
+    //    which does accept a bound integer.
+    let rows = sqlx::query(
+        "SELECT agent_id, agent_name, tier, visibility, status, \
+                created_at, total_executions \
+           FROM agents \
+          WHERE agent_name LIKE $1 \
+            AND total_executions = 0 \
+            AND created_at < NOW() - make_interval(hours => $2::int) \
+            AND tier NOT IN ('curated', 'system') \
+          ORDER BY created_at ASC",
+    )
+    .bind(&like_pattern)
+    .bind(older_than_hours as i32)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("list cruft candidates: {}", e),
+        )
+    })?;
+
+    let total_matched = rows.len();
+
+    // 2. Apply `limit` (cap on batch size).
+    let mut candidates: Vec<(uuid::Uuid, String, String, chrono::DateTime<chrono::Utc>)> =
+        Vec::with_capacity(rows.len());
+    for row in &rows {
+        let agent_id: uuid::Uuid = match row.try_get("agent_id") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let agent_name: String = row.try_get("agent_name").unwrap_or_default();
+        let tier: String = row.try_get("tier").unwrap_or_default();
+        let created_at: chrono::DateTime<chrono::Utc> = row
+            .try_get("created_at")
+            .unwrap_or_else(|_| chrono::Utc::now());
+        candidates.push((agent_id, agent_name, tier, created_at));
+    }
+    let truncated = q.limit.map(|n| n < candidates.len()).unwrap_or(false);
+    if let Some(n) = q.limit {
+        candidates.truncate(n);
+    }
+
+    // 3. If applying, DELETE in one transaction + audit-log each.
+    //    CASCADE handles episodes/entities/facts/versions/etc.
+    //    After mig-169 the mig-049 tables also cascade.
+    let mut deleted_count: usize = 0;
+    let mut failures: Vec<Value> = Vec::new();
+
+    if q.apply && !candidates.is_empty() {
+        let mut tx = state.db.begin().await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("begin tx: {}", e),
+            )
+        })?;
+
+        for (agent_id, agent_name, tier, created_at) in &candidates {
+            let details = json!({
+                "agent_id":     agent_id.to_string(),
+                "agent_name":   agent_name,
+                "tier":         tier,
+                "created_at":   created_at.to_rfc3339(),
+                "prefix":       prefix,
+                "older_than_hours": older_than_hours,
+                "reason":       "orphan test-fixture row — total_executions=0, older than grace period",
+            });
+
+            // Log FIRST so the audit trail exists even if the
+            // DELETE errors out for some unexpected reason (partial
+            // rollback still preserves the trail because both are
+            // in the same tx — either both land or neither).
+            if let Err(e) = sqlx::query(
+                "INSERT INTO admin_bypass_events \
+                 (admin_user_id, target_type, target_id, action, details) \
+                 VALUES ($1, $2, $3, $4, $5)",
+            )
+            .bind(&admin_user_id)
+            .bind("agent")
+            .bind(agent_id.to_string())
+            .bind("delete_test_cruft")
+            .bind(&details)
+            .execute(&mut *tx)
+            .await
+            {
+                failures.push(json!({
+                    "agent_id": agent_id.to_string(),
+                    "agent_name": agent_name,
+                    "stage": "audit_insert",
+                    "error": e.to_string(),
+                }));
+                continue;
+            }
+
+            match sqlx::query("DELETE FROM agents WHERE agent_id = $1")
+                .bind(agent_id)
+                .execute(&mut *tx)
+                .await
+            {
+                Ok(_) => {
+                    deleted_count += 1;
+                }
+                Err(e) => {
+                    failures.push(json!({
+                        "agent_id": agent_id.to_string(),
+                        "agent_name": agent_name,
+                        "stage": "delete",
+                        "error": e.to_string(),
+                    }));
+                }
+            }
+        }
+
+        // Commit even if some rows failed — the successful ones
+        // and their audit rows should land. Failures are surfaced
+        // in the response body so the operator can decide next step.
+        tx.commit().await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("commit tx: {}", e),
+            )
+        })?;
+    }
+
+    // 4. Build entry list for the response.
+    let entries: Vec<Value> = candidates
+        .iter()
+        .map(|(agent_id, agent_name, tier, created_at)| {
+            json!({
+                "agent_id":    agent_id.to_string(),
+                "agent_name":  agent_name,
+                "tier":        tier,
+                "created_at":  created_at.to_rfc3339(),
+                "action_taken": if q.apply { "deleted" } else { "audit_only" },
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "prefix":              prefix,
+        "older_than_hours":    older_than_hours,
+        "limit":               q.limit,
+        "apply":               q.apply,
+        "total_matched":       total_matched,
+        "in_this_batch":       candidates.len(),
+        "truncated":           truncated,
+        "deleted":             if q.apply { Some(deleted_count) } else { None },
+        "failures":            failures,
+        "entries":             entries,
+    })))
+}
