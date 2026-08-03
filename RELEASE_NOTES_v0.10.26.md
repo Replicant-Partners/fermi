@@ -1,122 +1,79 @@
-# v0.10.26 — `agents.updated_at`, actually this time
+# v0.10.26 — fix the embedder: OpenAI @ 1024, unbreak dreaming/search
 
 ## Why
 
-Ivan tried to force-publish Mario's `key_metrics` agent and hit the
-exact same error we thought v0.10.18 had fixed:
+Root cause of a 6-week platform-wide outage of Loop 1 (agent
+dreaming/consolidation) and all runtime embedding.
 
-```
-Publish failed: 400 DB error: error returned from database:
-column "updated_at" of relation "agents" does not exist
-```
+Since the Spec-22 embedding-portability work, the server built
+`AnthropicEmbeddings`, which POSTs to
+`https://api.anthropic.com/v1/embeddings` — **an endpoint
+Anthropic does not serve** (live probe: 404). Every embedding call
+errored or hung; consolidation jobs wedged at
+`episodes_processed = 0`. The reqwest client had no timeout, so a
+dead endpoint stalled instead of failing loud.
 
-**mig-166 didn't apply to prod.** The migration wraps its
-`ADD COLUMN` inside `DO $$ … $$` blocks (for the idempotent probe
-+ RAISE NOTICE observability). PgBouncer in transaction mode can
-split multi-statement DDL at dollar-quoted body boundaries — and
-`sqlx::raw_sql` is a single `execute()` on a shared pool. Result:
-mig-166 executed against a PgBouncer connection that ate the
-`DO $$` block silently. The migration runner logged "Migration
-completed" but the column was never added.
+Symptom in production data at the moment of this release:
 
-This is a **known failure mode** on this deploy — `api_server.rs`
-even has a function called `ensure_critical_schema` with this exact
-warning in its header:
+- **89% of episodes unembedded** (2737 / 3089).
+- The 4 football factor agents (`macro_data_agent`,
+  `football_institution_agent`, `fixture_context_agent`, plus
+  `football_analyst`) have **0 embedded episodes**.
+- `search_knowledge` returns empty because there's nothing to
+  vector-search.
+- Every agent's Loop 1 diagnostic reads "consolidation stuck at 0
+  episodes processed".
 
-> "Each ALTER is its own single-statement sqlx::query — bypasses any
-> interaction between raw_sql, DO blocks, and PgBouncer in
-> transaction mode that has eaten multi-statement DDL in the past."
-
-mig-166 should have been landed via `ensure_critical_schema` from
-the start. Fixing that now.
+Silent because there was no timeout and no loud fallback — the
+mock embedder just returned deterministic zero-vectors when the
+"real" client errored out.
 
 ## Change
 
-### `src/api_server.rs::ensure_critical_schema`
+Smallest fix that closes the loop.
 
-Adds two single-statement entries to the `alters` slice:
+### `src/api_server.rs`
 
-```rust
-("agents.updated_at",
- "ALTER TABLE public.agents \
-    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
-("agents.updated_at.backfill",
- "UPDATE public.agents SET updated_at = created_at WHERE updated_at IS NULL"),
-```
+- Embedder now built from `OPENAI_API_KEY` → `OpenAIEmbeddings`
+  (model `text-embedding-3-large`, `dimensions=1024`).
+- **1024 matches the existing pgvector column + HNSW indices**, so
+  no schema migration required. All existing dimension-1024 rows
+  stay valid; new rows land at the same dimension.
+- Mock fallback now warns loudly (`eprintln!`) when it's engaged.
+  A silent fallback is how this hid for 6 weeks.
+- Register `migrations/170_backfill_agents_used_agent_id.sql` in
+  `run_migrations()` (was in-flight, now wired).
 
-Each is a **single statement**, so PgBouncer can't split it at a
-`DO $$` boundary. Runs after `run_migrations()` at every boot;
-idempotent via `IF NOT EXISTS` on the ALTER and a `WHERE
-updated_at IS NULL` gate on the backfill.
+### `agent-bestiary/memory/src/embeddings.rs`
 
-The `NOT NULL DEFAULT NOW()` on `ADD COLUMN` means:
-- Existing rows get `updated_at = <migration time>` (PG ≥ 11) or
-  `NULL` on older versions
-- The follow-up `UPDATE ... WHERE updated_at IS NULL` catches the
-  older-PG case and backfills from `created_at` (which every row
-  has since mig-010).
-- Future INSERTs that don't set `updated_at` get `NOW()`
-  automatically.
-
-mig-166 itself is not removed. On environments where it did apply
-successfully (or on a fresh DB), it's a no-op idempotent probe.
-On environments where PgBouncer ate it, `ensure_critical_schema`
-now backstops.
+- `OpenAIEmbeddings` client gets a 30-second timeout so a bad
+  endpoint fails fast/visibly instead of wedging a consolidation
+  job forever.
 
 ## Post-deploy verification
 
 ```bash
-# Column exists.
-psql -c "\d public.agents" | grep updated_at
-# → updated_at | timestamp with time zone | not null default now()
+# Search returns real hits.
+curl -s -H "Authorization: Bearer $TOKEN" \
+     "https://agent-bestiary.world/api/agents/<any>/knowledge/search?q=probability"
+# → non-empty vector matches (was: empty)
 
-# Every row has it.
-psql -c "SELECT COUNT(*) FROM public.agents WHERE updated_at IS NULL;"
-# → 0
+# Consolidation processes episodes instead of wedging.
+psql -c "SELECT status, episodes_processed, duration_ms
+         FROM consolidation_jobs
+         WHERE started_at > NOW() - INTERVAL '1 hour'
+         ORDER BY started_at DESC LIMIT 5;"
+# → status='completed', episodes_processed > 0
 
-# Force-publish now succeeds.
-curl -si -X POST \
-     -H "Authorization: Bearer $IVAN_TOKEN" \
-     "https://agent-bestiary.world/api/agents/key_metrics/publish?force=true&reason=post-v0.10.26"
-# → HTTP/2 200 (was: 400 column does not exist)
-
-# Publish (as admin) button in the UI now completes.
-# UI → catalogue → Mario's agent → Publish (as admin) → give reason → OK
+# Backfill: schedule a re-embed sweep of the 2737 unembedded rows
+# (separate job, not this release).
 ```
-
-## The three sightings, closed
-
-- **v0.10.18** — mig-166 shipped, thought this was fixed.
-- **v0.10.26** — Ivan tried again, saw the same error, we found
-  that mig-166 was eaten by PgBouncer. Fixed via
-  `ensure_critical_schema`.
-
-Third time's the charm because `ensure_critical_schema` uses
-single-statement `sqlx::query` per ALTER — PgBouncer can't split
-one statement.
-
-## Follow-up (still elevated)
-
-This is exactly the class of failure the v0.11.0 trust-contract
-substrate is designed to catch. At every boot, walk every code
-site that references `agents.<column>` and confirm the column
-exists. If not, refuse to serve. The bug would have surfaced at
-deploy time with a clear "column missing after migration" error
-instead of at first user click.
-
-**Migration authoring guideline** for the interim: any
-production-critical column ADD/ALTER should ALSO be listed in
-`ensure_critical_schema` as a single-statement ALTER. mig-166's
-`DO $$` block was fine for auditing and observability, but the
-actual `ADD COLUMN` should have been a bare single-statement
-fallback. Consider adding this as a note in the migration
-template.
 
 ## Related
 
-- v0.10.18 — mig-166 first attempt (eaten by PgBouncer).
-- v0.10.15 — the admin force-publish path that surfaced this bug.
-- v0.10.25 — cleanup tools (previous release).
-- v0.11.0 — trust-contract boot check. **Fourth in a row of
-  "single-statement schema drift" issues. This is now unambiguously
-  the next release.**
+- Spec 22 (embedding portability) — the substrate that introduced
+  the pluggable `EmbeddingGenerator` trait. Correct architectural
+  layer; wrong default at boot.
+- v0.10.27 — `agents.updated_at` fix via `ensure_critical_schema`
+  (mig-166 was eaten by PgBouncer). Landed in the same push
+  window; documented separately.
