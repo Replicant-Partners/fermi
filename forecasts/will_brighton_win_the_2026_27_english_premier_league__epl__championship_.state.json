@@ -1,47 +1,23 @@
 {
   "forecast_id": "c95b0b58-8fef-4758-930f-9060f923f853",
-  "current_version": 5,
-  "predicted_probability": 1.0746821841605896,
-  "inside_view_explanation": "Inside view: model evaluates to 1.075 (p5=0.638, p95=1.674). Key drivers: strength_factor, conditions, disruption. Most influential: strength_factor (50%), disruption (33%), conditions (18%).",
+  "current_version": 1,
+  "predicted_probability": 1.0759298316947101,
+  "inside_view_explanation": "Inside view: model evaluates to 1.076 (p5=0.642, p95=1.674). Key drivers: strength_factor, conditions, disruption. Most influential: strength_factor (51%), disruption (33%), conditions (19%).",
   "forecast_confidence": 0.14,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-08-03 06:13",
-      "probability": 1.0746821841605896,
-      "change_summary": "Initial: 107.5%, 3 drivers, 0 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-08-03 09:47",
-      "probability": 1.0746821841605896,
-      "change_summary": "Updated forecast"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-08-03 09:48",
-      "probability": 1.0746821841605896,
-      "change_summary": "Updated forecast"
-    },
-    {
-      "version": 4,
-      "timestamp": "2026-08-03 09:58",
-      "probability": 1.0746821841605896,
-      "change_summary": "Updated forecast"
-    },
-    {
-      "version": 5,
-      "timestamp": "2026-08-03 09:58",
-      "probability": 1.0746821841605896,
-      "change_summary": "107.5% (→), 3 drivers"
+      "timestamp": "2026-08-03 10:17",
+      "probability": 1.0759298316947101,
+      "change_summary": "Initial: 107.6%, 3 drivers, 0 evidence"
     }
   ],
   "sim_results": {
-    "mean": 1.0746821841605896,
-    "median": 1.0321667810200144,
-    "p5": 0.6376997742774777,
-    "p95": 1.6740500303621126,
-    "std_dev": 0.3175618296610036,
+    "mean": 1.0759298316947101,
+    "median": 1.0354852034664823,
+    "p5": 0.6422082534464166,
+    "p95": 1.6739532176604761,
+    "std_dev": 0.3151935007923209,
     "iterations": 10000
   },
   "base_rate": null,
@@ -54,13 +30,13 @@
     "question": "Will Brighton win the 2026-27 English Premier League (EPL) Championship?",
     "market_price": 0.0025,
     "volume_24h": 9574.048166,
-    "liquidity": 243048.06686,
+    "liquidity": 243183.65926,
     "confidence": "Low",
     "price_change_1w": null,
     "url": "https://polymarket.com/event/epl-2027-champion-20260701200428749",
     "price_history": [
       {
-        "t": 1785737621,
+        "t": 1785752221,
         "p": 0.0025
       }
     ]
