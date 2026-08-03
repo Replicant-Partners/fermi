@@ -18,6 +18,9 @@ mod chat;
 mod cockpit;
 mod composer;
 mod text_input;
+// Vector chart elements. Replaces the `charts` plotters→bitmap
+// pipeline chart by chart; see `viz/mod.rs` for why bitmaps flickered.
+mod viz;
 
 // `updater` lives in the lib target (src/lib.rs), not here, so its
 // tests can actually run — rustc segfaults expanding this binary's

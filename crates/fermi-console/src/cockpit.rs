@@ -390,11 +390,52 @@ pub struct CockpitState {
     pub resolution_note: Option<String>,
     pub reconciling: bool,
 
-    /// Per-driver Sobol total-order index (0..1) from the last simulation's
-    /// `full_sensitivity_analysis`. The sensitivity bars render from THIS
-    /// (true variance-based influence) when present, instead of the driver's
-    /// raw p95−p5 spread (which is ~uniform for a factor model).
-    pub driver_sensitivity: std::collections::HashMap<String, f64>,
+    /// Per-driver Sobol indices from the last simulation's
+    /// `full_sensitivity_analysis`, as `(first_order, total_order)`.
+    /// The sensitivity bars render from THIS (true variance-based
+    /// influence) when present, instead of the driver's raw p95−p5
+    /// spread (which is ~uniform for a factor model).
+    ///
+    /// Both indices are kept because the *gap between them* is the
+    /// actionable part. A driver at `S1 = 0.05, ST = 0.40` is not an
+    /// important driver — it's an important **coupling**, and the
+    /// correct response is to find what it interacts with, not to go
+    /// tighten its prior. Storing only the total, as this map used to,
+    /// made those two situations indistinguishable on screen.
+    pub driver_sensitivity: std::collections::HashMap<String, (f64, f64)>,
+
+    /// Decision threshold on the outcome distribution, in the
+    /// simulation's own output units (so 0..1 for a probability
+    /// forecast, not 0..100).
+    ///
+    /// This is the question a forecaster is actually deciding — "will
+    /// revenue clear $200M?", "is this above 30%?" — and the bar moves
+    /// as the argument moves. Three fixed percentile ticks can't answer
+    /// it. `None` means no threshold set and the chart renders as it
+    /// always did.
+    pub outcome_threshold: Option<f64>,
+
+    /// True while the operator is dragging the threshold handle.
+    ///
+    /// Tracked explicitly because a drag routinely leaves the element,
+    /// and the gesture must keep following the pointer rather than
+    /// snapping away the moment it crosses the chart's edge.
+    pub threshold_dragging: bool,
+
+    /// Records where the outcome histogram last painted, so mouse
+    /// positions can be inverted into outcome values through the same
+    /// scale the bars were laid out with.
+    pub histogram_surface: crate::viz::PlotSurface,
+
+    /// The sensitivity layout from the *previous* simulation, kept so
+    /// the bars can show what moved.
+    ///
+    /// Sensitivity is recomputed every sim and overwrites the last, but
+    /// "which driver dominates" *changing* is the highest-signal event
+    /// in a live forecast: it means the model's structure shifted, not
+    /// merely its numbers. Without a snapshot that signal is destroyed
+    /// on every run.
+    pub sobol_previous: Option<fermi_console::plot::SobolLayout>,
 
     /// True while a just-run sim's raw mean is being recomposed server-side
     /// (mutex-group eliminations priced back in). The displayed value is
@@ -686,6 +727,17 @@ pub struct CockpitState {
     /// sub-pixel accuracy GPUI hands us, so the guide line doesn't
     /// stutter as the mouse moves.
     pub hovered_trajectory_x: Option<f32>,
+    /// Where the trajectory chart last painted itself, in window space.
+    ///
+    /// GPUI reports mouse positions in window coordinates but a chart
+    /// reasons in element-local ones, and only the paint pass knows the
+    /// offset between them. The chart records its bounds here during
+    /// paint and the `on_mouse_move` handler reads them back, so
+    /// hit-testing is *derived from* the render rather than a parallel
+    /// re-implementation of it. (The parallel re-implementation was
+    /// `charts::trajectory_plot_bounds`, and it drifted off the dots
+    /// every time a margin changed.)
+    pub trajectory_surface: crate::viz::PlotSurface,
     /// True while a fermi-agent invocation is scoped to a base-rate-only
     /// update. When set, fire_agent's completion handler only extracts
     /// the base_rate field from the fermi response — it must NEVER route
@@ -962,6 +1014,10 @@ impl CockpitState {
             resolution_note: None,
             reconciling: false,
             driver_sensitivity: std::collections::HashMap::new(),
+            outcome_threshold: None,
+            threshold_dragging: false,
+            histogram_surface: crate::viz::PlotSurface::new(),
+            sobol_previous: None,
             recomposing: false,
             shares: Vec::new(),
             shares_loading: false,
@@ -1036,6 +1092,7 @@ impl CockpitState {
             hovered_index_version: None,
             hovered_trajectory_event: None,
             hovered_trajectory_x: None,
+            trajectory_surface: crate::viz::PlotSurface::new(),
             base_rate_update_in_flight: false,
         };
 
@@ -7399,14 +7456,25 @@ impl CockpitState {
                     "Sensitivity analysis unavailable.".to_string()
                 };
 
-                // Store per-driver Sobol total-order indices so the
-                // sensitivity bars render true influence, not raw spread.
+                // Store per-driver Sobol indices so the sensitivity bars
+                // render true influence (and its interaction split), not
+                // raw spread.
                 if let Ok(ref sa) = sensitivity {
+                    // Snapshot the outgoing layout *before* overwriting so
+                    // the next render can diff against it and show which
+                    // drivers climbed or fell.
+                    let previous = sobol_layout_from(&self.driver_sensitivity);
+                    if !previous.bars.is_empty() {
+                        self.sobol_previous = Some(previous);
+                    }
+
                     self.driver_sensitivity.clear();
                     for d in parsed.drivers() {
                         if let Some(ds) = sa.get_driver_sensitivity(&d.name) {
-                            self.driver_sensitivity
-                                .insert(d.name.clone(), ds.total_order_index);
+                            self.driver_sensitivity.insert(
+                                d.name.clone(),
+                                (ds.first_order_index, ds.total_order_index),
+                            );
                         }
                     }
                 }
@@ -7857,8 +7925,19 @@ impl CockpitState {
         self.sim_results = None;
         self.agent_runs.clear();
         self.driver_confidence.clear();
+        // Sensitivity belongs to the forecast that produced it. Carrying
+        // it across a switch would render one model's Sobol indices
+        // against another model's drivers, and the run-over-run diff
+        // would compare two unrelated forecasts.
+        self.driver_sensitivity.clear();
+        self.sobol_previous = None;
         self.inside_view_explanation.clear();
         self.hovered_histogram_bin = None;
+        // The threshold is expressed in the outgoing forecast's output
+        // units; carrying it to a different question would silently
+        // point at a meaningless value.
+        self.outcome_threshold = None;
+        self.threshold_dragging = false;
         self.hovered_index_version = None;
 
         // Try to parse FPL — may fail on old files with bad evidence strings
@@ -11212,19 +11291,42 @@ fn bin_center(sim: &SimResults, idx: usize) -> f64 {
     }
 }
 
+/// The outcome range the histogram bars actually span.
+///
+/// This matters more than it looks. The bars are laid out across the
+/// simulation output's full `[min, max]`, but the anchor reference
+/// lines used to be positioned with a *separate* mapping built from
+/// `[p5, p95]` — a narrower interval. So every anchor line was drawn
+/// in the wrong place, stretched toward the edges, and an anchor
+/// outside the middle 90% vanished entirely rather than sitting near
+/// the tail where it belonged.
+///
+/// One domain, derived from the bins the bars are drawn from, used by
+/// the bars, the anchors, and the threshold alike.
+fn histogram_domain(sim: &SimResults) -> (f64, f64) {
+    // Falls back to `[p5, p95]` for forecasts saved before bin geometry
+    // was persisted. That's an approximation, but every reader of the
+    // histogram goes through here, so the bars and the anchors are at
+    // least wrong *together*.
+    fermi_console::plot::density::bin_domain(&sim.bin_starts, sim.bin_width, (sim.p5, sim.p95))
+}
+
 /// Render the simulation distribution as an interactive histogram with
-/// per-bar hover, anchor reference lines, and a live tooltip.
+/// per-bar hover, anchor reference lines, a draggable decision
+/// threshold, and a live tooltip.
 ///
 /// The element is constructed via `cx.listener` per-bar so each bar
 /// updates `state.hovered_histogram_bin` independently. Cost is
-/// negligible (~20 bins per render). The tooltip is rendered above the
-/// bars; bars are stacked horizontally beneath it.
+/// negligible (~20 bins per render).
 fn render_interactive_histogram(
     state: &CockpitState,
     cx: &mut Context<CockpitState>,
     chart_w: f32,
     chart_h: f32,
 ) -> gpui::AnyElement {
+    use fermi_console::plot::density::{bin_side, prob_at_least_bins, BinSide};
+    use fermi_console::plot::LinearScale;
+
     let sim_opt = state.sim_results.as_ref();
     let Some(sim) = sim_opt else {
         return div().into_any_element();
@@ -11241,30 +11343,36 @@ fn render_interactive_histogram(
     let max_count = *sim.histogram.iter().max().unwrap_or(&1) as f32;
     let total: u64 = sim.histogram.iter().map(|&c| c as u64).sum();
 
-    // Map an outcome value (0–1 for prob forecasts; arbitrary for others)
-    // to an x-offset within the histogram. Returns None if outside the
-    // displayed range so the caller can suppress the reference line.
-    let outcome_to_x = {
-        let p5 = sim.p5;
-        let p95 = sim.p95;
-        let span = (p95 - p5).max(1e-9);
-        let w = chart_w;
-        move |outcome_pct: f64| -> Option<f32> {
-            // The histogram is built over the simulation output's actual
-            // (min, max) range. We approximate using (p5, p95) which is
-            // what's reliably stored. Outcome inputs are 0-100 (model %).
-            // For prob forecasts the sim output is itself a probability
-            // in [0,1], so we compare on the same scale by treating the
-            // 0-100 outcome as a 0-1 fraction.
-            let val = outcome_pct / 100.0;
-            if val < p5 || val > p95 {
-                return None;
-            }
-            Some(((val - p5) / span * w as f64) as f32)
-        }
+    // ── One scale, both directions ──────────────────────────────────
+    //
+    // `map` places ink; `invert` turns a dragged pixel back into an
+    // outcome value. Same object, so the threshold lands where the
+    // pointer is.
+    let (dom_lo, dom_hi) = histogram_domain(sim);
+    let scale = LinearScale::new((dom_lo, dom_hi), (0.0, chart_w as f64));
+    let bin_w_val = if sim.bin_width > 0.0 {
+        sim.bin_width
+    } else {
+        (dom_hi - dom_lo) / n_bins.max(1) as f64
     };
 
-    // Tooltip text for the currently-hovered bin (if any).
+    // Anchors arrive as 0–100 percentages; the sim's output units are
+    // 0–1 for a probability forecast.
+    let outcome_to_x = move |outcome_pct: f64| -> Option<f32> {
+        let val = outcome_pct / 100.0;
+        (val >= dom_lo && val <= dom_hi).then(|| scale.map(val) as f32)
+    };
+
+    // ── Decision threshold ──────────────────────────────────────────
+    let threshold = state
+        .outcome_threshold
+        .filter(|t| *t >= dom_lo && *t <= dom_hi);
+    // P(X ≥ t) comes from the bin counts, with the straddling bin split
+    // proportionally. Never from the rendered bar heights, which are
+    // normalised to the tallest bar for display.
+    let prob_above = threshold.and_then(|t| prob_at_least_bins(&sim.histogram, dom_lo, dom_hi, t));
+
+    // ── Tooltip text for the hovered bin ────────────────────────────
     let tooltip_lines: Vec<String> = match state.hovered_histogram_bin {
         Some(idx) if idx < n_bins => {
             let count = sim.histogram[idx];
@@ -11274,7 +11382,6 @@ fn render_interactive_histogram(
             } else {
                 0.0
             };
-            // CDF up to end of this bin
             let cdf_count: u64 = sim.histogram[..=idx].iter().map(|&c| c as u64).sum();
             let cdf_pct = if total > 0 {
                 cdf_count as f64 / total as f64 * 100.0
@@ -11286,7 +11393,6 @@ fn render_interactive_histogram(
                 format!("count: {} ({:.1}% of sims)", count, density_pct),
                 format!("CDF: {:.0}th percentile", cdf_pct),
             ];
-            // Signed distance to each anchor (in pp of outcome).
             lines.push(format!(
                 "Δ from model: {:+.1}pp",
                 outcome - triad.inside_pct
@@ -11299,10 +11405,9 @@ fn render_interactive_histogram(
             }
             lines
         }
-        _ => vec!["hover a bar".to_string()],
+        _ => vec!["hover a bar · click to set a threshold".to_string()],
     };
 
-    // ── Tooltip card (always present; content changes with hover) ──
     let tooltip = div()
         .px(px(8.0))
         .py(px(4.0))
@@ -11314,9 +11419,42 @@ fn render_interactive_histogram(
         .text_color(rgb(theme::FG_DIM))
         .children(tooltip_lines.into_iter().map(|line| div().child(line)));
 
-    // ── Bars + reference lines layered together ──
-    // We use a horizontal flex of bars; the anchor reference lines are
-    // overlaid via absolutely-positioned children on the bar container.
+    // ── The headline answer ─────────────────────────────────────────
+    //
+    // When a threshold is set this is the number the operator came for,
+    // so it reads before the chart rather than after it.
+    let readout = threshold.map(|t| {
+        let p = prob_above.unwrap_or(0.0);
+        div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .text_size(px(13.0))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(rgb(theme::GREEN))
+                    .child(format!("P(≥ {:.1}%) = {:.0}%", t * 100.0, p * 100.0)),
+            )
+            .child(
+                div()
+                    .id("threshold-clear")
+                    .px(px(6.0))
+                    .rounded(px(3.0))
+                    .text_size(px(9.0))
+                    .text_color(rgb(theme::FG_DIM))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                    .on_click(cx.listener(|this, _ev, _window, cx| {
+                        this.outcome_threshold = None;
+                        this.threshold_dragging = false;
+                        cx.notify();
+                    }))
+                    .child("clear ✕"),
+            )
+    });
+
+    // ── Bars ────────────────────────────────────────────────────────
     let mut bars_row = div()
         .id("histogram-bars-row")
         .relative()
@@ -11334,16 +11472,33 @@ fn render_interactive_histogram(
             1.0
         };
         let hovered = state.hovered_histogram_bin == Some(idx);
+
+        // Colour by which side of the threshold this bin falls on,
+        // using the same classifier the probability is computed from.
+        // The straddling bin gets its own colour rather than being
+        // rounded into one side — it's the bin whose mass
+        // `prob_at_least_bins` splits proportionally, and pretending
+        // otherwise is how a chart ends up contradicting its own
+        // headline number.
+        let bin_lo = dom_lo + bin_w_val * idx as f64;
+        let bin_hi = bin_lo + bin_w_val;
+        let bar_color = match threshold.map(|t| bin_side(bin_lo, bin_hi, t)) {
+            None => rgba(0x5CCFE6FF),
+            Some(BinSide::AtOrAbove) => rgba(0xBAE67EFF),
+            Some(BinSide::Straddles) => rgba(0xFFCC66FF),
+            Some(BinSide::Below) => rgba(0x5CCFE659),
+        };
+
         bars_row = bars_row.child(
             div()
                 .id(("hist-bar", idx))
                 .w(px(bar_w))
                 .h(px(bar_h.max(1.0)))
-                .bg(rgb(theme::CYAN))
+                .bg(bar_color)
                 .when(hovered, |el| {
                     // Hovered bar pops via a gold outline — keeps the bar
-                    // body the same cyan as the rest so the eye lands on
-                    // the affordance, not on a flickering color change.
+                    // body the same colour so the eye lands on the
+                    // affordance, not on a flickering fill change.
                     el.border_1().border_color(rgb(theme::GOLD))
                 })
                 .cursor_pointer()
@@ -11361,9 +11516,7 @@ fn render_interactive_histogram(
         );
     }
 
-    // Overlay reference lines for each anchor (inside / outside / crowd).
-    // Each is a thin absolutely-positioned vertical div spanning the
-    // histogram height. Skip silently when outside the [p5, p95] range.
+    // ── Anchor reference lines ──────────────────────────────────────
     let mut overlay = div()
         .absolute()
         .top(px(0.0))
@@ -11371,7 +11524,13 @@ fn render_interactive_histogram(
         .w(px(chart_w))
         .h(px(chart_h));
 
-    if let Some(x) = outcome_to_x(triad.inside_pct) {
+    for (value, color) in [
+        (Some(triad.inside_pct), theme::CYAN),
+        (triad.outside_pct, theme::GOLD),
+        (triad.crowd_pct, theme::PURPLE),
+    ] {
+        let Some(v) = value else { continue };
+        let Some(x) = outcome_to_x(v) else { continue };
         overlay = overlay.child(
             div()
                 .absolute()
@@ -11379,45 +11538,114 @@ fn render_interactive_histogram(
                 .top(px(0.0))
                 .w(px(1.5))
                 .h(px(chart_h))
-                .bg(rgb(theme::CYAN)),
+                .bg(rgb(color)),
         );
     }
-    if let Some(o) = triad.outside_pct {
-        if let Some(x) = outcome_to_x(o) {
-            overlay = overlay.child(
+
+    // Threshold line + grab handle, drawn last so it sits above the
+    // anchors it's being compared against.
+    if let Some(t) = threshold {
+        let x = scale.map(t) as f32;
+        overlay = overlay
+            .child(
                 div()
                     .absolute()
                     .left(px(x))
                     .top(px(0.0))
-                    .w(px(1.5))
+                    .w(px(2.0))
                     .h(px(chart_h))
-                    .bg(rgb(theme::GOLD)),
-            );
-        }
-    }
-    if let Some(c) = triad.crowd_pct {
-        if let Some(x) = outcome_to_x(c) {
-            overlay = overlay.child(
+                    .bg(rgb(theme::GREEN)),
+            )
+            // A visible grab target. An invisible drag affordance isn't
+            // direct manipulation, it's a guessing game.
+            .child(
                 div()
                     .absolute()
-                    .left(px(x))
-                    .top(px(0.0))
-                    .w(px(1.5))
-                    .h(px(chart_h))
-                    .bg(rgb(theme::PURPLE)),
+                    .left(px(x - 4.0))
+                    .top(px(-3.0))
+                    .w(px(8.0))
+                    .h(px(8.0))
+                    .rounded(px(2.0))
+                    .bg(rgb(theme::GREEN)),
             );
-        }
     }
 
-    bars_row = bars_row.child(overlay);
+    bars_row = bars_row
+        .child(overlay)
+        .child(state.histogram_surface.tracker());
 
-    // ── Compose: tooltip on top, bars below, legend at bottom ──
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(4.0))
-        .child(tooltip)
+    // ── Drag band ───────────────────────────────────────────────────
+    //
+    // The handlers live on a container that is deliberately taller than
+    // the bars. GPUI only delivers `on_mouse_move` while the pointer is
+    // over the element, so a thin strip would drop the gesture the
+    // moment the operator's hand drifted a few pixels vertically. The
+    // extra band absorbs that. Horizontally there's no such problem:
+    // the value clamps to the domain, which is exactly what leaving the
+    // chart sideways should mean.
+    let surface = state.histogram_surface.clone();
+    let down_surface = surface.clone();
+    let move_surface = surface.clone();
+
+    let drag_band = div()
+        .id("histogram-threshold-band")
+        .relative()
+        .w(px(chart_w))
+        .pt(px(6.0))
+        .pb(px(10.0))
         .child(bars_row)
+        .on_mouse_down(
+            gpui::MouseButton::Left,
+            cx.listener(move |this, ev: &gpui::MouseDownEvent, _window, cx| {
+                let Some((lx, _)) = down_surface.local_unclamped(ev.position) else {
+                    return;
+                };
+                this.outcome_threshold = Some(scale.invert(lx).clamp(dom_lo, dom_hi));
+                this.threshold_dragging = true;
+                cx.notify();
+            }),
+        )
+        .on_mouse_move(
+            cx.listener(move |this, ev: &gpui::MouseMoveEvent, _window, cx| {
+                if !this.threshold_dragging {
+                    return;
+                }
+                // The button was released somewhere we never saw the
+                // up-event (outside the window, over another element).
+                // Treat a move with no button held as the end of the
+                // gesture rather than latching forever.
+                if !ev.dragging() {
+                    this.threshold_dragging = false;
+                    cx.notify();
+                    return;
+                }
+                let Some((lx, _)) = move_surface.local_unclamped(ev.position) else {
+                    return;
+                };
+                let next = Some(scale.invert(lx).clamp(dom_lo, dom_hi));
+                if this.outcome_threshold != next {
+                    this.outcome_threshold = next;
+                    cx.notify();
+                }
+            }),
+        )
+        .on_mouse_up(
+            gpui::MouseButton::Left,
+            cx.listener(|this, _ev: &gpui::MouseUpEvent, _window, cx| {
+                if this.threshold_dragging {
+                    this.threshold_dragging = false;
+                    cx.notify();
+                }
+            }),
+        );
+
+    // ── Compose ─────────────────────────────────────────────────────
+    let mut root = div().flex().flex_col().gap(px(4.0));
+    if let Some(r) = readout {
+        root = root.child(r);
+    }
+    root.child(tooltip)
+        .child(drag_band)
         .child(
             div()
                 .flex()
@@ -11431,10 +11659,13 @@ fn render_interactive_histogram(
                 .when(triad.crowd_pct.is_some(), |el| {
                     el.child(div().text_color(rgb(theme::PURPLE)).child("│ crowd"))
                 })
+                .when(threshold.is_some(), |el| {
+                    el.child(div().text_color(rgb(theme::GREEN)).child("│ threshold"))
+                })
                 .child(div().text_color(rgb(theme::FG_FAINT)).child(format!(
-                    "p5–p95: {:.0}% – {:.0}% · {} iters",
-                    sim.p5 * 100.0,
-                    sim.p95 * 100.0,
+                    "range {:.0}%–{:.0}% · {} iters",
+                    dom_lo * 100.0,
+                    dom_hi * 100.0,
                     sim.iterations
                 ))),
         )
@@ -12527,20 +12758,6 @@ fn render_driver_card(
                         let v50 = expr_to_f64(p50);
                         let v95 = expr_to_f64(p95);
                         if v95 > v5 {
-                            // Match sparkline bg to card bg so it blends seamlessly
-                            let card_bg = if is_focused {
-                                plotters::prelude::RGBColor(61, 68, 85) // BG_ACTIVE
-                            } else {
-                                plotters::prelude::RGBColor(39, 45, 56) // BG_ELEVATED
-                            };
-                            let chart_w = 120u32;
-                            let chart_h = 24u32;
-                            let rgb_buf = crate::charts::render_distribution_sparkline_on(
-                                v5, v50, v95, chart_w, chart_h, card_bg,
-                            );
-                            let render_img =
-                                crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
-
                             let ev_count = evidence_items.len();
                             let spread = v95 - v5;
                             let skew = (v50 - v5) / spread - 0.5;
@@ -12561,11 +12778,21 @@ fn render_driver_card(
                                 )
                             };
 
-                            el.child(
-                                gpui::img(gpui::ImageSource::Render(render_img))
-                                    .w(gpui::px(chart_w as f32))
-                                    .h(gpui::px(chart_h as f32)),
-                            )
+                            // Vector sparkline. The bitmap version this
+                            // replaces minted a fresh `RenderImage` per
+                            // driver card per frame, and `RenderImage`
+                            // ids are never reclaimed from the sprite
+                            // atlas (`ImageSource::Render` is excluded
+                            // from `remove_asset`) — so a list of eight
+                            // drivers leaked eight atlas tiles every
+                            // time anything called `cx.notify()`. That
+                            // churn is the flicker. Paths cost nothing
+                            // to re-emit and it no longer needs to be
+                            // told the card's background colour, since
+                            // it simply doesn't paint one.
+                            el.child(crate::viz::distribution::DistributionPlot::sparkline(
+                                v5, v50, v95,
+                            ))
                             .child(
                                 div()
                                     .text_size(px(9.0))
@@ -15124,6 +15351,395 @@ fn render_fermi_banner(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
         )
 }
 
+// ══════════════════════════════════════════════════════════════════
+// Driver sensitivity bars
+//
+// Rendered in two places (the forecast-index panel and the wiki tab)
+// at different sizes. They used to be two near-identical 80-line
+// copies; they're now one renderer with a size profile, so a fix to
+// one is a fix to both.
+//
+// What the bar shows, and why it has two segments:
+//
+//   ▮▮▮▮▮▮▮▮ first-order (S₁)   — variance this driver explains alone
+//   ▨▨▨▨     interaction (Sₜ−S₁) — variance it explains only in company
+//
+// The single-segment version this replaces drew total-order only, so a
+// driver at (S₁ 0.05, Sₜ 0.40) looked exactly like one at (0.38, 0.40).
+// Those call for opposite actions: the first is a coupling to go find,
+// the second is a prior to go tighten. Collapsing them was the chart
+// actively misleading rather than merely being thin.
+// ══════════════════════════════════════════════════════════════════
+
+/// Size profile for the sensitivity bars.
+struct SensitivityStyle {
+    label_w: f32,
+    bar_w: f32,
+    row_h: f32,
+    label_size: f32,
+    value_size: f32,
+    header_size: f32,
+}
+
+impl SensitivityStyle {
+    /// The forecast-index panel — narrow column, dense.
+    const COMPACT: Self = Self {
+        label_w: 100.0,
+        bar_w: 180.0,
+        row_h: 14.0,
+        label_size: 8.0,
+        value_size: 7.0,
+        header_size: 8.0,
+    };
+    /// The wiki tab — more room to breathe.
+    const WIDE: Self = Self {
+        label_w: 140.0,
+        bar_w: 260.0,
+        row_h: 16.0,
+        label_size: 9.0,
+        value_size: 8.0,
+        header_size: 9.0,
+    };
+}
+
+/// Build a [`SobolLayout`] from the stored `(first, total)` pairs.
+fn sobol_layout_from(
+    m: &std::collections::HashMap<String, (f64, f64)>,
+) -> fermi_console::plot::SobolLayout {
+    fermi_console::plot::SobolLayout::new(m.iter().map(|(name, (s1, st))| (name.clone(), *s1, *st)))
+}
+
+/// One bar's worth of display data.
+struct SensitivityRow {
+    display: String,
+    /// Bar length driver: the Sobol total-order index, or — before any
+    /// sim has run — the driver's raw p95−p5 spread.
+    total: f64,
+    /// Portion of `total` this driver explains alone. Equals `total` in
+    /// the spread fallback, so the bar renders as one solid segment and
+    /// doesn't imply a split we haven't measured.
+    first: f64,
+    rank_delta: Option<i32>,
+    interaction_dominated: bool,
+    ev_count: usize,
+}
+
+/// Count evidence items attributable to a driver, either directly by id
+/// or via an agent that references it.
+fn driver_evidence_count(state: &CockpitState, driver_name: &str) -> usize {
+    let owner = driver_name.to_string();
+    state
+        .program
+        .evidence_items()
+        .iter()
+        .filter(|e| {
+            e.id.contains(driver_name)
+                || state
+                    .program
+                    .agents()
+                    .iter()
+                    .filter(|a| a.driver_refs.contains(&owner))
+                    .any(|a| evidence_matches_agent(e, &a.name))
+        })
+        .count()
+}
+
+/// Assemble the rows, plus the layout when real Sobol data exists.
+///
+/// With Sobol data the rows come back **sorted by influence** — it's a
+/// tornado chart, and the ordering is the first thing it says.
+/// `SobolLayout` breaks ties by name so the order is stable across
+/// re-renders and the operator's spatial memory survives.
+fn sensitivity_rows(
+    state: &CockpitState,
+) -> (
+    Vec<SensitivityRow>,
+    Option<fermi_console::plot::SobolLayout>,
+) {
+    let drivers = state.program.drivers();
+
+    if state.driver_sensitivity.is_empty() {
+        let rows = drivers
+            .iter()
+            .map(|d| {
+                // Pre-sim fallback: the driver's own spread. Not a Sobol
+                // index and not comparable to one, which is why the
+                // header labels it differently.
+                let spread = match d.driver_type {
+                    DriverType::Continuous => {
+                        if let Some(Distribution::Triangular {
+                            ref p5, ref p95, ..
+                        }) = d.distribution
+                        {
+                            (expr_to_f64(p95) - expr_to_f64(p5)).abs().max(0.01)
+                        } else {
+                            0.5
+                        }
+                    }
+                    DriverType::Binary => {
+                        d.probability.unwrap_or(0.5) * d.impact_multiplier.unwrap_or(1.0)
+                    }
+                    _ => 0.5,
+                };
+                SensitivityRow {
+                    display: d.display_name.as_deref().unwrap_or(&d.name).to_string(),
+                    total: spread,
+                    first: spread,
+                    rank_delta: None,
+                    interaction_dominated: false,
+                    ev_count: driver_evidence_count(state, &d.name),
+                }
+            })
+            .collect();
+        return (rows, None);
+    }
+
+    let mut layout = sobol_layout_from(&state.driver_sensitivity);
+    if let Some(prev) = state.sobol_previous.as_ref() {
+        layout = layout.diff_against(prev);
+    }
+
+    let rows = layout
+        .bars
+        .iter()
+        .map(|bar| {
+            let display = drivers
+                .iter()
+                .find(|d| d.name == bar.name)
+                .and_then(|d| d.display_name.clone())
+                .unwrap_or_else(|| bar.name.clone());
+            SensitivityRow {
+                display,
+                total: bar.total_order.max(0.001),
+                first: bar.first_order,
+                // A rank that didn't move isn't news; suppress the chip.
+                rank_delta: bar.rank_delta.filter(|d| *d != 0),
+                interaction_dominated: bar.is_interaction_dominated(),
+                ev_count: driver_evidence_count(state, &bar.name),
+            }
+        })
+        .collect();
+
+    (rows, Some(layout))
+}
+
+/// The sensitivity bar chart. Native GPUI divs — no bitmap, no atlas.
+fn render_sensitivity_bars(state: &CockpitState, s: &SensitivityStyle) -> gpui::AnyElement {
+    let (rows, layout) = sensitivity_rows(state);
+    if rows.is_empty() {
+        return div().into_any_element();
+    }
+
+    let max_total = rows.iter().map(|r| r.total).fold(0.01_f64, f64::max);
+    let has_sobol = layout.is_some();
+
+    // Drivers the program has but the last sim didn't measure — added
+    // or renamed since. They deliberately get a count rather than a
+    // bar: their spread is not a Sobol index, and drawing the two in
+    // the same axis would invite exactly the apples-to-oranges reading
+    // this chart is trying to stop.
+    let unmeasured = if has_sobol {
+        state
+            .program
+            .drivers()
+            .iter()
+            .filter(|d| !state.driver_sensitivity.contains_key(&d.name))
+            .count()
+    } else {
+        0
+    };
+
+    // ── Header ──────────────────────────────────────────────────────
+    //
+    // Before a sim, say plainly that this is spread and not influence.
+    // After one, name the two segments so the split is legible without
+    // a separate legend.
+    let header = div()
+        .flex()
+        .items_center()
+        .gap(px(6.0))
+        .text_size(px(s.header_size))
+        .child(div().text_color(rgb(theme::FG_FAINT)).child(if has_sobol {
+            "Driver influence"
+        } else {
+            "Driver spread — run a sim for Sobol influence"
+        }))
+        .when(has_sobol, |el| {
+            el.child(div().text_color(rgb(theme::CYAN)).child("▮ direct"))
+                .child(div().text_color(rgb(theme::PURPLE)).child("▮ interaction"))
+        });
+
+    // ── Structural summary ──────────────────────────────────────────
+    //
+    // Two facts that live in the layout as a whole rather than in any
+    // one bar, and that change what the operator should do next:
+    //
+    //   • additive fraction — when the first-order indices sum well
+    //     below 1, the model's variance lives in couplings, and
+    //     "tighten driver X" is unsound advice however tall X's bar is.
+    //   • dominance — `dominant()` returns None when no driver is
+    //     clearly ahead, which is precisely when reading the top bar as
+    //     "the important one" would be over-reading noise.
+    let summary = layout.as_ref().and_then(|l| {
+        use fermi_console::plot::sobol::Verdict;
+        let (msg, color) = match l.verdict() {
+            Verdict::NoData => return None,
+            Verdict::Dominant { name, share } => (
+                format!(
+                    "{} dominates ({:.0}% of variance) — tightening it should move the forecast",
+                    name,
+                    share * 100.0
+                ),
+                theme::GREEN,
+            ),
+            Verdict::DominantButCoupled { name, additive } => (
+                format!(
+                    "{} leads, but only {:.0}% of variance is additive — its influence is mostly coupling",
+                    name,
+                    additive * 100.0
+                ),
+                theme::PURPLE,
+            ),
+            Verdict::SpreadAndCoupled { additive } => (
+                format!(
+                    "influence is spread and only {:.0}% additive — no single prior to tighten",
+                    additive * 100.0
+                ),
+                theme::PURPLE,
+            ),
+            Verdict::Spread => (
+                "influence is spread across several independent drivers".to_string(),
+                theme::FG_DIM,
+            ),
+        };
+        Some(
+            div()
+                .text_size(px(s.value_size))
+                .text_color(rgb(color))
+                .child(msg),
+        )
+    });
+
+    let mut root = div().flex().flex_col().gap(px(2.0)).child(header);
+
+    root = root.children(rows.into_iter().map(|r| {
+        // Bar geometry. The two segments are drawn as adjacent divs so
+        // their widths sum to the total-order length — the eye reads
+        // the whole bar as influence and the split as its composition.
+        let total_frac = (r.total / max_total).clamp(0.05, 1.0);
+        let total_w = total_frac as f32 * s.bar_w;
+        // `first` can exceed `total` only through estimator noise, which
+        // `SobolBar::new` already clamps; belt-and-braces here so a bad
+        // fallback value can't produce a negative-width div.
+        let first_w = ((r.first / r.total.max(1e-9)).clamp(0.0, 1.0) as f32 * total_w).min(total_w);
+        let interaction_w = (total_w - first_w).max(0.0);
+
+        let ev_color = if r.ev_count >= 3 {
+            theme::GREEN
+        } else if r.ev_count >= 1 {
+            theme::GOLD
+        } else {
+            theme::FG_FAINT
+        };
+
+        div()
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .h(px(s.row_h))
+            .child(
+                div()
+                    .w(px(s.label_w))
+                    .text_size(px(s.label_size))
+                    .text_color(rgb(theme::FG_DIM))
+                    .overflow_hidden()
+                    .child(r.display.clone()),
+            )
+            // The bar: direct segment, then interaction segment.
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .w(px(s.bar_w))
+                    .child(
+                        div()
+                            .h(px(8.0))
+                            .w(px(first_w))
+                            .rounded_l(px(2.0))
+                            .bg(rgba(0x5CCFE6CC)),
+                    )
+                    .child(
+                        div()
+                            .h(px(8.0))
+                            .w(px(interaction_w))
+                            .rounded_r(px(2.0))
+                            .bg(rgba(0xD4BFFF99)),
+                    ),
+            )
+            // Total-order value.
+            .child(
+                div()
+                    .text_size(px(s.value_size))
+                    .text_color(rgb(theme::FG_FAINT))
+                    .child(format!("{:.2}", r.total)),
+            )
+            // Coupling marker — this driver's influence is mostly
+            // interactive, so tightening it alone won't help.
+            .when(r.interaction_dominated, |el| {
+                el.child(
+                    div()
+                        .text_size(px(s.value_size))
+                        .text_color(rgb(theme::PURPLE))
+                        .child("⋈"),
+                )
+            })
+            // Rank movement since the previous sim.
+            .when_some(r.rank_delta, |el, delta| {
+                let (glyph, color) = if delta > 0 {
+                    ("▲", theme::GREEN)
+                } else {
+                    ("▼", theme::ORANGE)
+                };
+                el.child(
+                    div()
+                        .text_size(px(s.value_size))
+                        .text_color(rgb(color))
+                        .child(format!("{}{}", glyph, delta.abs())),
+                )
+            })
+            // Evidence count.
+            .child(
+                div()
+                    .text_size(px(s.value_size))
+                    .text_color(rgb(ev_color))
+                    .child(if r.ev_count > 0 {
+                        format!("{}", r.ev_count)
+                    } else {
+                        "—".to_string()
+                    }),
+            )
+    }));
+
+    if let Some(sum) = summary {
+        root = root.child(sum);
+    }
+
+    if unmeasured > 0 {
+        root = root.child(
+            div()
+                .text_size(px(s.value_size))
+                .text_color(rgb(theme::GOLD))
+                .child(format!(
+                    "{} driver{} added since the last sim — re-run for their influence",
+                    unmeasured,
+                    if unmeasured == 1 { "" } else { "s" }
+                )),
+        );
+    }
+
+    root.into_any_element()
+}
+
 /// Forecast Index — the key visualization section shown above drivers.
 /// Displays inside/outside divergence, simulation stats, histogram,
 /// index comparison chart, and evidence treemap.
@@ -15379,138 +15995,15 @@ fn render_forecast_index(state: &CockpitState, cx: &mut Context<CockpitState>) -
                         }),
                 )
         })
-        // ── Driver Sensitivity Bar Chart (native GPUI) ─────────────
-        // Horizontal bars sized by impact spread (p95−p5).
-        // Evidence quality shown as a colored dot at bar end.
-        // Click a bar to focus that driver.
+        // ── Driver sensitivity ─────────────────────────────────────
+        //
+        // Shared with the wiki tab; see `render_sensitivity_bars`.
         .when(has_drivers, |el| {
-            // Compute driver impact data
-            let drivers_data: Vec<(String, String, f64, usize)> = state
-                .program
-                .drivers()
-                .iter()
-                .map(|d| {
-                    let display = d.display_name.as_deref().unwrap_or(&d.name).to_string();
-                    let name = d.name.clone();
-                    // Prefer the Sobol total-order index (true variance-based
-                    // influence) from the last sim; fall back to p95−p5 spread
-                    // when no sensitivity has been computed yet.
-                    let impact = state
-                        .driver_sensitivity
-                        .get(&d.name)
-                        .copied()
-                        .map(|s| s.max(0.001))
-                        .unwrap_or_else(|| match d.driver_type {
-                            DriverType::Continuous => {
-                                if let Some(Distribution::Triangular {
-                                    ref p5, ref p95, ..
-                                }) = d.distribution
-                                {
-                                    (expr_to_f64(p95) - expr_to_f64(p5)).abs().max(0.01)
-                                } else {
-                                    0.5
-                                }
-                            }
-                            DriverType::Binary => {
-                                d.probability.unwrap_or(0.5) * d.impact_multiplier.unwrap_or(1.0)
-                            }
-                            _ => 0.5,
-                        });
-                    let ev_count = state
-                        .program
-                        .evidence_items()
-                        .iter()
-                        .filter(|e| {
-                            state.program.agents().iter()
-                                .filter(|a| a.driver_refs.contains(&d.name))
-                                .any(|a| evidence_matches_agent(e, &a.name))
-                                || e.id.contains(&d.name)
-                        })
-                        .count();
-                    (name, display, impact, ev_count)
-                })
-                .collect();
-
-            let max_impact = drivers_data.iter().map(|(_, _, imp, _)| *imp).fold(0.01_f64, f64::max);
-
-            if !drivers_data.is_empty() {
-                el.child(
-                    div()
-                        .px(px(12.0))
-                        .flex()
-                        .flex_col()
-                        .gap(px(2.0))
-                        .child(
-                            div()
-                                .text_size(px(8.0))
-                                .text_color(rgb(theme::FG_FAINT))
-                                .child(if state.driver_sensitivity.is_empty() {
-                                    "Driver sensitivity (spread)  ·  evidence — run a sim for Sobol influence"
-                                } else {
-                                    "Driver influence (Sobol total-order)  ·  evidence"
-                                }),
-                        )
-                        .children(drivers_data.iter().map(|(name, display, impact, ev_count)| {
-                            let bar_frac = (impact / max_impact).clamp(0.05, 1.0);
-                            let bar_width = (bar_frac * 200.0) as f32;
-                            let ev_color = if *ev_count >= 3 {
-                                theme::GREEN
-                            } else if *ev_count >= 1 {
-                                theme::GOLD
-                            } else {
-                                theme::FG_FAINT
-                            };
-                            let ev_label = if *ev_count > 0 {
-                                format!("{}", ev_count)
-                            } else {
-                                "—".to_string()
-                            };
-                            let n = name.clone();
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(4.0))
-                                .h(px(14.0))
-                                .cursor_pointer()
-                                .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
-                                    cx.stop_propagation();
-                                })
-                                // Driver label — fixed width, right-aligned
-                                .child(
-                                    div()
-                                        .w(px(100.0))
-                                        .text_size(px(8.0))
-                                        .text_color(rgb(theme::FG_DIM))
-                                        .overflow_hidden()
-                                        .child(display.clone()),
-                                )
-                                // Bar — single color, width proportional to sensitivity
-                                .child(
-                                    div()
-                                        .h(px(8.0))
-                                        .w(px(bar_width))
-                                        .rounded(px(2.0))
-                                        .bg(rgba(0x5CCFE680)),
-                                )
-                                // Impact value
-                                .child(
-                                    div()
-                                        .text_size(px(7.0))
-                                        .text_color(rgb(theme::FG_FAINT))
-                                        .child(format!("{:.2}", impact)),
-                                )
-                                // Evidence dot
-                                .child(
-                                    div()
-                                        .text_size(px(7.0))
-                                        .text_color(rgb(ev_color))
-                                        .child(ev_label),
-                                )
-                        })),
-                )
-            } else {
-                el
-            }
+            el.child(
+                div()
+                    .px(px(12.0))
+                    .child(render_sensitivity_bars(state, &SensitivityStyle::COMPACT)),
+            )
         })
         // Ctrl+R hint if no sim yet
         .when(
@@ -15733,15 +16226,18 @@ fn render_stat(label: &str, value: f64, color: u32) -> impl IntoElement {
         )
 }
 
-fn render_histogram(bins: &[u32]) -> impl IntoElement {
-    let chart_w = 400u32;
-    let chart_h = 80u32;
-    let rgb_buf = crate::charts::render_histogram_chart(bins, chart_w, chart_h);
-    let render_img = crate::charts::rgb_to_render_image(&rgb_buf, chart_w, chart_h);
-
-    gpui::img(gpui::ImageSource::Render(render_img))
-        .w(gpui::px(chart_w as f32))
-        .h(gpui::px(chart_h as f32))
+/// Outcome distribution for the last simulation.
+///
+/// `bins` are counts over the simulation's output range. When that
+/// range is known, pass it as `domain` so the x-axis reads in the
+/// forecast's own units instead of bin indices — the bitmap version
+/// had no axis at all, which meant the operator could see the *shape*
+/// of the outcome but not read a single value off it.
+fn render_histogram(bins: &[u32], domain: Option<(f64, f64)>) -> impl IntoElement {
+    let (lo, hi) = domain.unwrap_or((0.0, bins.len().max(1) as f64));
+    crate::viz::distribution::DistributionPlot::from_bins(bins, lo, hi)
+        .size(400.0, 80.0)
+        .background(theme::BG)
 }
 
 /// Polymarket type-ahead strip — the zero-friction PM integration.
@@ -18940,15 +19436,17 @@ fn render_trajectory_body(
     );
     let earliest = all_ts.iter().min().cloned();
 
-    let worm_points: Vec<crate::charts::TrajectoryPoint> = rate_series
+    use crate::viz::trajectory::{Event as TrajEvent, EventKind, Point as TrajPoint};
+
+    let worm_points: Vec<TrajPoint> = rate_series
         .iter()
         .filter_map(|p| {
             let ts = parse_ts(p.get("ts")?.as_str()?)?;
             let rate = p.get("rate")?.as_f64()?;
             let t_secs = (ts - earliest?).num_milliseconds() as f64 / 1000.0;
-            Some(crate::charts::TrajectoryPoint {
-                t_seconds: t_secs,
-                rate_pct: rate * 100.0,
+            Some(TrajPoint {
+                t: t_secs,
+                pct: rate * 100.0,
             })
         })
         .collect();
@@ -18958,36 +19456,45 @@ fn render_trajectory_body(
         worm_points
             .iter()
             .min_by(|a, b| {
-                (a.t_seconds - target)
+                (a.t - target)
                     .abs()
-                    .partial_cmp(&(b.t_seconds - target).abs())
+                    .partial_cmp(&(b.t - target).abs())
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
-            .map(|p| p.rate_pct)
+            .map(|p| p.pct)
             .unwrap_or(2.08)
     };
 
-    let worm_events: Vec<crate::charts::TrajectoryEvent> = events_arr
+    let worm_events: Vec<TrajEvent> = events_arr
         .iter()
         .filter_map(|ev| {
             let ts = parse_ts(ev.get("ts")?.as_str()?)?;
             let kind_str = ev.get("kind").and_then(|v| v.as_str()).unwrap_or("");
             let kind = match kind_str {
-                "rate_revision" => crate::charts::TrajectoryEventKind::RateRevision,
-                "bayesops_fit" => crate::charts::TrajectoryEventKind::BayesOpsFit,
-                "agent_run" => crate::charts::TrajectoryEventKind::AgentRun,
-                "market_observation" => crate::charts::TrajectoryEventKind::MarketObservation,
-                _ => crate::charts::TrajectoryEventKind::AgentRun,
+                "rate_revision" => EventKind::RateRevision,
+                "bayesops_fit" => EventKind::BayesOpsFit,
+                "agent_run" => EventKind::AgentRun,
+                "market_observation" => EventKind::MarketObservation,
+                _ => EventKind::AgentRun,
             };
-            let rate_pct = ev
-                .get("predicted_probability")
-                .and_then(|v| v.as_f64())
-                .map(|p| p * 100.0)
-                .unwrap_or_else(|| rate_at(ts));
+            // Only a rate revision genuinely carries its own resulting
+            // probability. For the rest, leaving `pct` unset lets the
+            // correlation layer anchor the marker to the worm — which
+            // is honest — rather than implying the event *set* a value
+            // it merely happened alongside.
+            let pct = match kind {
+                EventKind::RateRevision => Some(
+                    ev.get("predicted_probability")
+                        .and_then(|v| v.as_f64())
+                        .map(|p| p * 100.0)
+                        .unwrap_or_else(|| rate_at(ts)),
+                ),
+                _ => None,
+            };
             let t_secs = (ts - earliest?).num_milliseconds() as f64 / 1000.0;
-            Some(crate::charts::TrajectoryEvent {
-                t_seconds: t_secs,
-                rate_pct,
+            Some(TrajEvent {
+                t: t_secs,
+                pct,
                 kind,
             })
         })
@@ -19022,15 +19529,15 @@ fn render_trajectory_body(
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    let mut crowd_points: Vec<crate::charts::TrajectoryPoint> = market_series_json
+    let mut crowd_points: Vec<TrajPoint> = market_series_json
         .iter()
         .filter_map(|p| {
             let ts = parse_ts(p.get("ts")?.as_str()?)?;
             let price = p.get("market_price")?.as_f64()?;
             let t_secs = (ts - earliest?).num_milliseconds() as f64 / 1000.0;
-            Some(crate::charts::TrajectoryPoint {
-                t_seconds: t_secs,
-                rate_pct: price * 100.0,
+            Some(TrajPoint {
+                t: t_secs,
+                pct: price * 100.0,
             })
         })
         .collect();
@@ -19043,12 +19550,12 @@ fn render_trajectory_body(
         let live_pct = price * 100.0;
         let is_dupe = crowd_points
             .last()
-            .map(|p| (p.rate_pct - live_pct).abs() < 0.05 && (t_secs - p.t_seconds).abs() < 30.0)
+            .map(|p| (p.pct - live_pct).abs() < 0.05 && (t_secs - p.t).abs() < 30.0)
             .unwrap_or(false);
         if !is_dupe {
-            crowd_points.push(crate::charts::TrajectoryPoint {
-                t_seconds: t_secs,
-                rate_pct: live_pct,
+            crowd_points.push(TrajPoint {
+                t: t_secs,
+                pct: live_pct,
             });
         }
     }
@@ -19061,45 +19568,26 @@ fn render_trajectory_body(
         .and_then(parse_ts)
         .and_then(|t| earliest.map(|e| (t - e).num_milliseconds() as f64 / 1000.0));
 
-    let chart_w: u32 = 800;
-    let chart_h: u32 = 240;
-    let worm_buf = crate::charts::render_trajectory_worm(
-        &worm_points,
-        &crowd_points,
-        &worm_events,
-        base_rate_pct,
-        crowd_price_pct,
-        earliest,
-        resolved_at_secs,
-        chart_w,
-        chart_h,
-    );
-    let worm_img = crate::charts::rgb_to_render_image(&worm_buf, chart_w, chart_h);
+    // ── Vector trajectory chart ────────────────────────────────
+    //
+    // Replaces the plotters bitmap plus its parallel coordinate-space
+    // re-derivation (`trajectory_plot_bounds`) plus the 60 invisible
+    // hover strips. One `Frame` now serves both painting and
+    // hit-testing, so the readout can no longer drift off the dots it
+    // describes — and nothing touches the sprite atlas, which is what
+    // made the old chart flicker under a mouse sweep.
+    let chart_w: f32 = 800.0;
+    let chart_h: f32 = 260.0;
 
-    // Plot bounds — shared between the event pixel-position math and the
-    // new time-anchored hover overlay. Both need the same coord space
-    // as the rendered bitmap, so they read from the same helper.
-    let plot_bounds = crate::charts::trajectory_plot_bounds(
-        &worm_points,
-        &crowd_points,
-        &worm_events,
+    let traj_data = crate::viz::trajectory::TrajectoryData {
+        model: worm_points.clone(),
+        crowd: crowd_points.clone(),
+        events: worm_events,
         base_rate_pct,
         crowd_price_pct,
-        chart_w,
-        chart_h,
-    );
-
-    // Compute pixel positions of every event so we can put hover divs
-    // over them. Same coordinate-space math the chart used internally.
-    let event_pixels = crate::charts::trajectory_event_pixel_positions(
-        &worm_events,
-        &worm_points,
-        &crowd_points,
-        base_rate_pct,
-        crowd_price_pct,
-        chart_w,
-        chart_h,
-    );
+        resolved_at: resolved_at_secs,
+        epoch: earliest,
+    };
 
     // Live divergence, computed once for the header. Colour + arrow
     // encode the direction and magnitude so the operator's eye lands
@@ -19208,8 +19696,8 @@ fn render_trajectory_body(
                 // walking together; if the model moved +8pp and the
                 // crowd moved −2pp, we're the ones taking a position.
                 .when(!crowd_points.is_empty(), {
-                    let first = crowd_points.first().map(|p| p.rate_pct);
-                    let last = crowd_points.last().map(|p| p.rate_pct);
+                    let first = crowd_points.first().map(|p| p.pct);
+                    let last = crowd_points.last().map(|p| p.pct);
                     move |el| match (first, last) {
                         (Some(f), Some(l)) => {
                             let arrow = if l - f > 0.5 {
@@ -19235,222 +19723,68 @@ fn render_trajectory_body(
                 .child(format!("{} PM ticks", market_count)),
         );
 
-    // ── Worm chart slot with interactive hover overlays ─────────────
+    // ── Worm chart slot ─────────────────────────────────────────────
     //
-    // The chart bitmap is rendered at fixed (chart_w, chart_h). Three
-    // layers of interactivity sit on top:
+    // One element, one coordinate space, real mouse coordinates.
     //
-    //   1. Time-anchored hover: a full-plot-area listener tracks the
-    //      mouse position so we can render a vertical guide + tooltip
-    //      showing model/crowd/divergence at that instant. This is the
-    //      "scrub the timeline" affordance — the operator can trace a
-    //      finger across the chart and see the numbers evolve.
-    //   2. Per-event hitboxes: 16×16 invisible divs at each event dot
-    //      trigger the event-list highlight + rich tooltip below.
-    //   3. The bitmap itself renders the worms, divergence fill, and
-    //      static markers.
+    // What this replaces: an `img` of a plotters bitmap, 60 invisible
+    // "strip" divs used to infer the cursor's x-position by which one
+    // reported a hover, one 16×16 hitbox div per event, and a floating
+    // pill tooltip positioned by hand. Roughly 250 lines whose entire
+    // purpose was working around the fact that a bitmap can't tell you
+    // where the mouse is.
     //
-    // Ordering matters: event hitboxes render AFTER the plot-area
-    // listener so they capture the hover first when the mouse is over
-    // a dot.
-    let mut chart_overlay = div()
+    // `TrajectoryPlot::probe` inverts a pixel back through the very
+    // `Frame` the painter used, so the value in the readout is the
+    // value under the cursor by construction — not by two pieces of
+    // arithmetic agreeing.
+    let traj_surface = state.trajectory_surface.clone();
+    let probe_plot =
+        crate::viz::trajectory::TrajectoryPlot::new(traj_data.clone()).size(chart_w, chart_h);
+    let probe_surface = traj_surface.clone();
+
+    let chart_overlay = div()
+        .id("trajectory-plot")
         .relative()
-        .w(px(chart_w as f32))
-        .h(px(chart_h as f32))
+        .w(px(chart_w))
+        .h(px(chart_h))
         .child(
-            gpui::img(worm_img)
-                .w(px(chart_w as f32))
-                .h(px(chart_h as f32)),
-        );
-
-    // Time-anchored hover — approach:
-    //
-    // GPUI's on_mouse_move gives window-relative coords and we don't
-    // have a clean way to know the chart_overlay's window offset
-    // inside a listener closure. Instead of chasing that, divide the
-    // plot area into a strip grid: each strip is a hoverable div
-    // whose canvas-local x is baked into its closure. When a strip is
-    // hovered, we know exactly which time-slice the operator is on —
-    // no coord math required.
-    //
-    // 60 strips over ~700px of plot area = ~12px resolution. Finer than
-    // that visually flicker under fast mouse moves; coarser is
-    // noticeably choppy. Cost: 60 tiny interactive divs, cheap in GPUI.
-    let plot_area_left = plot_bounds.plot_left as f32;
-    let plot_area_top = plot_bounds.plot_top as f32;
-    let plot_area_w = (plot_bounds.plot_right - plot_bounds.plot_left) as f32;
-    let plot_area_h = (plot_bounds.plot_bot - plot_bounds.plot_top) as f32;
-    const N_STRIPS: usize = 60;
-    let strip_w = (plot_area_w / N_STRIPS as f32).max(1.0);
-    for i in 0..N_STRIPS {
-        let strip_left = plot_area_left + (i as f32) * strip_w;
-        let center_x = strip_left + strip_w / 2.0;
-        chart_overlay = chart_overlay.child(
-            div()
-                .id(ElementId::Name(format!("traj-strip-{}", i).into()))
-                .absolute()
-                .left(px(strip_left))
-                .top(px(plot_area_top))
-                .w(px(strip_w))
-                .h(px(plot_area_h))
-                .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
-                    if *hovered {
-                        let new = Some(center_x);
-                        if this.hovered_trajectory_x != new {
-                            this.hovered_trajectory_x = new;
-                            cx.notify();
-                        }
-                    } else if this.hovered_trajectory_x == Some(center_x) {
-                        this.hovered_trajectory_x = None;
-                        cx.notify();
-                    }
-                })),
-        );
-    }
-
-    for (i, (x_pix, y_pix)) in event_pixels.iter().enumerate() {
-        let hit_size = 16.0_f32;
-        let left = (*x_pix as f32) - hit_size / 2.0;
-        let top = (*y_pix as f32) - hit_size / 2.0;
-        let idx = i;
-        chart_overlay = chart_overlay.child(
-            div()
-                .id(ElementId::Name(format!("traj-hit-{}", i).into()))
-                .absolute()
-                .left(px(left))
-                .top(px(top))
-                .w(px(hit_size))
-                .h(px(hit_size))
-                .cursor_pointer()
-                .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
-                    if *hovered {
-                        if this.hovered_trajectory_event != Some(idx) {
-                            this.hovered_trajectory_event = Some(idx);
-                            cx.notify();
-                        }
-                    } else if this.hovered_trajectory_event == Some(idx) {
-                        this.hovered_trajectory_event = None;
-                        cx.notify();
-                    }
-                })),
-        );
-    }
-
-    // Vertical time-guide + tooltip. Rendered as siblings inside the
-    // chart_overlay so they position in canvas-local coords. Only
-    // visible when the operator is hovering the plot area.
-    if let Some(hover_x) = state.hovered_trajectory_x {
-        if let Some(t_secs) = plot_bounds.pixel_to_t_seconds(hover_x) {
-            let model_pct = crate::charts::interpolate_trajectory_rate(&worm_points, t_secs);
-            let crowd_pct = crate::charts::interpolate_trajectory_rate(&crowd_points, t_secs);
-
-            // Vertical guide line, drawn as a 1px div.
-            chart_overlay = chart_overlay.child(
-                div()
-                    .absolute()
-                    .left(px(hover_x))
-                    .top(px(plot_area_top))
-                    .w(px(1.0))
-                    .h(px(plot_area_h))
-                    .bg(rgb(theme::FG_DIM)),
-            );
-
-            // Little pill tooltip. Placed above the guide, or below if
-            // the mouse is near the top of the plot area. Content
-            // depends on which streams have coverage at t_secs.
-            let tooltip_top = if hover_x > (plot_area_left + plot_area_w * 0.5) {
-                plot_area_top + 4.0
-            } else {
-                plot_area_top + 4.0
-            };
-            // Anchor tooltip so it doesn't overrun the right edge when
-            // the mouse is near it.
-            let tooltip_left = if hover_x > (chart_w as f32 - 160.0) {
-                hover_x - 150.0
-            } else {
-                hover_x + 8.0
-            };
-
-            // Format the timestamp for the tooltip. Falls back to the
-            // raw offset when we lack an anchor.
-            let ts_label: String = match earliest {
-                Some(anchor) => {
-                    let ts = anchor + chrono::Duration::milliseconds((t_secs * 1000.0) as i64);
-                    ts.format("%b %-d, %H:%M").to_string()
+            crate::viz::trajectory::TrajectoryPlot::new(traj_data)
+                .size(chart_w, chart_h)
+                .cursor_x(state.hovered_trajectory_x)
+                .selected_event(state.hovered_trajectory_event)
+                .surface(traj_surface),
+        )
+        // Continuous scrubbing. The old strip grid quantised to ~12px
+        // and fired a notify — and therefore a full re-rasterisation —
+        // on every strip boundary crossed.
+        .on_mouse_move(
+            cx.listener(move |this, ev: &gpui::MouseMoveEvent, _window, cx| {
+                let Some((lx, ly)) = probe_surface.local(ev.position) else {
+                    return;
+                };
+                let probe = probe_plot.probe(lx, ly);
+                let new_x = probe.as_ref().map(|_| lx as f32);
+                // Chart → list brushing: whatever the cursor is nearest
+                // also highlights in the event list below.
+                let new_event = probe.as_ref().and_then(|p| p.event);
+                if this.hovered_trajectory_x != new_x || this.hovered_trajectory_event != new_event
+                {
+                    this.hovered_trajectory_x = new_x;
+                    this.hovered_trajectory_event = new_event;
+                    cx.notify();
                 }
-                None => format!("+{:.1}d", t_secs / 86400.0),
-            };
-
-            let divergence: Option<f64> = match (model_pct, crowd_pct) {
-                (Some(m), Some(c)) => Some(m - c),
-                _ => None,
-            };
-
-            let mut tooltip = div()
-                .absolute()
-                .left(px(tooltip_left))
-                .top(px(tooltip_top))
-                .flex()
-                .flex_col()
-                .gap(px(2.0))
-                .px(px(8.0))
-                .py(px(6.0))
-                .rounded(px(4.0))
-                .bg(theme::bg_elevated())
-                .border_1()
-                .border_color(theme::fg_faint())
-                .text_size(px(10.0))
-                .child(
-                    div()
-                        .text_color(rgb(theme::FG))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(ts_label),
-                );
-            if let Some(m) = model_pct {
-                tooltip = tooltip.child(
-                    div()
-                        .text_color(rgb(theme::CYAN))
-                        .child(format!("model  {:.1}%", m)),
-                );
+            }),
+        )
+        .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
+            if !*hovered
+                && (this.hovered_trajectory_x.is_some() || this.hovered_trajectory_event.is_some())
+            {
+                this.hovered_trajectory_x = None;
+                this.hovered_trajectory_event = None;
+                cx.notify();
             }
-            if let Some(c) = crowd_pct {
-                tooltip = tooltip.child(
-                    div()
-                        .text_color(rgb(theme::PURPLE))
-                        .child(format!("crowd  {:.1}%", c)),
-                );
-            }
-            if let Some(d) = divergence {
-                let arrow = if d > 0.0 {
-                    "▲"
-                } else if d < 0.0 {
-                    "▼"
-                } else {
-                    "●"
-                };
-                // Divergence colour: neutral FG for tight, RED only when
-                // the gap is meaningful. Avoids the previous three-way
-                // clash where mid-divergence GOLD collided with the base-
-                // rate line + BayesOps-fit legend chip. The arrow + sign
-                // already communicate direction, so colour is reserved
-                // for magnitude urgency.
-                let color = if d.abs() < 5.0 {
-                    theme::FG
-                } else if d.abs() < 15.0 {
-                    theme::FG_DIM
-                } else {
-                    theme::RED
-                };
-                tooltip = tooltip.child(
-                    div()
-                        .text_color(rgb(color))
-                        .child(format!("Δ      {} {:+.1}pp", arrow, d)),
-                );
-            }
-            let _ = tooltip_top; // silence unused when compiled without warnings
-            chart_overlay = chart_overlay.child(tooltip);
-        }
-    }
+        }));
 
     let worm = div()
         .px(px(16.0))
@@ -21342,113 +21676,11 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                     );
                 }
 
-                // Driver sensitivity — native GPUI bar chart (no bitmap)
+                // Driver sensitivity — native GPUI bar chart (no bitmap).
+                // Shared with the forecast-index panel.
                 if !drivers.is_empty() {
-                    let drivers_data: Vec<(String, f64, usize)> = drivers
-                        .iter()
-                        .map(|d| {
-                            let display = d.display_name.as_deref().unwrap_or(&d.name).to_string();
-                            // Sobol total-order index when available, else spread.
-                            let impact = state
-                                .driver_sensitivity
-                                .get(&d.name)
-                                .copied()
-                                .map(|s| s.max(0.001))
-                                .unwrap_or_else(|| match d.driver_type {
-                                    DriverType::Continuous => {
-                                        if let Some(Distribution::Triangular {
-                                            ref p5, ref p95, ..
-                                        }) = d.distribution
-                                        {
-                                            (expr_to_f64(p95) - expr_to_f64(p5)).abs().max(0.01)
-                                        } else {
-                                            0.5
-                                        }
-                                    }
-                                    DriverType::Binary => {
-                                        d.probability.unwrap_or(0.5)
-                                            * d.impact_multiplier.unwrap_or(1.0)
-                                    }
-                                    _ => 0.5,
-                                });
-                            let ev_count = evidence
-                                .iter()
-                                .filter(|e| {
-                                    e.id.contains(&d.name)
-                                        || agents
-                                            .iter()
-                                            .filter(|a| a.driver_refs.contains(&d.name))
-                                            .any(|a| evidence_matches_agent(e, &a.name))
-                                })
-                                .count();
-                            (display, impact, ev_count)
-                        })
-                        .collect();
-
-                    let max_impact = drivers_data.iter().map(|(_, imp, _)| *imp).fold(0.01_f64, f64::max);
-
-                    if !drivers_data.is_empty() {
-                        chart_children.push(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(px(2.0))
-                                .child(
-                                    div()
-                                        .text_size(px(9.0))
-                                        .text_color(rgb(theme::FG_FAINT))
-                                        .child(if state.driver_sensitivity.is_empty() {
-                                            "Driver sensitivity (spread) · evidence"
-                                        } else {
-                                            "Driver influence (Sobol total-order) · evidence"
-                                        }),
-                                )
-                                .children(drivers_data.iter().map(|(display, impact, ev_count)| {
-                                    let bar_frac = (impact / max_impact).clamp(0.05, 1.0);
-                                    let bar_width = (bar_frac * 280.0) as f32;
-                                    let ev_color = if *ev_count >= 3 {
-                                        theme::GREEN
-                                    } else if *ev_count >= 1 {
-                                        theme::GOLD
-                                    } else {
-                                        theme::FG_FAINT
-                                    };
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(6.0))
-                                        .h(px(16.0))
-                                        .child(
-                                            div()
-                                                .w(px(140.0))
-                                                .text_size(px(9.0))
-                                                .text_color(rgb(theme::FG_DIM))
-                                                .overflow_hidden()
-                                                .child(display.clone()),
-                                        )
-                                        .child(
-                                            div()
-                                                .h(px(6.0))
-                                                .w(px(bar_width))
-                                                .rounded(px(1.0))
-                                                .bg(rgba(0x5CCFE670)),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_size(px(8.0))
-                                                .text_color(rgb(theme::FG_FAINT))
-                                                .child(format!("{:.2}", impact)),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_size(px(8.0))
-                                                .text_color(rgb(ev_color))
-                                                .child(if *ev_count > 0 { format!("{}", ev_count) } else { "—".to_string() }),
-                                        )
-                                }))
-                                .into_any_element(),
-                        );
-                    }
+                    chart_children
+                        .push(render_sensitivity_bars(state, &SensitivityStyle::WIDE));
                 }
 
                 if chart_children.is_empty() {

@@ -33,9 +33,17 @@
 //! is silent data loss, and which therefore has no business being
 //! untestable.
 //!
+//! [`plot`] holds the geometry and statistics behind every chart —
+//! scales, frames, density estimation, Sobol layout. It is deliberately
+//! GPUI-free so that "is the hover overlay actually on top of the dot?"
+//! and "does this curve show both modes?" are assertions rather than
+//! things someone eyeballs at 2am. The binary's `viz` module does the
+//! painting and owns all the `gpui` types.
+//!
 //! Candidates to migrate here as they're decoupled from GPUI: the FPL
 //! action-marker parser in `chat.rs` and the Anthropic error extractor
 //! in `cockpit.rs`, both of which currently have tests that can't run.
 
+pub mod plot;
 pub mod updater;
 pub mod wire;
