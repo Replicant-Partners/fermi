@@ -33,8 +33,8 @@ use fermi::gas::GasFees;
 use tokio::sync::broadcast;
 
 use agent_bestiary_memory::{
-    Agent, AnthropicEmbeddings, EmbeddingGenerator, Episode, ExecutionStatus, MemoryStore,
-    MockEmbeddings,
+    Agent, EmbeddingGenerator, Episode, ExecutionStatus, MemoryStore, MockEmbeddings,
+    OpenAIEmbeddings,
 };
 use agent_bestiary_ontology::{GitConfig, WorkspaceGitManager};
 use agent_bestiary_projector::{ProjectionCache, ProjectionEngine};
@@ -822,6 +822,11 @@ async fn run_migrations(db: &PgPool) {
         // coherence scores are derived from the agents; when the
         // agent goes away, the derived rows are meaningless.
         "migrations/169_akp_foundation_fks_cascade.sql",
+        // v0.10.26: backfill agent_id into fermi_forecasts.agents_used so
+        // resolved-forecast brier scores become attributable to agents
+        // (Loop 5 join is on agent_id; data was keyed by name only).
+        // Idempotent; already applied to prod out-of-band 2026-08-03.
+        "migrations/170_backfill_agents_used_agent_id.sql",
     ];
 
     for file in &migration_files {
@@ -1443,14 +1448,27 @@ async fn main() {
     };
 
     // Initialize embedding generator
-    let embedder: Arc<dyn EmbeddingGenerator> =
-        if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
-            println!("Using Anthropic embeddings (voyage-2)");
-            Arc::new(AnthropicEmbeddings::new(api_key))
-        } else {
-            println!("No ANTHROPIC_API_KEY, using mock embeddings");
-            Arc::new(MockEmbeddings::new(1024))
-        };
+    let embedder: Arc<dyn EmbeddingGenerator> = if let Ok(api_key) = std::env::var("OPENAI_API_KEY")
+    {
+        // v0.10.26: OpenAI text-embedding-3-large @ 1024 dims (matches
+        // the pgvector column + HNSW indices, so no schema migration).
+        // Replaces AnthropicEmbeddings, which POSTed to
+        // api.anthropic.com/v1/embeddings — an endpoint Anthropic does
+        // not serve (404). That silently broke ALL embedding generation
+        // (and thus consolidation/dreaming + semantic search) from the
+        // Spec-22 portability work until now.
+        println!("Using OpenAI embeddings (text-embedding-3-large @ 1024)");
+        Arc::new(OpenAIEmbeddings::new(api_key))
+    } else {
+        // Loud, not silent: mock vectors make memory meaningless, and a
+        // silent fallback is exactly how the previous outage hid for 6 weeks.
+        eprintln!(
+            "\u{26a0} NO OPENAI_API_KEY set \u{2014} falling back to MOCK embeddings. \
+                 Consolidation/dreaming and semantic search will be meaningless. \
+                 Set OPENAI_API_KEY to enable real embeddings."
+        );
+        Arc::new(MockEmbeddings::new(1024))
+    };
 
     // Load agents from filesystem into registry
     let agents_dir = std::env::var("AGENTS_DIR").unwrap_or_else(|_| "agents/curated".to_string());

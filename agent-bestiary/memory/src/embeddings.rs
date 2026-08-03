@@ -257,7 +257,13 @@ impl OpenAIEmbeddings {
             model,
             dimension: 1024,
             model_id_cached,
-            client: reqwest::Client::new(),
+            // v0.10.26: bound the request. A client with no timeout is how a
+            // dead endpoint wedged consolidation jobs at episodes_processed=0
+            // for weeks instead of failing loudly.
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .expect("failed to build reqwest client for OpenAIEmbeddings"),
         }
     }
 
@@ -659,9 +665,10 @@ impl EmbeddingGenerator for NomicEmbeddings {
             req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
         }
 
-        let response = req_builder.send().await.map_err(|e| {
-            MemoryError::InvalidData(format!("Nomic API request failed: {}", e))
-        })?;
+        let response = req_builder
+            .send()
+            .await
+            .map_err(|e| MemoryError::InvalidData(format!("Nomic API request failed: {}", e)))?;
 
         if !response.status().is_success() {
             let status = response.status();
