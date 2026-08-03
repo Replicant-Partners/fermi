@@ -1659,6 +1659,125 @@ impl FermiConsole {
 
     // ── Fermi Chat drawer (v0.10.0 Slice 1) ──────────────────────
 
+    // ── Cockpit lifecycle ───────────────────────────────────
+
+    /// Adopt a freshly-built `CockpitState` as the active cockpit and
+    /// wire its parent-notification channel.
+    ///
+    /// **Every** construction site must go through here. `CockpitState`
+    /// can't reach `FermiConsole` directly, so it queues cross-surface
+    /// intent in `pending_*` fields that only this observer drains:
+    /// toasts, the invite-share modal, forecast-list refreshes, the
+    /// Activity-tab open request, and the Activity log mirror.
+    ///
+    /// Before v0.10.19 the observer was registered inline in
+    /// `navigate()` and nowhere else — while seven call sites built
+    /// cockpits (`open_forecast`, `open_workspace_forecast`,
+    /// `on_new_forecast`, `on_reset_cockpit`, `on_import_forecast`,
+    /// `import_polymarket_forecast`, the dashboard hero). Six of the
+    /// seven produced an unobserved cockpit, so every queued signal
+    /// from those sessions was silently dropped. That was invisible
+    /// while the only consumers were toasts (a toast that never fires
+    /// looks like "no news"); it became obvious the moment the
+    /// Activity panel started showing a permanently empty log after
+    /// opening a forecast from the Portfolio.
+    ///
+    /// Returns the entity so callers can keep chaining on it.
+    fn install_cockpit(
+        &mut self,
+        cockpit: Entity<CockpitState>,
+        cx: &mut Context<Self>,
+    ) -> Entity<CockpitState> {
+        cx.observe(&cockpit, |this, cockpit_ref, cx| {
+            let drained = cockpit_ref.update(cx, |state, _| {
+                let refresh = state.pending_forecasts_refresh;
+                state.pending_forecasts_refresh = false;
+                let open_activity = state.pending_open_activity;
+                state.pending_open_activity = false;
+
+                // Mirror any banner messages the parent hasn't seen
+                // into the app-level Activity log. A watermark over
+                // the existing `messages` vector means none of the
+                // 92 `messages.push(..)` call sites in cockpit.rs
+                // needed to change.
+                //
+                // Self-heal if the watermark is past the end — that
+                // means `messages` was cleared (new forecast /
+                // re-orchestration) since the last drain.
+                let n = state.messages.len();
+                if state.activity_watermark > n {
+                    state.activity_watermark = 0;
+                }
+                let mirrored: Vec<cockpit::AssistantMessage> = state.messages
+                    [state.activity_watermark..]
+                    .iter()
+                    .enumerate()
+                    // Skip anything a `push_rich` call site already
+                    // queued a fuller version of, so a save failure
+                    // is one row and not two.
+                    .filter(|(offset, _)| {
+                        !state
+                            .activity_suppressed
+                            .contains(&(state.activity_watermark + offset))
+                    })
+                    .map(|(_, m)| m.clone())
+                    .collect();
+                state.activity_watermark = n;
+
+                CockpitDrain {
+                    toasts: std::mem::take(&mut state.pending_toasts),
+                    invite_share: state.pending_invite_share.take(),
+                    refresh_forecasts: refresh,
+                    open_activity,
+                    mirrored,
+                    rich: std::mem::take(&mut state.pending_activity),
+                }
+            });
+
+            let CockpitDrain {
+                toasts,
+                invite_share,
+                refresh_forecasts,
+                open_activity,
+                mirrored,
+                rich,
+            } = drained;
+
+            // Generic mirror first, then the rich events, so a
+            // rich event always sorts after the plainer messages
+            // that led up to it.
+            for msg in mirrored {
+                this.activity.push(activity_log::from_cockpit_message(msg));
+            }
+            for event in rich {
+                this.activity.push(event);
+            }
+            if open_activity {
+                this.open_activity_panel(cx);
+            }
+
+            for msg in toasts {
+                this.show_toast(msg, "✓", theme::GREEN, cx);
+            }
+            if let Some((invite_json, target_label, recipient)) = invite_share {
+                this.open_invite_share_modal(&invite_json, target_label, recipient, cx);
+            }
+            if refresh_forecasts {
+                // Forecast list on the parent has drifted (publish
+                // just added a new active row, or a resolution just
+                // came in). Refetch so the Dashboard's Live section
+                // and the Recent Activity feed reflect it without
+                // waiting for the 30s background loop.
+                this.fetch_forecasts(cx);
+                this.fetch_stats(cx);
+            }
+        })
+        .detach();
+
+        self.cockpit = Some(cockpit.clone());
+        cockpit
+    }
+
     /// Ctrl+; or sidebar chip — toggle the right-edge Fermi drawer.
     /// State (drawer_open) is per-session; chat history persists
     /// across toggle for the process lifetime (RAM only in Slice 1).
@@ -6109,104 +6228,16 @@ impl FermiConsole {
         // Create cockpit Entity on first visit to Composer
         if panel == Panel::Composer && self.cockpit.is_none() {
             let api = self.api.clone();
-            let cockpit_entity = cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx));
+            let cockpit_entity = self.install_cockpit(
+                cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx)),
+                cx,
+            );
             // Kick off the portfolio list fetch so the composer's
             // inline chip strip has options as soon as the operator
             // publishes their first forecast in this session.
             cockpit_entity.update(cx, |cockpit, cx| {
                 cockpit.load_portfolios_list(cx);
             });
-            // Observe cockpit changes to drain queued cross-tab events
-            // (toast notifications, invite-share modal requests). These
-            // fields must live on FermiConsole (the parent), so the
-            // cockpit stashes intent here and the observe callback picks
-            // it up on the next tick.
-            cx.observe(&cockpit_entity, |this, cockpit_ref, cx| {
-                let drained = cockpit_ref.update(cx, |state, _| {
-                    let refresh = state.pending_forecasts_refresh;
-                    state.pending_forecasts_refresh = false;
-                    let open_activity = state.pending_open_activity;
-                    state.pending_open_activity = false;
-
-                    // Mirror any banner messages the parent hasn't seen
-                    // into the app-level Activity log. A watermark over
-                    // the existing `messages` vector means none of the
-                    // 92 `messages.push(..)` call sites in cockpit.rs
-                    // needed to change.
-                    //
-                    // Self-heal if the watermark is past the end — that
-                    // means `messages` was cleared (new forecast /
-                    // re-orchestration) since the last drain.
-                    let n = state.messages.len();
-                    if state.activity_watermark > n {
-                        state.activity_watermark = 0;
-                    }
-                    let mirrored: Vec<cockpit::AssistantMessage> = state.messages
-                        [state.activity_watermark..]
-                        .iter()
-                        .enumerate()
-                        // Skip anything a `push_rich` call site already
-                        // queued a fuller version of, so a save failure
-                        // is one row and not two.
-                        .filter(|(offset, _)| {
-                            !state
-                                .activity_suppressed
-                                .contains(&(state.activity_watermark + offset))
-                        })
-                        .map(|(_, m)| m.clone())
-                        .collect();
-                    state.activity_watermark = n;
-
-                    CockpitDrain {
-                        toasts: std::mem::take(&mut state.pending_toasts),
-                        invite_share: state.pending_invite_share.take(),
-                        refresh_forecasts: refresh,
-                        open_activity,
-                        mirrored,
-                        rich: std::mem::take(&mut state.pending_activity),
-                    }
-                });
-
-                let CockpitDrain {
-                    toasts,
-                    invite_share,
-                    refresh_forecasts,
-                    open_activity,
-                    mirrored,
-                    rich,
-                } = drained;
-
-                // Generic mirror first, then the rich events, so a
-                // rich event always sorts after the plainer messages
-                // that led up to it.
-                for msg in mirrored {
-                    this.activity.push(activity_log::from_cockpit_message(msg));
-                }
-                for event in rich {
-                    this.activity.push(event);
-                }
-                if open_activity {
-                    this.open_activity_panel(cx);
-                }
-
-                for msg in toasts {
-                    this.show_toast(msg, "✓", theme::GREEN, cx);
-                }
-                if let Some((invite_json, target_label, recipient)) = invite_share {
-                    this.open_invite_share_modal(&invite_json, target_label, recipient, cx);
-                }
-                if refresh_forecasts {
-                    // Forecast list on the parent has drifted (publish
-                    // just added a new active row, or a resolution just
-                    // came in). Refetch so the Dashboard's Live section
-                    // and the Recent Activity feed reflect it without
-                    // waiting for the 30s background loop.
-                    this.fetch_forecasts(cx);
-                    this.fetch_stats(cx);
-                }
-            })
-            .detach();
-            self.cockpit = Some(cockpit_entity);
         }
         // Refresh data when switching to agent fleet or leaderboard
         if changed && self.connected {
@@ -6307,8 +6338,9 @@ impl FermiConsole {
                 this.update(cx, |this, cx| {
                     if this.cockpit.is_none() {
                         let api = this.api.clone();
-                        this.cockpit =
-                            Some(cx.new(|cx| CockpitState::new(api, this.registry.clone(), cx)));
+                        let cockpit =
+                            cx.new(|cx| CockpitState::new(api, this.registry.clone(), cx));
+                        this.install_cockpit(cockpit, cx);
                     }
                     if let Some(ref cockpit) = this.cockpit {
                         let cockpit = cockpit.clone();
@@ -6505,14 +6537,16 @@ impl FermiConsole {
     /// Reset the cockpit to a fresh state (new forecast).
     fn on_new_forecast(&mut self, _: &NewForecast, _window: &mut Window, cx: &mut Context<Self>) {
         let api = self.api.clone();
-        self.cockpit = Some(cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx)));
+        let cockpit = cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx));
+        self.install_cockpit(cockpit, cx);
         self.active_panel = Panel::Composer;
         cx.notify();
     }
 
     fn on_reset_cockpit(&mut self, _: &ResetCockpit, _window: &mut Window, cx: &mut Context<Self>) {
         let api = self.api.clone();
-        self.cockpit = Some(cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx)));
+        let cockpit = cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx));
+        self.install_cockpit(cockpit, cx);
         self.active_panel = Panel::Composer;
         cx.notify();
     }
@@ -7103,8 +7137,8 @@ impl FermiConsole {
                 )
                 .on_click(cx.listener(|this, _, _w, cx| {
                     let api = this.api.clone();
-                    this.cockpit =
-                        Some(cx.new(|cx| CockpitState::new(api, this.registry.clone(), cx)));
+                    let cockpit = cx.new(|cx| CockpitState::new(api, this.registry.clone(), cx));
+                    this.install_cockpit(cockpit, cx);
                     this.active_panel = Panel::Composer;
                     cx.notify();
                 })),
@@ -9332,8 +9366,10 @@ impl FermiConsole {
 
         // Always create a fresh cockpit for each workspace — don't reuse
         let api = self.api.clone();
-        let cockpit = cx.new(|cx| CockpitState::new(api.clone(), self.registry.clone(), cx));
-        self.cockpit = Some(cockpit.clone());
+        let cockpit = self.install_cockpit(
+            cx.new(|cx| CockpitState::new(api.clone(), self.registry.clone(), cx)),
+            cx,
+        );
 
         cockpit.update(cx, |cockpit, cx| {
             // Set workspace_id so outputs publish to the right workspace
@@ -9558,8 +9594,10 @@ impl FermiConsole {
         // previous forecast — see the comment block around CockpitState
         // reset for the long-form reasoning.
         let api = self.api.clone();
-        let cockpit = cx.new(|cx| CockpitState::new(api.clone(), self.registry.clone(), cx));
-        self.cockpit = Some(cockpit.clone());
+        let cockpit = self.install_cockpit(
+            cx.new(|cx| CockpitState::new(api.clone(), self.registry.clone(), cx)),
+            cx,
+        );
 
         cockpit.update(cx, |cockpit, _cx| {
             cockpit.forecast_id = Some(fid.clone());
@@ -9953,7 +9991,8 @@ impl FermiConsole {
         // unconditional replace. GC drops the old CockpitState the
         // moment we overwrite the Option.
         let api = self.api.clone();
-        self.cockpit = Some(cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx)));
+        let cockpit = cx.new(|cx| CockpitState::new(api, self.registry.clone(), cx));
+        self.install_cockpit(cockpit, cx);
         // Selection tracker on the FermiConsole itself — not owned by
         // the cockpit — must also be cleared so panel views that key
         // off it (Portfolio expand, forecast detail) don't keep

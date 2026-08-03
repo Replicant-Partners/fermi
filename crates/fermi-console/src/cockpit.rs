@@ -37,12 +37,15 @@ use fermi::ast::{
 };
 
 use crate::activity_log::{LogEvent, LogSource, Remedy, Severity};
+// Lives in the lib target so it can be unit-tested — the bin target's
+// tests can't build (see src/lib.rs).
 use crate::api::client::{
     AgentExecutionResult, ApiClient, ApiError, CreateForecastRequest, ForecastSchedule, Invite,
     InviteRequest, ShareEntry, ShareRequest, Team, UpsertScheduleRequest,
 };
 use crate::text_input::TextInput;
 use crate::theme;
+use fermi_console::wire::clamp_wire_probability;
 
 // ════════════════════════════════════════════════════════════════════
 // Autosave tuning
@@ -8344,7 +8347,76 @@ impl CockpitState {
 
         let api = self.api.clone();
         let fpl = self.cached_fpl.clone();
-        let prob = self.predicted_probability;
+
+        // `predicted_probability` is a probability on the wire — both
+        // `create_forecast_handler` and `update_forecast_handler`
+        // reject anything outside [0,1] with
+        // "predicted_probability must be between 0 and 1" (HTTP 400).
+        //
+        // `run_simulation` does NOT guarantee that range. When the
+        // question carries no `base_rate` it treats the forecast as
+        // non-probabilistic (a count/magnitude/duration) and assigns
+        // the raw simulation mean unclamped. A multiplier-shaped model
+        // — the default Fermi decomposition emits
+        // `strength_factor * conditions * disruption`, all centred on
+        // 1.0 — lands around 1.0 and routinely exceeds it.
+        //
+        // The result was silent, total data loss: every save after such
+        // a simulation 400'd, the local snapshot still succeeded, the
+        // chip said "Saved just now", and reopening from the Portfolio
+        // showed the pre-simulation value. Clamping at the persistence
+        // boundary means no caller can reintroduce this. The true mean
+        // is preserved verbatim in `simulation_results`, which has no
+        // range constraint.
+        let raw_prob = self.predicted_probability;
+        let prob = clamp_wire_probability(raw_prob);
+        if (prob - raw_prob).abs() > 1e-9 {
+            let summary = if raw_prob.is_finite() {
+                format!(
+                    "Model output {:.1}% is not a probability — clamped to {:.1}% for saving",
+                    raw_prob * 100.0,
+                    prob * 100.0
+                )
+            } else {
+                "Model output is NaN/infinite — saved as 50%".to_string()
+            };
+            self.push_rich(
+                "save",
+                MessageKind::Warning,
+                LogEvent::new(Severity::Warn, LogSource::Save, summary)
+                    .with_detail(
+                        "The server stores `predicted_probability` as a value in [0,1] and \
+                         rejects anything else with HTTP 400 — so without this clamp the \
+                         save would fail outright and your work would not persist.\n\n\
+                         This usually means the model expression is a multiplier chain \
+                         rather than a probability. The default decomposition emits \
+                         drivers centred on 1.0, so their product sits near 1.0 and \
+                         drifts above it.\n\n\
+                         Fix: anchor the question with a base rate (Ctrl+Enter to \
+                         research one) so the model reads `base_rate * driver * driver`, \
+                         or edit the model expression directly on the FPL tab.\n\n\
+                         The unclamped mean is preserved in simulation_results and on \
+                         the Trajectory tab.",
+                    )
+                    .with_context("raw_model_output", format!("{:.6}", raw_prob))
+                    .with_context("saved_as", format!("{:.6}", prob))
+                    .with_context(
+                        "has_base_rate",
+                        if self
+                            .program
+                            .question()
+                            .and_then(|q| q.base_rate.as_ref())
+                            .is_some()
+                        {
+                            "yes"
+                        } else {
+                            "no — forecast treated as non-probabilistic"
+                        },
+                    )
+                    .with_remedy(Remedy::CopyDiagnostics),
+            );
+        }
+
         let res_crit = self
             .program
             .question()
@@ -9552,7 +9624,11 @@ impl CockpitState {
 
         let api = self.api.clone();
         let fpl = self.cached_fpl.clone();
-        let prob = self.predicted_probability;
+        // Same [0,1] contract as `persist_backend_save` — see the long
+        // comment there. Publish is the higher-stakes path of the two:
+        // a 400 here leaves the forecast unpublished after the operator
+        // explicitly asked for it.
+        let prob = clamp_wire_probability(self.predicted_probability);
         let res_crit = self
             .program
             .question()

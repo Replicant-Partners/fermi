@@ -28,8 +28,14 @@
 //! rather than declaring `mod updater;` itself, so there is a single
 //! definition and no duplicate compilation.
 //!
+//! [`wire`] holds client-side enforcement of API contracts the server
+//! validates and 400s on — the kind of arithmetic whose failure mode
+//! is silent data loss, and which therefore has no business being
+//! untestable.
+//!
 //! Candidates to migrate here as they're decoupled from GPUI: the FPL
 //! action-marker parser in `chat.rs` and the Anthropic error extractor
 //! in `cockpit.rs`, both of which currently have tests that can't run.
 
 pub mod updater;
+pub mod wire;
