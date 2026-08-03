@@ -580,8 +580,13 @@ impl ConsolidationWorker {
                 .iter()
                 .map(|e| {
                     let ctx = serde_json::to_string(&e.context).unwrap_or_default();
+                    // Char-safe truncation: `&ctx[..200]` panics when byte 200
+                    // lands inside a multi-byte UTF-8 char (e.g. '≈' in a
+                    // macro-econ episode), which killed the whole consolidation
+                    // worker task. Take by chars, not bytes.
                     let ctx_preview = if ctx.len() > 200 {
-                        format!("{}...", &ctx[..200])
+                        let head: String = ctx.chars().take(200).collect();
+                        format!("{}...", head)
                     } else {
                         ctx
                     };
@@ -802,8 +807,11 @@ impl ConsolidationWorker {
             .iter()
             .map(|e| {
                 let ctx = serde_json::to_string(&e.context).unwrap_or_default();
+                // Char-safe truncation (see extract_entities_with_llm): byte
+                // slicing panics on a multi-byte boundary.
                 let ctx_preview = if ctx.len() > 300 {
-                    format!("{}...", &ctx[..300])
+                    let head: String = ctx.chars().take(300).collect();
+                    format!("{}...", head)
                 } else {
                     ctx
                 };
