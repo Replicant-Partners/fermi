@@ -69,6 +69,31 @@ jobs:
           cargo update time --precise 0.3.36
           cargo update home --precise 0.5.9
 
+      # The in-app updater compares the highest release TAG against the
+      # running binary's env!("CARGO_PKG_VERSION"). If they don't match,
+      # the client is told an update is available forever — it downloads a
+      # binary that STILL reports the old version, so it never converges.
+      # That happens whenever a tag ships without bumping
+      # crates/fermi-console/Cargo.toml (e.g. backend/CLI-only releases,
+      # which still trigger this workflow). Stamp the version FROM the tag
+      # so the published binary always reports exactly the tag it ships
+      # under. No manual Cargo.toml bump discipline required.
+      - name: Stamp console version to match the release tag
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="${{ inputs.tag }}"
+          fi
+          VER="${TAG#v}"
+          if echo "$VER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            sed -i -E "0,/^version = \"[^\"]*\"/s//version = \"$VER\"/" crates/fermi-console/Cargo.toml
+            echo "Stamped fermi-console version = $VER (from tag $TAG)"
+            grep -m1 '^version' crates/fermi-console/Cargo.toml
+          else
+            echo "Tag '$TAG' is not semver ('$VER'); leaving Cargo.toml as-is"
+          fi
+
       - name: Build release binary
         run: cargo build --release -p fermi-console
 

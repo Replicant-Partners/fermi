@@ -1304,6 +1304,38 @@ async fn ensure_critical_schema(db: &PgPool) {
          "CREATE INDEX IF NOT EXISTS idx_invites_target \
               ON public.forecast_invites(target_type, target_id) \
             WHERE status = 'pending'"),
+
+        // v0.10.26: `agents.updated_at` was declared in mig-166 via a
+        // DO $$ block, which — exactly per the header comment on this
+        // function — PgBouncer in transaction mode ate silently on
+        // Ivan's deploy. Symptom is the exact error he hit AGAIN
+        // (post-v0.10.18) when trying to force-publish Mario's
+        // `key_metrics` agent:
+        //
+        //   Publish failed: 400 DB error: column "updated_at" of
+        //   relation "agents" does not exist
+        //
+        // Four write sites reference the column (publish_agent,
+        // archive_agent, restore_agent, update_fork_pricing_handler);
+        // every one 500's until this ALTER lands. Single-statement
+        // form so PgBouncer can't split it. Idempotent via IF NOT
+        // EXISTS. NOT NULL DEFAULT NOW() so future INSERTs get it
+        // automatically. Backfill of existing rows is a follow-up
+        // one-liner if any rows end up NULL (default fires on
+        // INSERT but not on existing rows added between the
+        // migration path and this ensure).
+        ("agents.updated_at",
+         "ALTER TABLE public.agents \
+            ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
+        // Belt-and-braces backfill for any rows created between the
+        // failed mig-166 attempt and this ensure. NULL updated_at is
+        // impossible now (NOT NULL DEFAULT NOW() enforces it on ADD),
+        // but PostgreSQL versions handle ADD COLUMN NOT NULL DEFAULT
+        // for existing rows by treating the default as retroactive, so
+        // this is a no-op on new PG and a fill-in on older PG. Kept
+        // in the ensure so re-runs converge.
+        ("agents.updated_at.backfill",
+         "UPDATE public.agents SET updated_at = created_at WHERE updated_at IS NULL"),
     ];
 
     println!(
