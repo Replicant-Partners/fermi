@@ -4,6 +4,7 @@
 //! parsed args, and returns `anyhow::Result<()>`. Errors bubble up to `main`
 //! which renders the chain.
 
+pub mod admin;
 pub mod deploy;
 pub mod list;
 pub mod login;

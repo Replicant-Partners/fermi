@@ -2082,3 +2082,387 @@ pub async fn admin_schema_health_handler(
         },
     })))
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// v0.10.20 — Legacy agent-slug audit + rename
+//
+// Un-routable agent names produced by the pre-2026-05-23 platform
+// (before `slug::validate` locked down creation surfaces in
+// commit d0f94e8). Names containing `-` or `/` are unreachable via
+// /agent/<name> because axum's tree router splits on `/`. This
+// endpoint audits them and, with `?apply=true`, renames them to
+// slug-compliant snake_case and backfills the JSONB references
+// in `fermi_forecasts.agents_used`.
+//
+// Design:
+//   * GET /api/admin/agents/legacy-slugs         — audit only (dry-run)
+//   * POST /api/admin/agents/legacy-slugs        — audit only
+//   * POST /api/admin/agents/legacy-slugs?apply=true — execute rename
+//
+// Both use `admin_legacy_agent_slugs_handler`. Query param `apply`
+// (default false) toggles between audit and mutate. The response
+// shape is identical in both modes; `action_taken` differs per row.
+//
+// Every actual rename lands in `admin_bypass_events` with the
+// old → new mapping so the trail is legible six months from now.
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Deserialize)]
+pub struct LegacySlugsQuery {
+    /// When true, execute the rename in a transaction. Default false
+    /// (audit-only). Only platform admins can hit this endpoint at
+    /// all, so no further gate is needed on `apply`.
+    #[serde(default)]
+    pub apply: bool,
+}
+
+/// Conservative slug sanitiser scoped to this handler.
+///
+/// Mirrors the intent of `apps::workspace_fork::slugify` (which is
+/// private to that module) and `crate::slug::validate` (which is
+/// reject-only). Rules:
+///
+///   * Lowercase every ASCII letter.
+///   * Keep digits and underscores.
+///   * Replace every other char (including `-`, `/`, `.`, spaces)
+///     with a single `_` — collapse runs so we don't emit `__`.
+///   * Strip leading digits and underscores (slugs must start with
+///     a letter per `slug::validate`).
+///   * Strip trailing underscores.
+///   * Truncate to 64 chars.
+///   * Return `None` if the result would be < 3 chars (unrecoverable
+///     — caller needs to rename manually).
+///
+/// The returned string is guaranteed to satisfy `slug::validate`
+/// when `Some`. If it doesn't, that's a bug in this fn; the caller
+/// re-validates defensively.
+fn sanitise_legacy_agent_name(input: &str) -> Option<String> {
+    let mut out = String::with_capacity(input.len());
+    let mut prev_underscore = true; // treat start as if preceded by `_`
+    for c in input.chars() {
+        if c.is_ascii_alphanumeric() {
+            let lc = c.to_ascii_lowercase();
+            // Slugs must start with a letter.
+            if out.is_empty() && lc.is_ascii_digit() {
+                continue;
+            }
+            out.push(lc);
+            prev_underscore = false;
+        } else if !prev_underscore && !out.is_empty() {
+            out.push('_');
+            prev_underscore = true;
+        }
+    }
+    while out.ends_with('_') {
+        out.pop();
+    }
+    if out.len() > 64 {
+        out.truncate(64);
+        while out.ends_with('_') {
+            out.pop();
+        }
+    }
+    if out.len() < 3 {
+        return None;
+    }
+    // Reserved slugs (see `apps::builder::is_reserved`) should not
+    // become an agent name via rename. If the sanitised form
+    // collides with one, return None and let the caller flag for
+    // manual review.
+    const RESERVED: &[&str] = &[
+        "rabble_swarm",
+        "bestiary_workspace",
+        "personal_workspace",
+        "fermi_forecast",
+        "silat_workspace",
+    ];
+    if RESERVED.contains(&out.as_str()) {
+        return None;
+    }
+    Some(out)
+}
+
+pub async fn admin_legacy_agent_slugs_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Query(q): Query<LegacySlugsQuery>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin(&principal)?;
+    let admin_user_id = principal.user_id();
+
+    // 1. Load every agent — filter to legacy names client-side.
+    //    `slug::validate` is the authoritative rule; anything it
+    //    rejects is legacy data by definition.
+    let rows = sqlx::query("SELECT agent_id, agent_name FROM agents ORDER BY agent_name")
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("list agents: {}", e),
+            )
+        })?;
+
+    // 2. For every legacy name, propose a sanitised form and check
+    //    for collisions. Two collision axes:
+    //      (a) existing_names: some other agent already has this name.
+    //      (b) proposal_names: two legacy names sanitise to the same
+    //          target within this batch. First-come wins; the second
+    //          gets flagged.
+    let mut existing_names: std::collections::HashSet<String> = rows
+        .iter()
+        .filter_map(|r| r.try_get::<String, _>("agent_name").ok())
+        .collect();
+
+    let mut proposals: Vec<(uuid::Uuid, String, Option<String>, Option<String>)> = Vec::new();
+    let mut claimed_new: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for row in &rows {
+        let agent_id: uuid::Uuid = match row.try_get("agent_id") {
+            Ok(id) => id,
+            Err(_) => continue,
+        };
+        let old_name: String = match row.try_get("agent_name") {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+        // Skip agents that already satisfy the slug rule.
+        if fermi::slug::validate(&old_name).is_ok() {
+            continue;
+        }
+        let (proposal, collision) = match sanitise_legacy_agent_name(&old_name) {
+            None => (
+                None,
+                Some(
+                    "sanitiser produced < 3 chars or reserved slug — needs manual rename"
+                        .to_string(),
+                ),
+            ),
+            Some(new) => {
+                // Re-validate defensively — sanitiser should always
+                // produce a valid slug when Some.
+                if let Err(msg) = fermi::slug::validate(&new) {
+                    (
+                        None,
+                        Some(format!(
+                            "sanitiser produced invalid slug `{}`: {} — needs manual rename",
+                            new, msg
+                        )),
+                    )
+                } else if existing_names.contains(&new) && new != old_name {
+                    (
+                        Some(new.clone()),
+                        Some(format!("another agent already uses `{}`", new)),
+                    )
+                } else if claimed_new.contains(&new) {
+                    (
+                        Some(new.clone()),
+                        Some(format!(
+                            "a legacy-name peer in this batch sanitises to `{}` as well",
+                            new
+                        )),
+                    )
+                } else {
+                    claimed_new.insert(new.clone());
+                    (Some(new), None)
+                }
+            }
+        };
+        proposals.push((agent_id, old_name, proposal, collision));
+    }
+
+    // 3. Count `fermi_forecasts.agents_used` JSONB references per
+    //    legacy name. Pure informational — renames only happen after
+    //    the operator eyeballs the report. `agents_used` stores an
+    //    array of `{agent_name: "..."}` objects, so the containment
+    //    query is `@> jsonb_build_array(jsonb_build_object('agent_name', $1))`.
+    //    (Same shape used by eval_brier.rs, get_agent_calibration_handler.)
+    let mut forecast_ref_counts: std::collections::HashMap<String, i64> =
+        std::collections::HashMap::new();
+    for (_agent_id, old_name, _new, _coll) in &proposals {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM fermi_forecasts \
+             WHERE agents_used @> jsonb_build_array(jsonb_build_object('agent_name', $1::text))",
+        )
+        .bind(old_name)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+        forecast_ref_counts.insert(old_name.clone(), n);
+    }
+
+    // 4. If applying, execute renames + JSONB backfill in ONE
+    //    transaction so a partial write can't leave the DB in a
+    //    torn state. We loop inside the tx per row so a mid-tx
+    //    failure still rolls back everything.
+    let mut applied_count: usize = 0;
+    let mut skipped_collisions: usize = 0;
+    let mut unrecoverable: usize = 0;
+
+    if q.apply {
+        let mut tx = state.db.begin().await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("begin tx: {}", e),
+            )
+        })?;
+
+        for (agent_id, old_name, proposal, collision) in &proposals {
+            if collision.is_some() {
+                skipped_collisions += 1;
+                continue;
+            }
+            let new_name = match proposal {
+                Some(n) => n.clone(),
+                None => {
+                    unrecoverable += 1;
+                    continue;
+                }
+            };
+
+            // Rename the agent row itself.
+            sqlx::query("UPDATE agents SET agent_name = $1 WHERE agent_id = $2")
+                .bind(&new_name)
+                .bind(agent_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("rename agent {}: {}", old_name, e),
+                    )
+                })?;
+
+            // Backfill `fermi_forecasts.agents_used` JSONB. Rewrite
+            // every `{agent_name: <old>}` object to `{agent_name: <new>}`
+            // in-place, preserving any sibling keys on the object.
+            // Using jsonb_path array-map is the cleanest option in
+            // Postgres 12+: for each element whose agent_name matches,
+            // set agent_name = new. Fallback: string-substitute the
+            // whole JSONB by casting to text and back, but that risks
+            // false matches on any string equal to old_name; use the
+            // structural path variant instead.
+            //
+            // Assumption: `agents_used` is either NULL or an ARRAY of
+            // OBJECTS (verified against every writer in the codebase).
+            // If it's ever a bare string somewhere in prod data, the
+            // jsonb_path_query will simply skip it — no rewrite.
+            sqlx::query(
+                r#"UPDATE fermi_forecasts
+                      SET agents_used = (
+                          SELECT jsonb_agg(
+                              CASE
+                                  WHEN elem ? 'agent_name'
+                                       AND elem->>'agent_name' = $1
+                                  THEN jsonb_set(elem, '{agent_name}', to_jsonb($2::text))
+                                  ELSE elem
+                              END
+                          )
+                          FROM jsonb_array_elements(agents_used) AS elem
+                      )
+                      WHERE agents_used IS NOT NULL
+                        AND jsonb_typeof(agents_used) = 'array'
+                        AND agents_used @> jsonb_build_array(
+                              jsonb_build_object('agent_name', $1::text))"#,
+            )
+            .bind(old_name)
+            .bind(&new_name)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!(
+                        "backfill agents_used for {} → {}: {}",
+                        old_name, new_name, e
+                    ),
+                )
+            })?;
+
+            // Log to admin_bypass_events. Same pattern as force_publish
+            // (v0.10.5). target_type='agent', target_id=UUID string,
+            // action='rename_legacy_slug'. Reason string includes both
+            // sides of the mapping so the audit trail is self-contained.
+            let details = json!({
+                "old_name": old_name,
+                "new_name": new_name,
+                "forecast_refs_backfilled": forecast_ref_counts.get(old_name).copied().unwrap_or(0),
+                "reason": "legacy slug produced by pre-d0f94e8 creation path; unroutable at /agent/<name>",
+            });
+            sqlx::query(
+                "INSERT INTO admin_bypass_events \
+                 (admin_user_id, target_type, target_id, action, details) \
+                 VALUES ($1, $2, $3, $4, $5)",
+            )
+            .bind(&admin_user_id)
+            .bind("agent")
+            .bind(agent_id.to_string())
+            .bind("rename_legacy_slug")
+            .bind(&details)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("log admin_bypass_events for {}: {}", old_name, e),
+                )
+            })?;
+
+            // Update the in-memory sets so a subsequent proposal in
+            // the same batch can't collide with a name we just claimed.
+            existing_names.remove(old_name);
+            existing_names.insert(new_name.clone());
+            applied_count += 1;
+        }
+
+        tx.commit().await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("commit tx: {}", e),
+            )
+        })?;
+    }
+
+    // 5. Build the response report.
+    let entries: Vec<Value> = proposals
+        .iter()
+        .map(|(agent_id, old_name, proposal, collision)| {
+            let action = if q.apply {
+                if collision.is_some() {
+                    "skipped:collision"
+                } else if proposal.is_none() {
+                    "skipped:unrecoverable"
+                } else {
+                    "renamed"
+                }
+            } else {
+                "audit_only"
+            };
+            json!({
+                "agent_id": agent_id.to_string(),
+                "old_name": old_name,
+                "proposed_new_name": proposal,
+                "collision": collision,
+                "forecast_refs": forecast_ref_counts.get(old_name).copied().unwrap_or(0),
+                "action_taken": action,
+            })
+        })
+        .collect();
+
+    let would_rename = proposals
+        .iter()
+        .filter(|(_, _, p, c)| p.is_some() && c.is_none())
+        .count();
+    let collision_count = proposals.iter().filter(|(_, _, _, c)| c.is_some()).count();
+
+    Ok(Json(json!({
+        "total_legacy": proposals.len(),
+        "would_rename": would_rename,
+        "collisions": collision_count,
+        "applied": if q.apply { Some(applied_count) } else { None },
+        "skipped_collisions": if q.apply { Some(skipped_collisions) } else { None },
+        "skipped_unrecoverable": if q.apply { Some(unrecoverable) } else { None },
+        "apply": q.apply,
+        "entries": entries,
+    })))
+}

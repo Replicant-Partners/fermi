@@ -19,6 +19,10 @@
 //!   abw workspace actions mutate <ws-id> --path simops/process.yaml --content @new.yaml
 //!   abw workspace actions fork <ws-id> --name "co2-capture" --patch '{"stages":[...]}'
 //!
+//! Platform admin (requires an admin API key):
+//!   abw admin agents legacy-slugs             # dry-run audit
+//!   abw admin agents legacy-slugs --apply     # execute rename + backfill
+//!
 //! See `crates/abw-cli/README.md` for the full surface.
 
 use clap::{Parser, Subcommand};
@@ -69,6 +73,11 @@ enum Top {
     /// Workspace interaction — messages, files, and action protocol.
     #[command(subcommand)]
     Workspace(commands::workspace::WorkspaceCmd),
+
+    /// Platform-admin operations. Requires a platform-admin API key;
+    /// non-admin callers get 403.
+    #[command(subcommand)]
+    Admin(commands::admin::AdminCmd),
 }
 
 #[derive(Subcommand, Debug)]
@@ -126,6 +135,7 @@ async fn main() -> ExitCode {
             AppCmd::Publish(args) => commands::publish::run(&ctx, args).await,
         },
         Top::Workspace(ws_cmd) => commands::workspace::run(&ctx, ws_cmd).await,
+        Top::Admin(admin_cmd) => commands::admin::run(&ctx, admin_cmd).await,
     };
 
     match result {

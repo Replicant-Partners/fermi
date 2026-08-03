@@ -3087,6 +3087,17 @@ async fn main() {
             "/api/admin/agents/:agent_id/flag",
             put(handlers::admin::admin_flag_agent_handler),
         )
+        // v0.10.20: audit + rename un-routable legacy agent names
+        // (containing `-` or `/`) that predate slug::validate. GET is
+        // audit-only; POST with ?apply=true executes the rename in a
+        // transaction and backfills fermi_forecasts.agents_used JSONB
+        // references. Every rename is logged to admin_bypass_events.
+        // See RELEASE_NOTES_v0.10.20.md.
+        .route(
+            "/api/admin/agents/legacy-slugs",
+            get(handlers::admin::admin_legacy_agent_slugs_handler)
+                .post(handlers::admin::admin_legacy_agent_slugs_handler),
+        )
         // Admin view over third-party Apps — lists every app across every
         // visibility level (private/unlisted/public) with owner display
         // name + workspace count so external app authors like `efrain_ai`
