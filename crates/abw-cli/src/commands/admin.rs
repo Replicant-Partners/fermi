@@ -45,6 +45,22 @@ pub struct LegacySlugsArgs {
     /// Useful when chaining into `jq`.
     #[arg(long)]
     pub json: bool,
+
+    /// Restrict the audit / apply to agents whose current name starts
+    /// with this prefix. Essential for targeted rewrites when the
+    /// full legacy set is large or mixed (e.g. `--prefix efra-ai/`
+    /// to touch only Mario's real EFRA agents, leaving `test_agent_*`
+    /// fixtures alone). Pushed down to SQL via LIKE, so it's fast.
+    #[arg(long)]
+    pub prefix: Option<String>,
+
+    /// Cap the batch size (post-filter). Safe with `--apply` to keep
+    /// each run well below the 60-second client timeout — apply runs
+    /// ~3 statements per rename in one transaction, so 574 in one
+    /// go blew past the timeout on Ivan's first attempt. Use e.g.
+    /// `--limit 50` and repeat until the report says `truncated=false`.
+    #[arg(long)]
+    pub limit: Option<usize>,
 }
 
 pub async fn run(ctx: &Ctx, cmd: AdminCmd) -> Result<()> {
@@ -57,12 +73,25 @@ async fn legacy_slugs(ctx: &Ctx, args: LegacySlugsArgs) -> Result<()> {
     let api_key = resolve_api_key()
         .context("this command requires authentication — run `abw login` first")?;
 
-    let path = if args.apply {
-        "/api/admin/agents/legacy-slugs?apply=true"
+    // Build the query string. `apply` toggles the mutation path;
+    // `prefix` and `limit` are v0.10.24 filter/batch controls.
+    let mut params: Vec<String> = Vec::new();
+    if args.apply {
+        params.push("apply=true".into());
+    }
+    if let Some(p) = &args.prefix {
+        params.push(format!("prefix={}", urlencode(p)));
+    }
+    if let Some(n) = args.limit {
+        params.push(format!("limit={}", n));
+    }
+    let query = if params.is_empty() {
+        String::new()
     } else {
-        "/api/admin/agents/legacy-slugs"
+        format!("?{}", params.join("&"))
     };
-    let url = ctx.url(path);
+    let path = format!("/api/admin/agents/legacy-slugs{}", query);
+    let url = ctx.url(&path);
 
     // POST when applying (so it's obvious in server logs that this
     // is a mutation), GET otherwise (matches REST semantics for a
@@ -115,6 +144,17 @@ fn render_report(ctx: &Ctx, report: &Value, applied: bool) {
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
+    // v0.10.24 metadata for the filter/batch controls.
+    let total_matched = report
+        .get("total_matched")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(total_legacy);
+    let truncated = report
+        .get("truncated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let prefix = report.get("prefix").and_then(|v| v.as_str());
+    let limit = report.get("limit").and_then(|v| v.as_u64());
 
     if !ctx.quiet {
         println!();
@@ -129,6 +169,20 @@ fn render_report(ctx: &Ctx, report: &Value, applied: bool) {
             title.yellow().bold()
         };
         println!("  {} {}", "★".yellow().bold(), title_col);
+        // Surface the active filter/batch controls so the caller
+        // knows the scope of this run at a glance.
+        if let Some(p) = prefix {
+            if !p.is_empty() {
+                println!("  {} prefix filter: {}", "⤷".dimmed(), p.cyan());
+            }
+        }
+        if let Some(n) = limit {
+            println!(
+                "  {} limit: {} (this batch)",
+                "⤷".dimmed(),
+                n.to_string().cyan()
+            );
+        }
         println!();
     }
 
@@ -240,7 +294,7 @@ fn render_report(ctx: &Ctx, report: &Value, applied: bool) {
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
         println!(
-            "  {} {} renamed, {} skipped (collisions), {} skipped (unrecoverable), out of {} legacy names.",
+            "  {} {} renamed, {} skipped (collisions), {} skipped (unrecoverable), out of {} legacy names in this batch.",
             "summary:".bold(),
             applied_n.to_string().green(),
             skipped_c.to_string().yellow(),
@@ -268,5 +322,39 @@ fn render_report(ctx: &Ctx, report: &Value, applied: bool) {
             );
         }
     }
+
+    // v0.10.24: surface the truncation state so multi-batch runs
+    // are obvious. When `--limit` clipped the tail, tell the caller
+    // how many more legacy names remain outside the batch and how
+    // to fetch the next one.
+    if truncated {
+        let remaining = total_matched.saturating_sub(total_legacy);
+        println!(
+            "  {} this batch shows {} of {} matching legacy names (remaining: {}).",
+            "batch:".cyan().bold(),
+            total_legacy,
+            total_matched,
+            remaining.to_string().yellow(),
+        );
+        println!(
+            "  {} re-run with the same flags to pick up the next batch (same deterministic order).",
+            "tip:".green().bold()
+        );
+    }
     println!();
+}
+
+/// Minimal percent-encoder for query values. Matches the pattern in
+/// commands/list.rs — keeps the surface small and dependency-free.
+fn urlencode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        let c = b as char;
+        if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~') {
+            out.push(c);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
 }

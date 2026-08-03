@@ -2114,6 +2114,24 @@ pub struct LegacySlugsQuery {
     /// all, so no further gate is needed on `apply`.
     #[serde(default)]
     pub apply: bool,
+
+    /// v0.10.24: restrict the audit / apply set to agents whose
+    /// current `agent_name` starts with this prefix. Used to target
+    /// a specific vertical (e.g. `efra-ai/` for Mario's real work)
+    /// so a bulk `--apply` doesn't sweep unrelated test fixtures.
+    /// Applied at the SQL layer via `WHERE agent_name LIKE $1`
+    /// (with `%` appended by the handler — not the caller).
+    #[serde(default)]
+    pub prefix: Option<String>,
+
+    /// v0.10.24: cap the batch size. Even with mig-168 speeding up
+    /// reads, apply still runs ~3 statements per rename in one
+    /// transaction. 574 renames blew past the 60s client timeout on
+    /// Ivan's first try. `--limit 50` keeps a run bounded and
+    /// resumable. Applied AFTER the slug-rule filter (only counts
+    /// actual legacy rows).
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
 /// Conservative slug sanitiser scoped to this handler.
@@ -2190,18 +2208,42 @@ pub async fn admin_legacy_agent_slugs_handler(
     require_admin(&principal)?;
     let admin_user_id = principal.user_id();
 
-    // 1. Load every agent — filter to legacy names client-side.
-    //    `slug::validate` is the authoritative rule; anything it
-    //    rejects is legacy data by definition.
-    let rows = sqlx::query("SELECT agent_id, agent_name FROM agents ORDER BY agent_name")
-        .fetch_all(&state.db)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("list agents: {}", e),
+    // 1. Load every agent (optionally prefix-filtered) — then filter
+    //    to legacy names client-side. `slug::validate` is the
+    //    authoritative rule; anything it rejects is legacy data by
+    //    definition.
+    //
+    //    v0.10.24: `prefix` is pushed down to SQL via LIKE so we
+    //    don't pull all 500+ rows to filter 9. `%` is appended by
+    //    the handler — caller supplies the literal prefix. The
+    //    escape-handling here treats `_` and `%` as literal in the
+    //    caller-supplied prefix (unusual on operator input; if it
+    //    matters we'd need pg_escape, which sqlx doesn't expose
+    //    directly; the current callers are admin CLI users so
+    //    controlled input is fine).
+    let rows = match q.prefix.as_deref() {
+        Some(prefix) if !prefix.is_empty() => {
+            let like_pattern = format!("{}%", prefix);
+            sqlx::query(
+                "SELECT agent_id, agent_name FROM agents \
+                 WHERE agent_name LIKE $1 ORDER BY agent_name",
             )
-        })?;
+            .bind(&like_pattern)
+            .fetch_all(&state.db)
+            .await
+        }
+        _ => {
+            sqlx::query("SELECT agent_id, agent_name FROM agents ORDER BY agent_name")
+                .fetch_all(&state.db)
+                .await
+        }
+    }
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("list agents: {}", e),
+        )
+    })?;
 
     // 2. For every legacy name, propose a sanitised form and check
     //    for collisions. Two collision axes:
@@ -2269,6 +2311,18 @@ pub async fn admin_legacy_agent_slugs_handler(
             }
         };
         proposals.push((agent_id, old_name, proposal, collision));
+    }
+
+    // v0.10.24: apply `limit` AFTER the slug-rule filter so the cap
+    // is meaningful ("first 50 legacy names") rather than "first 50
+    // agents alphabetically, most of which may not be legacy at all".
+    // Deterministic order because the SELECT is `ORDER BY agent_name`
+    // — so `--limit N` from the same starting state always picks the
+    // same N, safe to run repeatedly to chunk through the backlog.
+    let total_matched_before_limit = proposals.len();
+    let limited = q.limit.map(|n| n < proposals.len()).unwrap_or(false);
+    if let Some(n) = q.limit {
+        proposals.truncate(n);
     }
 
     // 3. Count `fermi_forecasts.agents_used` JSONB references per
@@ -2484,6 +2538,7 @@ pub async fn admin_legacy_agent_slugs_handler(
     let collision_count = proposals.iter().filter(|(_, _, _, c)| c.is_some()).count();
 
     Ok(Json(json!({
+        // Post-limit counts — what this response body actually covers.
         "total_legacy": proposals.len(),
         "would_rename": would_rename,
         "collisions": collision_count,
@@ -2492,5 +2547,14 @@ pub async fn admin_legacy_agent_slugs_handler(
         "skipped_unrecoverable": if q.apply { Some(unrecoverable) } else { None },
         "apply": q.apply,
         "entries": entries,
+        // v0.10.24: filter + batch metadata so the caller knows when
+        // more legacy rows remain beyond this response. `total_matched`
+        // is the full slug-rule-failing set inside the `prefix` filter
+        // (or all agents if no prefix); `truncated` is true when
+        // `limit` clipped the tail.
+        "prefix": q.prefix,
+        "limit": q.limit,
+        "total_matched": total_matched_before_limit,
+        "truncated": limited,
     })))
 }
