@@ -1,30 +1,25 @@
 {
   "forecast_id": "c95b0b58-8fef-4758-930f-9060f923f853",
-  "current_version": 3,
-  "predicted_probability": 1.0773247473705176,
-  "inside_view_explanation": "Inside view: model evaluates to 1.077 (p5=0.644, p95=1.665). Key drivers: strength_factor, conditions, disruption. Most influential: strength_factor (53%), disruption (30%), conditions (19%).",
+  "current_version": 1,
+  "predicted_probability": 1.0746821841605896,
+  "inside_view_explanation": "Inside view: model evaluates to 1.075 (p5=0.638, p95=1.674). Key drivers: strength_factor, conditions, disruption. Most influential: strength_factor (50%), disruption (33%), conditions (18%).",
   "forecast_confidence": 0.14,
   "versions": [
     {
       "version": 1,
-      "timestamp": "2026-08-02 11:17",
-      "probability": 0.009999999776482582,
-      "change_summary": "Initial: 1.0%, 3 drivers, 0 evidence"
-    },
-    {
-      "version": 2,
-      "timestamp": "2026-08-02 11:17",
-      "probability": 0.009999999776482582,
-      "change_summary": "Updated forecast"
-    },
-    {
-      "version": 3,
-      "timestamp": "2026-08-02 11:18",
-      "probability": 1.0773247473705176,
-      "change_summary": "107.7% (+107pp), 3 drivers"
+      "timestamp": "2026-08-03 06:13",
+      "probability": 1.0746821841605896,
+      "change_summary": "Initial: 107.5%, 3 drivers, 0 evidence"
     }
   ],
-  "sim_results": null,
+  "sim_results": {
+    "mean": 1.0746821841605896,
+    "median": 1.0321667810200144,
+    "p5": 0.6376997742774777,
+    "p95": 1.6740500303621126,
+    "std_dev": 0.3175618296610036,
+    "iterations": 10000
+  },
   "base_rate": null,
   "evidence": [],
   "agents": [],
@@ -34,17 +29,17 @@
     "market_id": "2771328",
     "question": "Will Brighton win the 2026-27 English Premier League (EPL) Championship?",
     "market_price": 0.0025,
-    "volume_24h": 6249.8745,
-    "liquidity": 247090.69164,
-    "confidence": "Low",
+    "volume_24h": 10473.588166,
+    "liquidity": 246551.99406,
+    "confidence": "Medium",
     "price_change_1w": null,
     "url": "https://polymarket.com/event/epl-2027-champion-20260701200428749",
     "price_history": [
       {
-        "t": 1785669401,
+        "t": 1785737621,
         "p": 0.0025
       }
     ]
   },
-  "workspace_id": "65fe611d-c8f0-4e2f-a279-c7f6ef221ecf"
+  "workspace_id": null
 }
