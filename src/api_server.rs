@@ -775,6 +775,30 @@ async fn run_migrations(db: &PgPool) {
         // JOIN so the new FK is satisfied by every existing row.
         // See RELEASE_NOTES_v0.10.9.md.
         "migrations/165_fermi_forecasts_owner_fk_realign.sql",
+        // 166: adds agents.updated_at. Four write sites reference this
+        // column (publish_agent, archive_agent, restore_agent,
+        // update_fork_pricing_handler) and all have been silently
+        // 500'ing since the code shipped — nobody hit the codepath
+        // cleanly until v0.10.15 unblocked admin force-publish.
+        // `agents` was the only publishable substrate on the platform
+        // missing an updated_at column; every other one (apps,
+        // fermi_forecasts, teams, wallets, …) has it. Backfills
+        // existing rows from created_at.
+        //
+        // Authored for a v0.10.18 hotfix; that version number went to
+        // the console updater fix shipped from a parallel session, so
+        // it lands here alongside mig-167. Both are schema-drift
+        // closures. See RELEASE_NOTES_v0.10.19.md.
+        "migrations/166_agents_updated_at.sql",
+        // 167: v0.10.19 hotfix. Recreates fermi_leaderboard
+        // materialized view with `::float8` casts on MIN/MAX so
+        // Rust reads as Option<f64> stop 400'ing with FLOAT4/FLOAT8
+        // mismatch. Same substrate rule applied to the four SQL
+        // reads in handlers/forecasts.rs (portfolio_stats,
+        // my_stats, leaderboard fallback, resolve_forecast). Family
+        // originated in Mo's Resolve Forecast dialog. See
+        // RELEASE_NOTES_v0.10.19.md.
+        "migrations/167_fermi_leaderboard_float8_minmax.sql",
     ];
 
     for file in &migration_files {

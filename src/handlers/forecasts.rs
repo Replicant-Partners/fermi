@@ -1067,8 +1067,17 @@ pub async fn resolve_forecast_handler(
         None => return Err((StatusCode::NOT_FOUND, "Forecast not found".into())),
     }
 
-    // Use the database function for atomic resolution
-    let brier_score: f64 = sqlx::query_scalar("SELECT resolve_forecast($1, $2, $3, $4)")
+    // Use the database function for atomic resolution.
+    //
+    // v0.10.19: `resolve_forecast()` returns REAL (mig-094, FLOAT4).
+    // sqlx enforces exact type match on scalar reads, so binding as
+    // `f64` (FLOAT8) 400'd with `Rust type f64 is not compatible with
+    // SQL type FLOAT4`. That's the error Mo hit in the Resolve
+    // Forecast modal. Cast in SQL (`::float8`) so every downstream
+    // f64 site in this handler and record_forecast_calibration_signals
+    // stays untouched. Substrate rule: numeric aggregates and
+    // scalar-returning functions publish DOUBLE PRECISION to Rust.
+    let brier_score: f64 = sqlx::query_scalar("SELECT resolve_forecast($1, $2, $3, $4)::float8")
         .bind(&forecast_id)
         .bind(req.actual_outcome)
         .bind(&user_id)
@@ -1760,9 +1769,16 @@ pub async fn portfolio_stats_handler(
             COUNT(*) FILTER (WHERE f.status = 'active') AS active_count,
             COUNT(*) FILTER (WHERE f.status = 'resolved') AS resolved_count,
             COUNT(*) FILTER (WHERE f.status = 'draft') AS draft_count,
+            -- v0.10.19: MIN(REAL)/MAX(REAL) return REAL; AVG/STDDEV
+            -- widen to DOUBLE PRECISION already. Cast MIN/MAX to
+            -- float8 so Rust's Option<f64> read at the serializer
+            -- below doesn't 400 with FLOAT4/FLOAT8 mismatch (same
+            -- family as the resolve_forecast bug Mo hit in v0.10.19).
+            -- Parens around the FILTER expression before `::float8`
+            -- so precedence is unambiguous across PG versions.
             AVG(f.brier_score) FILTER (WHERE f.brier_score IS NOT NULL) AS avg_brier,
-            MIN(f.brier_score) FILTER (WHERE f.brier_score IS NOT NULL) AS best_brier,
-            MAX(f.brier_score) FILTER (WHERE f.brier_score IS NOT NULL) AS worst_brier,
+            (MIN(f.brier_score) FILTER (WHERE f.brier_score IS NOT NULL))::float8 AS best_brier,
+            (MAX(f.brier_score) FILTER (WHERE f.brier_score IS NOT NULL))::float8 AS worst_brier,
             STDDEV(f.brier_score) FILTER (WHERE f.brier_score IS NOT NULL) AS brier_stddev,
             AVG(f.predicted_probability) AS avg_probability,
             -- Calibration: for each probability decile, what fraction resolved true?
@@ -2306,11 +2322,17 @@ pub async fn leaderboard_handler(
         Err(_) => {
             // Fallback: live query (slower but works before first REFRESH)
             sqlx::query(
+                // v0.10.19: MIN/MAX on REAL return REAL; cast to
+                // float8 so the Option<f64> reads below don't
+                // FLOAT4/FLOAT8-mismatch. Fallback branch used when
+                // the materialized view has drifted or a fresh
+                // aggregate is preferred. Materialized view itself
+                // fixed in mig-167.
                 "SELECT f.owner_id::text AS owner_id, COALESCE(u.display_name, u.name, u.email, u.user_id) AS display_name,
                         COUNT(*) AS total_resolved,
                         AVG(f.brier_score) AS avg_brier_score,
-                        MIN(f.brier_score) AS best_brier_score,
-                        MAX(f.brier_score) AS worst_brier_score,
+                        MIN(f.brier_score)::float8 AS best_brier_score,
+                        MAX(f.brier_score)::float8 AS worst_brier_score,
                         STDDEV(f.brier_score) AS brier_stddev,
                         MAX(f.resolved_at) AS last_resolved_at,
                         ROW_NUMBER() OVER (ORDER BY AVG(f.brier_score) ASC) AS rank
@@ -2378,9 +2400,11 @@ pub async fn my_stats_handler(
             COUNT(*) FILTER (WHERE status = 'active') AS active_count,
             COUNT(*) FILTER (WHERE status = 'resolved') AS resolved_count,
             COUNT(*) FILTER (WHERE status = 'draft') AS draft_count,
+            -- v0.10.19: cast MIN/MAX to float8 (see portfolio_stats_handler
+            -- and resolve_forecast_handler for the same substrate rule).
             AVG(brier_score) FILTER (WHERE brier_score IS NOT NULL) AS avg_brier,
-            MIN(brier_score) FILTER (WHERE brier_score IS NOT NULL) AS best_brier,
-            MAX(brier_score) FILTER (WHERE brier_score IS NOT NULL) AS worst_brier,
+            (MIN(brier_score) FILTER (WHERE brier_score IS NOT NULL))::float8 AS best_brier,
+            (MAX(brier_score) FILTER (WHERE brier_score IS NOT NULL))::float8 AS worst_brier,
             -- Calibration
             AVG(CASE WHEN predicted_probability < 0.2 AND brier_score IS NOT NULL
                      THEN actual_outcome::int END) AS cal_0_20,
