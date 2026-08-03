@@ -39,6 +39,33 @@ pub fn clamp_wire_probability(p: f64) -> f64 {
     }
 }
 
+/// Coerce an optional confidence-interval bound into the `[0,1]`
+/// range the database enforces.
+///
+/// `fermi_forecasts.confidence_interval_low` and
+/// `confidence_interval_high` carry
+/// `CHECK (col >= 0 AND col <= 1)` (mig-048, mig-094). Unlike
+/// `predicted_probability`, the handler does **not** range-check these
+/// in Rust — so an out-of-range value reaches Postgres and surfaces as
+/// a constraint violation wrapped in a 500, not a clean 400.
+///
+/// The console fills both straight from `sim_results.p5` / `p95`,
+/// which are exactly as unbounded as the simulation mean. A
+/// multiplier-chain model that pushes the mean past 1.0 pushes p95
+/// further still — an observed run had `mean 1.068, p95 1.655`.
+/// Clamping `predicted_probability` alone therefore just moves the
+/// failure one column to the right.
+///
+/// Non-finite bounds return `None` (omit the field) rather than
+/// substituting a value: unlike the point estimate, an interval bound
+/// has no defensible stand-in, and both columns are nullable.
+pub fn clamp_wire_interval_bound(v: Option<f64>) -> Option<f64> {
+    match v {
+        Some(x) if x.is_finite() => Some(x.clamp(0.0, 1.0)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,6 +101,71 @@ mod tests {
         assert_eq!(clamp_wire_probability(f64::NAN), 0.5);
         assert_eq!(clamp_wire_probability(f64::INFINITY), 0.5);
         assert_eq!(clamp_wire_probability(f64::NEG_INFINITY), 0.5);
+    }
+
+    // ── interval bounds ───────────────────────────────────────
+
+    #[test]
+    fn interval_bounds_in_range_pass_through() {
+        assert_eq!(clamp_wire_interval_bound(Some(0.0)), Some(0.0));
+        assert_eq!(clamp_wire_interval_bound(Some(0.637)), Some(0.637));
+        assert_eq!(clamp_wire_interval_bound(Some(1.0)), Some(1.0));
+    }
+
+    #[test]
+    fn clamps_the_observed_p95_constraint_violation() {
+        // The production failure: mean 1.068 clamped fine, but p95
+        // 1.655 went straight to Postgres and tripped
+        // fermi_forecasts_confidence_interval_high_check as a 500.
+        assert_eq!(clamp_wire_interval_bound(Some(1.655)), Some(1.0));
+    }
+
+    #[test]
+    fn interval_bounds_clamp_below_zero() {
+        assert_eq!(clamp_wire_interval_bound(Some(-0.2)), Some(0.0));
+    }
+
+    #[test]
+    fn absent_and_non_finite_bounds_are_omitted() {
+        // Nullable columns — omitting beats inventing a bound.
+        assert_eq!(clamp_wire_interval_bound(None), None);
+        assert_eq!(clamp_wire_interval_bound(Some(f64::NAN)), None);
+        assert_eq!(clamp_wire_interval_bound(Some(f64::INFINITY)), None);
+        assert_eq!(clamp_wire_interval_bound(Some(f64::NEG_INFINITY)), None);
+    }
+
+    #[test]
+    fn interval_output_always_satisfies_the_check_constraint() {
+        for raw in [
+            Some(-1e9),
+            Some(-0.0001),
+            Some(0.0),
+            Some(0.637),
+            Some(1.0),
+            Some(1.655),
+            Some(1e9),
+            Some(f64::NAN),
+            Some(f64::INFINITY),
+            None,
+        ] {
+            if let Some(out) = clamp_wire_interval_bound(raw) {
+                assert!(
+                    out.is_finite() && (0.0..=1.0).contains(&out),
+                    "clamp_wire_interval_bound({raw:?}) = {out} violates CHECK (col >= 0 AND col <= 1)"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn clamping_preserves_low_le_high_ordering() {
+        // Both bounds clamp monotonically, so a valid interval can
+        // collapse to a point but can never invert.
+        for (lo, hi) in [(0.2, 0.8), (0.637, 1.655), (1.2, 3.4), (-0.5, 0.1)] {
+            let clo = clamp_wire_interval_bound(Some(lo)).unwrap();
+            let chi = clamp_wire_interval_bound(Some(hi)).unwrap();
+            assert!(clo <= chi, "interval inverted: {lo}..{hi} -> {clo}..{chi}");
+        }
     }
 
     #[test]

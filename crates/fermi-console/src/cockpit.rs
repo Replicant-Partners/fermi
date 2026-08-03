@@ -45,7 +45,7 @@ use crate::api::client::{
 };
 use crate::text_input::TextInput;
 use crate::theme;
-use fermi_console::wire::clamp_wire_probability;
+use fermi_console::wire::{clamp_wire_interval_bound, clamp_wire_probability};
 
 // ════════════════════════════════════════════════════════════════════
 // Autosave tuning
@@ -8422,8 +8422,14 @@ impl CockpitState {
             .question()
             .and_then(|q| q.resolution_criteria.clone());
         let target_date = self.program.question().and_then(|q| q.target_date.clone());
-        let ci_low = self.sim_results.as_ref().map(|s| s.p5);
-        let ci_high = self.sim_results.as_ref().map(|s| s.p95);
+        // Same [0,1] contract as the point estimate above, enforced by
+        // a DB CHECK rather than a handler guard — so an out-of-range
+        // bound arrives as a constraint violation wrapped in a 500
+        // instead of a clean 400. Clamping `predicted_probability`
+        // alone just moved the failure one column right: a model whose
+        // mean is 1.068 has a p95 of 1.655.
+        let ci_low = clamp_wire_interval_bound(self.sim_results.as_ref().map(|s| s.p5));
+        let ci_high = clamp_wire_interval_bound(self.sim_results.as_ref().map(|s| s.p95));
         let sim_results_json = self.sim_results.as_ref().map(
             |s| serde_json::json!({ "mean": s.mean, "median": s.median, "p5": s.p5, "p95": s.p95 }),
         );
@@ -8646,17 +8652,42 @@ impl CockpitState {
                             http_status.map(|s| s.to_string()).unwrap_or_default(),
                         )
                         .with_context("forecast_id", fid_for_log.clone().unwrap_or_default())
-                        .with_context("transient", if transient { "yes" } else { "no" })
-                        .with_context("local_draft", "retained — autosave will retry")
+                        // The classifier's verdict wins when it
+                        // positively identified the failure. `ApiError`
+                        // calls every 5xx transient, but Postgres
+                        // returns 500 for permanently-doomed writes too
+                        // (constraint violations, type mismatches) —
+                        // reporting those as retryable told the operator
+                        // to wait for a retry that could never succeed,
+                        // while autosave burned a request every cycle.
+                        .with_context(
+                            "retryable",
+                            if diagnosis.recognised {
+                                if diagnosis.retryable {
+                                    "yes"
+                                } else {
+                                    "no — permanent, retrying cannot help"
+                                }
+                            } else if transient {
+                                "maybe — transport-level 5xx, cause unidentified"
+                            } else {
+                                "no"
+                            },
+                        )
+                        .with_context("local_draft", "retained locally")
                         .with_payload(serde_json::json!({ "raw_error": raw }));
 
-                        // A transient failure outranks the taxonomy's
-                        // static advice: retrying really is the move.
-                        if let Some(remedy) = if transient {
+                        // Prefer the taxonomy when it recognised the
+                        // failure; only fall back to a blanket Retry for
+                        // unidentified transport errors.
+                        let remedy = if diagnosis.recognised {
+                            diagnosis.remedy.clone()
+                        } else if transient {
                             Some(Remedy::Retry)
                         } else {
                             diagnosis.remedy.clone()
-                        } {
+                        };
+                        if let Some(remedy) = remedy {
                             event = event.with_remedy(remedy);
                         }
 
@@ -9634,8 +9665,9 @@ impl CockpitState {
             .question()
             .and_then(|q| q.resolution_criteria.clone());
         let target_date = self.program.question().and_then(|q| q.target_date.clone());
-        let ci_low = self.sim_results.as_ref().map(|s| s.p5);
-        let ci_high = self.sim_results.as_ref().map(|s| s.p95);
+        // See `persist_backend_save` — DB CHECK on both bounds.
+        let ci_low = clamp_wire_interval_bound(self.sim_results.as_ref().map(|s| s.p5));
+        let ci_high = clamp_wire_interval_bound(self.sim_results.as_ref().map(|s| s.p95));
         let sim_results_json = self.sim_results.as_ref().map(
             |s| serde_json::json!({ "mean": s.mean, "median": s.median, "p5": s.p5, "p95": s.p95 }),
         );
@@ -20624,6 +20656,16 @@ pub struct SaveErrorDiagnosis {
     pub detail: String,
     /// The suggested next step, if we recognised the failure.
     pub remedy: Option<Remedy>,
+    /// True when a branch positively identified this failure, false
+    /// for the catch-all. Callers should prefer this diagnosis over
+    /// transport-level heuristics when it's `true` — `ApiError`
+    /// classifies every 5xx as transient, but Postgres surfaces
+    /// permanent failures (constraint violations, type mismatches)
+    /// as 500s too, and those will never succeed on retry.
+    pub recognised: bool,
+    /// Whether retrying the identical request could plausibly work.
+    /// Only meaningful when `recognised`.
+    pub retryable: bool,
 }
 
 /// Translate a raw backend error string into a structured operator
@@ -20647,6 +20689,54 @@ pub fn classify_backend_save_error(raw: &str) -> SaveErrorDiagnosis {
     // account). The server surfaces this as 409 CONFLICT with a
     // specific phrase. Checked BEFORE the FK branch below so we
     // don't misclassify it as a stale-deploy.
+    // Postgres CHECK-constraint violation. Distinct from the handler's
+    // own range guards: the API validates `predicted_probability` in
+    // Rust and returns a clean 400, but the confidence-interval bounds
+    // (and several other columns) are only constrained at the schema
+    // level — so a bad value reaches the database and comes back as a
+    // 500 wrapping the constraint name.
+    //
+    // Checked first because it's unambiguous and, critically,
+    // *permanent*: `ApiError` calls every 5xx transient, so without
+    // this branch the autosave loop retries a request that cannot ever
+    // succeed.
+    if lower.contains("violates check constraint") {
+        // The constraint name is the most actionable token in the whole
+        // message — surface it in the summary so the row is
+        // self-identifying, and so distinct violations don't coalesce.
+        let constraint =
+            extract_quoted_constraint(raw).unwrap_or_else(|| "unknown constraint".to_string());
+        let column_hint = if constraint.contains("confidence_interval") {
+            "\n\nThis is the confidence interval from your last simulation. \
+             `confidence_interval_low` and `confidence_interval_high` are \
+             CHECK-constrained to [0,1] (mig-048, mig-094), and the console \
+             fills them from the simulation's p5 and p95 — which are as \
+             unbounded as the mean. A multiplier-chain model that pushes the \
+             mean past 1.0 pushes p95 further still.\n\n\
+             Anchor the question with a base rate so the model produces a \
+             probability, and the interval will fall back inside range."
+        } else {
+            ""
+        };
+        return SaveErrorDiagnosis {
+            summary: format!(
+                "Backend save failed: database rejected a value ({})",
+                constraint
+            ),
+            detail: format!(
+                "A CHECK constraint on the forecasts table refused this write. \
+                 This is a permanent failure — the same request will fail \
+                 identically every time, so autosave retrying it will not \
+                 help.{}\n\n\
+                 Raw error: {}",
+                column_hint, raw
+            ),
+            remedy: Some(Remedy::CopyDiagnostics),
+            recognised: true,
+            retryable: false,
+        };
+    }
+
     if lower.contains("already registered under a different account") {
         return SaveErrorDiagnosis {
             summary: "Backend save failed: your email is claimed by a different account"
@@ -20660,6 +20750,8 @@ pub fn classify_backend_save_error(raw: &str) -> SaveErrorDiagnosis {
                 raw
             ),
             remedy: Some(Remedy::CopyDiagnostics),
+            recognised: true,
+            retryable: false,
         };
     }
 
@@ -20683,6 +20775,8 @@ pub fn classify_backend_save_error(raw: &str) -> SaveErrorDiagnosis {
                 raw
             ),
             remedy: Some(Remedy::RunSelfCheck),
+            recognised: true,
+            retryable: false,
         };
     }
 
@@ -20714,6 +20808,8 @@ pub fn classify_backend_save_error(raw: &str) -> SaveErrorDiagnosis {
                 raw
             ),
             remedy: Some(Remedy::SignOut),
+            recognised: true,
+            retryable: false,
         };
     }
 
@@ -20732,6 +20828,8 @@ pub fn classify_backend_save_error(raw: &str) -> SaveErrorDiagnosis {
                 raw
             ),
             remedy: Some(Remedy::ResetComposer),
+            recognised: true,
+            retryable: false,
         };
     }
 
@@ -20748,6 +20846,8 @@ pub fn classify_backend_save_error(raw: &str) -> SaveErrorDiagnosis {
                 raw
             ),
             remedy: Some(Remedy::Retry),
+            recognised: true,
+            retryable: true,
         };
     }
 
@@ -20763,7 +20863,28 @@ pub fn classify_backend_save_error(raw: &str) -> SaveErrorDiagnosis {
                  diagnostics and re-save before navigating away."
             .to_string(),
         remedy: Some(Remedy::CopyDiagnostics),
+        // Catch-all: we have no idea what this is, so the caller
+        // should fall back to the transport-level transient/permanent
+        // heuristic rather than trusting anything here.
+        recognised: false,
+        retryable: false,
     }
+}
+
+/// Pull the constraint name out of a Postgres violation message.
+///
+/// Postgres formats these as:
+/// `new row for relation "t" violates check constraint "c_check"`
+/// — the constraint is the last double-quoted token.
+fn extract_quoted_constraint(raw: &str) -> Option<String> {
+    let idx = raw.to_lowercase().find("violates check constraint")?;
+    let tail = &raw[idx..];
+    let mut parts = tail.split('"');
+    parts.next()?; // text before the opening quote
+    parts
+        .next()
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Flat-string form, kept for the inline `publish_status` chip which

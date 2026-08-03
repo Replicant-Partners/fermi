@@ -3636,7 +3636,7 @@ dependencies = [
 
 [[package]]
 name = "fermi-console"
-version = "0.10.21"
+version = "0.10.22"
 dependencies = [
  "anyhow",
  "chrono",
