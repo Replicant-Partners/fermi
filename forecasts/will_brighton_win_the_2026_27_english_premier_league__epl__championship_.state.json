@@ -1,6 +1,6 @@
 {
   "forecast_id": "c95b0b58-8fef-4758-930f-9060f923f853",
-  "current_version": 1,
+  "current_version": 5,
   "predicted_probability": 1.0746821841605896,
   "inside_view_explanation": "Inside view: model evaluates to 1.075 (p5=0.638, p95=1.674). Key drivers: strength_factor, conditions, disruption. Most influential: strength_factor (50%), disruption (33%), conditions (18%).",
   "forecast_confidence": 0.14,
@@ -10,6 +10,30 @@
       "timestamp": "2026-08-03 06:13",
       "probability": 1.0746821841605896,
       "change_summary": "Initial: 107.5%, 3 drivers, 0 evidence"
+    },
+    {
+      "version": 2,
+      "timestamp": "2026-08-03 09:47",
+      "probability": 1.0746821841605896,
+      "change_summary": "Updated forecast"
+    },
+    {
+      "version": 3,
+      "timestamp": "2026-08-03 09:48",
+      "probability": 1.0746821841605896,
+      "change_summary": "Updated forecast"
+    },
+    {
+      "version": 4,
+      "timestamp": "2026-08-03 09:58",
+      "probability": 1.0746821841605896,
+      "change_summary": "Updated forecast"
+    },
+    {
+      "version": 5,
+      "timestamp": "2026-08-03 09:58",
+      "probability": 1.0746821841605896,
+      "change_summary": "107.5% (→), 3 drivers"
     }
   ],
   "sim_results": {
@@ -29,9 +53,9 @@
     "market_id": "2771328",
     "question": "Will Brighton win the 2026-27 English Premier League (EPL) Championship?",
     "market_price": 0.0025,
-    "volume_24h": 10473.588166,
-    "liquidity": 246551.99406,
-    "confidence": "Medium",
+    "volume_24h": 9574.048166,
+    "liquidity": 243048.06686,
+    "confidence": "Low",
     "price_change_1w": null,
     "url": "https://polymarket.com/event/epl-2027-champion-20260701200428749",
     "price_history": [
