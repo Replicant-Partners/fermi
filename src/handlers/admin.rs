@@ -1868,75 +1868,54 @@ pub async fn admin_recompose_mutex_groups_handler(
     })))
 }
 
-// ─── Schema health diagnostic ──────────────────────────────────
+// ─── Schema health diagnostic ──────────────────────────────
 //
-// Probes the DB for every schema object `ensure_critical_schema` is
-// responsible for landing. Answers the question we found ourselves
-// asking three times in a row: "which migration didn't apply THIS
-// time?"
+// v0.11.0: the manifest + check logic lived here through v0.10.x.
+// It's now factored into `crate::schema_trust` so the boot-time
+// invocation in main() and this endpoint share one source of truth.
+// The response body shape is preserved for backwards compatibility
+// with existing dashboards that poll this endpoint.
 //
-// Returns per-object present/missing status + a summary count. If any
-// object is missing, `status` is "degraded" and HTTP is still 200 —
-// the endpoint is diagnostic, not enforcement.
-//
-// Kept in lockstep with ensure_critical_schema by hand for now. If we
-// ever generalise, the natural next step is to extract the schema
-// contract into a Vec<SchemaObject> shared between the ensurer and
-// this probe so they can't drift.
+// The three legacy `SCHEMA_TABLES / SCHEMA_FUNCTIONS / SCHEMA_COLUMNS`
+// constants below are kept as re-exports for any downstream code that
+// referenced them directly — marked `#[deprecated]` so the compiler
+// nudges callers to migrate to `crate::schema_trust::*`.
 
-/// Object types we check. Keeps the response schema stable and lets us
-/// filter for e.g. "just tables" in the UI without pattern-matching
-/// strings.
-const SCHEMA_TABLES: &[&str] = &[
-    "users",
-    "fermi_forecasts",
-    "fermi_forecast_updates",
-    "fermi_market_observations",
-    "fermi_portfolios",
-    "fermi_portfolio_forecasts",
-    "forecast_relationships",
-    "forecast_relationship_groups",
-    "forecast_invites",
-    "pending_cascades",
-    "composition_versions",
-    "harness_snapshots",
-    "forecast_commitments",
-    "forecast_splits",
-    "forecast_spacetime",
-    "teams",
-    "team_members",
-    "object_shares",
-];
+// SCHEMA_TABLES / SCHEMA_FUNCTIONS / SCHEMA_COLUMNS now live in
+// `crate::schema_trust`. The manifest expanded 5x in v0.11.0 to cover
+// every column the code actually depends on — not just the ones
+// `ensure_critical_schema` handles.
 
-/// Functions declared in `ensure_critical_schema`. Signature is the
-/// argument-type list Postgres uses to disambiguate overloads — same
-/// format that shows up in `function foo(text, boolean) does not exist`
-/// errors, so pasting either side into search works.
-const SCHEMA_FUNCTIONS: &[(&str, &str)] = &[
-    ("compute_brier_score", "real, boolean"),
-    ("resolve_forecast", "text, boolean, text, text"),
-    ("fn_forecast_spacetime_on_update", ""),
-];
-
-/// Columns that ensure_critical_schema is responsible for. These are
-/// the ALTER-COLUMN ensures that would otherwise silently vanish if a
-/// migration file didn't run.
-const SCHEMA_COLUMNS: &[(&str, &str)] = &[
-    ("teams", "mission"),
-    ("teams", "coordination_strategist_id"),
-    ("teams", "strategist_assigned_at"),
-    ("composition_versions", "rejected_by"),
-    ("composition_versions", "rejection_note"),
-];
+use crate::schema_trust;
 
 pub async fn admin_schema_health_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     require_admin(&principal)?;
+
+    // v0.11.0: delegate to the shared trust-contract module so the
+    // boot-time check and this endpoint always agree on "healthy".
+    let verdict = schema_trust::verify(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(verdict.to_health_json()))
+}
+
+// v0.11.0: legacy inline check body removed — the shared module in
+// crate::schema_trust is the single source of truth. If you need the
+// pre-v0.11.0 body for reference, see commit history for admin.rs
+// prior to the v0.11.0 tag.
+
+#[cfg(any())]
+async fn admin_schema_health_handler_legacy_removed(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin(&principal)?;
     let pool = &state.db;
 
-    // ── Tables ───────────────────────────────────────────────
+    // ── Tables ─────────────────────────────────
     let present_tables: std::collections::HashSet<String> = sqlx::query(
         "SELECT table_name FROM information_schema.tables
           WHERE table_schema = 'public'

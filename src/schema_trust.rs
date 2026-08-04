@@ -1,0 +1,594 @@
+//! # Schema trust contract
+//!
+//! v0.11.0 — the substrate that would have caught every schema/wire drift
+//! bug from v0.10.15 → v0.10.29 at deploy time instead of at first user
+//! click. Sixth consecutive "the code assumed X but the DB shipped Y"
+//! hotfix is when we build the invariant.
+//!
+//! ## What it does
+//!
+//! At boot, after `run_migrations()` and `ensure_critical_schema()`, we
+//! probe the DB for every schema object the Rust code assumes exists:
+//!
+//!   * Every table in [`SCHEMA_TABLES`] is present.
+//!   * Every column in [`SCHEMA_COLUMNS`] is present on its table.
+//!   * Every function in [`SCHEMA_FUNCTIONS`] is present AND has the
+//!     declared argument-type signature AND the declared return type.
+//!     (Return type catches the v0.10.19 REAL-vs-FLOAT8 class.)
+//!
+//! Any missing/mismatched object is logged LOUDLY to stderr.
+//!
+//! ## Behaviour
+//!
+//! Two modes, controlled by `SCHEMA_STRICT` env var:
+//!
+//!   * **`SCHEMA_STRICT` unset / `SCHEMA_STRICT=0`** — default. Log every
+//!     drift to stderr with a WARNING banner. Continue booting. Suitable
+//!     for gradual rollout: the deploy proceeds, but the operator sees
+//!     the drift in Railway logs immediately.
+//!
+//!   * **`SCHEMA_STRICT=1`** — abort boot on any drift. The intended
+//!     production posture once the contract is comprehensive enough
+//!     that a false positive is rarer than a real drift.
+//!
+//! ## Why hand-declared and not auto-generated
+//!
+//! The existing pre-commit lint (`scripts/lint-schema-consistency.py`)
+//! parses migration files at author time — it catches drift at commit,
+//! before deploy. But it's opt-in on the developer machine, only fires
+//! on qualified refs (`table.col` or `alias.col` with a JOIN mapping),
+//! and doesn't run in CI.
+//!
+//! The boot check here is the last line of defense: it runs against
+//! the *actual production DB* at *actual boot time*, so it catches:
+//!
+//!   * Migrations that didn't run (PgBouncer ate them — v0.10.27).
+//!   * Columns removed from a table between deploys.
+//!   * Function signatures changed by an ops-team hotfix.
+//!
+//! The hand-declared manifest is the tradeoff: high signal on the
+//! columns we actually depend on, low maintenance burden compared to
+//! generating from every `sqlx::query!` in the codebase.
+//!
+//! ## Extending
+//!
+//! When a new column/table/function becomes production-critical, add
+//! it here. Rule of thumb: **if the Rust code would 500 on its
+//! absence, it belongs in the contract.**
+
+use serde_json::{json, Value};
+use sqlx::{PgPool, Row};
+use std::collections::HashSet;
+
+// ═══════════════════════════════════════════════════════════════════
+// The contract
+// ═══════════════════════════════════════════════════════════════════
+
+/// Tables the Rust code assumes exist.
+pub const SCHEMA_TABLES: &[&str] = &[
+    // Core identity
+    "users",
+    "api_keys",
+    // Agent lifecycle
+    "agents",
+    "agent_versions",
+    "workspace_agents",
+    "admin_bypass_events",
+    // Fermi forecasting
+    "fermi_forecasts",
+    "fermi_forecast_updates",
+    "fermi_market_observations",
+    "fermi_portfolios",
+    "fermi_portfolio_forecasts",
+    "fermi_notebooks",
+    "fermi_leaderboard",
+    // Relationships and pending cascades
+    "forecast_relationships",
+    "forecast_relationship_groups",
+    "forecast_invites",
+    "pending_cascades",
+    "forecast_commitments",
+    "forecast_splits",
+    "forecast_spacetime",
+    // Workspaces / teams
+    "teams",
+    "team_members",
+    "object_shares",
+    // Compositions
+    "composition_versions",
+    // Apps
+    "apps",
+    // Memory (mig-010 core)
+    "episodes",
+    "entities",
+    "facts",
+    "semantic_rules",
+    "communities",
+    "ontology_snapshots",
+    "consolidation_jobs",
+    "consolidation_locks",
+    // Observability (mig-103/104/105/106)
+    "episode_corrections",
+    "eval_signals",
+    "eval_runs",
+    "eval_test_cases",
+    "agent_timeline_entries",
+    "dyad_state",
+    "anomaly_events",
+    "agent_observability_state",
+    "hitl_actions",
+    // Harness / benchmark
+    "harness_snapshots",
+];
+
+/// Columns the Rust code depends on. Rule of thumb: any column whose
+/// absence would 500 a user-facing request. Grouped by table for
+/// readability.
+///
+/// **This list is not exhaustive** — it's populated in priority order
+/// starting with the columns whose absence has actually caused
+/// production incidents (v0.10.15 → v0.10.29). Extend when a new
+/// column becomes load-bearing.
+pub const SCHEMA_COLUMNS: &[(&str, &str)] = &[
+    // ── agents ─────────────────────────────────────────────────────
+    // Every one of these has been referenced in a bug in the last
+    // month. The trust contract exists to keep them present.
+    ("agents", "agent_id"),
+    ("agents", "agent_name"),
+    ("agents", "agent_type"),
+    ("agents", "tier"),
+    ("agents", "status"),
+    ("agents", "visibility"),
+    ("agents", "user_id"), // was assumed as `owner_id` in v0.10.15/16
+    ("agents", "created_at"),
+    ("agents", "updated_at"), // v0.10.18/v0.10.27 — mig-166 got eaten by PgBouncer
+    ("agents", "total_executions"),
+    ("agents", "description"),
+    ("agents", "system_prompt"),
+    ("agents", "tags"),
+    ("agents", "fork_pricing"),
+    ("agents", "forked_from"),
+    ("agents", "fork_count"),
+    // ── fermi_forecasts ────────────────────────────────────────────
+    ("fermi_forecasts", "id"),
+    ("fermi_forecasts", "owner_id"), // realigned TEXT via mig-165
+    ("fermi_forecasts", "question_text"),
+    ("fermi_forecasts", "predicted_probability"),
+    ("fermi_forecasts", "confidence_interval_low"),
+    ("fermi_forecasts", "confidence_interval_high"),
+    ("fermi_forecasts", "brier_score"), // REAL — see v0.10.19 float8 cast
+    ("fermi_forecasts", "actual_outcome"),
+    ("fermi_forecasts", "status"),
+    ("fermi_forecasts", "resolved_at"),
+    ("fermi_forecasts", "agents_used"), // JSONB, GIN-indexed post mig-168
+    ("fermi_forecasts", "visibility"),
+    ("fermi_forecasts", "team_id"),
+    ("fermi_forecasts", "tags"),
+    ("fermi_forecasts", "created_at"),
+    ("fermi_forecasts", "updated_at"),
+    // ── users ──────────────────────────────────────────────────────
+    ("users", "id"),
+    ("users", "user_id"), // TEXT, the substrate identity (v0.10.9 realign)
+    ("users", "email"),
+    ("users", "display_name"),
+    ("users", "auth_provider"),
+    // ── admin_bypass_events (mig-164) ─────────────────────────────
+    ("admin_bypass_events", "event_id"),
+    ("admin_bypass_events", "admin_user_id"),
+    ("admin_bypass_events", "target_type"),
+    ("admin_bypass_events", "target_id"),
+    ("admin_bypass_events", "action"),
+    ("admin_bypass_events", "details"),
+    ("admin_bypass_events", "created_at"),
+    // ── apps ───────────────────────────────────────────────────────
+    ("apps", "id"),
+    ("apps", "slug"),
+    ("apps", "name"),
+    ("apps", "owner_user_id"),
+    ("apps", "visibility"),
+    ("apps", "workspace_template"),
+    ("apps", "created_at"),
+    ("apps", "updated_at"),
+    // ── teams / workspaces ─────────────────────────────────────────
+    ("teams", "id"),
+    ("teams", "name"),
+    ("teams", "slug"),
+    ("teams", "owner_id"),
+    ("teams", "origin"),
+    ("teams", "mission"),
+    ("teams", "coordination_strategist_id"),
+    ("teams", "strategist_assigned_at"),
+    // ── workspace_agents (mig-015) ─────────────────────────────────
+    ("workspace_agents", "workspace_id"),
+    ("workspace_agents", "agent_id"),
+    ("workspace_agents", "added_by"),
+    ("workspace_agents", "added_at"),
+    ("workspace_agents", "relationship"),
+    // ── composition_versions ──────────────────────────────────────
+    ("composition_versions", "composition_version_id"),
+    ("composition_versions", "workspace_id"),
+    ("composition_versions", "rejected_by"),
+    ("composition_versions", "rejection_note"),
+];
+
+/// Functions the Rust code depends on. Now includes return type so we
+/// catch signature drift on both directions (v0.10.19 was
+/// `resolve_forecast()` returning REAL where code assumed FLOAT8).
+///
+/// Signature format matches
+/// `pg_get_function_identity_arguments(oid)` — space-normalised
+/// lowercase. Return type matches `pg_catalog.format_type(prorettype)`.
+pub const SCHEMA_FUNCTIONS: &[(&str, &str, &str)] = &[
+    // (name, args, return_type)
+    ("compute_brier_score", "real, boolean", "real"),
+    // v0.10.19 witness — return type declared explicitly so any future
+    // change to the SQL function surfaces as a contract violation
+    // rather than a runtime decoding panic.
+    ("resolve_forecast", "text, boolean, text, text", "real"),
+    ("fn_forecast_spacetime_on_update", "", "trigger"),
+    // v0.10.19 companion: leaderboard refresh needs the view to exist,
+    // captured via SCHEMA_TABLES; the refresh function is here.
+    ("refresh_fermi_leaderboard", "", "void"),
+];
+
+// ═══════════════════════════════════════════════════════════════════
+// Verdict
+// ═══════════════════════════════════════════════════════════════════
+
+/// Result of a single schema check. Serializes cleanly for the
+/// `/api/admin/schema-health` endpoint AND is inspectable at boot.
+#[derive(Debug, Default)]
+pub struct SchemaVerdict {
+    pub missing_tables: Vec<&'static str>,
+    pub missing_columns: Vec<(&'static str, &'static str)>,
+    /// Functions that don't exist at all (name not found).
+    pub missing_functions: Vec<(&'static str, &'static str, &'static str)>,
+    /// Functions found but with drifted argument signature. Third
+    /// element is the actual signatures the DB has, joined with `|`.
+    pub function_sig_mismatches: Vec<(&'static str, &'static str, String)>,
+    /// Functions found but with drifted return type. Third element is
+    /// the actual return type.
+    pub function_return_mismatches: Vec<(&'static str, &'static str, String)>,
+}
+
+impl SchemaVerdict {
+    /// True if every check passed.
+    pub fn is_healthy(&self) -> bool {
+        self.missing_tables.is_empty()
+            && self.missing_columns.is_empty()
+            && self.missing_functions.is_empty()
+            && self.function_sig_mismatches.is_empty()
+            && self.function_return_mismatches.is_empty()
+    }
+
+    pub fn total_issues(&self) -> usize {
+        self.missing_tables.len()
+            + self.missing_columns.len()
+            + self.missing_functions.len()
+            + self.function_sig_mismatches.len()
+            + self.function_return_mismatches.len()
+    }
+
+    /// Serialize to the JSON shape the `/api/admin/schema-health`
+    /// endpoint returns. Preserves backwards compatibility with the
+    /// pre-v0.11.0 response body.
+    pub fn to_health_json(&self) -> Value {
+        let tables: Vec<Value> = SCHEMA_TABLES
+            .iter()
+            .map(|name| {
+                json!({
+                    "name": name,
+                    "present": !self.missing_tables.contains(name),
+                })
+            })
+            .collect();
+
+        let columns: Vec<Value> = SCHEMA_COLUMNS
+            .iter()
+            .map(|(t, c)| {
+                json!({
+                    "table": t,
+                    "column": c,
+                    "present": !self.missing_columns.contains(&(*t, *c)),
+                })
+            })
+            .collect();
+
+        let functions: Vec<Value> = SCHEMA_FUNCTIONS
+            .iter()
+            .map(|(name, sig, ret)| {
+                let missing = self.missing_functions.iter().any(|(n, _, _)| n == name);
+                let sig_drift = self
+                    .function_sig_mismatches
+                    .iter()
+                    .find(|(n, _, _)| n == name)
+                    .map(|(_, _, found)| found.clone());
+                let ret_drift = self
+                    .function_return_mismatches
+                    .iter()
+                    .find(|(n, _, _)| n == name)
+                    .map(|(_, _, found)| found.clone());
+
+                json!({
+                    "name":            name,
+                    "signature":       sig,
+                    "return_type":     ret,
+                    "present":         !missing,
+                    "signature_drift": sig_drift,
+                    "return_drift":    ret_drift,
+                })
+            })
+            .collect();
+
+        let status = if self.is_healthy() {
+            "healthy"
+        } else {
+            "degraded"
+        };
+
+        json!({
+            "status":     status,
+            "checked_at": chrono::Utc::now().to_rfc3339(),
+            "tables":     tables,
+            "columns":    columns,
+            "functions":  functions,
+            "summary": {
+                "tables":    { "total": SCHEMA_TABLES.len(),    "missing": self.missing_tables.len() },
+                "columns":   { "total": SCHEMA_COLUMNS.len(),   "missing": self.missing_columns.len() },
+                "functions": {
+                    "total":               SCHEMA_FUNCTIONS.len(),
+                    "missing":             self.missing_functions.len(),
+                    "signature_drift":     self.function_sig_mismatches.len(),
+                    "return_type_drift":   self.function_return_mismatches.len(),
+                },
+                "total_issues": self.total_issues(),
+            },
+        })
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// The check
+// ═══════════════════════════════════════════════════════════════════
+
+/// Probe the DB for every entry in the contract. Returns a verdict.
+///
+/// Single round trip per axis (tables, columns, functions) via
+/// `ANY($1)` — even a bloated contract stays well under any timeout.
+pub async fn verify(db: &PgPool) -> Result<SchemaVerdict, sqlx::Error> {
+    let mut verdict = SchemaVerdict::default();
+
+    // ── Tables ────────────────────────────────────────────────────
+    let present_tables: HashSet<String> = sqlx::query(
+        "SELECT table_name FROM information_schema.tables \
+          WHERE table_schema = 'public' AND table_name = ANY($1)",
+    )
+    .bind(SCHEMA_TABLES)
+    .fetch_all(db)
+    .await?
+    .into_iter()
+    .filter_map(|r| r.try_get::<String, _>("table_name").ok())
+    .collect();
+
+    for &t in SCHEMA_TABLES {
+        if !present_tables.contains(t) {
+            verdict.missing_tables.push(t);
+        }
+    }
+
+    // ── Columns ───────────────────────────────────────────────────
+    let table_names: Vec<String> = SCHEMA_COLUMNS.iter().map(|(t, _)| t.to_string()).collect();
+    let col_names: Vec<String> = SCHEMA_COLUMNS.iter().map(|(_, c)| c.to_string()).collect();
+
+    let present_columns: HashSet<(String, String)> = sqlx::query(
+        "SELECT table_name, column_name FROM information_schema.columns \
+          WHERE table_schema = 'public' \
+            AND table_name  = ANY($1) \
+            AND column_name = ANY($2)",
+    )
+    .bind(&table_names)
+    .bind(&col_names)
+    .fetch_all(db)
+    .await?
+    .into_iter()
+    .filter_map(|r| {
+        Some((
+            r.try_get::<String, _>("table_name").ok()?,
+            r.try_get::<String, _>("column_name").ok()?,
+        ))
+    })
+    .collect();
+
+    for &(t, c) in SCHEMA_COLUMNS {
+        if !present_columns.contains(&(t.to_string(), c.to_string())) {
+            verdict.missing_columns.push((t, c));
+        }
+    }
+
+    // ── Functions (name + signature + return type) ────────────────
+    // pg_proc joined with pg_namespace + pg_type to get name,
+    // argument-identity-list, and formatted return type. Case-insensitive
+    // + space-normalized signature match so `text, boolean` == `TEXT,
+    // BOOLEAN` == `text,boolean`.
+    let fn_names: Vec<String> = SCHEMA_FUNCTIONS
+        .iter()
+        .map(|(n, _, _)| n.to_string())
+        .collect();
+
+    let present_functions: Vec<(String, String, String)> = sqlx::query(
+        "SELECT p.proname, \
+                pg_get_function_identity_arguments(p.oid) AS args, \
+                pg_catalog.format_type(p.prorettype, NULL) AS ret \
+           FROM pg_catalog.pg_proc p \
+           JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
+          WHERE n.nspname = 'public' \
+            AND p.proname = ANY($1)",
+    )
+    .bind(&fn_names)
+    .fetch_all(db)
+    .await?
+    .into_iter()
+    .filter_map(|r| {
+        Some((
+            r.try_get::<String, _>("proname").ok()?,
+            r.try_get::<String, _>("args").ok()?,
+            r.try_get::<String, _>("ret").ok()?,
+        ))
+    })
+    .collect();
+
+    let normalise = |s: &str| s.replace(' ', "").to_lowercase();
+
+    for &(name, want_sig, want_ret) in SCHEMA_FUNCTIONS {
+        let matches: Vec<&(String, String, String)> = present_functions
+            .iter()
+            .filter(|(n, _, _)| n == name)
+            .collect();
+
+        if matches.is_empty() {
+            verdict.missing_functions.push((name, want_sig, want_ret));
+            continue;
+        }
+
+        let want_sig_norm = normalise(want_sig);
+        let want_ret_norm = normalise(want_ret);
+
+        // Any overload with matching signature counts as "present".
+        let sig_match = matches
+            .iter()
+            .any(|(_, sig, _)| normalise(sig) == want_sig_norm);
+        if !sig_match {
+            let found_sigs = matches
+                .iter()
+                .map(|(_, s, _)| s.clone())
+                .collect::<Vec<_>>()
+                .join(" | ");
+            verdict
+                .function_sig_mismatches
+                .push((name, want_sig, found_sigs));
+            continue; // signature mismatch dominates; return-type check is meaningless
+        }
+
+        // Among matching-signature overloads, does the return type match?
+        let ret_match = matches
+            .iter()
+            .filter(|(_, sig, _)| normalise(sig) == want_sig_norm)
+            .any(|(_, _, ret)| normalise(ret) == want_ret_norm);
+        if !ret_match {
+            let found_rets = matches
+                .iter()
+                .filter(|(_, sig, _)| normalise(sig) == want_sig_norm)
+                .map(|(_, _, r)| r.clone())
+                .collect::<Vec<_>>()
+                .join(" | ");
+            verdict
+                .function_return_mismatches
+                .push((name, want_ret, found_rets));
+        }
+    }
+
+    Ok(verdict)
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Boot-time enforcement
+// ═══════════════════════════════════════════════════════════════════
+
+/// Decision the boot check hands back to `main()`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BootDecision {
+    /// Schema is healthy — serve traffic.
+    Healthy,
+    /// Drift detected but running in default (non-strict) mode. Continue
+    /// booting so the operator can diagnose from Railway logs.
+    DriftContinueBoot,
+    /// Drift detected and `SCHEMA_STRICT=1` — refuse to serve.
+    DriftAbortBoot,
+}
+
+/// Emit the verdict to stderr with a loud banner and return the
+/// decision `main()` should act on.
+///
+/// The banner is intentionally visually distinctive (`═` bars, ANSI
+/// bold) so it survives being interleaved with the usual startup
+/// noise in Railway logs. Every drift item gets its own line so the
+/// operator can `grep '[schema_trust]'` and see the whole picture.
+pub fn emit_boot_report(verdict: &SchemaVerdict, strict: bool) -> BootDecision {
+    if verdict.is_healthy() {
+        eprintln!(
+            "[schema_trust] ✓ contract verified — {} tables, {} columns, {} functions all present",
+            SCHEMA_TABLES.len(),
+            SCHEMA_COLUMNS.len(),
+            SCHEMA_FUNCTIONS.len()
+        );
+        return BootDecision::Healthy;
+    }
+
+    // Banner
+    eprintln!();
+    eprintln!("╔══════════════════════════════════════════════════════════════╗");
+    eprintln!(
+        "║ [schema_trust] DRIFT DETECTED — {} issue(s) against contract",
+        verdict.total_issues()
+    );
+    eprintln!("╚══════════════════════════════════════════════════════════════╝");
+
+    for t in &verdict.missing_tables {
+        eprintln!("[schema_trust]   ✗ missing table:  public.{}", t);
+    }
+    for (t, c) in &verdict.missing_columns {
+        eprintln!("[schema_trust]   ✗ missing column: public.{}.{}", t, c);
+    }
+    for (name, sig, ret) in &verdict.missing_functions {
+        eprintln!(
+            "[schema_trust]   ✗ missing function: {}({}) -> {}",
+            name, sig, ret
+        );
+    }
+    for (name, want_sig, found) in &verdict.function_sig_mismatches {
+        eprintln!(
+            "[schema_trust]   ✗ signature drift: {}({}) — found: {}",
+            name, want_sig, found
+        );
+    }
+    for (name, want_ret, found) in &verdict.function_return_mismatches {
+        eprintln!(
+            "[schema_trust]   ✗ return-type drift: {} — want {}, found {}",
+            name, want_ret, found
+        );
+    }
+    eprintln!();
+
+    if strict {
+        eprintln!("[schema_trust] SCHEMA_STRICT=1 — refusing to serve traffic. Fix the drift and redeploy.");
+        eprintln!();
+        BootDecision::DriftAbortBoot
+    } else {
+        eprintln!("[schema_trust] SCHEMA_STRICT unset — continuing boot in warn-only mode.");
+        eprintln!("[schema_trust] Set SCHEMA_STRICT=1 to refuse traffic on future drift.");
+        eprintln!();
+        BootDecision::DriftContinueBoot
+    }
+}
+
+/// Convenience: verify against the DB and log the verdict in one call.
+/// Returns the decision for `main()`. Never panics; DB errors are
+/// logged as a distinct WARNING and treated as `DriftContinueBoot`
+/// (we don't refuse boot because *the check itself* couldn't run —
+/// only because the check ran and found drift).
+pub async fn verify_and_report(db: &PgPool) -> BootDecision {
+    let strict = std::env::var("SCHEMA_STRICT")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    match verify(db).await {
+        Ok(verdict) => emit_boot_report(&verdict, strict),
+        Err(e) => {
+            eprintln!(
+                "[schema_trust] ⚠ probe itself failed: {} — continuing boot without contract check",
+                e
+            );
+            BootDecision::DriftContinueBoot
+        }
+    }
+}

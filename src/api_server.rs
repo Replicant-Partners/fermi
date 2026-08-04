@@ -48,6 +48,11 @@ use std::time::Instant;
 #[path = "handlers/mod.rs"]
 mod handlers;
 
+// v0.11.0: schema trust contract — boot-time drift check against the DB.
+// See src/schema_trust.rs for the manifest and the check logic.
+#[path = "schema_trust.rs"]
+pub(crate) mod schema_trust;
+
 #[derive(Clone)]
 struct RateLimiter {
     /// Map of key -> list of request timestamps (sliding window)
@@ -1465,6 +1470,29 @@ async fn main() {
     // weirdness. Logs the schema state so we can see in Railway logs
     // whether the columns are present.
     ensure_critical_schema(&db).await;
+
+    // v0.11.0: schema trust contract check. Runs AFTER migrations and
+    // ensure_critical_schema so any drift caught here is a genuine
+    // contract violation, not just "migration hasn't run yet." Default
+    // mode logs LOUDLY and continues; SCHEMA_STRICT=1 aborts boot on
+    // drift (production-strict posture once the contract is
+    // comprehensive). See src/schema_trust.rs.
+    match schema_trust::verify_and_report(&db).await {
+        schema_trust::BootDecision::Healthy => {}
+        schema_trust::BootDecision::DriftContinueBoot => {
+            eprintln!(
+                "[main] schema drift detected — continuing boot in warn-only mode. \
+                 GET /api/admin/schema-health for the JSON breakdown."
+            );
+        }
+        schema_trust::BootDecision::DriftAbortBoot => {
+            eprintln!(
+                "[main] aborting boot due to SCHEMA_STRICT=1 + contract violations. \
+                 Fix the drift (check migrations and ensure_critical_schema) and redeploy."
+            );
+            std::process::exit(2);
+        }
+    }
 
     // Initialize ADM memory store — reuse the same pool (single pool to Neon)
     let memory_store = Arc::new(MemoryStore::from_pool(db.clone()));
