@@ -427,6 +427,9 @@ pub struct CockpitState {
     /// scale the bars were laid out with.
     pub histogram_surface: crate::viz::PlotSurface,
 
+    /// Same, for the version index chart.
+    pub index_surface: crate::viz::PlotSurface,
+
     /// The sensitivity layout from the *previous* simulation, kept so
     /// the bars can show what moved.
     ///
@@ -1017,6 +1020,7 @@ impl CockpitState {
             outcome_threshold: None,
             threshold_dragging: false,
             histogram_surface: crate::viz::PlotSurface::new(),
+            index_surface: crate::viz::PlotSurface::new(),
             sobol_previous: None,
             recomposing: false,
             shares: Vec::new(),
@@ -11372,8 +11376,19 @@ fn render_interactive_histogram(
     // normalised to the tallest bar for display.
     let prob_above = threshold.and_then(|t| prob_at_least_bins(&sim.histogram, dom_lo, dom_hi, t));
 
-    // ── Tooltip text for the hovered bin ────────────────────────────
-    let tooltip_lines: Vec<String> = match state.hovered_histogram_bin {
+    // ── Readout for the hovered bin ─────────────────────────────────
+    //
+    // FIXED HEIGHT, TWO LINES, ALWAYS. This is not cosmetic.
+    //
+    // The old readout was one line when idle and *six* when hovering a
+    // bar, and it sat above the chart in a flex column. So hovering
+    // pushed the bars down, which moved them out from under the
+    // cursor, which cleared the hover, which shrank the readout, which
+    // moved the bars back up. A layout feedback loop — visually
+    // indistinguishable from flicker, and entirely separate from the
+    // sprite-atlas leak that was making the neighbouring chart flicker
+    // for real. Both had to be fixed to make the panel feel solid.
+    let (line_one, line_two, accent) = match state.hovered_histogram_bin {
         Some(idx) if idx < n_bins => {
             let count = sim.histogram[idx];
             let outcome = bin_center(sim, idx) * 100.0;
@@ -11388,36 +11403,46 @@ fn render_interactive_histogram(
             } else {
                 0.0
             };
-            let mut lines = vec![
-                format!("outcome: {:.1}%", outcome),
-                format!("count: {} ({:.1}% of sims)", count, density_pct),
-                format!("CDF: {:.0}th percentile", cdf_pct),
-            ];
-            lines.push(format!(
-                "Δ from model: {:+.1}pp",
-                outcome - triad.inside_pct
-            ));
+            let one = format!(
+                "{:.1}%  ·  {} sims ({:.1}%)  ·  p{:.0}",
+                outcome, count, density_pct, cdf_pct
+            );
+            let mut two = format!("Δ model {:+.1}pp", outcome - triad.inside_pct);
             if let Some(o) = triad.outside_pct {
-                lines.push(format!("Δ from base: {:+.1}pp", outcome - o));
+                two.push_str(&format!("   base {:+.1}pp", outcome - o));
             }
             if let Some(c) = triad.crowd_pct {
-                lines.push(format!("Δ from crowd: {:+.1}pp", outcome - c));
+                two.push_str(&format!("   crowd {:+.1}pp", outcome - c));
             }
-            lines
+            (one, two, theme::FG)
         }
-        _ => vec!["hover a bar · click to set a threshold".to_string()],
+        _ => (
+            "hover a bar · click to set a threshold".to_string(),
+            format!(
+                "range {:.0}%–{:.0}%  ·  {} iters",
+                dom_lo * 100.0,
+                dom_hi * 100.0,
+                sim.iterations
+            ),
+            theme::FG_FAINT,
+        ),
     };
 
     let tooltip = div()
-        .px(px(8.0))
-        .py(px(4.0))
+        .w(px(chart_w))
+        .h(px(30.0))
+        .px(px(6.0))
+        .py(px(3.0))
         .rounded(px(4.0))
         .bg(rgb(theme::BG_ELEVATED))
         .border_1()
         .border_color(rgb(theme::FG_FAINT))
         .text_size(px(9.0))
-        .text_color(rgb(theme::FG_DIM))
-        .children(tooltip_lines.into_iter().map(|line| div().child(line)));
+        .flex()
+        .flex_col()
+        .overflow_hidden()
+        .child(div().text_color(rgb(accent)).child(line_one))
+        .child(div().text_color(rgb(theme::FG_DIM)).child(line_two));
 
     // ── The headline answer ─────────────────────────────────────────
     //
@@ -11661,13 +11686,9 @@ fn render_interactive_histogram(
                 })
                 .when(threshold.is_some(), |el| {
                     el.child(div().text_color(rgb(theme::GREEN)).child("│ threshold"))
-                })
-                .child(div().text_color(rgb(theme::FG_FAINT)).child(format!(
-                    "range {:.0}%–{:.0}% · {} iters",
-                    dom_lo * 100.0,
-                    dom_hi * 100.0,
-                    sim.iterations
-                ))),
+                }),
+            // Range and iteration count live in the readout's idle line
+            // rather than being repeated here.
         )
         .into_any_element()
 }
@@ -11681,181 +11702,202 @@ fn render_interactive_histogram(
 // pairwise deltas at that historical point.
 // ──────────────────────────────────────────────────────────────────────
 
-/// Render the interactive index chart with mouseover crosshair + tooltip.
+/// Render the version index chart: model vs base vs crowd, revision by
+/// revision, with a hover crosshair and a fixed-height readout.
 ///
-/// Bitmap line layer + native hover layer composed in absolute positioning.
-/// The hovered version (if any) drives a vertical crosshair + per-version
-/// tooltip card.
+/// Vector, not a bitmap. The bitmap version leaked a sprite-atlas tile
+/// on every render (`ImageSource::Render` is never reclaimed), which
+/// made this chart flicker under its own hover *and* under the outcome
+/// histogram's — because GPUI re-renders the whole view on any
+/// `cx.notify()`, and the two charts sit side by side.
 fn render_interactive_index_chart(
     state: &CockpitState,
     cx: &mut Context<CockpitState>,
     chart_w: f32,
     chart_h: f32,
 ) -> gpui::AnyElement {
+    use fermi_console::plot::events::sample_within;
+    use fermi_console::plot::index::{IndexData, IndexVersion};
+
     if state.versions.len() < 2 {
         return div().into_any_element();
     }
 
-    let base_rate = state
+    let base_rate_pct = state
         .program
         .question()
         .and_then(|q| q.base_rate.as_ref())
-        .map(|br| br.historical_frequency * 100.0)
-        .unwrap_or(50.0);
-    let crowd_price_pct = state.pm_market_price.map(|p| p * 100.0);
+        .map(|br| br.historical_frequency * 100.0);
+    let crowd_now_pct = state.pm_market_price.map(|p| p * 100.0);
 
-    let history: Vec<crate::charts::IndexPoint> = state
+    // ── Crowd price as it stood at each save ────────────────────────
+    //
+    // The old chart copied *today's* crowd price into every version's
+    // row, producing a flat purple line that looked like a data series
+    // and carried none. Sampling the recorded price history at each
+    // version's timestamp turns it into a real comparison: was the
+    // market moving with me, or did I walk away from it?
+    //
+    // `sample_within` returns None outside the recorded span rather
+    // than clamping, so versions saved before polling began show a gap
+    // instead of a back-dated fiction.
+    let price_series: Vec<(f64, f64)> = state
+        .pm_price_history
+        .iter()
+        .map(|(ts, p)| (*ts as f64, *p * 100.0))
+        .collect();
+
+    let versions: Vec<IndexVersion> = state
         .versions
         .iter()
-        .map(|v| crate::charts::IndexPoint {
-            label: format!("v{}", v.version),
-            inside_view: v.probability * 100.0,
-            outside_view: base_rate,
-            crowd_price: crowd_price_pct,
+        .map(|v| {
+            let crowd_pct = chrono::DateTime::parse_from_rfc3339(&v.timestamp)
+                .ok()
+                .map(|t| t.timestamp() as f64)
+                .and_then(|t| sample_within(&price_series, t));
+            IndexVersion {
+                label: format!("v{}", v.version),
+                model_pct: v.probability * 100.0,
+                crowd_pct,
+                note: v.change_summary.clone(),
+            }
         })
         .collect();
 
-    let n = history.len();
-    let chart_w_u = chart_w as u32;
-    let chart_h_u = chart_h as u32;
-    let rgb_buf =
-        crate::charts::render_index_chart(&history, n.saturating_sub(1), chart_w_u, chart_h_u);
-    let render_img = crate::charts::rgb_to_render_image(&rgb_buf, chart_w_u, chart_h_u);
-
-    // Per-version hover columns. Each column is centered on the x-pixel
-    // of its data point. Columns are equally spaced from 0 to chart_w.
-    let col_w = chart_w / n as f32;
-
-    // ── Tooltip card ──
-    // Shows three anchor values + pairwise deltas at the hovered version.
-    // Stays mounted so layout doesn't jump; content swaps based on hover.
-    let tooltip_card = match state.hovered_index_version {
-        Some(idx) if idx < n => {
-            let v = &state.versions[idx];
-            let p = &history[idx];
-            let inside = p.inside_view;
-            let outside = p.outside_view;
-            let crowd = p.crowd_price;
-
-            let mut lines: Vec<String> = Vec::new();
-            lines.push(format!(
-                "v{} · {}",
-                v.version,
-                v.timestamp.split('T').next().unwrap_or(&v.timestamp)
-            ));
-            lines.push(format!(
-                "model: {:.1}%   base: {:.1}%{}",
-                inside,
-                outside,
-                crowd
-                    .map(|c| format!("   crowd: {:.1}%", c))
-                    .unwrap_or_default()
-            ));
-            lines.push(format!(
-                "Δ(model−base): {:+.1}pp{}",
-                inside - outside,
-                crowd
-                    .map(|c| format!(
-                        "   Δ(model−crowd): {:+.1}pp   Δ(base−crowd): {:+.1}pp",
-                        inside - c,
-                        outside - c
-                    ))
-                    .unwrap_or_default()
-            ));
-            if !v.change_summary.is_empty() {
-                lines.push(format!("note: {}", v.change_summary));
-            }
-
-            div()
-                .px(px(8.0))
-                .py(px(4.0))
-                .rounded(px(4.0))
-                .bg(rgb(theme::BG_ELEVATED))
-                .border_1()
-                .border_color(rgb(theme::FG_FAINT))
-                .text_size(px(9.0))
-                .text_color(rgb(theme::FG_DIM))
-                .children(lines.into_iter().map(|line| div().child(line)))
-        }
-        _ => div()
-            .px(px(8.0))
-            .py(px(4.0))
-            .rounded(px(4.0))
-            .bg(rgb(theme::BG_ELEVATED))
-            .border_1()
-            .border_color(rgb(theme::FG_FAINT))
-            .text_size(px(9.0))
-            .text_color(rgb(theme::FG_FAINT))
-            .child("hover a version on the line chart"),
+    let n = versions.len();
+    let data = IndexData {
+        versions,
+        base_rate_pct,
+        crowd_now_pct,
     };
 
-    // ── Chart layer (bitmap) + hover layer (transparent native) ──
-    let mut hover_layer = div()
-        .absolute()
-        .top(px(0.0))
-        .left(px(0.0))
-        .w(px(chart_w))
-        .h(px(chart_h));
+    let plot = crate::viz::index::IndexPlot::new(data.clone())
+        .size(chart_w, chart_h)
+        .selected(state.hovered_index_version)
+        .surface(state.index_surface.clone());
 
-    for idx in 0..n {
-        // Center the column on the data point's x-pixel; same convention
-        // plotters uses (i × col_w + col_w / 2). The column width covers
-        // the full segment so adjacent points don't fight for hover.
-        let col_x = (idx as f32) * col_w;
-        let hovered = state.hovered_index_version == Some(idx);
-        let mut col = div()
-            .id(("idx-col", idx))
-            .absolute()
-            .left(px(col_x))
-            .top(px(0.0))
-            .w(px(col_w))
-            .h(px(chart_h))
-            .cursor_crosshair()
-            .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
-                if *hovered {
-                    if this.hovered_index_version != Some(idx) {
-                        this.hovered_index_version = Some(idx);
-                        cx.notify();
-                    }
-                } else if this.hovered_index_version == Some(idx) {
-                    this.hovered_index_version = None;
+    // A second, identical spec for the hit-test. Cheap, and it keeps
+    // the probe reading the same geometry the painter will use.
+    let probe_plot = crate::viz::index::IndexPlot::new(data.clone()).size(chart_w, chart_h);
+    let probe_surface = state.index_surface.clone();
+
+    // ── Readout ─────────────────────────────────────────────────────
+    //
+    // FIXED HEIGHT, and this is not cosmetic. The old readout grew from
+    // one line to four when a version was hovered, and it sat *above*
+    // the chart in a flex column — so hovering pushed the chart down,
+    // which moved the plot out from under the cursor, which cleared the
+    // hover, which shrank the readout, which moved the chart back up.
+    // A layout feedback loop, indistinguishable from flicker and
+    // entirely separate from the atlas leak.
+    //
+    // Two lines, always, whether or not anything is hovered.
+    let (line_one, line_two, accent) = match state.hovered_index_version {
+        Some(idx) if idx < n => {
+            let v = &state.versions[idx];
+            let iv = &data.versions[idx];
+            let date = v.timestamp.split('T').next().unwrap_or(&v.timestamp);
+
+            let deltas =
+                fermi_console::plot::IndexSpec::new(data.clone(), chart_w as f64, chart_h as f64)
+                    .deltas();
+            let move_str = match deltas.get(idx).copied().flatten() {
+                Some(d) if d.abs() >= 0.05 => format!("  ({:+.1}pp)", d),
+                _ => String::new(),
+            };
+
+            let mut two = format!("model {:.1}%{}", iv.model_pct, move_str);
+            if let Some(b) = base_rate_pct {
+                two.push_str(&format!("   base {:.1}%", b));
+            }
+            match iv.crowd_pct {
+                Some(c) => {
+                    two.push_str(&format!(
+                        "   crowd {:.1}%   edge {:+.1}pp",
+                        c,
+                        iv.model_pct - c
+                    ));
+                }
+                None => two.push_str("   crowd —"),
+            }
+
+            let one = if iv.note.is_empty() {
+                format!("{} · {}", iv.label, date)
+            } else {
+                format!("{} · {} · {}", iv.label, date, iv.note)
+            };
+            (one, two, theme::FG)
+        }
+        _ => (
+            "hover a version on the line chart".to_string(),
+            format!(
+                "{} versions · {} → {}",
+                n,
+                data.versions
+                    .first()
+                    .map(|v| format!("{:.1}%", v.model_pct))
+                    .unwrap_or_default(),
+                data.versions
+                    .last()
+                    .map(|v| format!("{:.1}%", v.model_pct))
+                    .unwrap_or_default()
+            ),
+            theme::FG_FAINT,
+        ),
+    };
+
+    let readout = div()
+        .w(px(chart_w))
+        .h(px(30.0))
+        .px(px(6.0))
+        .py(px(3.0))
+        .rounded(px(4.0))
+        .bg(rgb(theme::BG_ELEVATED))
+        .border_1()
+        .border_color(rgb(theme::FG_FAINT))
+        .text_size(px(9.0))
+        .flex()
+        .flex_col()
+        .overflow_hidden()
+        .child(div().text_color(rgb(accent)).child(line_one))
+        .child(div().text_color(rgb(theme::FG_DIM)).child(line_two));
+
+    // ── Chart + continuous hover ────────────────────────────────────
+    //
+    // One element and a real mouse position, replacing N invisible
+    // per-version columns.
+    let chart = div()
+        .id("index-chart")
+        .relative()
+        .w(px(chart_w))
+        .h(px(chart_h))
+        .cursor_crosshair()
+        .child(plot)
+        .on_mouse_move(
+            cx.listener(move |this, ev: &gpui::MouseMoveEvent, _window, cx| {
+                let Some((lx, ly)) = probe_surface.local(ev.position) else {
+                    return;
+                };
+                let next = probe_plot.probe(lx, ly).map(|p| p.version);
+                if this.hovered_index_version != next {
+                    this.hovered_index_version = next;
                     cx.notify();
                 }
-            }));
-        // Vertical crosshair line — only drawn when this column is the
-        // hovered one. Thin gold line at the column's center pixel.
-        if hovered {
-            col = col.child(
-                div()
-                    .absolute()
-                    .left(px(col_w / 2.0 - 0.5))
-                    .top(px(0.0))
-                    .w(px(1.0))
-                    .h(px(chart_h))
-                    .bg(rgb(theme::GOLD)),
-            );
-        }
-        hover_layer = hover_layer.child(col);
-    }
+            }),
+        )
+        .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
+            if !*hovered && this.hovered_index_version.is_some() {
+                this.hovered_index_version = None;
+                cx.notify();
+            }
+        }));
 
-    // Composed: tooltip on top, layered chart beneath.
     div()
         .flex()
         .flex_col()
         .gap(px(4.0))
-        .child(tooltip_card)
-        .child(
-            div()
-                .relative()
-                .w(px(chart_w))
-                .h(px(chart_h))
-                .child(
-                    gpui::img(gpui::ImageSource::Render(render_img))
-                        .w(gpui::px(chart_w))
-                        .h(gpui::px(chart_h)),
-                )
-                .child(hover_layer),
-        )
+        .child(readout)
+        .child(chart)
         .child(
             div()
                 .flex()
@@ -11863,9 +11905,25 @@ fn render_interactive_index_chart(
                 .text_size(px(8.0))
                 .text_color(rgb(theme::FG_FAINT))
                 .child(div().text_color(rgb(theme::CYAN)).child("─ model"))
-                .child(div().text_color(rgb(theme::GOLD)).child("─ base"))
-                .when(crowd_price_pct.is_some(), |el| {
-                    el.child(div().text_color(rgb(theme::PURPLE)).child("─ crowd"))
+                .when(base_rate_pct.is_some(), |el| {
+                    el.child(div().text_color(rgb(theme::GOLD)).child("╌ base"))
+                })
+                .when(crowd_now_pct.is_some(), |el| {
+                    el.child(
+                        div().text_color(rgb(theme::PURPLE)).child(
+                            if data
+                                .versions
+                                .iter()
+                                .filter(|v| v.crowd_pct.is_some())
+                                .count()
+                                >= 2
+                            {
+                                "─ crowd"
+                            } else {
+                                "╌ crowd"
+                            },
+                        ),
+                    )
                 })
                 .child(
                     div()

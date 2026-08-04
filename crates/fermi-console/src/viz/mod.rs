@@ -32,6 +32,7 @@
 //!   is, not in a legend across the panel.
 
 pub mod distribution;
+pub mod index;
 pub mod paint;
 pub mod trajectory;
 

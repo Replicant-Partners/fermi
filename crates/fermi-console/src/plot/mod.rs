@@ -33,8 +33,8 @@
 //! * [`events`] — correlating trajectory events with the movement they
 //!   caused, and packing their labels so they stay legible.
 //! * [`format`] — scale-adaptive axis and readout formatting.
-//! * [`distribution`], [`trajectory`] — per-chart geometry: the
-//!   layout, the scales, and the pixel→data inversion each chart's
+//! * [`distribution`], [`trajectory`], [`index`] — per-chart geometry:
+//!   the layout, the scales, and the pixel→data inversion each chart's
 //!   painter and hit-tester both consult.
 
 pub mod density;
@@ -42,6 +42,7 @@ pub mod distribution;
 pub mod events;
 pub mod format;
 pub mod frame;
+pub mod index;
 pub mod scale;
 pub mod sobol;
 pub mod trajectory;
@@ -50,6 +51,7 @@ pub use density::{Density, DensitySource};
 pub use distribution::DistributionSpec;
 pub use events::{correlate, Correlated};
 pub use frame::{Frame, Margins, Rect};
+pub use index::{IndexData, IndexSpec, IndexVersion};
 pub use scale::{extent, LinearScale};
 pub use sobol::{SobolBar, SobolLayout};
 pub use trajectory::{TrajectoryData, TrajectorySpec};

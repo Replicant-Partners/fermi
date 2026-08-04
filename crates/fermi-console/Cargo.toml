@@ -72,7 +72,9 @@ fermi-activity = { path = "../fermi-activity" }
 # variants when surfacing learnable-driver status badges in the UI.
 posterior = { path = "../posterior" }
 
-# Charting — renders to pixel buffer for GPUI display
-plotters = { version = "0.3", default-features = false, features = ["bitmap_backend", "ab_glyph", "line_series", "area_series"] }
-image = "0.25"
+# Charting needs no dependency: charts are vector paths painted straight
+# into the GPUI scene by `src/viz`, with geometry and statistics in
+# `src/plot`. The former `plotters` + `image` pipeline rasterised into
+# `RenderImage`s, which GPUI never reclaims from the sprite atlas — a
+# tile leaked per frame, and that was the chart flicker.
 rfd = "0.15"

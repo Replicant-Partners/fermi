@@ -1,7 +1,7 @@
 # Visualisation architecture
 
-Status: **in progress.** Distribution, trajectory, driver-sensitivity and
-outcome-histogram charts done; index chart still to do.
+Status: **complete.** Every chart is now vector. `charts.rs` and the
+`plotters` + `image` dependencies are gone.
 
 This document answers three questions:
 
@@ -269,7 +269,48 @@ Same disease as `trajectory_plot_bounds`: two derivations of one
 geometry. There is now one `LinearScale` over the real bin domain,
 shared by the bars, the anchors, and the threshold.
 
-### 3.6 Honesty about provenance — ✅ built
+### 3.6 The index chart, and why its neighbour appeared to flicker — ✅ built
+
+The outcome histogram was reported as flickering on hover even though
+it's built from plain `div`s and touches no bitmap. Two separate causes,
+neither of them in the histogram's own drawing:
+
+**The bitmap next door.** The index chart sits directly beside it and
+was the last `RenderImage` in the console. GPUI re-renders the whole
+view on any `cx.notify()`, so hovering a *histogram bar* re-rasterised
+the *index chart*, leaking an atlas tile per mouse-move. The histogram
+looked like it was flickering; its neighbour was doing it. This is what
+"they interact" turned out to mean.
+
+**A layout feedback loop.** Both charts had a readout above them that
+grew when something was hovered — one line to six for the histogram, one
+to four for the index chart — inside a flex column. Hovering pushed the
+chart down, which moved it out from under the cursor, which cleared the
+hover, which shrank the readout, which moved the chart back up.
+Self-sustaining oscillation, visually identical to flicker, and entirely
+independent of the atlas leak. Both readouts are now a fixed two lines
+at a fixed height.
+
+The index chart also wasn't showing what it claimed. It plotted three
+"series", but the base rate and crowd price were copied unchanged into
+every version's row — two constants drawn with the same visual weight as
+the one line that varied. Now:
+
+- the base rate is drawn as the reference level it is (dashed),
+- the crowd becomes a **real series** by sampling recorded price history
+  at each version's timestamp — "what was the market saying when I saved
+  v3?", which is what tells you whether a revision was insight or drift,
+- the model–crowd gap is shaded, as on the trajectory chart,
+- revisions that moved the number carry a delta badge, the same idiom as
+  trajectory event markers,
+- hover is continuous rather than N invisible per-version columns.
+
+Sampling uses `events::sample_within`, which returns `None` outside the
+recorded span instead of clamping. Clamping would have reported today's
+price as the price at a version saved before polling began — inventing
+history rather than admitting a gap.
+
+### 3.7 Honesty about provenance — ✅ built
 
 The old driver sparkline drew a triangle through `(p5, 0) → (p50, peak)
 → (p95, 0)`. For a bimodal posterior — exactly when shape matters most —
@@ -316,18 +357,18 @@ only the outcome histogram is wired. Per-driver thresholds would need a
 value than the outcome threshold — a driver's prior isn't usually what
 you're deciding against — so it's parked.
 
-### 4.4 Migrate the index chart
+### 4.4 ~~Migrate the index chart~~ — done
 
-`charts.rs` is down to one bitmap: `render_index_chart`, used by
-`render_interactive_index_chart` with per-version hover columns — the
-same hit-strip workaround, smaller. Once it moves, `charts.rs` and the
-`plotters` + `image` dependencies can go.
+`charts.rs` is deleted. `plotters`, `plotters-bitmap`, `ab_glyph`,
+`ab_glyph_rasterizer`, `owned_ttf_parser` and `image` are out of the
+console's dependency tree. There are no `RenderImage`s left in the
+application, and therefore no way for this class of flicker to recur.
 
 ---
 
 ## 5. Module map
 
-118 tests, all in the lib target.
+131 tests, all in the lib target.
 
 ```
 crates/fermi-console/src/
@@ -340,6 +381,7 @@ crates/fermi-console/src/
 │   ├── sobol.rs         variance decomposition, run-over-run diff, verdict
 │   ├── format.rs        scale-adaptive axis and readout formatting
 │   ├── distribution.rs  distribution chart geometry
+│   ├── index.rs         version-index geometry + probe()
 │   └── trajectory.rs    trajectory chart geometry + probe()
 ├── viz/             # bin target — paints, decides nothing
 │   │                 (sensitivity bars stay in cockpit.rs: plain divs,
@@ -347,8 +389,9 @@ crates/fermi-console/src/
 │   ├── paint.rs         PathBuilder primitives
 │   ├── mod.rs           PlotSurface (window↔element coordinate bridge)
 │   ├── distribution.rs
+│   ├── index.rs
 │   └── trajectory.rs
-└── charts.rs        # legacy plotters bitmaps — index chart only
+└── (charts.rs deleted — no bitmaps remain)
 ```
 
 **Why the split:** the bin target *cannot be tested*. `rustc` overflows

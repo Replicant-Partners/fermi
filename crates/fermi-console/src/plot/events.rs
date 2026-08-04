@@ -52,6 +52,23 @@ pub fn interpolate(series: &Series, t: f64) -> Option<f64> {
     None
 }
 
+/// Interpolate, but only where the series actually has coverage.
+///
+/// [`interpolate`] clamps to the endpoints, which is right for drawing
+/// a line and wrong for answering a question. Asking "what was the
+/// crowd price when I saved v1?" of a series that only starts a week
+/// later must answer *don't know*, not today's price wearing last
+/// week's date. Clamped extrapolation is how a chart ends up inventing
+/// history.
+pub fn sample_within(series: &Series, t: f64) -> Option<f64> {
+    let first = series.first()?;
+    let last = series.last()?;
+    if t < first.0 || t > last.0 {
+        return None;
+    }
+    interpolate(series, t)
+}
+
 /// An event once we've worked out what it did to the trajectory.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Correlated {
@@ -273,6 +290,26 @@ mod tests {
         assert!(close(interpolate(&s, 500.0).unwrap(), 20.0));
         assert!(close(interpolate(&s, 100.0).unwrap(), 15.0));
         assert!(interpolate(&[], 1.0).is_none());
+    }
+
+    #[test]
+    fn sampling_refuses_to_extrapolate_beyond_the_data() {
+        let s = [(100.0, 5.0), (200.0, 9.0)];
+        // Inside the covered span: a real reading.
+        assert!(close(sample_within(&s, 150.0).unwrap(), 7.0));
+        assert!(close(sample_within(&s, 100.0).unwrap(), 5.0));
+        assert!(close(sample_within(&s, 200.0).unwrap(), 9.0));
+        // Outside it: don't know, rather than a clamped fabrication.
+        assert_eq!(sample_within(&s, 99.0), None);
+        assert_eq!(sample_within(&s, 201.0), None);
+        // ...which is exactly where `interpolate` would have lied.
+        assert!(close(interpolate(&s, 99.0).unwrap(), 5.0));
+        assert!(close(interpolate(&s, 500.0).unwrap(), 9.0));
+    }
+
+    #[test]
+    fn sampling_an_empty_series_is_unknown_not_a_panic() {
+        assert_eq!(sample_within(&[], 1.0), None);
     }
 
     #[test]
