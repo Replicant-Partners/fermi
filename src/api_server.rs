@@ -827,6 +827,9 @@ async fn run_migrations(db: &PgPool) {
         // (Loop 5 join is on agent_id; data was keyed by name only).
         // Idempotent; already applied to prod out-of-band 2026-08-03.
         "migrations/170_backfill_agents_used_agent_id.sql",
+        // Agent credential store + abw-system principal (P0 of the
+        // credential model, docs/specs/AGENT_CREDENTIAL_MODEL.md).
+        "migrations/171_agent_credentials.sql",
     ];
 
     for file in &migration_files {
@@ -1676,6 +1679,40 @@ async fn main() {
         println!("Secrets encryption configured");
     } else {
         eprintln!("Note: SECRETS_ENCRYPTION_KEY not set. User secrets will be disabled.");
+    }
+
+    // P0 (credential model): migrate platform provider keys from env into the
+    // abw-system credential store. The store is authoritative; env is a
+    // one-time bootstrap seed, not the runtime source of truth. Idempotent:
+    // only seeds the (abw-system, provider, '*') default when it's absent.
+    // See docs/specs/AGENT_CREDENTIAL_MODEL.md.
+    if let Some(encryptor) = state.secret_encryptor.as_ref() {
+        for (env_var, provider) in [
+            ("OPENAI_API_KEY", "openai"),
+            ("ANTHROPIC_API_KEY", "anthropic"),
+        ] {
+            if let Ok(key) = std::env::var(env_var) {
+                match fermi_auth::bootstrap_agent_credential_if_absent(
+                    &state.db,
+                    encryptor,
+                    "abw-system",
+                    provider,
+                    &key,
+                )
+                .await
+                {
+                    Ok(true) => println!(
+                        "Bootstrapped abw-system '{}' credential from {} env var",
+                        provider, env_var
+                    ),
+                    Ok(false) => {} // already in store — store is authoritative
+                    Err(e) => eprintln!(
+                        "Failed to bootstrap abw-system '{}' credential: {}",
+                        provider, e
+                    ),
+                }
+            }
+        }
     }
 
     // Spawn rate limiter cleanup task (every 5 min)
