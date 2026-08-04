@@ -2198,8 +2198,11 @@
           if (checksRes.ok) {
             const checks = await checksRes.json();
             if (!checks.can_publish) {
+              // v0.10.28: lowercase severity per Rust's #[serde(rename_all)].
+              // Was `"Error"` — matched nothing, admin saw empty check
+              // list when force-publishing over failures.
               const failing = (checks.checks || [])
-                .filter((c) => !c.passed && c.severity === "Error")
+                .filter((c) => !c.passed && c.severity === "error")
                 .map((c) => `• ${c.message}`)
                 .join("\n");
               reason = prompt(
@@ -4109,12 +4112,23 @@
         try {
           const checks = await API.get(`/api/agents/${agentId}/publish-checks`);
           if (!checks.can_publish) {
+            // v0.10.28: the enum is serialized `#[serde(rename_all =
+            // "lowercase")]` on the Rust side, so JSON severity is
+            // `"error"` — the previous filter for capitalized `"Error"`
+            // matched nothing and the toast rendered as bare "Cannot
+            // publish:" with no reasons. Mario's screenshot on
+            // efra_ai_01_scout was the smoking gun. Also swapped
+            // Toast for a modal alert so the full checklist is
+            // legible on narrow / mobile viewports (Toast has no
+            // max-width guard). Formatted as a bulleted list plus a
+            // one-line "how to fix" hint per check.
             const failing = checks.checks.filter(
-              (c) => !c.passed && c.severity === "Error",
+              (c) => !c.passed && c.severity === "error",
             );
-            Toast.show(
-              "Cannot publish: " + failing.map((c) => c.message).join("; "),
-              "error",
+            const bulletList = failing.map((c) => `\u2022 ${c.message}`).join("\n");
+            alert(
+              `Cannot publish yet — fix the following before retrying:\n\n${bulletList}\n\n` +
+                `Edit these fields in the Manage tab, then click Publish again.`,
             );
             return;
           }
