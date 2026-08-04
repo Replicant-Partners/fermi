@@ -4054,7 +4054,9 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
             education_credits_used: 0,
             auto_collect_pct: 0,
             display_alias: None,
-            llm_provider: "anthropic".to_string(),
+            // Card-driven (was hardcoded "anthropic"): keeps the DB row truthful
+            // so credential resolution + observability see the real provider.
+            llm_provider: card.capabilities.provider.clone(),
             embedding_provider: "anthropic".to_string(),
             embedding_model: "voyage-2".to_string(),
             embedding_dimension: 1024,
@@ -4399,6 +4401,61 @@ pub(crate) async fn resolve_agent(
 /// path stores the resolved secrets on `ToolContext` (Arc-shared) and
 /// we don't want to leak `state.db` / `state.secret_encryptor` into
 /// executor code.
+/// P1 (credential model, docs/specs/AGENT_CREDENTIAL_MODEL.md): resolve the
+/// effective API key for `provider` that powers `agent`, from the owning
+/// principal's credential store. Single credential path:
+///
+///   - **system-tier** agents → the `abw-system` principal's keys (the
+///     platform "system keys", seeded into the store at boot from env).
+///   - **owner-owned** agents → the agent's `owner_id`.
+///
+/// Order: agent-scoped key, then the principal's `*` default (via
+/// `agent_credentials`). For owner-owned agents mid-migration we also fall
+/// back to the legacy `user_secrets` (`<PROVIDER>_API_KEY`) so already-funded
+/// agents keep working until P5. Deliberately does NOT read env vars — env is
+/// a one-time bootstrap seed into the store, not a runtime source of truth.
+pub(crate) async fn resolve_credential(
+    state: &AppState,
+    agent: &Agent,
+    provider: &str,
+) -> Option<String> {
+    let encryptor = state.secret_encryptor.as_ref()?;
+    let principal_id: &str = if agent.tier.eq_ignore_ascii_case("system") {
+        "abw-system"
+    } else {
+        agent.owner_id.as_deref()?
+    };
+
+    // Primary: the (principal, provider, scope) store.
+    if let Ok(Some(key)) = fermi_auth::resolve_agent_credential(
+        &state.db,
+        encryptor,
+        principal_id,
+        provider,
+        &agent.agent_name,
+    )
+    .await
+    {
+        return Some(key);
+    }
+
+    // Legacy fallback (owner-owned only): user_secrets named <PROVIDER>_API_KEY.
+    if !agent.tier.eq_ignore_ascii_case("system") {
+        if let Some(owner_id) = agent.owner_id.as_deref() {
+            let secret_name = format!("{}_API_KEY", provider.to_uppercase());
+            if let Ok(secrets) =
+                fermi_auth::get_secrets_for_agent(&state.db, encryptor, owner_id, &agent.agent_name)
+                    .await
+            {
+                if let Some(v) = secrets.get(&secret_name) {
+                    return Some(v.clone());
+                }
+            }
+        }
+    }
+    None
+}
+
 pub(crate) async fn resolve_agent_owner_secrets(
     state: &AppState,
     agent: &Agent,

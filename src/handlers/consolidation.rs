@@ -15,13 +15,39 @@ use sqlx::Row;
 use std::sync::Arc;
 
 use agent_bestiary_memory::{
-    ConsolidationLock, ConsolidationWorker, LLMProviderConfig, LLMProviderFactory, ProviderType,
+    ConsolidationLock, ConsolidationWorker, LLMProvider, LLMProviderConfig, LLMProviderFactory,
+    ProviderType,
 };
 use fermi::agent_backend::executor::AgentExecutor;
 use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
+use std::str::FromStr;
 
-use crate::{resolve_agent, AppState};
+use crate::{resolve_agent, resolve_credential, AppState};
+
+/// Build the extraction "brain" for consolidation from the `ontologist`
+/// system agent (docs/specs/AGENT_CREDENTIAL_MODEL.md, P3).
+///
+/// Provider + model come from the ontologist's *card* (not hardcoded); the
+/// API key is resolved from the credential store — tier=system routes to the
+/// `abw-system` principal, so the platform funds learning via its system key.
+/// Returns `None` (card missing / unfunded / unknown provider) so the worker
+/// falls back to pattern-based extraction instead of crashing.
+async fn build_ontologist_extraction_llm(state: &AppState) -> Option<Arc<dyn LLMProvider>> {
+    let card = state.registry.get("ontologist").ok()?;
+    let provider = card.capabilities.provider.clone();
+    let model = card.capabilities.model.clone();
+    let db_agent = resolve_agent(state, "ontologist").await.ok()?;
+    let api_key = resolve_credential(state, &db_agent, &provider).await?;
+    let provider_type = ProviderType::from_str(&provider).ok()?;
+    LLMProviderFactory::create(&LLMProviderConfig {
+        provider_type,
+        api_key,
+        model,
+        base_url: None,
+    })
+    .ok()
+}
 // ─── Dreaming budget ───────────────────────────────────────────────
 
 pub async fn get_dreaming_budget(
@@ -277,34 +303,23 @@ pub async fn consolidate_agent_handler(
     tokio::spawn(async move {
         let pool = Arc::new(spawn_state.db.clone());
         let lock = Arc::new(ConsolidationLock::new(pool, format!("api-{}", job_id)));
-        let worker = if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
-            match LLMProviderFactory::create(&LLMProviderConfig {
-                provider_type: ProviderType::Anthropic,
-                api_key,
-                model: "claude-haiku-4-5-20251001".to_string(),
-                base_url: None,
-            }) {
-                Ok(llm) => ConsolidationWorker::with_llm(
-                    spawn_state.memory_store.clone(),
-                    lock,
-                    spawn_state.embedder.clone(),
-                    llm,
-                    format!("api-{}", job_id),
-                ),
-                Err(_) => ConsolidationWorker::new(
-                    spawn_state.memory_store.clone(),
-                    lock,
-                    spawn_state.embedder.clone(),
-                    format!("api-{}", job_id),
-                ),
-            }
-        } else {
-            ConsolidationWorker::new(
+        // Extraction brain = the `ontologist` system agent (card-configured
+        // provider/model, funded by abw-system's stored key). No env-var key
+        // path — that was the old system-tier shortcut this model replaces.
+        let worker = match build_ontologist_extraction_llm(&spawn_state).await {
+            Some(llm) => ConsolidationWorker::with_llm(
+                spawn_state.memory_store.clone(),
+                lock,
+                spawn_state.embedder.clone(),
+                llm,
+                format!("api-{}", job_id),
+            ),
+            None => ConsolidationWorker::new(
                 spawn_state.memory_store.clone(),
                 lock,
                 spawn_state.embedder.clone(),
                 format!("api-{}", job_id),
-            )
+            ),
         };
 
         match worker.consolidate_agent(spawn_agent_id, 0.5, 2).await {
