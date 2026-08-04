@@ -102,17 +102,26 @@ Server log during the run should show **no** `credit balance too low`
 
 ## 5. The dreaming affordance = a compound flow
 
-The UX **"dreaming"** affordance (→ `POST /api/agents/:id/consolidate`) now
-orchestrates what is effectively a **compound agent**:
+The UX **"dreaming"** affordance (→ `POST /api/agents/:id/consolidate`) is now a
+declarative **compound agent**: **`dream_coordinator`**
+(`agents/curated/dream_coordinator/agent_card.json`, tier=system), which
+declares `ontologist` + `dream_narrator` as its `dependencies.required` and
+orchestrates:
 
 ```
-dreaming(agent)
+dream_coordinator (compound, system)
   ├─ embed unconsolidated episodes        (OpenAI embeddings, platform key)
   ├─ cluster (DBSCAN)
   ├─ EXTRACT  → ontologist                (system agent, OpenAI, abw-system key)
   │              entities + semantic rules → agent's knowledge graph
   └─ NARRATE  → dream_narrator             (system agent) → dream_synopsis
 ```
+
+Members are resolved **from the card, not hardcoded**: consolidation picks the
+coordinator's member that produces `semantic-rules` (extract) and the one that
+produces `dream-synopsis` (narrate). Swap the members in the card and the
+pipeline follows (`dream_member()` in `handlers/consolidation.rs`, with safe
+fallbacks to `ontologist` / `dream_narrator`).
 
 - **`ontologist`** is the extraction brain (this change). **`dream_narrator`**
   is the narration voice (already wired). Both are platform-service agents.
@@ -124,10 +133,11 @@ dreaming(agent)
   through the same `resolve_credential` path once P5 lands, so eval and
   dreaming share one funding/credential substrate.
 
-> Formalising dreaming as a first-class compound agent (a `dreaming`
-> orchestrator card that declares `ontologist` + `dream_narrator` as members)
-> is a clean next step — the runtime already behaves this way; the card would
-> make it declarative + visible in xaman_ek and the observability UI.
+> Done: `dream_coordinator` is the first-class compound orchestrator card,
+> registered in `xaman_ek` (roster + Compound Agent Dependency Graph:
+> `dream_coordinator → [ontologist, dream_narrator]`) so it's visible to the
+> navigator and the observability UI. Its `workflow_template` documents the
+> 4-stage pipeline (embed → cluster → extract → narrate).
 
 ---
 

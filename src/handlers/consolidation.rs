@@ -25,19 +25,38 @@ use std::str::FromStr;
 
 use crate::{resolve_agent, resolve_credential, AppState};
 
-/// Build the extraction "brain" for consolidation from the `ontologist`
-/// system agent (docs/specs/AGENT_CREDENTIAL_MODEL.md, P3).
-///
-/// Provider + model come from the ontologist's *card* (not hardcoded); the
-/// API key is resolved from the credential store — tier=system routes to the
-/// `abw-system` principal, so the platform funds learning via its system key.
-/// Returns `None` (card missing / unfunded / unknown provider) so the worker
-/// falls back to pattern-based extraction instead of crashing.
-async fn build_ontologist_extraction_llm(state: &AppState) -> Option<Arc<dyn LLMProvider>> {
-    let card = state.registry.get("ontologist").ok()?;
+/// Resolve a member of the `dream_coordinator` compound by what it produces.
+/// The coordinator card names its members declaratively (its `dependencies`);
+/// we pick the member whose card declares it produces `produces_label`. Swap
+/// the members in dream_coordinator's card and this pipeline follows. Falls
+/// back to `default_name` when the coordinator or member is unavailable.
+fn dream_member(state: &AppState, produces_label: &str, default_name: &str) -> String {
+    let Ok(coord) = state.registry.get("dream_coordinator") else {
+        return default_name.to_string();
+    };
+    for name in &coord.dependencies.required {
+        if let Ok(member) = state.registry.get(name) {
+            if member.produces.iter().any(|p| p == produces_label) {
+                return name.clone();
+            }
+        }
+    }
+    default_name.to_string()
+}
+
+/// Build the extraction "brain" for consolidation from the dream_coordinator's
+/// declared EXTRACT member (whichever produces `semantic-rules` — the
+/// `ontologist` by default). Provider + model come from that member's card
+/// (not hardcoded); the API key resolves from the credential store — tier=system
+/// routes to the `abw-system` principal, so the platform funds learning via its
+/// system key. Returns `None` (unresolved / unfunded / unknown provider) so the
+/// worker falls back to pattern-based extraction instead of crashing.
+async fn build_extraction_llm(state: &AppState) -> Option<Arc<dyn LLMProvider>> {
+    let extractor = dream_member(state, "semantic-rules", "ontologist");
+    let card = state.registry.get(&extractor).ok()?;
     let provider = card.capabilities.provider.clone();
     let model = card.capabilities.model.clone();
-    let db_agent = resolve_agent(state, "ontologist").await.ok()?;
+    let db_agent = resolve_agent(state, &extractor).await.ok()?;
     let api_key = resolve_credential(state, &db_agent, &provider).await?;
     let provider_type = ProviderType::from_str(&provider).ok()?;
     LLMProviderFactory::create(&LLMProviderConfig {
@@ -306,7 +325,7 @@ pub async fn consolidate_agent_handler(
         // Extraction brain = the `ontologist` system agent (card-configured
         // provider/model, funded by abw-system's stored key). No env-var key
         // path — that was the old system-tier shortcut this model replaces.
-        let worker = match build_ontologist_extraction_llm(&spawn_state).await {
+        let worker = match build_extraction_llm(&spawn_state).await {
             Some(llm) => ConsolidationWorker::with_llm(
                 spawn_state.memory_store.clone(),
                 lock,
@@ -362,8 +381,11 @@ pub async fn consolidate_agent_handler(
                 let narrator_state = spawn_state.clone();
                 let aname = spawn_agent_name.clone();
                 tokio::spawn(async move {
-                    let narrator_id = "dream_narrator";
-                    let card = match narrator_state.registry.get(narrator_id) {
+                    // Declarative: the narrator is the dream_coordinator member
+                    // that produces `dream-synopsis` (dream_narrator by default).
+                    let narrator_id =
+                        dream_member(&narrator_state, "dream-synopsis", "dream_narrator");
+                    let card = match narrator_state.registry.get(&narrator_id) {
                         Ok(c) => c,
                         Err(_) => return,
                     };
@@ -375,7 +397,7 @@ pub async fn consolidate_agent_handler(
                         aname, ep, cl, rx, rv, ec, fc
                     );
                     let agent_stmt = ast::AgentStmt {
-                        name: narrator_id.to_string(),
+                        name: narrator_id.clone(),
                         agent_type: Some(card.agent_type.clone()),
                         query: synopsis_input,
                         executor: Some(ast::ExecutorType::LLM),
