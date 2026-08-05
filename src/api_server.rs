@@ -842,6 +842,10 @@ async fn run_migrations(db: &PgPool) {
         // and reserves `fermi_forecasts.counterfactual_brier` for the
         // manager-effect metric. See RELEASE_NOTES_v0.11.2.md.
         "migrations/172_orchestra_membership.sql",
+        // Realign per-agent embedding identity (anthropic/voyage-2 ->
+        // openai/text-embedding-3-large) to the active embedder. Metadata
+        // only; per-vector provenance untouched. See mig file + P5 notes.
+        "migrations/173_embedding_identity_realign.sql",
     ];
 
     for file in &migration_files {
@@ -3303,6 +3307,13 @@ async fn main() {
             "/api/agents/:agent_id/orchestras",
             get(handlers::orchestras::agent_orchestras_handler),
         )
+        // v0.11.3-follow-up: manager-effect readout for strategist
+        // orchestras. Aggregate + per-forecast Brier / counterfactual
+        // Brier / manager_effect delta.
+        .route(
+            "/api/orchestras/:name/manager-effect",
+            get(handlers::orchestras::orchestra_manager_effect_handler),
+        )
         // Admin view over third-party Apps — lists every app across every
         // visibility level (private/unlisted/public) with owner display
         // name + workspace count so external app authors like `efrain_ai`
@@ -4140,9 +4151,11 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
             // Card-driven (was hardcoded "anthropic"): keeps the DB row truthful
             // so credential resolution + observability see the real provider.
             llm_provider: card.capabilities.provider.clone(),
-            embedding_provider: "anthropic".to_string(),
-            embedding_model: "voyage-2".to_string(),
-            embedding_dimension: 1024,
+            // Track the active embedder (OpenAIEmbeddings), not the stale
+            // anthropic/voyage-2 identity. See handlers::agents::default_embedding_*.
+            embedding_provider: crate::handlers::agents::default_embedding_provider(),
+            embedding_model: crate::handlers::agents::default_embedding_model(),
+            embedding_dimension: crate::handlers::agents::default_embedding_dimension(),
             sample_queries: card.metadata.sample_queries.clone(),
             status: "published".to_string(),
             fork_pricing: None,

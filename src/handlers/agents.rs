@@ -664,10 +664,15 @@ pub fn default_llm_provider() -> String {
     "anthropic".to_string()
 }
 pub fn default_embedding_provider() -> String {
-    "anthropic".to_string()
+    // Must track the platform's ACTIVE embedder (src/api_server.rs builds
+    // OpenAIEmbeddings). Leaving this as "anthropic"/"voyage-2" stamped new
+    // agents with an identity no vector ever had (Anthropic serves no
+    // embeddings API) and mislabelled the correct OpenAI vectors in the
+    // portability view. Single source of truth for new-agent embedding intent.
+    "openai".to_string()
 }
 pub fn default_embedding_model() -> String {
-    "voyage-2".to_string()
+    "text-embedding-3-large".to_string()
 }
 pub fn default_embedding_dimension() -> i32 {
     1024
@@ -863,8 +868,7 @@ pub async fn model_catalogue_handler(State(_state): State<AppState>) -> Json<Val
             }
         ],
         "embedding_providers": [
-            {"id": "anthropic", "name": "Voyage-2 (Anthropic)", "model": "voyage-2", "dimension": 1024, "env_var": "ANTHROPIC_API_KEY", "available": check_env("ANTHROPIC_API_KEY")},
-            {"id": "openai", "name": "text-embedding-3-large (OpenAI)", "model": "text-embedding-3-large", "dimension": 1024, "env_var": "OPENAI_API_KEY", "available": check_env("OPENAI_API_KEY")},
+            {"id": "openai", "name": "text-embedding-3-large (OpenAI)", "model": "text-embedding-3-large", "dimension": 1024, "env_var": "OPENAI_API_KEY", "available": check_env("OPENAI_API_KEY"), "default": true},
             {"id": "mistral", "name": "mistral-embed (Mistral)", "model": "mistral-embed", "dimension": 1024, "env_var": "MISTRAL_API_KEY", "available": check_env("MISTRAL_API_KEY")},
             {"id": "qwen", "name": "text-embedding-v3 (Qwen)", "model": "text-embedding-v3", "dimension": 1024, "env_var": "QWEN_API_KEY", "available": check_env("QWEN_API_KEY")}
         ]
@@ -983,9 +987,9 @@ pub async fn import_agent_handler(
         auto_collect_pct: 0,
         display_alias: None,
         llm_provider: "anthropic".to_string(),
-        embedding_provider: "anthropic".to_string(),
-        embedding_model: "voyage-2".to_string(),
-        embedding_dimension: 1024,
+        embedding_provider: default_embedding_provider(),
+        embedding_model: default_embedding_model(),
+        embedding_dimension: default_embedding_dimension(),
         sample_queries: vec![],
         status: "draft".to_string(),
         fork_pricing: None,
