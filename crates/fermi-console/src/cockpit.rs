@@ -8404,6 +8404,37 @@ impl CockpitState {
     /// `save_forecast`; this is the backend leg so the operator can
     /// close the composer and come back to the same forecast on any
     /// device via `open_forecast(id)`.
+    //
+    // v0.11.3-follow-up: naive-baseline counterfactual for the
+    // football-manager metric.
+    //
+    // The counterfactual is what a naive baseline model would have
+    // predicted for this question absent Fermi's decomposition and
+    // specialist aggregation. We use the reference-class
+    // `historical_frequency` from the outside-view base rate: it's the
+    // classic Tetlock/Kahneman baseline ("how often has this class of
+    // event happened before?") and lives in the AST as soon as
+    // `macro_forecaster` returns.
+    //
+    // Why the raw base rate and not "average of specialist outputs":
+    // specialists produce driver *multipliers* on the base rate, not
+    // stand-alone probabilities. There is no naive arithmetic mean of
+    // multipliers that maps back to a probability without
+    // reconstructing the FPL model — which is the very thing the
+    // counterfactual is supposed to strip out. The base rate is the
+    // honest "no manager, no team" reference; the manager-effect delta
+    // then measures the value-add of the whole Fermi apparatus.
+    //
+    // Returned as `None` when no base rate is set (e.g. the operator
+    // saved a draft before running orchestrate). Server treats that as
+    // NULL and leaves `manager_effect` unavailable for the row.
+    fn naive_counterfactual_probability(&self) -> Option<f64> {
+        self.program
+            .question()
+            .and_then(|q| q.base_rate.as_ref())
+            .map(|br| clamp_wire_probability(br.historical_frequency))
+    }
+
     fn persist_backend_save(&mut self, cx: &mut Context<Self>) {
         // No question yet — the API rejects empty question_text with 400
         // and there's nothing to persist anyway. Silent no-op is fine
@@ -8512,6 +8543,12 @@ impl CockpitState {
         let sim_results_json = self.sim_results.as_ref().map(
             |s| serde_json::json!({ "mean": s.mean, "median": s.median, "p5": s.p5, "p95": s.p95 }),
         );
+        // v0.11.3-follow-up: capture the naive counterfactual before
+        // spawning — the async block can't borrow `self`. Only used on
+        // the create branch below (POST); PUT never touches this
+        // column, so the counterfactual stays exactly what the row
+        // was born with.
+        let cf_prob = self.naive_counterfactual_probability();
         let existing_fid = self.forecast_id.clone();
         // Snapshotted out of the branch below so the failure path can
         // report which endpoint was attempted, and against which id.
@@ -8557,6 +8594,9 @@ impl CockpitState {
                 let req = CreateForecastRequest {
                     question_text: question,
                     predicted_probability: prob,
+                    // v0.11.3-follow-up: naive-baseline counterfactual.
+                    // POST-only; see naive_counterfactual_probability.
+                    counterfactual_probability: cf_prob,
                     domain: None,
                     resolution_criteria: res_crit,
                     target_date,
@@ -9750,6 +9790,11 @@ impl CockpitState {
         let sim_results_json = self.sim_results.as_ref().map(
             |s| serde_json::json!({ "mean": s.mean, "median": s.median, "p5": s.p5, "p95": s.p95 }),
         );
+        // v0.11.3-follow-up: naive counterfactual snapshot, POST-only.
+        // See persist_backend_save for the full rationale — in short,
+        // manager_effect = brier − counterfactual_brier, where
+        // counterfactual = base_rate.historical_frequency.
+        let cf_prob = self.naive_counterfactual_probability();
         let existing_fid = self.forecast_id.clone();
 
         cx.spawn(async move |this, cx| {
@@ -9790,6 +9835,9 @@ impl CockpitState {
                 let req = CreateForecastRequest {
                     question_text: question,
                     predicted_probability: prob,
+                    // v0.11.3-follow-up: naive-baseline counterfactual.
+                    // POST-only; see naive_counterfactual_probability.
+                    counterfactual_probability: cf_prob,
                     domain: None,
                     resolution_criteria: res_crit,
                     target_date,
