@@ -353,6 +353,7 @@
         <button class="tab" data-tab="ownership">Ownership</button>
         <button class="tab" data-tab="waitlist">Waitlist</button>
         <button class="tab" data-tab="ledger">Credit Ledger</button>
+        <button class="tab" data-tab="orchestras">Orchestras</button>
       </div>
 
       <!-- Users Tab -->
@@ -637,6 +638,55 @@
           <tbody id="ledger-tbody"></tbody>
         </table>
       </div>
+
+      <!-- Orchestras Tab -->
+      <!--
+        Admin inbox for orchestra membership requests. Owners of
+        orchestra strategist agents (e.g. Fermi) and platform admins
+        can approve or reject. Backing endpoints:
+          GET  /api/orchestras
+          GET  /api/orchestras/:name/requests?status=pending|approved|rejected|withdrawn|all
+          POST /api/orchestras/:name/requests/:id/approve  {note?, final_contract?}
+          POST /api/orchestras/:name/requests/:id/reject   {note}   (note required)
+        Fermi is the only strategist wired for now; the filter select
+        is prepared to accept other orchestras once they land.
+      -->
+      <div class="tab-content" id="tab-orchestras">
+        <div
+          style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap"
+        >
+          <label style="color:var(--fg3);font-size:0.85rem">Orchestra</label>
+          <select id="orchestra-select">
+            <option value="fermi">fermi</option>
+          </select>
+          <label style="color:var(--fg3);font-size:0.85rem">Status</label>
+          <select id="orchestra-status">
+            <option value="pending" selected>pending</option>
+            <option value="approved">approved</option>
+            <option value="rejected">rejected</option>
+            <option value="withdrawn">withdrawn</option>
+            <option value="all">all</option>
+          </select>
+          <button
+            class="btn btn-sm"
+            onclick="loadOrchestraRequests()"
+            title="Refresh the inbox"
+          >
+            ↻ Refresh
+          </button>
+          <span
+            id="orchestra-count"
+            style="color:var(--fg3);font-size:0.85rem;margin-left:auto"
+          ></span>
+        </div>
+        <p style="color: var(--fg3); font-size: 0.85rem; margin-bottom: 12px">
+          Approving admits the agent as a member with the shown
+          contract. Rejecting requires a note that the requester will
+          see. Approval is admin-gated (owner of the orchestra's
+          strategist agent, or a platform admin).
+        </p>
+        <div id="orchestra-requests-list"></div>
+      </div>
     </div>
 
     <!-- Grant Credits to User Modal -->
@@ -909,6 +959,182 @@
           });
         } catch (e) {
           console.error("Failed to load agents", e);
+        }
+      }
+
+      // --- Orchestra membership inbox ---
+      // The strategist for an orchestra (currently only `fermi`)
+      // gates membership. Ownership of the strategist agent card is
+      // the admin credential; platform admins bypass that check on
+      // the server side. See handlers/orchestras.rs.
+      async function loadOrchestraRequests() {
+        const orchestra =
+          document.getElementById("orchestra-select")?.value || "fermi";
+        const status =
+          document.getElementById("orchestra-status")?.value || "pending";
+        const listEl = document.getElementById("orchestra-requests-list");
+        const countEl = document.getElementById("orchestra-count");
+        if (!listEl) return;
+        listEl.innerHTML =
+          '<div style="color:var(--fg3);padding:12px">Loading…</div>';
+        try {
+          const res = await fetch(
+            `/api/orchestras/${encodeURIComponent(orchestra)}/requests?status=${encodeURIComponent(status)}`,
+          );
+          if (!res.ok) {
+            const txt = await res.text().catch(() => "");
+            listEl.innerHTML = `<div style="color:var(--red);padding:12px">Failed to load: ${escHtml(txt || res.statusText)}</div>`;
+            countEl.textContent = "";
+            return;
+          }
+          const data = await res.json();
+          const reqs = data.requests || [];
+          countEl.textContent = `${reqs.length} ${status} request${reqs.length === 1 ? "" : "s"}`;
+          if (reqs.length === 0) {
+            listEl.innerHTML = `<div style="color:var(--fg3);padding:24px;text-align:center;border:1px dashed var(--bg3);border-radius:6px">No ${escHtml(status)} ${escHtml(orchestra)} membership requests.</div>`;
+            return;
+          }
+          listEl.innerHTML = reqs
+            .map((r) => renderOrchestraRequestCard(orchestra, r))
+            .join("");
+        } catch (e) {
+          console.error("Failed to load orchestra requests", e);
+          listEl.innerHTML = `<div style="color:var(--red);padding:12px">Error: ${escHtml(String(e))}</div>`;
+        }
+      }
+
+      function renderOrchestraRequestCard(orchestra, r) {
+        const agent = r.agent || {};
+        const requester = r.requester || {};
+        const submitted = r.created_at
+          ? new Date(r.created_at).toLocaleString()
+          : "-";
+        const reviewed = r.reviewed_at
+          ? new Date(r.reviewed_at).toLocaleString()
+          : null;
+        const statusColor =
+          r.status === "pending"
+            ? "badge-yellow"
+            : r.status === "approved"
+              ? "badge-green"
+              : r.status === "rejected"
+                ? "badge-red"
+                : "badge-gray";
+          const tierBadge =
+            agent.tier === "curated"
+              ? "badge-blue"
+              : agent.tier === "system"
+                ? "badge-gray"
+                : "badge-yellow";
+
+        // Contract summary: pull the two Fermi-shaped fields we
+        // validate on submit, then show full JSON for everything.
+        const contract = r.proposed_contract || {};
+        const labels = Array.isArray(contract.finding_labels)
+          ? contract.finding_labels.join(", ")
+          : "-";
+        const range = Array.isArray(contract.multiplier_range)
+          ? `[${contract.multiplier_range.join(", ")}]`
+          : "-";
+        const contractJson = JSON.stringify(contract, null, 2);
+
+        // Actions only for pending. Approve/reject POST straight to
+        // the request id; the server bounces stale statuses with 409.
+        const actions =
+          r.status === "pending"
+            ? `
+              <button class="btn btn-sm btn-green" onclick="approveOrchestraRequest('${escAttr(orchestra)}', '${escAttr(r.request_id)}', '${escAttr(agent.agent_name || "")}')">Approve</button>
+              <button class="btn btn-sm btn-red" onclick="rejectOrchestraRequest('${escAttr(orchestra)}', '${escAttr(r.request_id)}', '${escAttr(agent.agent_name || "")}')">Reject</button>
+            `
+            : "";
+
+        const reviewLine = reviewed
+          ? `<div style="color:var(--fg3);font-size:0.8rem;margin-top:8px">Reviewed by <code>${escHtml(r.reviewed_by || "-")}</code> at ${escHtml(reviewed)}${r.review_note ? ` — “${escHtml(r.review_note)}”` : ""}</div>`
+          : "";
+
+        return `
+          <div style="border:1px solid var(--bg3);border-radius:6px;padding:14px;margin-bottom:12px;background:var(--bg1)">
+            <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+              <a href="/agent/${encodeURIComponent(agent.agent_name || "")}" style="color:var(--aqua);text-decoration:none;font-weight:bold;font-size:1.05rem">${escHtml(agent.agent_name || "(unknown agent)")}</a>
+              <span class="badge ${tierBadge}">${escHtml(agent.tier || "-")}</span>
+              <span class="badge badge-gray">${escHtml(agent.agent_type || "-")}</span>
+              <span class="badge ${statusColor}">${escHtml(r.status || "-")}</span>
+              <span style="color:var(--fg3);font-size:0.8rem;margin-left:auto">${escHtml(submitted)}</span>
+            </div>
+            ${agent.description ? `<div style="color:var(--fg2);font-size:0.9rem;margin-bottom:8px">${escHtml(agent.description)}</div>` : ""}
+            <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:0.85rem;margin-bottom:8px">
+              <div style="color:var(--fg3)">Requester</div>
+              <div>${escHtml(requester.display || requester.user_id || "-")}</div>
+              <div style="color:var(--fg3)">Finding labels</div>
+              <div style="font-family:monospace">${escHtml(labels)}</div>
+              <div style="color:var(--fg3)">Multiplier range</div>
+              <div style="font-family:monospace">${escHtml(range)}</div>
+              ${r.rationale ? `<div style="color:var(--fg3)">Rationale</div><div>${escHtml(r.rationale)}</div>` : ""}
+            </div>
+            <details style="margin-bottom:8px">
+              <summary style="cursor:pointer;color:var(--fg3);font-size:0.8rem">Full proposed_contract</summary>
+              <pre style="background:var(--bg0-hard);padding:8px;border-radius:4px;font-size:0.75rem;overflow-x:auto">${escHtml(contractJson)}</pre>
+            </details>
+            ${reviewLine}
+            <div style="display:flex;gap:6px;margin-top:10px">${actions}</div>
+          </div>`;
+      }
+
+      async function approveOrchestraRequest(orchestra, requestId, agentName) {
+        const note = prompt(
+          `Approve “${agentName}” for the ${orchestra} orchestra?\n\nOptional review note (visible to requester):`,
+          "",
+        );
+        // prompt returns null on Cancel; empty string is a legitimate
+        // "approve with no note".
+        if (note === null) return;
+        try {
+          const res = await fetch(
+            `/api/orchestras/${encodeURIComponent(orchestra)}/requests/${encodeURIComponent(requestId)}/approve`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(note ? { note } : {}),
+            },
+          );
+          if (!res.ok) {
+            const txt = await res.text().catch(() => "");
+            alert(`Approve failed: ${txt || res.statusText}`);
+            return;
+          }
+          await loadOrchestraRequests();
+        } catch (e) {
+          alert(`Approve failed: ${e}`);
+        }
+      }
+
+      async function rejectOrchestraRequest(orchestra, requestId, agentName) {
+        const note = prompt(
+          `Reject “${agentName}” for the ${orchestra} orchestra?\n\nA review note is REQUIRED (visible to requester):`,
+          "",
+        );
+        if (note === null) return;
+        if (!note.trim()) {
+          alert("A rejection note is required.");
+          return;
+        }
+        try {
+          const res = await fetch(
+            `/api/orchestras/${encodeURIComponent(orchestra)}/requests/${encodeURIComponent(requestId)}/reject`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ note: note.trim() }),
+            },
+          );
+          if (!res.ok) {
+            const txt = await res.text().catch(() => "");
+            alert(`Reject failed: ${txt || res.statusText}`);
+            return;
+          }
+          await loadOrchestraRequests();
+        } catch (e) {
+          alert(`Reject failed: ${e}`);
         }
       }
 
@@ -1242,6 +1468,7 @@
 
       // --- Tabs ---
       let ownershipLoaded = false;
+      let orchestrasLoaded = false;
       document.querySelectorAll(".tab").forEach((tab) => {
         tab.addEventListener("click", () => {
           document
@@ -1269,6 +1496,16 @@
                   300,
                 );
               });
+          }
+          if (tab.dataset.tab === "orchestras" && !orchestrasLoaded) {
+            loadOrchestraRequests();
+            orchestrasLoaded = true;
+            document
+              .getElementById("orchestra-status")
+              .addEventListener("change", () => loadOrchestraRequests());
+            document
+              .getElementById("orchestra-select")
+              .addEventListener("change", () => loadOrchestraRequests());
           }
         });
       });

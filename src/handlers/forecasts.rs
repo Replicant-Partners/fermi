@@ -221,6 +221,18 @@ pub(crate) async fn ensure_user_row(
 pub struct CreateForecastRequest {
     pub question_text: String,
     pub predicted_probability: f64,
+
+    /// v0.11.3: counterfactual probability under naive-average
+    /// aggregation of member outputs (Fermi orchestra path). Optional
+    /// so non-Fermi forecasts don't need to compute it. Populated by
+    /// the client (Fermi harness) which knows the naive baseline
+    /// formula; server persists verbatim. At resolution we compute
+    /// counterfactual_brier and expose `brier_score - counterfactual_brier`
+    /// as Fermi's manager-effect delta. See football-manager model
+    /// design conversation preceding v0.11.2.
+    #[serde(default)]
+    pub counterfactual_probability: Option<f64>,
+
     pub domain: Option<String>,
     pub resolution_criteria: Option<String>,
     pub target_date: Option<String>, // ISO 8601
@@ -419,14 +431,17 @@ pub async fn create_forecast_handler(
         // Postgres coerced text → uuid → text on assign — but broke
         // for non-UUID-shaped user_ids and was a source of drift
         // between the write and read paths.
+        // v0.11.3: counterfactual_probability added at position $22.
+        // Nullable — non-Fermi forecasts pass through with NULL.
         "INSERT INTO fermi_forecasts
          (id, owner_id, question_text, domain, resolution_criteria, target_date,
           predicted_probability, confidence_interval_low, confidence_interval_high,
           fpl_source, notebook_id, simulation_results, iterations,
           drivers, evidence, agents_used,
-          status, visibility, team_id, workspace_id, tags, created_at, updated_at)
+          status, visibility, team_id, workspace_id, tags,
+          counterfactual_probability, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-                 $14, $15, $16, $17, $18, $19, $20, $21, NOW(), NOW())",
+                 $14, $15, $16, $17, $18, $19, $20, $21, $22, NOW(), NOW())",
     )
     .bind(&forecast_id)
     .bind(&user_id)
@@ -449,6 +464,14 @@ pub async fn create_forecast_handler(
     .bind(team_id)
     .bind(workspace_id)
     .bind(&tags)
+    // Clamp to [0,1] defensively — the CHECK constraint (v0.11.3
+    // ensure_critical_schema) already enforces this, but clamping
+    // here surfaces the intent and keeps client bugs from becoming
+    // 500s.
+    .bind(
+        req.counterfactual_probability
+            .map(|p| (p as f32).clamp(0.0, 1.0)),
+    )
     .execute(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -608,6 +631,25 @@ pub async fn get_forecast_handler(
     .await
     .unwrap_or_default();
 
+    // v0.11.3: derive manager-effect from team+counterfactual Brier.
+    // Computed outside json!() because the macro can't handle
+    // multi-statement blocks with turbofish generics inside a value
+    // position. Same three reads used in the object below.
+    let brier_score_val: Option<f64> = row
+        .try_get::<Option<f32>, _>("brier_score")
+        .ok()
+        .flatten()
+        .map(|v| v as f64);
+    let counterfactual_brier_val: Option<f64> = row
+        .try_get::<Option<f32>, _>("counterfactual_brier")
+        .ok()
+        .flatten()
+        .map(|v| v as f64);
+    let manager_effect_val: Option<f64> = match (brier_score_val, counterfactual_brier_val) {
+        (Some(t), Some(c)) => Some(t - c),
+        _ => None,
+    };
+
     Ok(Json(json!({
         "id": row.try_get::<String, _>("id").ok(),
         "owner_id": owner_id,
@@ -632,7 +674,12 @@ pub async fn get_forecast_handler(
         "agents_used": row.try_get::<JsonValue, _>("agents_used").ok(),
         "status": row.try_get::<String, _>("status").ok(),
         "actual_outcome": row.try_get::<Option<bool>, _>("actual_outcome").ok().flatten(),
-        "brier_score": row.try_get::<Option<f32>, _>("brier_score").ok().flatten().map(|v| v as f64),
+        "brier_score": brier_score_val,
+        // v0.11.3: counterfactual + manager-effect delta. Both are
+        // NULL for non-Fermi forecasts and pre-v0.11.3 rows.
+        "counterfactual_probability": row.try_get::<Option<f32>, _>("counterfactual_probability").ok().flatten().map(|v| v as f64),
+        "counterfactual_brier": counterfactual_brier_val,
+        "manager_effect": manager_effect_val,
         "resolved_at": row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("resolved_at").ok().flatten().map(|t| t.to_rfc3339()),
         "resolved_by": row.try_get::<Option<String>, _>("resolved_by").ok().flatten(),
         "resolution_notes": row.try_get::<Option<String>, _>("resolution_notes").ok().flatten(),
@@ -1098,6 +1145,33 @@ pub async fn resolve_forecast_handler(
             }
         })?;
 
+    // v0.11.3: compute counterfactual_brier when the forecast
+    // carries a counterfactual_probability from its creation. This
+    // populates the manager-effect metric — team Brier vs
+    // naive-average Brier — for the roster-orthogonal skill signal
+    // defined in the football-manager model conversation.
+    //
+    // Best-effort: a compute failure doesn't roll back the resolve.
+    // The delta is a nice-to-have metric, not part of the resolve
+    // contract. Silently NULL when counterfactual_probability was
+    // never set (non-Fermi forecasts).
+    //
+    // Formula matches compute_brier_score (mig-094):
+    //   brier = (predicted - actual::int)^2
+    // Cast to REAL so the CHECK constraint on the column is honored.
+    let _ = sqlx::query(
+        "UPDATE fermi_forecasts \
+            SET counterfactual_brier = ( \
+                (counterfactual_probability - CASE WHEN $2 THEN 1.0::real ELSE 0.0::real END) \
+                * (counterfactual_probability - CASE WHEN $2 THEN 1.0::real ELSE 0.0::real END) \
+            )::real \
+          WHERE id = $1 AND counterfactual_probability IS NOT NULL",
+    )
+    .bind(&forecast_id)
+    .bind(req.actual_outcome)
+    .execute(pool)
+    .await;
+
     // Refresh leaderboard in background (non-blocking)
     let pool_bg = pool.clone();
     tokio::spawn(async move {
@@ -1234,10 +1308,29 @@ pub async fn resolve_forecast_handler(
         });
     }
 
+    // v0.11.3: read back the counterfactual_brier we just wrote (if
+    // any) so the response surfaces the manager-effect delta.
+    // Delta = brier_score − counterfactual_brier. Negative delta =
+    // team beat the naive baseline; positive delta = naive would
+    // have scored better this time.
+    let counterfactual_brier: Option<f64> = sqlx::query_scalar::<_, Option<f32>>(
+        "SELECT counterfactual_brier FROM fermi_forecasts WHERE id = $1",
+    )
+    .bind(&forecast_id)
+    .fetch_one(pool)
+    .await
+    .ok()
+    .flatten()
+    .map(|f| f as f64);
+
+    let manager_effect = counterfactual_brier.map(|cb| brier_score - cb);
+
     Ok(Json(json!({
         "forecast_id": forecast_id,
         "actual_outcome": req.actual_outcome,
         "brier_score": brier_score,
+        "counterfactual_brier": counterfactual_brier,
+        "manager_effect": manager_effect,
         "status": "resolved",
         "resolved_by": user_id,
         "resolution_notes": req.resolution_notes,

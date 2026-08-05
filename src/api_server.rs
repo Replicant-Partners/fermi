@@ -1351,6 +1351,21 @@ async fn ensure_critical_schema(db: &PgPool) {
         // in the ensure so re-runs converge.
         ("agents.updated_at.backfill",
          "UPDATE public.agents SET updated_at = created_at WHERE updated_at IS NULL"),
+
+        // v0.11.3: counterfactual_probability. Companion to
+        // fermi_forecasts.counterfactual_brier from mig-172. The client
+        // (Fermi harness) computes what its naive-average baseline
+        // would have said and sends it at forecast creation time; the
+        // server just persists. At resolution we compute
+        // counterfactual_brier = (counterfactual_probability -
+        // actual_outcome::int)^2 alongside the actual brier_score.
+        // Team Brier − Counterfactual Brier = manager-effect delta.
+        // Nullable — legacy forecasts and non-Fermi forecasts don't
+        // populate it.
+        ("fermi_forecasts.counterfactual_probability",
+         "ALTER TABLE public.fermi_forecasts \
+            ADD COLUMN IF NOT EXISTS counterfactual_probability REAL \
+              CHECK (counterfactual_probability IS NULL OR (counterfactual_probability >= 0 AND counterfactual_probability <= 1))"),
     ];
 
     println!(
