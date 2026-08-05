@@ -14682,17 +14682,10 @@ impl FermiConsole {
             .expect("render_update_modal called with no update");
         let current = env!("CARGO_PKG_VERSION");
 
-        // Format the notes: keep it readable but truncate absurdly long
-        // release bodies so the modal never grows past the window. If
-        // testers need the full text, they can hit the GitHub link.
-        let notes_display = if release.notes.len() > 2400 {
-            format!(
-                "{}…\n\n(truncated — see GitHub for full notes)",
-                &release.notes[..2400]
-            )
-        } else {
-            release.notes.clone()
-        };
+        // Keep it readable but truncate absurdly long release bodies so the
+        // modal never grows past the window. If testers need the full text,
+        // they can hit the GitHub link.
+        let notes_display = updater::truncate_release_notes(&release.notes);
 
         // Progress row content depends on state.
         let (progress_row, primary_label, primary_enabled, primary_color) =
@@ -17914,7 +17907,9 @@ fn short_user_label(user_id: &str) -> String {
                 return format!("{}…", head);
             }
         }
-        return format!("{}…", &trimmed[..8]);
+        // Char-aware: an opaque non-UUID id may carry multibyte bytes, and
+        // byte slicing would panic on a mid-codepoint cutoff.
+        return format!("{}…", trimmed.chars().take(8).collect::<String>());
     }
     trimmed.to_string()
 }
