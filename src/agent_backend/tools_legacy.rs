@@ -73,6 +73,18 @@ pub struct ToolContext {
     /// `run_evaluator_registry` calls into this. Sites that pass `None`
     /// get a graceful tool error instead of a trigger.
     pub eval_trigger: Option<Arc<dyn EvalTrigger>>,
+    /// Remote MCP tools this agent may call, discovered from the
+    /// `mcp_servers` block on its own card.
+    ///
+    /// Deliberately carried on the context rather than resolved from a
+    /// global registry: this is an authorization boundary. Builtin tools
+    /// are global (every agent gets all of them and `execute` performs no
+    /// per-agent check) — remote tools must not inherit that, or one
+    /// agent's third-party credential becomes every agent's.
+    ///
+    /// `None` means the caller did not resolve remote tools; the agent
+    /// simply has none. Never a silent anonymous fallback.
+    pub remote_mcp: Option<Arc<crate::agent_backend::mcp_client::RemoteMcpCatalogue>>,
 }
 
 /// Bridge for triggering an eval run from inside a tool handler.
@@ -1737,14 +1749,29 @@ impl ToolRegistry {
 
     /// Also include any MCP tools declared on the agent card
     pub(crate) fn to_claude_tools_with_card(&self, card: &AgentCard) -> Vec<ClaudeTool> {
+        self.to_claude_tools_with_card_and_remote(card, None)
+    }
+
+    /// Card tools plus any remote MCP tools discovered for this agent.
+    ///
+    /// Ordering is deliberate: builtins, then card-declared platform
+    /// tools, then remote tools — and each later group skips names
+    /// already claimed. A remote server therefore cannot shadow a
+    /// platform tool by naming one of its tools `execute_agent`, and both
+    /// APIs reject duplicate names with a 400 anyway.
+    pub(crate) fn to_claude_tools_with_card_and_remote(
+        &self,
+        card: &AgentCard,
+        remote: Option<&crate::agent_backend::mcp_client::RemoteMcpCatalogue>,
+    ) -> Vec<ClaudeTool> {
         let mut tools = self.to_claude_tools();
         // Collect builtin names first — Anthropic API rejects duplicate tool names with 400.
-        let builtin_names: std::collections::HashSet<String> =
+        let mut claimed: std::collections::HashSet<String> =
             tools.iter().map(|t| t.name.clone()).collect();
         for mcp in &card.capabilities.mcp_tools {
             // Only include MCP tools that have schemas and aren't already registered as builtins
             if let Some(ref schema) = mcp.input_schema {
-                if !builtin_names.contains(&mcp.name) {
+                if claimed.insert(mcp.name.clone()) {
                     tools.push(ClaudeTool {
                         name: mcp.name.clone(),
                         description: mcp.description.clone(),
@@ -1753,7 +1780,38 @@ impl ToolRegistry {
                 }
             }
         }
+        if let Some(cat) = remote {
+            for rt in cat.tools() {
+                if claimed.insert(rt.qualified_name.clone()) {
+                    tools.push(ClaudeTool {
+                        name: rt.qualified_name.clone(),
+                        description: rt.description.clone(),
+                        input_schema: rt.input_schema.clone(),
+                    });
+                }
+            }
+        }
         tools
+    }
+
+    /// OpenAI-format counterpart of
+    /// [`Self::to_claude_tools_with_card_and_remote`].
+    pub(crate) fn to_openai_tools_with_card_and_remote(
+        &self,
+        card: &AgentCard,
+        remote: Option<&crate::agent_backend::mcp_client::RemoteMcpCatalogue>,
+    ) -> Vec<OpenAITool> {
+        self.to_claude_tools_with_card_and_remote(card, remote)
+            .into_iter()
+            .map(|t| OpenAITool {
+                tool_type: "function".to_string(),
+                function: OpenAIFunction {
+                    name: t.name,
+                    description: t.description,
+                    parameters: t.input_schema,
+                },
+            })
+            .collect()
     }
 
     /// Execute a tool by name
@@ -1891,7 +1949,23 @@ impl ToolRegistry {
             "classify_anomaly"   => execute_classify_anomaly(input, ctx).await,
             "route_to_hitl"      => execute_route_to_hitl(input, ctx).await,
             "run_evaluator_registry" => execute_run_evaluator_registry(input, ctx).await,
-            _ => Err(format!("Unknown tool: {}", tool_name)),
+
+            // Fallthrough: a name no builtin claims may be a remote MCP
+            // tool this agent's card authorised. Checked last on purpose
+            // — builtins always win, so a third-party server cannot
+            // shadow a platform tool by reusing its name.
+            other => match ctx.remote_mcp.as_ref() {
+                Some(cat) if cat.get(other).is_some() => cat.call(other, input).await,
+                Some(cat) if !cat.is_empty() => Err(format!(
+                    "Unknown tool: {other}. Remote MCP tools available to this agent: {}",
+                    cat.tools()
+                        .iter()
+                        .map(|t| t.qualified_name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
+                _ => Err(format!("Unknown tool: {other}")),
+            },
         }
     }
 }
@@ -4338,6 +4412,7 @@ async fn execute_execute_agent(
                 user_id: ctx.user_id.clone(),
                 user_secrets: None,
                 eval_trigger: ctx.eval_trigger.clone(),
+                remote_mcp: None,
             });
 
             let tool_executor = crate::agent_backend::tool_executor::ToolAwareExecutor::new(
@@ -4499,6 +4574,7 @@ async fn execute_delegate_to_agent(
         user_secrets: ctx.user_secrets.clone(),
         // Delegated child agents inherit the parent's trigger capability.
         eval_trigger: ctx.eval_trigger.clone(),
+        remote_mcp: None,
     });
 
     let tool_executor = ToolAwareExecutor::new(

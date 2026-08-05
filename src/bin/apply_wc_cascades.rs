@@ -76,7 +76,10 @@ async fn main() {
     }
     triggers.sort_by(|a, b| a.1.cmp(&b.1));
 
-    let member_ids: Vec<String> = member_rows.iter().map(|r| r.get::<String, _>("id")).collect();
+    let member_ids: Vec<String> = member_rows
+        .iter()
+        .map(|r| r.get::<String, _>("id"))
+        .collect();
 
     println!(
         "Group '{}': {} members, {} resolved-NO triggers to replay{}\n",
@@ -91,18 +94,44 @@ async fn main() {
         .find(|(_, q)| q.contains("Argentina"))
         .map(|(id, _)| id.clone());
 
+    // Idempotency ledger, read from the append-only update log.
+    //
+    // This used to be inferred from the trigger's own probability: the
+    // run pinned each eliminated forecast to 0.001 and treated "already
+    // at the floor" as "already cascaded". That marker was destructive —
+    // the trigger is by definition a *resolved* forecast, so writing
+    // 0.001 into it overwrote the very probability its stored
+    // brier_score had been computed against. That is what corrupted all
+    // 47 Polymarket-resolved forecasts (see mig-174).
+    //
+    // The cascade reason string is already unique per trigger and is
+    // already written to fermi_forecast_updates, so the log is a
+    // sufficient and non-destructive signal.
+    let applied: HashSet<String> = sqlx::query(
+        "SELECT DISTINCT reason
+           FROM public.fermi_forecast_updates
+          WHERE revision_trigger = 'cascade'
+            AND reason LIKE 'cascade from %'",
+    )
+    .fetch_all(&db)
+    .await
+    .expect("fetch applied cascades")
+    .iter()
+    .map(|r| r.get::<String, _>("reason"))
+    .collect();
+
     for (trigger, _) in &triggers {
         let trigger_prev = *prob.get(trigger).unwrap_or(&0.0);
+        let reason = format!("cascade from {} (resolved)", trigger);
 
-        // Idempotency: a trigger already at the ~0 floor has had its
-        // cascade applied. Skip so re-runs don't double-redistribute.
-        if trigger_prev <= 0.0011 {
+        // Idempotency: skip if this trigger's cascade is already in the
+        // update log, so re-runs don't double-redistribute.
+        if applied.contains(&reason) {
             println!(
-                "  {} already cascaded (at {:.3}%), skipping",
+                "  {} already cascaded, skipping",
                 name[trigger]
                     .trim_start_matches("Will ")
-                    .trim_end_matches(" win the 2026 FIFA World Cup?"),
-                trigger_prev * 100.0
+                    .trim_end_matches(" win the 2026 FIFA World Cup?")
             );
             continue;
         }
@@ -125,7 +154,6 @@ async fn main() {
             continue;
         }
 
-        let reason = format!("cascade from {} (resolved)", trigger);
         let mut deltas: Vec<(String, f64, f64)> = Vec::new();
         for id in &survivors {
             let prev = prob[id];
@@ -135,15 +163,26 @@ async fn main() {
                 deltas.push((id.clone(), prev, new_p));
             }
         }
-        // Trigger drops out.
-        if trigger_prev > 0.001 {
-            deltas.push((trigger.clone(), trigger_prev, 0.001));
-        }
+
+        // The trigger deliberately gets NO delta. It is a resolved
+        // forecast: its elimination is already recorded by
+        // actual_outcome = false, and its probability is the historical
+        // record its Brier score was scored against. Pinning it to 0.001
+        // added no information and destroyed the audit trail. Its mass is
+        // still redistributed to survivors above — only the destructive
+        // self-write is gone.
+        //
+        // Keep the in-memory map consistent for the rest of this run
+        // without touching the database.
+        prob.insert(trigger.clone(), 0.001);
 
         let arg_line = arg_id.as_ref().and_then(|aid| {
-            deltas.iter().find(|(id, _, _)| id == aid).map(|(_, prev, new)| {
-                format!("   Argentina {:.3}% → {:.3}%", prev * 100.0, new * 100.0)
-            })
+            deltas
+                .iter()
+                .find(|(id, _, _)| id == aid)
+                .map(|(_, prev, new)| {
+                    format!("   Argentina {:.3}% → {:.3}%", prev * 100.0, new * 100.0)
+                })
         });
 
         println!(
@@ -175,11 +214,24 @@ async fn main() {
             .await
             .expect("batch insert updates");
 
+            // `AND f.status = 'active'` is load-bearing. Without it this
+            // UPDATE rewrote the probability of already-resolved
+            // forecasts — including pinning every eliminated one to 0.001
+            // via the delta pushed at :139-141 below — which destroyed the
+            // input that their stored brier_score had been computed
+            // against. All 47 Polymarket-resolved forecasts were corrupted
+            // this way (91 post-resolution revisions) before mig-174.
+            //
+            // mig-174 also installs a BEFORE UPDATE trigger that pins the
+            // scoring tuple on resolved rows, so this is now defence in
+            // depth rather than the sole guard — but filtering here keeps
+            // the warning log quiet and makes the intent explicit.
             sqlx::query(
                 "UPDATE public.fermi_forecasts f
                     SET predicted_probability = t.newp, updated_at = NOW()
                    FROM UNNEST($1::text[], $2::real[]) AS t(fid, newp)
-                  WHERE f.id = t.fid",
+                  WHERE f.id = t.fid
+                    AND f.status = 'active'",
             )
             .bind(&ids)
             .bind(&news)

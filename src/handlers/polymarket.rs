@@ -1177,11 +1177,29 @@ pub async fn check_resolutions_handler(
 
                 // Resolve the forecast
                 // v0.10.13: owner_id = $7 (was `$7::uuid`) — TEXT post-mig-165
+                //
+                // mig-174: `scored_probability` snapshots the probability
+                // this Brier was computed against. Without it the score is
+                // unauditable the moment any cascade/recompose/refit path
+                // touches `predicted_probability` — which is exactly how
+                // every pre-174 resolution got corrupted.
+                //
+                // `resolution_source` is deliberately
+                // 'polymarket_price_heuristic', NOT 'polymarket_oracle':
+                // `market_match.outcome` is derived from a settled price
+                // threshold (yes_price > 0.9 / < 0.1 in
+                // src/polymarket/mod.rs:688-699), not from a UMA oracle
+                // read. Labelling it 'oracle' overstated the guarantee and
+                // made a price heuristic look like hard-verified ground
+                // truth. Reserve 'polymarket_oracle' for genuine
+                // settlement-lifecycle reads.
                 let resolve_result = sqlx::query(
                     "UPDATE fermi_forecasts
                      SET status = 'resolved',
                          actual_outcome = $1,
                          brier_score = $2,
+                         scored_probability = $8,
+                         resolution_source = 'polymarket_price_heuristic',
                          resolved_at = NOW(),
                          resolved_by = $3,
                          resolution_notes = $4,
@@ -1193,12 +1211,12 @@ pub async fn check_resolutions_handler(
                 .bind(brier as f32)
                 .bind("polymarket_oracle")
                 .bind(format!(
-                    "Auto-resolved via Polymarket: {} → {}. Brier: {:.4}",
-                    market_match.question, outcome_str, brier
+                    "Auto-resolved via Polymarket settled price ({} → {}, p={:.4}). Brier: {:.4}",
+                    market_match.question, outcome_str, fermi_prob, brier
                 ))
                 .bind(json!({
                     "resolution": {
-                        "source": "polymarket_oracle",
+                        "source": "polymarket_price_heuristic",
                         "pm_outcome": outcome_str,
                         "pm_final_price": market_match.market_price,
                         "brier_score": brier,
@@ -1208,6 +1226,7 @@ pub async fn check_resolutions_handler(
                 }))
                 .bind(&forecast_id)
                 .bind(&user_id)
+                .bind(fermi_prob)
                 .execute(&state.db)
                 .await;
 

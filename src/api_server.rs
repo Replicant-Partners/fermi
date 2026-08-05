@@ -846,6 +846,12 @@ async fn run_migrations(db: &PgPool) {
         // openai/text-embedding-3-large) to the active embedder. Metadata
         // only; per-vector provenance untouched. See mig file + P5 notes.
         "migrations/173_embedding_identity_realign.sql",
+        // Brier integrity: scored_probability (immutable audit anchor) +
+        // resolution_source (structured provenance) on fermi_forecasts,
+        // plus a BEFORE UPDATE trigger that freezes the scoring tuple
+        // once resolved. Fixes silent corruption of every resolved
+        // forecast by the nine unguarded predicted_probability writers.
+        "migrations/174_fermi_forecasts_brier_integrity.sql",
     ];
 
     for file in &migration_files {
@@ -1198,6 +1204,8 @@ async fn ensure_critical_schema(db: &PgPool) {
               UPDATE public.fermi_forecasts SET \
                   actual_outcome = p_actual_outcome, \
                   brier_score = v_brier, \
+                  scored_probability = v_predicted, \
+                  resolution_source = COALESCE(resolution_source, 'operator'), \
                   status = 'resolved', \
                   resolved_at = NOW(), \
                   resolved_by = p_resolved_by, \
@@ -1370,6 +1378,61 @@ async fn ensure_critical_schema(db: &PgPool) {
          "ALTER TABLE public.fermi_forecasts \
             ADD COLUMN IF NOT EXISTS counterfactual_probability REAL \
               CHECK (counterfactual_probability IS NULL OR (counterfactual_probability >= 0 AND counterfactual_probability <= 1))"),
+
+        // ── mig-174: Brier integrity ───────────────────────────────
+        //
+        // Migration 174 creates two columns, a plpgsql trigger function
+        // with a dollar-quoted body, a trigger, and a view. That is
+        // exactly the multi-statement shape PgBouncer transaction mode
+        // has eaten before (see the 094 and 140 notes above). If the
+        // raw_sql run aborts at the function body, the columns silently
+        // never appear and every resolution writes a NULL audit anchor.
+        //
+        // Re-declare the load-bearing parts as single statements. The
+        // audit view is non-essential (nothing reads it at runtime) so
+        // it is not restored here.
+        ("fermi_forecasts.scored_probability",
+         "ALTER TABLE public.fermi_forecasts \
+            ADD COLUMN IF NOT EXISTS scored_probability REAL"),
+        ("fermi_forecasts.resolution_source",
+         "ALTER TABLE public.fermi_forecasts \
+            ADD COLUMN IF NOT EXISTS resolution_source TEXT \
+              CHECK (resolution_source IS NULL OR resolution_source IN ( \
+                  'operator', 'polymarket_oracle', 'polymarket_price_heuristic', \
+                  'workspace_upstream', 'backtest_seed', 'unknown'))"),
+        ("fn.fermi_forecasts_freeze_resolved",
+         "CREATE OR REPLACE FUNCTION public.fn_fermi_forecasts_freeze_resolved() \
+          RETURNS TRIGGER LANGUAGE plpgsql AS $$ \
+          BEGIN \
+              IF OLD.status = 'resolved' AND NEW.status = 'resolved' THEN \
+                  IF NEW.scored_probability IS DISTINCT FROM OLD.scored_probability THEN \
+                      RAISE WARNING 'fermi_forecasts %: scored_probability is immutable once resolved (attempted % -> %); keeping original', OLD.id, OLD.scored_probability, NEW.scored_probability; \
+                      NEW.scored_probability := OLD.scored_probability; \
+                  END IF; \
+                  IF NEW.brier_score IS DISTINCT FROM OLD.brier_score THEN \
+                      RAISE WARNING 'fermi_forecasts %: brier_score is immutable once resolved (attempted % -> %); keeping original', OLD.id, OLD.brier_score, NEW.brier_score; \
+                      NEW.brier_score := OLD.brier_score; \
+                  END IF; \
+                  IF NEW.actual_outcome IS DISTINCT FROM OLD.actual_outcome THEN \
+                      RAISE WARNING 'fermi_forecasts %: actual_outcome is immutable once resolved (attempted % -> %); keeping original', OLD.id, OLD.actual_outcome, NEW.actual_outcome; \
+                      NEW.actual_outcome := OLD.actual_outcome; \
+                  END IF; \
+                  IF NEW.predicted_probability IS DISTINCT FROM OLD.predicted_probability THEN \
+                      RAISE WARNING 'fermi_forecasts %: predicted_probability is frozen once resolved (attempted % -> %); keeping original. Filter on status = ''active'' in the calling UPDATE.', OLD.id, OLD.predicted_probability, NEW.predicted_probability; \
+                      NEW.predicted_probability := OLD.predicted_probability; \
+                  END IF; \
+              END IF; \
+              RETURN NEW; \
+          END; \
+          $$"),
+        // Drop + create as two separate calls: the sqlx::query layer
+        // doesn't run multi-statement strings.
+        ("fermi_forecasts.freeze_trigger_drop",
+         "DROP TRIGGER IF EXISTS trg_fermi_forecasts_freeze_resolved ON public.fermi_forecasts"),
+        ("fermi_forecasts.freeze_trigger_create",
+         "CREATE TRIGGER trg_fermi_forecasts_freeze_resolved \
+              BEFORE UPDATE ON public.fermi_forecasts \
+              FOR EACH ROW EXECUTE FUNCTION public.fn_fermi_forecasts_freeze_resolved()"),
     ];
 
     println!(
@@ -4616,7 +4679,20 @@ pub(crate) fn agent_card_from_db(agent: &Agent) -> AgentCard {
                 "skill" => ast::ExecutorType::Skill,
                 _ => ast::ExecutorType::LLM,
             },
+            // Known limitation, pre-existing and unchanged: DB-sourced
+            // cards carry no tool declarations. `resolve_agent_card`
+            // prefers the filesystem registry, so agents whose
+            // agent_card.json was loaded at boot are unaffected — but an
+            // agent that exists only in the DB gets no platform tools and
+            // no remote MCP servers.
+            //
+            // Note `agents.mcp_servers` (JSONB) is NOT the source here:
+            // despite the name it is populated from `mcp_tools` at
+            // handlers/agents.rs:963 and has never been read back. Wiring
+            // it up needs that writer corrected first, or DB cards would
+            // silently disagree with file cards.
             mcp_tools: vec![],
+            mcp_servers: vec![],
             skills: vec![],
             model: agent.model.clone(),
             temperature: agent.temperature,

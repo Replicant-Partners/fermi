@@ -22,6 +22,10 @@ pub mod agent_card;
 pub mod executor;
 pub mod kg_context;
 pub mod llm_executor;
+/// Outbound MCP client: lets an agent consume tools from remote MCP
+/// servers declared on its card. See module docs for the
+/// server-vs-client history.
+pub mod mcp_client;
 pub mod multi_model_executor;
 pub mod registry;
 pub mod simops_tools;
@@ -35,4 +39,4 @@ pub use llm_executor::*;
 pub use multi_model_executor::*;
 pub use registry::*;
 pub use tool_executor::ToolAwareExecutor;
-pub use tools::{ToolContext, ToolRegistry, SkillRegistry, validate_card_skills};
+pub use tools::{validate_card_skills, SkillRegistry, ToolContext, ToolRegistry};

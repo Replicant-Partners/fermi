@@ -106,7 +106,19 @@ impl std::fmt::Display for AgentTier {
     }
 }
 
-/// MCP tool descriptor
+/// MCP tool descriptor.
+///
+/// **This describes a tool ABW itself implements** — the name is
+/// resolved against the compile-time dispatch table in
+/// `tools_legacy::ToolRegistry::execute`, and the entry doubles as the
+/// allowlist for exposing that tool over `/mcp/agents/:id` (Fermi acting
+/// as an MCP *server*).
+///
+/// It carries no endpoint. To let an agent *consume* tools from a remote
+/// MCP server, use [`AgentCapabilities::mcp_servers`] instead. Declaring
+/// a name here with no corresponding dispatch arm produces a phantom
+/// tool: the model is told it exists, calls it, and gets
+/// `Unknown tool: X`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpTool {
     pub name: String,
@@ -206,8 +218,24 @@ fn default_min_tier() -> CognitionTier {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentCapabilities {
     pub executor: ExecutorType,
+    /// Platform tools this agent declares. Resolved against the
+    /// compile-time dispatch table; see [`McpTool`].
     #[serde(default)]
     pub mcp_tools: Vec<McpTool>,
+    /// Remote MCP servers this agent is authorised to call.
+    ///
+    /// This is the *client* direction, and it is a general ABW
+    /// capability: any card may declare any number of servers, their
+    /// tools are discovered at runtime via `tools/list`, namespaced
+    /// `server__tool`, and dispatched via `tools/call`. Adding a new
+    /// third-party MCP endpoint to the platform is a card edit — no Rust
+    /// changes and no new dispatch arm.
+    ///
+    /// Unlike builtin tools (which every agent currently receives), this
+    /// list is a real per-agent capability boundary: an agent can reach a
+    /// remote server only if its own card names it.
+    #[serde(default)]
+    pub mcp_servers: Vec<crate::agent_backend::mcp_client::RemoteMcpServer>,
     #[serde(default)]
     pub skills: Vec<String>,
     pub model: String,
@@ -364,10 +392,8 @@ impl AgentCapabilities {
             self.provider = provider;
             // Merge rung-level params on top of agent-level model_params
             if let Some(rp) = rung_params {
-                if let (
-                    serde_json::Value::Object(base),
-                    serde_json::Value::Object(overrides),
-                ) = (&mut self.model_params, rp)
+                if let (serde_json::Value::Object(base), serde_json::Value::Object(overrides)) =
+                    (&mut self.model_params, rp)
                 {
                     for (k, v) in overrides {
                         base.insert(k, v);
@@ -405,10 +431,7 @@ impl AgentCapabilities {
                 .map(|v| v as u32)
                 .unwrap_or(default_max_tokens),
             top_p: p.get("top_p").and_then(|v| v.as_f64()),
-            top_k: p
-                .get("top_k")
-                .and_then(|v| v.as_i64())
-                .map(|v| v as i32),
+            top_k: p.get("top_k").and_then(|v| v.as_i64()).map(|v| v as i32),
             extended_thinking,
             thinking_budget_tokens: p
                 .get("thinking_budget_tokens")
@@ -524,6 +547,7 @@ impl AgentCard {
             capabilities: AgentCapabilities {
                 executor: ExecutorType::LLM,
                 mcp_tools: vec![],
+                mcp_servers: vec![],
                 skills: vec![],
                 model: "claude-haiku-4-5-20251001".to_string(),
                 temperature: 0.3,
@@ -626,7 +650,9 @@ fn normalise_legacy_capability_fields(raw: &mut serde_json::Value) {
     let typed_present = caps.contains_key("min_provider_class");
 
     let legacy_value: Option<serde_json::Value> = {
-        let gates = caps.get_mut("capability_gates").and_then(|g| g.as_object_mut());
+        let gates = caps
+            .get_mut("capability_gates")
+            .and_then(|g| g.as_object_mut());
         match gates {
             Some(g) => g.remove("min_provider_class"),
             None => None,
@@ -877,8 +903,10 @@ mod tests {
         assert!(!names.is_empty(), "SkillRegistry is empty");
         let unique: HashSet<&&str> = names.iter().collect();
         assert_eq!(
-            unique.len(), names.len(),
-            "Duplicate skill names in SkillRegistry: {:?}", names
+            unique.len(),
+            names.len(),
+            "Duplicate skill names in SkillRegistry: {:?}",
+            names
         );
         println!("SkillRegistry has {} skills: {:?}", names.len(), names);
     }
@@ -914,7 +942,8 @@ mod tests {
 
         println!(
             "SkillRegistry: {} executable skills registered: {:?}",
-            names.len(), names
+            names.len(),
+            names
         );
     }
 

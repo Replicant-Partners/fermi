@@ -231,6 +231,7 @@ pub async fn mcp_agent_rpc(
                 eval_trigger: Some(Arc::new(crate::handlers::eval::EvalTriggerImpl {
                     state: state.clone(),
                 })),
+                remote_mcp: None,
             });
 
             let registry = ToolRegistry::standard();
@@ -322,6 +323,7 @@ async fn run_llm_execute(
         eval_trigger: Some(Arc::new(crate::handlers::eval::EvalTriggerImpl {
             state: state.clone(),
         })),
+        remote_mcp: None,
     });
 
     let tool_executor = ToolAwareExecutor::new(
