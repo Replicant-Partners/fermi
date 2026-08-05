@@ -495,7 +495,29 @@ pub fn restart(new_exe: &Path) -> Result<()> {
     std::process::exit(0);
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────
+// ─── Release-note formatting ──────────────────────────────────────────
+
+/// Longest release body the update modal renders inline, in **characters**.
+pub const RELEASE_NOTES_MAX_CHARS: usize = 2400;
+
+/// Clip a GitHub release body down to something the update modal can display
+/// without growing past the window, appending a pointer to the full notes.
+///
+/// Truncation is char-aware by necessity. The previous implementation sliced
+/// by byte index (`&notes[..2400]`) and panicked with "end byte index 2400 is
+/// not a char boundary" whenever the cutoff landed inside a multibyte
+/// codepoint. Release notes are dense with em-dashes, smart quotes and
+/// box-drawing characters, so that panic fired on essentially every upgrade
+/// attempt.
+pub fn truncate_release_notes(notes: &str) -> String {
+    if notes.chars().count() <= RELEASE_NOTES_MAX_CHARS {
+        return notes.to_string();
+    }
+    let head: String = notes.chars().take(RELEASE_NOTES_MAX_CHARS).collect();
+    format!("{head}…\n\n(truncated — see GitHub for full notes)")
+}
+
+// ─── Tests ────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -539,6 +561,47 @@ mod tests {
         assert!(is_newer("0.10.0", "0.9.0"));
         assert!(!is_newer("0.9.0", "0.10.0"));
         assert!(is_newer("0.10.17", "0.10.9"));
+    }
+
+    // ── truncate_release_notes ───────────────────────────────────
+
+    #[test]
+    fn short_notes_pass_through_untouched() {
+        let notes = "### Fixes\n• Fixed the thing — properly this time.";
+        assert_eq!(truncate_release_notes(notes), notes);
+    }
+
+    #[test]
+    fn notes_exactly_at_the_limit_are_not_truncated() {
+        let notes = "—".repeat(RELEASE_NOTES_MAX_CHARS);
+        assert_eq!(truncate_release_notes(&notes), notes);
+    }
+
+    /// Regression: the cutoff must never land inside a multibyte codepoint.
+    /// This previously panicked with "end byte index 2400 is not a char
+    /// boundary; it is inside '—'" on every upgrade attempt.
+    #[test]
+    fn truncation_never_splits_a_codepoint() {
+        // Sweep every alignment of a 3-byte codepoint across the boundary;
+        // a byte-indexed implementation panics for most of these.
+        for pad in 0..8 {
+            let mut notes = "a".repeat(pad);
+            notes.push_str(&"— dash ".repeat(1200));
+            let out = truncate_release_notes(&notes);
+            assert!(out.ends_with("(truncated — see GitHub for full notes)"));
+            // The retained head is the limit in *chars*, not bytes.
+            let head = out.split('…').next().unwrap();
+            assert_eq!(head.chars().count(), RELEASE_NOTES_MAX_CHARS);
+        }
+    }
+
+    #[test]
+    fn truncation_handles_4_byte_codepoints() {
+        // Emoji are 4 bytes each, so byte 2400 lands mid-codepoint here too.
+        let notes = "🎉".repeat(RELEASE_NOTES_MAX_CHARS + 50);
+        let out = truncate_release_notes(&notes);
+        let head = out.split('…').next().unwrap();
+        assert_eq!(head.chars().count(), RELEASE_NOTES_MAX_CHARS);
     }
 
     // ── pick_best_release ────────────────────────────────────────

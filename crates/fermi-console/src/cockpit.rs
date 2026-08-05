@@ -20888,11 +20888,10 @@ fn shorten_question_for_provenance(q: &str) -> String {
             }
         }
     }
-    if stripped.len() > 60 {
-        format!("{}…", &stripped[..57])
-    } else {
-        stripped.to_string()
-    }
+    // Char-aware: question text regularly contains multibyte codepoints
+    // ('Türkiye', 'Côte d'Ivoire', em-dashes), and byte slicing panics if
+    // the cutoff lands mid-codepoint.
+    crate::truncate(stripped, 60)
 }
 
 /// Show only the first segment of a UUID so a fallback trigger label
@@ -21901,11 +21900,9 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                             let agent_stmt = agents.iter().find(|a| a.name == *agent_name);
                             let query_preview = agent_stmt
                                 .map(|a| {
-                                    if a.query.len() > 80 {
-                                        format!("{}…", &a.query[..77])
-                                    } else {
-                                        a.query.clone()
-                                    }
+                                    // Char-aware — byte slicing panics on
+                                    // multibyte agent query text.
+                                    crate::truncate(&a.query, 80)
                                 })
                                 .unwrap_or_default();
                             div()
@@ -23155,11 +23152,9 @@ fn generate_evidence_wiki(
                 row.push_str(&format!(" {:+.1}pp |", model_pct - c));
             }
             // Trim change_summary to fit in the table cell.
-            let note = if v.change_summary.len() > 60 {
-                format!("{}…", &v.change_summary[..57])
-            } else {
-                v.change_summary.clone()
-            };
+            // Char-aware — agent-written summaries contain em-dashes and
+            // smart quotes, which byte slicing would split mid-codepoint.
+            let note = crate::truncate(&v.change_summary, 60);
             row.push_str(&format!(" {} |", note.replace('|', "\\|")));
             md.push_str(&row);
             md.push('\n');
