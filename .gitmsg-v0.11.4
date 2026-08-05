@@ -1,0 +1,91 @@
+v0.11.4: close the manager-effect loop — harness, viz, xaman_ek digest
+
+v0.11.3 shipped the substrate for the football-manager metric — a
+schema column, an admin inbox, dynamic roster injection. v0.11.4
+closes the loop so the metric flows end-to-end, and gives xaman_ek
+the same live-context treatment fermi got at a fraction of the tokens.
+
+Item 1 — Fermi console populates counterfactual_probability
+- crates/fermi-console/src/api/client.rs: new
+  CreateForecastRequest.counterfactual_probability: Option<f64>,
+  serde-skipped when None so pre-v0.11.4 servers still accept.
+- CockpitState::naive_counterfactual_probability(&self) returns
+  question.base_rate.historical_frequency clamped to [0,1] via the
+  existing clamp_wire_probability. This is the classic Tetlock/
+  Kahneman outside-view baseline — what a naive model would have
+  predicted without Fermi's decomposition and specialists.
+- Wired into persist_backend_save (draft POST) and publish_forecast
+  (publish POST). POST-only: the counterfactual is defined at
+  forecast-creation-time and is not touched on PUT. Later
+  "Update outside rate" mutations don't retroactively change the
+  naive baseline for a row that already exists.
+- Honest gap: drafts saved before orchestrate get NULL cf_prob
+  because the base rate isn't set yet. We do NOT backfill on later
+  PUTs; whatever base rate is in RAM at PUT time isn't the
+  counterfactual "at creation time" the metric measures.
+- Rationale for base-rate baseline over "naive average of specialist
+  outputs": specialists produce driver multipliers on the base rate,
+  not stand-alone probabilities. There's no naive arithmetic mean
+  of multipliers that maps to a probability without reconstructing
+  the FPL model — which is what the counterfactual should strip out.
+
+Item 2 — Manager Effect on /agent/fermi
+- New endpoint GET /api/orchestras/:name/manager-effect?limit=N.
+  Anonymous-visible. Requires the orchestra to have a strategist
+  (400 with message otherwise). Aggregates over resolved forecasts
+  matched by agents_used @> [{"agent_name": strategist}] — GIN-
+  index-backed via mig-168, so O(rows-matching) not O(table).
+  Returns n_resolved, n_with_counterfactual, mean_brier,
+  mean_counterfactual, mean_manager_effect, and forecasts[] with
+  per-row brier / cf_brier / manager_effect delta.
+- New Manager Effect section on templates/agent_detail.html
+  Overview tab. Rendered ONLY for agents in STRATEGIST_ORCHESTRAS
+  (currently {fermi: "fermi"}) — non-strategists never see it.
+- UI: five stat cards (Resolved, With counterfactual, Mean Brier,
+  Mean counterfactual, Mean manager effect). Delta card coloured
+  green when negative (beat baseline), red when positive.
+- Delta bar chart (inline SVG ~640×120): one bar per paired
+  forecast, chronological oldest → newest. Bars extend downward
+  from mid-line for negative deltas (green wins), upward for
+  positive (red losses). Hover tooltips carry question + numbers.
+- Recent-resolutions table (last 10) with question link and
+  colour-coded delta.
+- Empty-state box when no forecasts carry counterfactuals yet.
+
+Item 3 — Xaman Ek digest injection
+- inject_orchestra_context refactored to dispatch on strategy per
+  strategist:
+    enum InjectionStrategy {
+        FullRoster { view },
+        TierDigest { view, exemplars_per_tier },
+    }
+- Fermi: FullRoster on orchestra_fermi_members (unchanged).
+- Xaman Ek: TierDigest on orchestra_xaman_ek_members with 8
+  exemplars per tier.
+- Digest format: header line with grand total, one line per tier
+  with count and alphabetical sample, closing nudge to use
+  `list_agents` for anything beyond the digest.
+- One SQL round-trip: array_agg FILTER over a row_number-partitioned
+  subselect gives first-N-per-tier without Rust-side sorting.
+- Deterministic tier order (system → curated → community) helps
+  LLM prompt caching.
+- Bounded output regardless of catalogue size (~500 tokens at
+  500+ members). Same never-fails guardrails as FullRoster.
+
+Migrations: none. Item 1 is client-only. Item 2 uses v0.11.3 + mig-172
+columns and mig-168 GIN index. Item 3 uses the existing xaman_ek view.
+
+Files:
+- crates/fermi-console/src/api/client.rs
+- crates/fermi-console/src/cockpit.rs
+- src/handlers/orchestras.rs
+- src/api_server.rs
+- templates/agent_detail.html
+- RELEASE_NOTES_v0.11.4.md
+
+Validation:
+- cargo check --bin api-server -p fermi: clean
+- cargo check -p fermi-console: clean
+- cargo test -p fermi-console --lib: 122 pass
+- cargo test test_all_migrations_registered: pass
+- scripts/lint-schema-consistency.py: pass
