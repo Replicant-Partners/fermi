@@ -2937,6 +2937,24 @@
                  </div>
                </div>
 
+              <!-- Remote MCP Servers -->
+              <!-- Hidden until the GET confirms edit rights; a 403 leaves it hidden. -->
+              <div class="section" id="mcp-servers-section" style="display:none">
+                <div class="section-title">Remote MCP Servers</div>
+                <div style="color:var(--fg3);font-size:0.8em;margin-bottom:14px;line-height:1.5">
+                  Third-party MCP endpoints this agent may call. Their tools are discovered at run time and merged into the agent's tool surface, namespaced as <code style="background:var(--bg1);padding:1px 4px;border-radius:2px">server__tool</code>.<br>
+                  <span style="color:var(--gray)">Platform builtins win any name collision. Credentials are referenced by key name only — values live in your encrypted secret store, never in the agent card.</span>
+                </div>
+                <div id="mcp-source-note" style="display:none;font-size:0.78em;line-height:1.5;margin-bottom:12px;padding:8px 10px;background:var(--bg0);border-radius:4px;border-left:2px solid var(--yellow);color:var(--fg3)"></div>
+                <div id="mcp-servers-list" style="font-size:0.85em;color:var(--fg3)">Loading MCP servers...</div>
+                <div id="mcp-form-wrap"></div>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap">
+                  <button class="owner-btn" style="border-color:var(--aqua);color:var(--aqua)" onclick="addMcpServer()">+ Add Server</button>
+                  <button class="owner-btn" style="border-color:var(--green);color:var(--green)" onclick="saveMcpServers('${agentId}')">Save Servers</button>
+                  <span id="mcp-save-status" style="font-size:0.8em;color:var(--gray)"></span>
+                </div>
+              </div>
+
               ${
                 status === "published"
                   ? `
@@ -3022,6 +3040,7 @@
             loadVersions(agentId);
             loadAgentWallet(agentId);
             loadOrchestras(agentId);
+            loadMcpServers(agentId);
           }
         });
       }
@@ -5038,6 +5057,631 @@
         } catch (e) {
           resultEl.style.color = "var(--red)";
           resultEl.textContent = "Network error: " + e.message;
+        }
+      }
+
+      // ── Remote MCP Servers (Manage tab) ─────────────────────────────
+      //
+      // Reads from `GET /api/agents/:id/mcp-servers`, which is a
+      // *diagnostic* projection of the effective config: it reports which
+      // credential keys a server waits on and whether they resolve, but
+      // never a credential value. Writes go back through the ordinary
+      // `PUT /api/agents/:id` with a full `mcp_servers` array, so they
+      // inherit the existing RBAC ladder and version bumping.
+
+      let _mcpAgentId = null;
+      let _mcpAgentName = null;
+      let _mcpServers = [];
+      let _mcpMeta = { db_is_authoritative: true, source: "database" };
+      let _mcpEditIndex = null;
+
+      const MCP_INPUT_STYLE =
+        "width:100%;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:6px 8px;font-family:inherit;font-size:0.85em;box-sizing:border-box";
+      const MCP_LABEL_STYLE =
+        "display:block;font-size:0.7em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px";
+
+      function mcpPill(text, color, borderColor) {
+        return `<span style="color:${color};border:1px solid ${borderColor || color};padding:2px 8px;border-radius:4px;font-size:0.72em;white-space:nowrap">${escapeHtml(text)}</span>`;
+      }
+
+      function setMcpStatus(text, color) {
+        const el = document.getElementById("mcp-save-status");
+        if (!el) return;
+        el.style.color = color || "var(--gray)";
+        el.textContent = text;
+      }
+
+      // Editable fields are kept separate from reported ones (prefixed
+      // `_`) so `mcpServerToWire` can never send a diagnostic back as if
+      // it were config.
+      function mcpFromApi(s) {
+        const keys = s.credential_keys || [];
+        // The API projects the auth block minus its value, so scheme,
+        // header and the two key names round-trip exactly. `null` means
+        // the server declares no auth at all, which is distinct from an
+        // auth block whose keys happen to be empty.
+        const auth = s.auth || null;
+        return {
+          name: s.name || "",
+          endpoint: s.endpoint || "",
+          auth: auth
+            ? {
+                scheme: auth.scheme || "bearer",
+                header: auth.header || "",
+                secret_key: auth.secret_key || "",
+                env: auth.env || "",
+              }
+            : null,
+          tool_allowlist: s.tool_allowlist || [],
+          timeout_secs: s.timeout_secs == null ? "" : s.timeout_secs,
+          _credential_keys: keys,
+          _credential_required: !!s.credential_required,
+          _credential_resolved: !!s.credential_resolved,
+          _transport: s.transport || "streamable_http",
+          _transport_supported: s.transport_supported !== false,
+          _transport_error: s.transport_error || null,
+          _new: false,
+          _unsaved: false,
+        };
+      }
+
+      function mcpServerToWire(s) {
+        const out = { name: (s.name || "").trim(), endpoint: (s.endpoint || "").trim() };
+        // Emit the block whenever the server declares one. Keying this off
+        // `secret_key` would drop an env-only auth block, which is a valid
+        // shape for platform-funded integrations.
+        if (s.auth) {
+          out.auth = { scheme: s.auth.scheme || "bearer" };
+          if ((s.auth.header || "").trim())
+            out.auth.header = s.auth.header.trim();
+          if ((s.auth.secret_key || "").trim())
+            out.auth.secret_key = s.auth.secret_key.trim();
+          if ((s.auth.env || "").trim()) out.auth.env = s.auth.env.trim();
+        }
+        if ((s.tool_allowlist || []).length)
+          out.tool_allowlist = s.tool_allowlist;
+        const t = parseInt(s.timeout_secs, 10);
+        if (!isNaN(t) && t > 0) out.timeout_secs = t;
+        return out;
+      }
+
+      function mcpValidate(s) {
+        const name = (s.name || "").trim();
+        const endpoint = (s.endpoint || "").trim();
+        if (!name) return "Name is required.";
+        // The name becomes the tool-name prefix the model sees, and the
+        // backend sanitises to this set anyway.
+        if (!/^[a-zA-Z0-9_-]+$/.test(name))
+          return "Name may only contain letters, digits, underscore and hyphen.";
+        if (!endpoint) return "Endpoint is required.";
+        if (!mcpEndpointOk(endpoint))
+          return "Endpoint must be an https:// URL (http:// only for localhost).";
+        return null;
+      }
+
+      // https everywhere, with an http:// exemption for loopback so a
+      // locally-run MCP server can be wired up during development.
+      function mcpEndpointOk(endpoint) {
+        let u;
+        try {
+          u = new URL(endpoint);
+        } catch (e) {
+          return false;
+        }
+        if (u.protocol === "https:") return true;
+        return (
+          u.protocol === "http:" &&
+          (u.hostname === "localhost" ||
+            u.hostname === "127.0.0.1" ||
+            u.hostname === "[::1]")
+        );
+      }
+
+      async function loadMcpServers(agentId) {
+        const section = document.getElementById("mcp-servers-section");
+        if (!section) return;
+        _mcpAgentId = agentId;
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/mcp-servers`,
+          );
+          if (res.status === 403 || res.status === 404) {
+            // No edit rights here: endpoints and credential key names are
+            // operational detail. Stay hidden rather than render a panel
+            // whose every control would fail.
+            section.style.display = "none";
+            return;
+          }
+          section.style.display = "";
+          const listEl = document.getElementById("mcp-servers-list");
+          if (!res.ok) {
+            listEl.innerHTML = `<span style="color:var(--red)">Failed to load: ${escapeHtml(await res.text())}</span>`;
+            return;
+          }
+          const data = await res.json();
+          _mcpAgentName = data.agent_name || null;
+          _mcpMeta = {
+            db_is_authoritative: !!data.db_is_authoritative,
+            source: data.source || "database",
+          };
+          _mcpServers = (data.servers || []).map(mcpFromApi);
+          _mcpEditIndex = null;
+          renderMcpServers();
+        } catch (e) {
+          section.style.display = "";
+          const listEl = document.getElementById("mcp-servers-list");
+          if (listEl)
+            listEl.innerHTML = `<span style="color:var(--red)">Network error: ${escapeHtml(e.message)}</span>`;
+        }
+      }
+
+      function renderMcpServers() {
+        const listEl = document.getElementById("mcp-servers-list");
+        if (!listEl) return;
+
+        const note = document.getElementById("mcp-source-note");
+        if (note) {
+          if (!_mcpMeta.db_is_authoritative && _mcpServers.length > 0) {
+            note.style.display = "";
+            note.innerHTML =
+              `<strong style="color:var(--yellow)">Inherited from this agent's card file</strong> (<code>source: ${escapeHtml(_mcpMeta.source)}</code>). Nothing is stored in the database yet.<br>` +
+              `Saving copies this list into the database, which becomes authoritative from that point on — later edits to the card file will no longer take effect.`;
+          } else {
+            note.style.display = "none";
+            note.innerHTML = "";
+          }
+        }
+
+        listEl.innerHTML = _mcpServers.length
+          ? _mcpServers.map(mcpServerRow).join("")
+          : `<em style="color:var(--fg4)">No remote MCP servers. This agent uses platform builtin tools only.</em>`;
+        renderMcpForm();
+      }
+
+      function mcpServerRow(s, i) {
+        let badges;
+        if (s._unsaved) {
+          // Diagnostics describe the stored config and go stale the moment
+          // a row is edited. Showing a leftover "CREDENTIAL OK" next to a
+          // changed endpoint would be a lie.
+          badges = mcpPill("UNSAVED — TEST TO VERIFY", "var(--yellow)");
+        } else {
+          const cred = !s._credential_required
+            ? mcpPill("NO CREDENTIAL", "var(--fg3)", "var(--bg3)")
+            : s._credential_resolved
+              ? mcpPill("CREDENTIAL OK", "var(--green)")
+              : mcpPill("SECRET MISSING", "var(--red)");
+          const transport = s._transport_supported
+            ? mcpPill(
+                String(s._transport).toUpperCase(),
+                "var(--fg3)",
+                "var(--bg3)",
+              )
+            : mcpPill("TRANSPORT UNSUPPORTED", "var(--red)");
+          badges = cred + transport;
+        }
+
+        const allow = (s.tool_allowlist || []).length
+          ? `<div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px">${s.tool_allowlist
+              .map(
+                (t) =>
+                  `<span style="background:var(--bg2);color:var(--aqua);border:1px solid var(--bg3);border-radius:3px;padding:1px 6px;font-size:0.72em">${escapeHtml(t)}</span>`,
+              )
+              .join("")}</div>`
+          : `<div style="margin-top:4px;font-size:0.72em;color:var(--fg4)">allowlist: every tool the server advertises</div>`;
+
+        const credKeys = (s._credential_keys || []).length
+          ? `<div style="margin-top:4px;font-size:0.72em;color:var(--fg4)">secret key: ${s._credential_keys.map(escapeHtml).join(", ")}</div>`
+          : "";
+
+        const transportErr = s._transport_error
+          ? `<div style="margin-top:4px;font-size:0.72em;color:var(--red)">${escapeHtml(s._transport_error)}</div>`
+          : "";
+
+        const needsSecret =
+          !s._unsaved && s._credential_required && !s._credential_resolved;
+
+        return `
+          <div style="padding:10px 12px;background:var(--bg0);border:1px solid var(--bg3);border-radius:6px;margin-bottom:6px">
+            <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
+              <div style="flex:1;min-width:200px">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.9em;color:var(--fg1)">${escapeHtml(s.name || "(unnamed)")}</div>
+                <div style="font-size:0.75em;color:var(--fg3);word-break:break-all">${escapeHtml(s.endpoint || "(no endpoint)")}</div>
+                ${credKeys}
+                ${allow}
+                ${transportErr}
+              </div>
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">${badges}</div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <button class="owner-btn" style="border-color:var(--aqua);color:var(--aqua);font-size:0.8em;padding:3px 10px" onclick="testMcpServerAt(${i})">Test connection</button>
+                <button class="owner-btn" style="font-size:0.8em;padding:3px 10px" onclick="editMcpServer(${i})">Edit</button>
+                <button class="owner-btn danger" style="font-size:0.8em;padding:3px 10px" onclick="removeMcpServer(${i})">Remove</button>
+              </div>
+            </div>
+            ${needsSecret ? mcpSecretRow(s, i) : ""}
+            <div id="mcp-test-out-${i}" style="margin-top:6px;font-size:0.78em;color:var(--fg3)"></div>
+          </div>`;
+      }
+
+      // The value is never displayed or pre-filled: the input starts empty,
+      // is type=password, and its contents go straight to /api/secrets
+      // without ever entering `_mcpServers`.
+      function mcpSecretRow(s, i) {
+        const key = (s._credential_keys || [])[0] || "";
+        return `
+          <div style="margin-top:8px;padding:8px 10px;background:var(--bg1);border-left:2px solid var(--red);border-radius:4px">
+            <div style="font-size:0.75em;color:var(--fg3);margin-bottom:6px">
+              Needs <code style="color:var(--fg1)">${escapeHtml(key)}</code>, and no such secret resolves for this agent. Discovery fails closed until it is stored.
+            </div>
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <input type="password" id="mcp-secret-${i}" autocomplete="new-password" placeholder="Value for ${escAttr(key)}"
+                style="flex:1;min-width:180px;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:6px 8px;font-family:inherit;font-size:0.85em" />
+              <button class="owner-btn" style="border-color:var(--green);color:var(--green);font-size:0.8em;padding:3px 10px" onclick="saveMcpSecret(${i})">Store Secret</button>
+              <span id="mcp-secret-status-${i}" style="font-size:0.78em;color:var(--gray)"></span>
+            </div>
+            <div style="font-size:0.7em;color:var(--fg4);margin-top:4px">
+              Encrypted and scoped to this agent alone. Never shown again after storing.
+              If you already hold a secret of this name, storing here narrows its scope to this agent.
+            </div>
+          </div>`;
+      }
+
+      async function saveMcpSecret(i) {
+        const s = _mcpServers[i];
+        if (!s) return;
+        const key = (s._credential_keys || [])[0] || "";
+        const input = document.getElementById(`mcp-secret-${i}`);
+        const statusEl = document.getElementById(`mcp-secret-status-${i}`);
+        const value = input ? input.value : "";
+        if (!value.trim()) {
+          statusEl.style.color = "var(--red)";
+          statusEl.textContent = "Enter a value.";
+          return;
+        }
+        if (!_mcpAgentName) {
+          // Without the agent name we cannot scope the secret, and a `*`
+          // fallback would silently hand it to every agent.
+          statusEl.style.color = "var(--red)";
+          statusEl.textContent = "Agent name unavailable — reload the page.";
+          return;
+        }
+        statusEl.style.color = "var(--fg3)";
+        statusEl.textContent = "Storing…";
+        try {
+          const res = await fetch("/api/secrets", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              secret_name: key,
+              value: value,
+              // `get_secrets_for_agent` matches `scope = agent_name OR '*'`,
+              // so the agent NAME — not its id — is what binds a secret to
+              // this agent alone.
+              scope: _mcpAgentName,
+              label: `MCP server: ${s.name}`,
+            }),
+          });
+          if (input) input.value = "";
+          if (!res.ok) {
+            statusEl.style.color = "var(--red)";
+            statusEl.textContent = await res.text();
+            return;
+          }
+          statusEl.style.color = "var(--green)";
+          statusEl.textContent = "Stored.";
+          // Re-read so `credential_resolved` comes from the server rather
+          // than being assumed — unless that would discard unsaved edits.
+          if (_mcpEditIndex !== null || _mcpServers.some((x) => x._unsaved)) {
+            s._credential_resolved = true;
+            renderMcpServers();
+          } else {
+            await loadMcpServers(_mcpAgentId);
+          }
+        } catch (e) {
+          if (input) input.value = "";
+          statusEl.style.color = "var(--red)";
+          statusEl.textContent = "Network error: " + e.message;
+        }
+      }
+
+      function addMcpServer() {
+        _mcpServers.push({
+          name: "",
+          endpoint: "",
+          auth: null,
+          tool_allowlist: [],
+          timeout_secs: "",
+          _credential_keys: [],
+          _credential_required: false,
+          _credential_resolved: false,
+          _transport: "streamable_http",
+          _transport_supported: true,
+          _transport_error: null,
+          _new: true,
+          _unsaved: true,
+        });
+        _mcpEditIndex = _mcpServers.length - 1;
+        renderMcpServers();
+      }
+
+      function editMcpServer(i) {
+        _mcpEditIndex = i;
+        renderMcpServers();
+      }
+
+      function removeMcpServer(i) {
+        const s = _mcpServers[i];
+        if (
+          !confirm(
+            `Remove "${(s && s.name) || "this server"}" from the list?\n\nNothing changes until you press Save Servers.`,
+          )
+        )
+          return;
+        _mcpServers.splice(i, 1);
+        if (_mcpEditIndex === i) _mcpEditIndex = null;
+        else if (_mcpEditIndex !== null && _mcpEditIndex > i) _mcpEditIndex -= 1;
+        renderMcpServers();
+        setMcpStatus(
+          "Removed. Press Save Servers to persist.",
+          "var(--yellow)",
+        );
+      }
+
+      function renderMcpForm() {
+        const wrap = document.getElementById("mcp-form-wrap");
+        if (!wrap) return;
+        const s = _mcpEditIndex === null ? null : _mcpServers[_mcpEditIndex];
+        if (!s) {
+          wrap.innerHTML = "";
+          return;
+        }
+        const auth = s.auth || {
+          scheme: "bearer",
+          secret_key: "",
+          header: "",
+          env: "",
+        };
+        wrap.innerHTML = `
+          <div style="margin-top:12px;padding:12px;background:var(--bg0);border:1px solid var(--aqua);border-radius:6px">
+            <div style="font-size:0.72em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px">${s._new ? "Add Server" : "Edit Server"}</div>
+            <div style="display:grid;grid-template-columns:1fr 2fr;gap:8px;margin-bottom:8px">
+              <div>
+                <label style="${MCP_LABEL_STYLE}">Name</label>
+                <input type="text" id="mcp-f-name" value="${escAttr(s.name)}" placeholder="bioportal" style="${MCP_INPUT_STYLE}" />
+              </div>
+              <div>
+                <label style="${MCP_LABEL_STYLE}">Endpoint</label>
+                <input type="text" id="mcp-f-endpoint" value="${escAttr(s.endpoint)}" placeholder="https://bioportal.fastmcp.app/mcp" style="${MCP_INPUT_STYLE}" />
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+              <div>
+                <label style="${MCP_LABEL_STYLE}">Auth Scheme</label>
+                <select id="mcp-f-scheme" style="${MCP_INPUT_STYLE}">
+                  <option value="" ${!s.auth ? "selected" : ""}>None (open server)</option>
+                  <option value="bearer" ${s.auth && auth.scheme !== "header" ? "selected" : ""}>Bearer</option>
+                  <option value="header" ${s.auth && auth.scheme === "header" ? "selected" : ""}>Raw header value</option>
+                </select>
+              </div>
+              <div>
+                <label style="${MCP_LABEL_STYLE}">Secret Key Name</label>
+                <input type="text" id="mcp-f-secret-key" value="${escAttr(auth.secret_key || "")}" placeholder="BIOPORTAL_API_KEY" style="${MCP_INPUT_STYLE}" />
+              </div>
+              <div>
+                <label style="${MCP_LABEL_STYLE}">Env Fallback</label>
+                <input type="text" id="mcp-f-env" value="${escAttr(auth.env || "")}" placeholder="BIOPORTAL_API_KEY" style="${MCP_INPUT_STYLE}" />
+              </div>
+              <div>
+                <label style="${MCP_LABEL_STYLE}">Header</label>
+                <input type="text" id="mcp-f-header" value="${escAttr(auth.header || "")}" placeholder="Authorization" style="${MCP_INPUT_STYLE}" />
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:3fr 1fr;gap:8px;margin-bottom:8px">
+              <div>
+                <label style="${MCP_LABEL_STYLE}">Tool Allowlist</label>
+                <input type="text" id="mcp-f-allowlist" value="${escAttr((s.tool_allowlist || []).join(", "))}" placeholder="comma-separated; blank exposes everything" style="${MCP_INPUT_STYLE}" />
+              </div>
+              <div>
+                <label style="${MCP_LABEL_STYLE}">Timeout (s)</label>
+                <input type="number" id="mcp-f-timeout" min="1" value="${escAttr(s.timeout_secs == null ? "" : s.timeout_secs)}" placeholder="30" style="${MCP_INPUT_STYLE}" />
+              </div>
+            </div>
+            <div style="font-size:0.7em;color:var(--fg4);margin-bottom:10px;line-height:1.5">
+              The secret key names an entry in your encrypted store — the value is never entered or shown here. Store the value from the server's row once this is applied. The env fallback names a process environment variable, for platform-funded integrations.
+            </div>
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <button class="owner-btn" style="border-color:var(--aqua);color:var(--aqua);font-size:0.8em;padding:3px 10px" onclick="testMcpForm()">Test connection</button>
+              <button class="owner-btn" style="border-color:var(--green);color:var(--green);font-size:0.8em;padding:3px 10px" onclick="applyMcpForm()">Apply</button>
+              <button class="owner-btn" style="font-size:0.8em;padding:3px 10px" onclick="cancelMcpForm()">Cancel</button>
+              <span id="mcp-form-status" style="font-size:0.78em;color:var(--gray)"></span>
+            </div>
+            <div id="mcp-form-test-out" style="margin-top:8px;font-size:0.78em;color:var(--fg3)"></div>
+          </div>`;
+      }
+
+      function readMcpForm() {
+        const scheme = document.getElementById("mcp-f-scheme").value;
+        const secretKey = document
+          .getElementById("mcp-f-secret-key")
+          .value.trim();
+        const header = document.getElementById("mcp-f-header").value.trim();
+        const env = document.getElementById("mcp-f-env").value.trim();
+        const timeoutRaw = document.getElementById("mcp-f-timeout").value;
+        return {
+          name: document.getElementById("mcp-f-name").value.trim(),
+          endpoint: document.getElementById("mcp-f-endpoint").value.trim(),
+          auth: scheme ? { scheme, secret_key: secretKey, header, env } : null,
+          tool_allowlist: document
+            .getElementById("mcp-f-allowlist")
+            .value.split(",")
+            .map((t) => t.trim())
+            .filter(Boolean),
+          timeout_secs: timeoutRaw === "" ? "" : parseInt(timeoutRaw, 10),
+        };
+      }
+
+      function applyMcpForm() {
+        if (_mcpEditIndex === null) return;
+        const statusEl = document.getElementById("mcp-form-status");
+        const draft = readMcpForm();
+        const err = mcpValidate(draft);
+        if (err) {
+          statusEl.style.color = "var(--red)";
+          statusEl.textContent = err;
+          return;
+        }
+        const s = _mcpServers[_mcpEditIndex];
+        s.name = draft.name;
+        s.endpoint = draft.endpoint;
+        s.auth = draft.auth;
+        s.tool_allowlist = draft.tool_allowlist;
+        s.timeout_secs = draft.timeout_secs;
+        s._new = false;
+        s._unsaved = true;
+        _mcpEditIndex = null;
+        renderMcpServers();
+        setMcpStatus(
+          "Applied locally. Press Save Servers to persist.",
+          "var(--yellow)",
+        );
+      }
+
+      function cancelMcpForm() {
+        if (_mcpEditIndex === null) return;
+        const s = _mcpServers[_mcpEditIndex];
+        // A row that was never applied should not linger as a blank entry.
+        if (s && s._new) _mcpServers.splice(_mcpEditIndex, 1);
+        _mcpEditIndex = null;
+        renderMcpServers();
+      }
+
+      function testMcpServerAt(i) {
+        const s = _mcpServers[i];
+        const out = document.getElementById(`mcp-test-out-${i}`);
+        if (!s || !out) return;
+        const err = mcpValidate(s);
+        if (err) {
+          out.style.color = "var(--red)";
+          out.textContent = err;
+          return;
+        }
+        runMcpTest(mcpServerToWire(s), out);
+      }
+
+      function testMcpForm() {
+        const out = document.getElementById("mcp-form-test-out");
+        if (!out) return;
+        const draft = readMcpForm();
+        const err = mcpValidate(draft);
+        if (err) {
+          out.style.color = "var(--red)";
+          out.textContent = err;
+          return;
+        }
+        runMcpTest(mcpServerToWire(draft), out);
+      }
+
+      async function runMcpTest(wire, out) {
+        out.style.color = "var(--fg3)";
+        out.textContent = "Testing…";
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(_mcpAgentId)}/mcp-servers/test`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(wire),
+            },
+          );
+          if (!res.ok) {
+            out.style.color = "var(--red)";
+            out.textContent = `Test failed: ${await res.text()}`;
+            return;
+          }
+          const d = await res.json();
+          if (!d.ok) {
+            out.style.color = "var(--red)";
+            out.innerHTML = `✗ ${escapeHtml(d.error || "Discovery returned no tools.")}`;
+            return;
+          }
+          // Namespaced exactly as the model will see them.
+          const chips = (d.tools || [])
+            .map(
+              (t) =>
+                `<span title="${escAttr(t.description || "")}" style="background:var(--bg2);color:var(--aqua);border:1px solid var(--bg3);border-radius:3px;padding:1px 6px;font-family:'JetBrains Mono',monospace">${escapeHtml(t.name)}</span>`,
+            )
+            .join("");
+          out.style.color = "var(--green)";
+          out.innerHTML =
+            `✓ ${d.tool_count} tool${d.tool_count === 1 ? "" : "s"} discovered` +
+            (chips
+              ? `<div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px">${chips}</div>`
+              : "");
+        } catch (e) {
+          out.style.color = "var(--red)";
+          out.textContent = "Network error: " + e.message;
+        }
+      }
+
+      async function saveMcpServers(agentId) {
+        if (_mcpEditIndex !== null) {
+          setMcpStatus("Apply or cancel the open form first.", "var(--red)");
+          return;
+        }
+        for (let i = 0; i < _mcpServers.length; i++) {
+          const err = mcpValidate(_mcpServers[i]);
+          if (err) {
+            setMcpStatus(`Server ${i + 1}: ${err}`, "var(--red)");
+            return;
+          }
+        }
+        const names = _mcpServers.map((s) => s.name.trim());
+        if (new Set(names).size !== names.length) {
+          setMcpStatus(
+            "Server names must be unique — they namespace the tools.",
+            "var(--red)",
+          );
+          return;
+        }
+        if (
+          _mcpServers.length === 0 &&
+          !confirm(
+            "Save an empty server list?\n\nThis explicitly records 'no remote MCP servers' in the database, overriding any list in the agent's card file.",
+          )
+        )
+          return;
+        if (
+          !_mcpMeta.db_is_authoritative &&
+          _mcpServers.length > 0 &&
+          !confirm(
+            "This config is currently inherited from the agent's card file.\n\nSaving copies it into the database, which becomes authoritative from now on — later edits to the card file will no longer take effect.",
+          )
+        )
+          return;
+
+        setMcpStatus("Saving…", "var(--fg3)");
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}`,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                mcp_servers: _mcpServers.map(mcpServerToWire),
+              }),
+            },
+          );
+          if (!res.ok) {
+            setMcpStatus("Error: " + (await res.text()), "var(--red)");
+            return;
+          }
+          // Re-read so the badges reflect what was actually stored and
+          // db_is_authoritative flips over.
+          await loadMcpServers(agentId);
+          setMcpStatus("Saved.", "var(--green)");
+          setTimeout(() => setMcpStatus("", "var(--gray)"), 3000);
+        } catch (e) {
+          setMcpStatus("Network error.", "var(--red)");
         }
       }
     </script>

@@ -476,6 +476,7 @@ pub async fn post_workspace_message_handler(
                                     state: state2.clone(),
                                 },
                             )),
+                            remote_mcp: None,
                         });
                         let tool_executor = ToolAwareExecutor::new(
                             state2.registry.executor_arc(),

@@ -89,9 +89,14 @@ impl ToolAwareExecutor {
             .clone()
             .unwrap_or_else(|| "You are a forecasting research agent.".to_string());
 
-        let tools = self
-            .tool_registry
-            .to_claude_tools_with_card(&context.agent_card);
+        // Remote MCP tools are resolved by whoever built the ToolContext
+        // (it owns the per-agent capability grant); the executor only
+        // reads the result. `None` simply means this agent declared no
+        // remote servers.
+        let tools = self.tool_registry.to_claude_tools_with_card_and_remote(
+            &context.agent_card,
+            self.tool_context.remote_mcp.as_deref(),
+        );
 
         // v0.9.2 — agent-owner API key routing (tightened).
         //
@@ -464,7 +469,13 @@ impl ToolAwareExecutor {
             .clone()
             .unwrap_or_else(|| "You are a research agent.".to_string());
 
-        let tools = self.tool_registry.to_openai_tools();
+        // Was `to_openai_tools()`, which omitted card-declared tools
+        // entirely — OpenAI-provider agents silently never received
+        // them. Now symmetric with the Anthropic loop above.
+        let tools = self.tool_registry.to_openai_tools_with_card_and_remote(
+            &context.agent_card,
+            self.tool_context.remote_mcp.as_deref(),
+        );
 
         let sp_oai = context
             .agent_card

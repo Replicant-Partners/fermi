@@ -357,6 +357,7 @@ pub(crate) async fn trigger_swarm_host_welcome(
         eval_trigger: Some(Arc::new(crate::handlers::eval::EvalTriggerImpl {
             state: state.clone(),
         })),
+        remote_mcp: None,
     });
 
     let tool_executor = ToolAwareExecutor::new(

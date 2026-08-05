@@ -302,6 +302,7 @@ pub async fn dispatch_rabble_action(
         eval_trigger: Some(Arc::new(crate::handlers::eval::EvalTriggerImpl {
             state: state.clone(),
         })),
+        remote_mcp: None,
     });
 
     // Execute with tool-aware executor

@@ -30,7 +30,7 @@ use sqlx::Row;
 use crate::AppState;
 use fermi::polymarket::{
     compute_divergence_pp, format_probability, format_volume, interpret_divergence,
-    ConfidenceSignal, GammaClient,
+    ConfidenceSignal, GammaClient, MarketMatch,
 };
 use fermi_auth::visibility::can_edit;
 use fermi_auth::{AuthPrincipal, ObjectType, Visibility};
@@ -1172,112 +1172,27 @@ pub async fn check_resolutions_handler(
         // Check if resolved
         if market_match.closed && market_match.resolved {
             if let Some(ref outcome_str) = market_match.outcome {
-                let actual_outcome = outcome_str == "Yes";
-                let brier = (fermi_prob as f64 - if actual_outcome { 1.0 } else { 0.0 }).powi(2);
-
-                // Resolve the forecast
-                // v0.10.13: owner_id = $7 (was `$7::uuid`) — TEXT post-mig-165
-                let resolve_result = sqlx::query(
-                    "UPDATE fermi_forecasts
-                     SET status = 'resolved',
-                         actual_outcome = $1,
-                         brier_score = $2,
-                         resolved_at = NOW(),
-                         resolved_by = $3,
-                         resolution_notes = $4,
-                         metadata = metadata || $5::jsonb,
-                         updated_at = NOW()
-                     WHERE id = $6 AND owner_id = $7 AND status = 'active'",
-                )
-                .bind(actual_outcome)
-                .bind(brier as f32)
-                .bind("polymarket_oracle")
-                .bind(format!(
-                    "Auto-resolved via Polymarket: {} → {}. Brier: {:.4}",
-                    market_match.question, outcome_str, brier
-                ))
-                .bind(json!({
-                    "resolution": {
-                        "source": "polymarket_oracle",
-                        "pm_outcome": outcome_str,
-                        "pm_final_price": market_match.market_price,
-                        "brier_score": brier,
-                        "fermi_probability_at_resolution": fermi_prob,
-                        "resolved_at": chrono::Utc::now().to_rfc3339(),
-                    }
-                }))
-                .bind(&forecast_id)
-                .bind(&user_id)
-                .execute(&state.db)
-                .await;
-
-                if resolve_result.is_ok() {
-                    resolved_count += 1;
-
-                    // Record the resolution in forecast_updates (append-only)
-                    let _ = sqlx::query(
-                        "INSERT INTO fermi_forecast_updates (
-                            id, forecast_id, previous_probability, new_probability,
-                            reason, evidence_added
-                        ) VALUES ($1, $2, $3, $4, $5, $6)",
-                    )
-                    .bind(uuid::Uuid::new_v4().to_string())
-                    .bind(&forecast_id)
-                    .bind(fermi_prob)
-                    .bind(if actual_outcome { 1.0f32 } else { 0.0f32 })
-                    .bind(format!(
-                        "Auto-resolved via Polymarket oracle: {} (Brier: {:.4})",
-                        outcome_str, brier
-                    ))
-                    .bind(json!({
-                        "polymarket_resolution": {
+                match apply_settlement(&state.db, &forecast_id, &user_id, fermi_prob, &market_match)
+                    .await
+                {
+                    Some(s) => {
+                        resolved_count += 1;
+                        results.push(json!({
+                            "forecast_id": forecast_id,
+                            "status": "resolved",
                             "outcome": outcome_str,
-                            "final_market_price": market_match.market_price,
-                            "brier_score": brier,
-                        }
-                    }))
-                    .execute(&state.db)
-                    .await;
-
-                    // Queue a cascade review for any relationship group this
-                    // forecast belongs to (mutex/at_most_n). The oracle is the
-                    // REAL elimination path — without this hook, resolutions
-                    // here never queued cascades and siblings never rebalanced
-                    // (only the API /resolve handler had the hook, and nothing
-                    // routes real WC results through it). Operator-gated: we
-                    // queue; the operator reviews + applies in the console.
-                    crate::handlers::pending_cascades::queue_pending_cascade(
-                        &state.db,
-                        &forecast_id,
-                        "resolved",
-                        Some(actual_outcome),
-                        "polymarket_oracle",
-                        &user_id,
-                    )
-                    .await;
-
-                    // Feed the Brier outcome to the MoE strategist: one
-                    // forecast_calibration eval_signal per contributing agent
-                    // (score = 1 - brier). This is the path get_agent_calibration
-                    // reads. Without it, real (oracle) resolutions computed a
-                    // brier but never fed the strategist.
-                    crate::handlers::forecasts::record_forecast_calibration_signals(
-                        &state.db,
-                        &forecast_id,
-                        brier,
-                    )
-                    .await;
+                            "actual_outcome": s.actual_outcome,
+                            "fermi_probability": fermi_prob,
+                            "brier_score": s.brier,
+                            "market_final_price": market_match.market_price,
+                        }));
+                    }
+                    None => results.push(json!({
+                        "forecast_id": forecast_id,
+                        "status": "settled_but_not_applied",
+                        "outcome": outcome_str,
+                    })),
                 }
-
-                results.push(json!({
-                    "forecast_id": forecast_id,
-                    "status": "resolved",
-                    "outcome": outcome_str,
-                    "actual_outcome": actual_outcome,
-                    "fermi_probability": fermi_prob,
-                    "brier_score": brier,
-                    "market_final_price": market_match.market_price,
-                }));
             }
         } else {
             results.push(json!({
@@ -1296,9 +1211,319 @@ pub async fn check_resolutions_handler(
     })))
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
+// Settlement — the single write path for a market-derived resolution
+// ══════════════════════════════════════════════════════════════════
+
+pub(crate) struct Settlement {
+    pub actual_outcome: bool,
+    pub brier: f64,
+}
+
+/// Apply a settled market outcome to a forecast and close Loop 5.
+///
+/// Shared by the operator-triggered `check_resolutions_handler` and the
+/// background sweeper, so the two can't drift. Everything a resolution
+/// must do lives here exactly once:
+///
+/// 1. Write the outcome, Brier, and `scored_probability` (the immutable
+///    audit anchor from mig-174 — without it the score becomes
+///    unreproducible the moment any cascade/recompose/refit path touches
+///    `predicted_probability`, which is how every pre-174 resolution got
+///    corrupted).
+/// 2. Append to `fermi_forecast_updates`.
+/// 3. Queue an operator-gated cascade review.
+/// 4. Emit `forecast_calibration` eval_signals per contributing agent.
+/// 5. Backfill the trajectory's retrospective calibration columns.
+///
+/// `resolution_source` is deliberately `'polymarket_price_heuristic'`,
+/// NOT `'polymarket_oracle'`: `market_match.outcome` is inferred from a
+/// settled price threshold (`yes_price > 0.9` / `< 0.1` in
+/// `src/polymarket/mod.rs:688-699`), not read from a UMA oracle.
+/// Labelling it "oracle" made a price heuristic look like hard-verified
+/// ground truth. Reserve `'polymarket_oracle'` for genuine
+/// settlement-lifecycle reads.
+///
+/// Returns `None` if the row was not updated — typically because it is
+/// no longer `active` (already resolved, or a concurrent writer won).
+/// The `WHERE status = 'active'` guard makes this idempotent.
+pub(crate) async fn apply_settlement(
+    db: &sqlx::PgPool,
+    forecast_id: &str,
+    owner_id: &str,
+    fermi_prob: f32,
+    market_match: &MarketMatch,
+) -> Option<Settlement> {
+    let outcome_str = market_match.outcome.as_deref()?;
+    let actual_outcome = outcome_str == "Yes";
+    let brier = (fermi_prob as f64 - if actual_outcome { 1.0 } else { 0.0 }).powi(2);
+
+    // v0.10.13: owner_id = $7 (was `$7::uuid`) — TEXT post-mig-165
+    let resolve_result = sqlx::query(
+        "UPDATE fermi_forecasts
+         SET status = 'resolved',
+             actual_outcome = $1,
+             brier_score = $2,
+             scored_probability = $8,
+             resolution_source = 'polymarket_price_heuristic',
+             resolved_at = NOW(),
+             resolved_by = $3,
+             resolution_notes = $4,
+             metadata = metadata || $5::jsonb,
+             updated_at = NOW()
+         WHERE id = $6 AND owner_id = $7 AND status = 'active'",
+    )
+    .bind(actual_outcome)
+    .bind(brier as f32)
+    .bind("polymarket_oracle")
+    .bind(format!(
+        "Auto-resolved via Polymarket settled price ({} → {}, p={:.4}). Brier: {:.4}",
+        market_match.question, outcome_str, fermi_prob, brier
+    ))
+    .bind(json!({
+        "resolution": {
+            "source": "polymarket_price_heuristic",
+            "pm_outcome": outcome_str,
+            "pm_final_price": market_match.market_price,
+            "brier_score": brier,
+            "fermi_probability_at_resolution": fermi_prob,
+            "resolved_at": chrono::Utc::now().to_rfc3339(),
+        }
+    }))
+    .bind(forecast_id)
+    .bind(owner_id)
+    .bind(fermi_prob)
+    .execute(db)
+    .await;
+
+    match resolve_result {
+        Ok(r) if r.rows_affected() > 0 => {}
+        Ok(_) => return None,
+        Err(e) => {
+            tracing::warn!(
+                forecast = %forecast_id,
+                error = %e,
+                "[pm-settle] resolution UPDATE failed"
+            );
+            return None;
+        }
+    }
+
+    // Append-only revision record.
+    let _ = sqlx::query(
+        "INSERT INTO fermi_forecast_updates (
+            id, forecast_id, previous_probability, new_probability,
+            reason, evidence_added
+        ) VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(forecast_id)
+    .bind(fermi_prob)
+    .bind(if actual_outcome { 1.0f32 } else { 0.0f32 })
+    .bind(format!(
+        "Auto-resolved via Polymarket settled price: {} (Brier: {:.4})",
+        outcome_str, brier
+    ))
+    .bind(json!({
+        "polymarket_resolution": {
+            "outcome": outcome_str,
+            "final_market_price": market_match.market_price,
+            "brier_score": brier,
+        }
+    }))
+    .execute(db)
+    .await;
+
+    // Queue a cascade review for any relationship group this forecast
+    // belongs to (mutex/at_most_n). Operator-gated: we queue, the
+    // operator reviews and applies in the console.
+    crate::handlers::pending_cascades::queue_pending_cascade(
+        db,
+        forecast_id,
+        "resolved",
+        Some(actual_outcome),
+        "polymarket_oracle",
+        owner_id,
+    )
+    .await;
+
+    // Loop 5: one forecast_calibration eval_signal per contributing agent
+    // (score = 1 - brier). This is what get_agent_calibration reads and
+    // moe_router_strategist Stage 0 consumes.
+    crate::handlers::forecasts::record_forecast_calibration_signals(db, forecast_id, brier).await;
+
+    // Fill the trajectory's retrospective calibration columns
+    // (brier_at_this_point per revision + loop5_calibration snapshot).
+    crate::handlers::forecasts::backfill_spacetime_calibration(
+        db,
+        forecast_id,
+        actual_outcome,
+        brier,
+    )
+    .await;
+
+    Some(Settlement {
+        actual_outcome,
+        brier,
+    })
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Background resolution sweeper
+// ══════════════════════════════════════════════════════════════════
+
+/// Default sweep cadence. Prediction-market settlement is not
+/// latency-sensitive — what matters is that it happens at all.
+const DEFAULT_SWEEP_INTERVAL_SECS: u64 = 900; // 15 min
+
+/// Max forecasts examined per sweep. Bounds both Gamma load and the
+/// blast radius of a bad sweep.
+const SWEEP_BATCH_LIMIT: i64 = 40;
+
+/// Pause between Gamma calls. Gamma documents roughly 100 req/min; at
+/// 750ms we sit near 80/min worst case, and the sweeper is the only
+/// unattended caller.
+const SWEEP_PACING_MS: u64 = 750;
+
+/// Spawn the periodic Polymarket resolution sweep.
+///
+/// # Why this exists
+///
+/// Nothing scheduled resolution before this. `check_resolutions_handler`
+/// ran only when an operator clicked a button in the console
+/// (`crates/fermi-console/src/main.rs:8926`), and the 5-minute cockpit
+/// poll refreshes *prices* only. So a market could settle and the linked
+/// forecast would sit `active` indefinitely — no Brier, no calibration
+/// signal, Loop 5 cold. That is the single biggest reason the calibration
+/// loop looked broken: it was never being driven.
+///
+/// Design notes:
+/// - **Owner-scoped writes.** The sweep spans all owners, but
+///   `apply_settlement` still constrains its UPDATE to the row's own
+///   `owner_id`, so nothing crosses a tenancy boundary.
+/// - **Idempotent.** `WHERE status = 'active'` means a concurrent
+///   operator click and a sweep can't double-resolve.
+/// - **Paced and bounded**, because these endpoints have no rate limiting
+///   (PM routes sit in `protected_routes`, which gets `auth_middleware`
+///   but no rate-limit layer) and Gamma is a third party.
+/// - **Disable with `PM_RESOLUTION_SWEEP_SECS=0`.**
+pub fn spawn_resolution_sweeper(db: sqlx::PgPool) {
+    let interval_secs = std::env::var("PM_RESOLUTION_SWEEP_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_SWEEP_INTERVAL_SECS);
+
+    if interval_secs == 0 {
+        println!("[pm-sweep] disabled (PM_RESOLUTION_SWEEP_SECS=0)");
+        return;
+    }
+
+    println!("[pm-sweep] resolution sweep every {interval_secs}s");
+
+    tokio::spawn(async move {
+        // Stagger the first run so boot isn't competing with migrations
+        // and schema ensures for the pool.
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+
+        loop {
+            match sweep_resolutions_once(&db).await {
+                Ok((checked, resolved)) if checked > 0 => {
+                    println!("[pm-sweep] checked {checked}, resolved {resolved}");
+                }
+                Ok(_) => {}
+                Err(e) => eprintln!("[pm-sweep] sweep failed: {e}"),
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
+        }
+    });
+}
+
+/// One pass of the resolution sweep. Returns `(checked, resolved)`.
+///
+/// Separated from the spawn loop so it is directly testable and can be
+/// driven from an admin endpoint later.
+pub async fn sweep_resolutions_once(db: &sqlx::PgPool) -> Result<(usize, usize), sqlx::Error> {
+    // Oldest-target-date first: those are the most likely to have
+    // settled, so a bounded batch converges rather than starving.
+    let rows = sqlx::query(
+        "SELECT id,
+                owner_id::text AS owner_id,
+                predicted_probability,
+                metadata->'polymarket'->>'pm_event_id'  AS pm_event_id,
+                metadata->'polymarket'->>'pm_market_id' AS pm_market_id
+           FROM fermi_forecasts
+          WHERE status = 'active'
+            AND metadata->'polymarket'->>'pm_market_id' IS NOT NULL
+          ORDER BY target_date NULLS LAST
+          LIMIT $1",
+    )
+    .bind(SWEEP_BATCH_LIMIT)
+    .fetch_all(db)
+    .await?;
+
+    if rows.is_empty() {
+        return Ok((0, 0));
+    }
+
+    let gamma = GammaClient::new();
+    let mut checked = 0usize;
+    let mut resolved = 0usize;
+
+    for row in &rows {
+        let forecast_id: String = row.get("id");
+        let owner_id: String = row.try_get("owner_id").unwrap_or_default();
+        let fermi_prob: f32 = row.try_get("predicted_probability").unwrap_or(0.5);
+        let (Ok(Some(event_id)), Ok(Some(market_id))) = (
+            row.try_get::<Option<String>, _>("pm_event_id"),
+            row.try_get::<Option<String>, _>("pm_market_id"),
+        ) else {
+            continue;
+        };
+
+        if owner_id.is_empty() {
+            continue;
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(SWEEP_PACING_MS)).await;
+        checked += 1;
+
+        let market_match = match gamma.snapshot_market(&event_id, &market_id).await {
+            Ok(m) => m,
+            Err(e) => {
+                // A single unreachable market must not abort the sweep;
+                // the next pass retries it.
+                tracing::debug!(
+                    forecast = %forecast_id,
+                    error = %e,
+                    "[pm-sweep] snapshot failed; will retry next sweep"
+                );
+                continue;
+            }
+        };
+
+        if !(market_match.closed && market_match.resolved) {
+            continue;
+        }
+
+        if apply_settlement(db, &forecast_id, &owner_id, fermi_prob, &market_match)
+            .await
+            .is_some()
+        {
+            resolved += 1;
+            tracing::info!(
+                forecast = %forecast_id,
+                outcome = ?market_match.outcome,
+                "[pm-sweep] resolved"
+            );
+        }
+    }
+
+    Ok((checked, resolved))
+}
+
+// ══════════════════════════════════════════════════════════════════
 // Helpers
-// ═══════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
 
 /// Detect a Fermi domain from Polymarket tags.
 fn detect_domain_from_tags(tags: &[String]) -> Option<String> {

@@ -964,7 +964,14 @@ pub async fn import_agent_handler(
         executor_type,
         model,
         temperature,
-        mcp_servers: caps.and_then(|c| c.get("mcp_tools")).cloned(),
+        // Was `c.get("mcp_tools")` — a long-standing bug: it stored the
+        // agent's *platform* tool declarations in the column meant for
+        // *remote MCP server* configs. Nothing read the column, so it
+        // went unnoticed. Now that the DB is the source of truth for
+        // agent config (see resolve_agent_card), it has to be the right
+        // field or a new agent would come up with a server list that is
+        // actually a tool list.
+        mcp_servers: caps.and_then(|c| c.get("mcp_servers")).cloned(),
         description,
         author: user_id.clone(),
         system_prompt,
@@ -2110,6 +2117,9 @@ fn collect_changed_fields(updates: &AgentUpdate) -> Vec<&'static str> {
     if updates.requires_secrets.is_some() {
         fields.push("requires_secrets");
     }
+    if updates.mcp_servers.is_some() {
+        fields.push("mcp_servers");
+    }
     if updates.llm_provider.is_some() {
         fields.push("llm_provider");
     }
@@ -3144,7 +3154,180 @@ fn calibration_partition_json(
     })
 }
 
-// ─── Tests ─────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+// Remote MCP servers
+// ══════════════════════════════════════════════════════════════
+//
+// Writes go through the normal `PUT /api/agents/:agent_id` with an
+// `mcp_servers` field, so they inherit the existing RBAC ladder, agent
+// versioning, and the `agent_card.updated` broadcast for free. These two
+// endpoints cover what a plain PUT can't express.
+
+/// `GET /api/agents/:agent_id/mcp-servers`
+///
+/// The effective server list plus where it came from, so the UI can
+/// distinguish "this agent has no servers" from "this agent inherits its
+/// servers from a filesystem card" — which determines whether saving
+/// needs to seed the DB first.
+///
+/// Credential *values* are never returned. Only the key name and whether
+/// it currently resolves, so an operator can see at a glance which
+/// servers are one secret away from working.
+pub async fn get_agent_mcp_servers_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+
+    // Reading config is an edit-level concern: endpoints and credential
+    // key names are operational detail, not catalogue metadata.
+    rbac::require_edit(
+        &state.db,
+        &principal,
+        ObjectType::Agent,
+        &db_agent.agent_id.to_string(),
+        db_agent.owner_id.as_deref().unwrap_or(""),
+        agent_effective_visibility(&db_agent),
+    )
+    .await?;
+
+    let db_declared = db_agent
+        .mcp_servers
+        .as_ref()
+        .map(|v| !v.is_null())
+        .unwrap_or(false);
+
+    // The resolved card applies the DB-overrides-file precedence, so this
+    // is exactly what the executor will use.
+    let card = crate::resolve_agent_card(&state, &db_agent);
+    let servers = &card.capabilities.mcp_servers;
+
+    // Which secrets this owner actually has, so we can report resolvability
+    // without ever echoing a value.
+    let owner_secrets = crate::resolve_agent_owner_secrets(&state, &db_agent).await;
+
+    let items: Vec<Value> = servers
+        .iter()
+        .map(|s| {
+            let cred_keys = s.credential_key_names();
+            let resolved = cred_keys.iter().any(|k| {
+                owner_secrets
+                    .as_ref()
+                    .and_then(|m| m.get(k))
+                    .map(|v| !v.trim().is_empty())
+                    .unwrap_or(false)
+                    || std::env::var(k)
+                        .map(|v| !v.trim().is_empty())
+                        .unwrap_or(false)
+            });
+            json!({
+                "name": s.name,
+                "endpoint": s.endpoint,
+                "transport": s.transport,
+                "tool_allowlist": s.tool_allowlist,
+                "timeout_secs": s.timeout_secs,
+                "protocol_version": s.protocol_version,
+                // The auth block minus its value. Projected explicitly so a
+                // read → edit → save round trip is lossless: without
+                // scheme/header, a client has to guess "bearer" and would
+                // silently downgrade a server using a raw custom header.
+                // `secret_key`/`env` are key NAMES, never values.
+                "auth": s.auth.as_ref().map(|a| json!({
+                    "scheme": a.scheme,
+                    "header": a.header,
+                    "secret_key": a.secret_key,
+                    "env": a.env,
+                })),
+                // Diagnostics, not secrets.
+                "credential_keys": cred_keys,
+                "credential_required": !cred_keys.is_empty(),
+                "credential_resolved": resolved,
+                "transport_supported": s.http_endpoint().is_ok(),
+                "transport_error": s.http_endpoint().err(),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "agent_id": db_agent.agent_id,
+        "agent_name": db_agent.agent_name,
+        "servers": items,
+        // false => the list is inherited from the filesystem card and the
+        // first save must persist it to the DB (which then becomes
+        // authoritative). true => the DB already owns this config.
+        "db_is_authoritative": db_declared,
+        "source": if db_declared { "database" } else { "agent_card_file" },
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct TestMcpServerRequest {
+    /// A candidate server config. Not required to be saved first — the
+    /// point is to validate *before* persisting.
+    #[serde(flatten)]
+    pub server: fermi::agent_backend::mcp_client::RemoteMcpServer,
+}
+
+/// `POST /api/agents/:agent_id/mcp-servers/test`
+///
+/// Attempt discovery against a candidate server and report what happened.
+///
+/// This exists because every failure mode here is external and silent
+/// otherwise: a wrong endpoint, a missing credential, a server whose
+/// `tools/list` is open but whose `tools/call` is gated. Without a test
+/// action an operator saves a config and finds out only when an agent run
+/// mysteriously has no tools.
+///
+/// Uses the agent owner's secret scope, so a successful test means *this
+/// agent* can really reach the server — not merely that the platform can.
+pub async fn test_agent_mcp_server_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(agent_id): Path<String>,
+    Json(req): Json<TestMcpServerRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+
+    rbac::require_edit(
+        &state.db,
+        &principal,
+        ObjectType::Agent,
+        &db_agent.agent_id.to_string(),
+        db_agent.owner_id.as_deref().unwrap_or(""),
+        agent_effective_visibility(&db_agent),
+    )
+    .await?;
+
+    let mut server = req.server;
+    if server.name.trim().is_empty() {
+        server.name = "candidate".to_string();
+    }
+
+    let owner_secrets = crate::resolve_agent_owner_secrets(&state, &db_agent).await;
+    let cat = fermi::agent_backend::mcp_client::RemoteMcpCatalogue::discover(
+        std::slice::from_ref(&server),
+        owner_secrets.as_ref(),
+    )
+    .await;
+
+    let failure = cat.failures.first().map(|(_, e)| e.clone());
+
+    Ok(Json(json!({
+        "ok": failure.is_none() && !cat.is_empty(),
+        "error": failure,
+        "tool_count": cat.len(),
+        // Namespaced exactly as the model will see them, so the operator
+        // is previewing the real tool surface.
+        "tools": cat.tools().iter().map(|t| json!({
+            "name": t.qualified_name,
+            "remote_name": t.remote_name,
+            "description": t.description,
+        })).collect::<Vec<_>>(),
+    })))
+}
+
+// ─── Tests ───────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -3199,6 +3382,7 @@ mod tests {
             workflow_template: Some(json!({})),
             prompt_template: Some("p".into()),
             requires_secrets: Some(json!([])),
+            mcp_servers: Some(json!([])),
             llm_provider: Some("anthropic".into()),
             model_ladder: Some(json!([])),
             min_tier: Some("free".into()),
@@ -3209,12 +3393,12 @@ mod tests {
             version: Some("1.0.0".into()),
         };
         let fields = collect_changed_fields(&updates);
-        // 23 fields on AgentUpdate today — if the count drifts here,
+        // 24 fields on AgentUpdate today — if the count drifts here,
         // either a field was added (good — wire it up above) or a
         // maintainer wired one twice (bad — dedupe).
         assert_eq!(
             fields.len(),
-            23,
+            24,
             "AgentUpdate has fields that collect_changed_fields doesn't cover: got {:?}",
             fields
         );

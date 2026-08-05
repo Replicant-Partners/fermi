@@ -674,6 +674,10 @@ impl MemoryStore {
             set_clauses.push(format!("requires_secrets = ${}", param_idx));
             param_idx += 1;
         }
+        if updates.mcp_servers.is_some() {
+            set_clauses.push(format!("mcp_servers = ${}", param_idx));
+            param_idx += 1;
+        }
         if updates.llm_provider.is_some() {
             set_clauses.push(format!("llm_provider = ${}", param_idx));
             param_idx += 1;
@@ -761,6 +765,11 @@ impl MemoryStore {
             query = query.bind(v);
         }
         if let Some(ref v) = updates.requires_secrets {
+            query = query.bind(v);
+        }
+        // Must stay in the same relative position as the SET clause above:
+        // this block's order defines the $N binding order.
+        if let Some(ref v) = updates.mcp_servers {
             query = query.bind(v);
         }
         if let Some(ref v) = updates.llm_provider {

@@ -111,6 +111,35 @@ pub async fn execute_agent_handler(
         cognition_tier: None,
     };
 
+    // Resolve the agent's remote MCP tools before building the context.
+    //
+    // This is the client direction: any card may declare `mcp_servers`,
+    // whose tools are discovered via `tools/list`, namespaced
+    // `server__tool`, and dispatched via `tools/call`. Scoped per agent
+    // on purpose — builtins are global, remote servers (and their
+    // credentials) must not be.
+    //
+    // Secrets come from the same owner-scoped set the executor uses for
+    // model keys, so a third-party MCP credential is funded by whoever
+    // owns the agent, not the caller.
+    let owner_secrets = resolve_agent_owner_secrets(&state, &db_agent).await;
+    let remote_mcp = if card.capabilities.mcp_servers.is_empty() {
+        None
+    } else {
+        let cat = fermi::agent_backend::mcp_client::RemoteMcpCatalogue::discover(
+            &card.capabilities.mcp_servers,
+            owner_secrets.as_ref(),
+        )
+        .await;
+        for (server, err) in &cat.failures {
+            eprintln!(
+                "[mcp_client] agent {} server '{}' unavailable: {}",
+                db_agent.agent_id, server, err
+            );
+        }
+        Some(Arc::new(cat))
+    };
+
     // 3. Execute via ToolAwareExecutor
     let tool_context = Arc::new(ToolContext {
         memory_store: state.memory_store.clone(),
@@ -128,10 +157,11 @@ pub async fn execute_agent_handler(
         // System agents get None here → executor falls back to env var
         // (platform funds). See resolve_agent_owner_secrets for the
         // full rationale.
-        user_secrets: resolve_agent_owner_secrets(&state, &db_agent).await,
+        user_secrets: owner_secrets,
         eval_trigger: Some(Arc::new(crate::handlers::eval::EvalTriggerImpl {
             state: state.clone(),
         })),
+        remote_mcp,
     });
     // Clone the Arc before moving into ToolAwareExecutor::new so the
     // post-hook below (which needs workspace_id from the same context)

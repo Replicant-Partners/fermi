@@ -633,6 +633,17 @@ pub struct AgentUpdate {
     pub workflow_template: Option<serde_json::Value>,
     pub prompt_template: Option<String>,
     pub requires_secrets: Option<serde_json::Value>,
+    /// Remote MCP servers this agent may call.
+    ///
+    /// The DB is the source of truth for agent config: when this is
+    /// non-NULL it overrides whatever the filesystem `agent_card.json`
+    /// declares (see `resolve_agent_card`). An explicit empty array is
+    /// meaningful — it removes servers a file card declared — which is
+    /// why the column is nullable rather than defaulting to `[]`.
+    ///
+    /// Accepts the ecosystem map form or a sequence; see
+    /// `mcp_client::deserialize_mcp_servers`.
+    pub mcp_servers: Option<serde_json::Value>,
     pub llm_provider: Option<String>,
     // ADR-011: cognition economy
     pub model_ladder: Option<serde_json::Value>,

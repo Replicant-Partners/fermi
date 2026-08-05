@@ -1308,6 +1308,28 @@ pub async fn resolve_forecast_handler(
         });
     }
 
+    // ── Close Loop 5 on the operator path.
+    //
+    // This call used to exist ONLY on the Polymarket auto-resolution
+    // path (handlers/polymarket.rs), even though the doc comment on
+    // record_forecast_calibration_signals claimed both paths fed it.
+    // Consequence: operator resolutions — the primary path — computed a
+    // Brier score that never reached `eval_signals`, so the MoE
+    // strategist never learned from them and Loop 5 went cold whenever
+    // resolutions were manual. Verified against the live DB: 188
+    // calibration signals all dated to the Polymarket batch, none from
+    // the four operator resolutions that followed.
+    //
+    // Synchronous (not spawned) so a failure surfaces in the request
+    // rather than vanishing into a detached task; the function is
+    // idempotent per (agent, forecast) and cheap.
+    record_forecast_calibration_signals(pool, &forecast_id, brier_score).await;
+
+    // Retrospectively fill the trajectory's calibration columns now that
+    // ground truth exists. See fn docs — these columns had no writer at
+    // all before this.
+    backfill_spacetime_calibration(pool, &forecast_id, req.actual_outcome, brier_score).await;
+
     // v0.11.3: read back the counterfactual_brier we just wrote (if
     // any) so the response surfaces the manager-effect delta.
     // Delta = brier_score − counterfactual_brier. Negative delta =
@@ -1335,6 +1357,154 @@ pub async fn resolve_forecast_handler(
         "resolved_by": user_id,
         "resolution_notes": req.resolution_notes,
     })))
+}
+
+/// Retrospectively fill `forecast_spacetime`'s calibration columns for a
+/// forecast that has just resolved.
+///
+/// # Why this exists
+///
+/// `forecast_spacetime` (mig-140) is the append-only trajectory behind the
+/// console's Trajectory tab — one row per revision. Four of its columns
+/// were declared and **never written by anything in the repository**:
+///
+/// - `brier_at_this_point` (mig-140:173, commented "filled retrospectively")
+/// - `loop5_calibration`   (mig-140:179, "{specialist: calibration_score}")
+/// - `loop1_signal`, `loop3_coherence`
+///
+/// The trigger `fn_forecast_spacetime_on_update` inserts exactly ten
+/// columns and none of these. So `GET /api/forecasts/:id/spacetime`
+/// returned `brier_if_resolved_here: null` and `loop5_calibration: null`
+/// for every row, always, and the "RSI proof data" the table was built
+/// for did not exist.
+///
+/// This fills the two that ground truth makes computable:
+///
+/// - **`brier_at_this_point`** — what the Brier *would* have been had the
+///   forecast resolved at that revision: `(p_at_revision - actual)^2`.
+///   This is the whole point of the trajectory: it shows whether
+///   successive revisions moved toward or away from the truth.
+/// - **`loop5_calibration`** — a snapshot of contributing agents'
+///   calibration at resolution time, `{agent_name: score}`, so a later
+///   reader can tell how well-calibrated the roster was *when this
+///   forecast was scored* rather than today.
+///
+/// `loop1_signal` and `loop3_coherence` are deliberately left alone: they
+/// are not derivable from resolution, and inventing values would be worse
+/// than NULL.
+///
+/// Best-effort and idempotent — safe to re-run; recomputes from stored
+/// per-revision probabilities.
+pub async fn backfill_spacetime_calibration(
+    pool: &sqlx::PgPool,
+    forecast_id: &str,
+    actual_outcome: bool,
+    brier_score: f64,
+) {
+    let actual = if actual_outcome { 1.0_f64 } else { 0.0_f64 };
+
+    // brier_at_this_point for each revision, computed in SQL from the
+    // probability that revision recorded. One statement, no round trips.
+    //
+    // Scoped to revisions at or before resolution: "what the Brier would
+    // have been had it resolved here" is meaningless for a revision that
+    // postdates the outcome, and scoring those is actively misleading (a
+    // forecast pinned to 0.001 *after* resolving NO would show a spurious
+    // 0.0000, reading as a perfect call). Post-resolution revisions
+    // shouldn't occur at all now that mig-174 freezes resolved rows, but
+    // the guard keeps historical rows honest.
+    let updated = sqlx::query(
+        "UPDATE forecast_spacetime st
+            SET brier_at_this_point = power(st.predicted_probability::double precision - $2, 2)
+          FROM fermi_forecasts f
+          WHERE f.id = st.forecast_id
+            AND st.forecast_id = $1
+            AND st.predicted_probability IS NOT NULL
+            AND (f.resolved_at IS NULL
+                 OR st.revision_ts IS NULL
+                 OR st.revision_ts <= f.resolved_at)",
+    )
+    .bind(forecast_id)
+    .bind(actual)
+    .execute(pool)
+    .await;
+
+    match updated {
+        Ok(r) => tracing::info!(
+            forecast = %forecast_id,
+            revisions = r.rows_affected(),
+            "[loop5] filled brier_at_this_point across trajectory"
+        ),
+        Err(e) => {
+            tracing::warn!(
+                forecast = %forecast_id,
+                error = %e,
+                "[loop5] could not fill brier_at_this_point"
+            );
+            return;
+        }
+    }
+
+    // loop5_calibration: {agent_name: calibration_score} for the roster
+    // that produced this forecast, as of now. Derived from the
+    // eval_signals rows record_forecast_calibration_signals just wrote
+    // plus each agent's running average.
+    let roster: Option<JsonValue> = sqlx::query_scalar::<_, Option<JsonValue>>(
+        "SELECT jsonb_object_agg(a.agent_name, s.avg_score)
+           FROM (
+                SELECT agent_id, AVG(score) AS avg_score
+                  FROM eval_signals
+                 WHERE dimension = 'forecast_calibration'
+                 GROUP BY agent_id
+           ) s
+           JOIN agents a ON a.agent_id = s.agent_id
+          WHERE a.agent_name IN (
+                SELECT jsonb_array_elements(agents_used)->>'name'
+                  FROM fermi_forecasts WHERE id = $1
+          )",
+    )
+    .bind(forecast_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .flatten();
+
+    let Some(roster) = roster else {
+        tracing::info!(
+            forecast = %forecast_id,
+            "[loop5] no calibrated roster to snapshot; loop5_calibration left NULL"
+        );
+        return;
+    };
+
+    // Stamp the snapshot on the terminal revision — the state the
+    // forecast was actually scored in.
+    let _ = sqlx::query(
+        "UPDATE forecast_spacetime
+            SET loop5_calibration = $2
+          WHERE forecast_id = $1
+            AND revision_seq = (
+                SELECT MAX(revision_seq) FROM forecast_spacetime WHERE forecast_id = $1
+            )",
+    )
+    .bind(forecast_id)
+    .bind(&roster)
+    .execute(pool)
+    .await
+    .inspect_err(|e| {
+        tracing::warn!(
+            forecast = %forecast_id,
+            error = %e,
+            "[loop5] could not stamp loop5_calibration"
+        )
+    });
+
+    tracing::info!(
+        forecast = %forecast_id,
+        brier = brier_score,
+        "[loop5] trajectory calibration snapshot written"
+    );
 }
 
 /// Feed a resolved forecast's Brier score to the MoE strategist.

@@ -160,6 +160,14 @@ pub const SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("fermi_forecasts", "confidence_interval_high"),
     ("fermi_forecasts", "brier_score"), // REAL — see v0.10.19 float8 cast
     ("fermi_forecasts", "actual_outcome"),
+    // mig-174: the immutable audit anchor Brier is reproducible from.
+    // `predicted_probability` stays mutable post-resolution; this does
+    // not. Any consumer auditing or recomputing a score MUST read this.
+    ("fermi_forecasts", "scored_probability"),
+    // mig-174: structured resolution provenance. Distinguishes operator
+    // vs. real oracle vs. price-heuristic vs. synthetic backtest rows,
+    // which `resolved_by` alone could not.
+    ("fermi_forecasts", "resolution_source"),
     ("fermi_forecasts", "status"),
     ("fermi_forecasts", "resolved_at"),
     ("fermi_forecasts", "agents_used"), // JSONB, GIN-indexed post mig-168

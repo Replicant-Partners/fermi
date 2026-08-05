@@ -546,6 +546,7 @@ pub async fn run_eval_cases(
             // Inside the eval loop itself we deliberately omit the
             // trigger — agents under eval should not trigger more evals.
             eval_trigger: None,
+            remote_mcp: None,
         });
         let tool_executor = ToolAwareExecutor::new(
             state.registry.executor_arc(),

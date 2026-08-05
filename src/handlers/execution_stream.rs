@@ -159,6 +159,7 @@ pub async fn execute_agent_stream_handler(
             eval_trigger: Some(Arc::new(crate::handlers::eval::EvalTriggerImpl {
                 state: state.clone(),
             })),
+            remote_mcp: None,
         });
         Arc::new(ToolAwareExecutor::new(
             state.registry.executor_arc(),
