@@ -38,6 +38,7 @@ pub mod notebooks;
 pub mod observations;
 pub mod observatory;
 pub mod ontology;
+pub mod orchestras;
 pub mod pages;
 pub mod pending_cascades;
 pub mod polymarket;
