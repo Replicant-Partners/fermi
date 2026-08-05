@@ -130,6 +130,91 @@ impl Default for BuiltinToolDef {
 }
 
 /// All 6 built-in tools
+/// Every tool the compile-time dispatcher in [`ToolRegistry::execute`] can
+/// actually run.
+///
+/// Public because `capabilities.mcp_tools` on an agent card is validated
+/// against this list. A declared name with no dispatch arm is a **phantom
+/// tool**: it is advertised to the model and over `/mcp/agents/:id`, gets
+/// called, and returns `Unknown tool: X`. Historically nothing checked
+/// this, so cards could assert capabilities that were never wired.
+pub fn platform_tools() -> Vec<BuiltinToolDef> {
+    builtin_tools()
+}
+
+/// Names only — the cheap form for validation.
+pub fn platform_tool_names() -> Vec<&'static str> {
+    builtin_tools().into_iter().map(|t| t.name).collect()
+}
+
+/// Why a declared tool name can't be published.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolDeclarationError {
+    /// No dispatch arm and no declared remote server owns the namespace.
+    NotDispatchable,
+    /// Namespaced like a remote MCP tool, but the agent declares no server
+    /// by that name — so nothing would resolve it.
+    UnknownRemoteServer { server: String },
+}
+
+impl std::fmt::Display for ToolDeclarationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotDispatchable => write!(
+                f,
+                "no platform tool by this name (would be advertised to the model and then fail \
+                 with 'Unknown tool')"
+            ),
+            Self::UnknownRemoteServer { server } => write!(
+                f,
+                "looks like a remote MCP tool, but this agent declares no server named '{server}'"
+            ),
+        }
+    }
+}
+
+/// Validate the tool names an agent wants to publish.
+///
+/// A name is publishable if it is either a platform tool, or a remote MCP
+/// tool (`server__tool`) belonging to a server the agent declares. The
+/// remote case is checked by namespace rather than by live discovery on
+/// purpose: a save must not fail because a third-party endpoint happens to
+/// be down.
+///
+/// Returns the names that would be phantom tools, each with a reason.
+pub fn invalid_tool_declarations(
+    declared: &[String],
+    declared_servers: &[crate::agent_backend::mcp_client::RemoteMcpServer],
+) -> Vec<(String, ToolDeclarationError)> {
+    let builtins = platform_tool_names();
+    declared
+        .iter()
+        .filter_map(|name| {
+            if builtins.contains(&name.as_str()) {
+                return None;
+            }
+            match name.split_once(crate::agent_backend::mcp_client::NS_SEP) {
+                Some((ns, _)) if !ns.is_empty() => {
+                    // Compare against the sanitised namespace the client
+                    // actually generates, not the raw card `name`.
+                    let known = declared_servers.iter().any(|s| s.namespace() == ns);
+                    if known {
+                        None
+                    } else {
+                        Some((
+                            name.clone(),
+                            ToolDeclarationError::UnknownRemoteServer {
+                                server: ns.to_string(),
+                            },
+                        ))
+                    }
+                }
+                _ => Some((name.clone(), ToolDeclarationError::NotDispatchable)),
+            }
+        })
+        .collect()
+}
+
 fn builtin_tools() -> Vec<BuiltinToolDef> {
     vec![
         BuiltinToolDef {
@@ -1859,12 +1944,12 @@ impl ToolRegistry {
             "segment_creature_wings" => execute_segment_creature_wings(input, ctx).await,
             "activate_formation" => execute_activate_formation(input, ctx).await,
             "scan_nearby_creatures" => execute_scan_nearby_creatures(input, ctx).await,
-             "gbif_taxonomy_tree" => execute_gbif_taxonomy_tree(input).await,
-             // Wild / foraging tools
-             "inat_observations" => execute_inat_observations(input).await,
-             "mycobank_lookup" => execute_mycobank_lookup(input).await,
-             "openweather_forecast" => execute_openweather_forecast(input).await,
-             // FMP (Financial Modeling Prep) tools for equity_analyst
+            "gbif_taxonomy_tree" => execute_gbif_taxonomy_tree(input).await,
+            // Wild / foraging tools
+            "inat_observations" => execute_inat_observations(input).await,
+            "mycobank_lookup" => execute_mycobank_lookup(input).await,
+            "openweather_forecast" => execute_openweather_forecast(input).await,
+            // FMP (Financial Modeling Prep) tools for equity_analyst
             "fmp_company_profile" => execute_fmp_api(input, "/stable/profile", &["symbol"]).await,
             "fmp_income_statement" => {
                 execute_fmp_api(
@@ -1924,30 +2009,63 @@ impl ToolRegistry {
             "polymarket_search" => execute_polymarket_search(input).await,
             "polymarket_event" => execute_polymarket_event(input).await,
             // SimOps — Universal Resource Efficiency Engine (SOSA-aligned)
-            "simops_cascade_forward"       => crate::agent_backend::simops_tools::execute_simops_cascade_forward(input).await,
-            "simops_cascade_backward"      => crate::agent_backend::simops_tools::execute_simops_cascade_backward(input).await,
-            "simops_kpi_compute"           => crate::agent_backend::simops_tools::execute_simops_kpi_compute(input).await,
-            "simops_predictor_train"       => crate::agent_backend::simops_tools::execute_simops_predictor_train(input).await,
-            "simops_predictor_forecast"    => crate::agent_backend::simops_tools::execute_simops_predictor_forecast(input).await,
-            "simops_optimize_scale"        => crate::agent_backend::simops_tools::execute_simops_optimize_scale(input).await,
-            "simops_optimize_single_input" => crate::agent_backend::simops_tools::execute_simops_optimize_single_input(input).await,
+            "simops_cascade_forward" => {
+                crate::agent_backend::simops_tools::execute_simops_cascade_forward(input).await
+            }
+            "simops_cascade_backward" => {
+                crate::agent_backend::simops_tools::execute_simops_cascade_backward(input).await
+            }
+            "simops_kpi_compute" => {
+                crate::agent_backend::simops_tools::execute_simops_kpi_compute(input).await
+            }
+            "simops_predictor_train" => {
+                crate::agent_backend::simops_tools::execute_simops_predictor_train(input).await
+            }
+            "simops_predictor_forecast" => {
+                crate::agent_backend::simops_tools::execute_simops_predictor_forecast(input).await
+            }
+            "simops_optimize_scale" => {
+                crate::agent_backend::simops_tools::execute_simops_optimize_scale(input).await
+            }
+            "simops_optimize_single_input" => {
+                crate::agent_backend::simops_tools::execute_simops_optimize_single_input(input)
+                    .await
+            }
             // ─── SimOps ABW-integrated tools ────────────────────
-            "simops_load_process"        => crate::agent_backend::simops_tools::execute_simops_load_process(input, ctx).await,
-            "simops_write_observation"   => crate::agent_backend::simops_tools::execute_simops_write_observation(input, ctx).await,
-            "simops_fetch_training_data" => crate::agent_backend::simops_tools::execute_simops_fetch_training_data(input, ctx).await,
-            "get_observations"           => crate::agent_backend::simops_tools::execute_get_observations(input, ctx).await,
-            "describe_session"           => crate::agent_backend::simops_tools::execute_describe_session(input, ctx).await,
-            "simops_check_constraints"   => crate::agent_backend::simops_tools::execute_simops_check_constraints(input, ctx).await,
-            "simops_write_actuation_plan"=> crate::agent_backend::simops_tools::execute_simops_write_actuation_plan(input, ctx).await,
+            "simops_load_process" => {
+                crate::agent_backend::simops_tools::execute_simops_load_process(input, ctx).await
+            }
+            "simops_write_observation" => {
+                crate::agent_backend::simops_tools::execute_simops_write_observation(input, ctx)
+                    .await
+            }
+            "simops_fetch_training_data" => {
+                crate::agent_backend::simops_tools::execute_simops_fetch_training_data(input, ctx)
+                    .await
+            }
+            "get_observations" => {
+                crate::agent_backend::simops_tools::execute_get_observations(input, ctx).await
+            }
+            "describe_session" => {
+                crate::agent_backend::simops_tools::execute_describe_session(input, ctx).await
+            }
+            "simops_check_constraints" => {
+                crate::agent_backend::simops_tools::execute_simops_check_constraints(input, ctx)
+                    .await
+            }
+            "simops_write_actuation_plan" => {
+                crate::agent_backend::simops_tools::execute_simops_write_actuation_plan(input, ctx)
+                    .await
+            }
             // ─── Observability composition tools ───────────────
             "query_eval_signals" => execute_query_eval_signals(input, ctx).await,
-            "query_eval_runs"    => execute_query_eval_runs(input, ctx).await,
-            "query_anomalies"    => execute_query_anomalies(input, ctx).await,
-            "query_hitl_queue"   => execute_query_hitl_queue(input, ctx).await,
-            "query_timeline"     => execute_query_timeline(input, ctx).await,
-            "query_dyad_state"   => execute_query_dyad_state(input, ctx).await,
-            "classify_anomaly"   => execute_classify_anomaly(input, ctx).await,
-            "route_to_hitl"      => execute_route_to_hitl(input, ctx).await,
+            "query_eval_runs" => execute_query_eval_runs(input, ctx).await,
+            "query_anomalies" => execute_query_anomalies(input, ctx).await,
+            "query_hitl_queue" => execute_query_hitl_queue(input, ctx).await,
+            "query_timeline" => execute_query_timeline(input, ctx).await,
+            "query_dyad_state" => execute_query_dyad_state(input, ctx).await,
+            "classify_anomaly" => execute_classify_anomaly(input, ctx).await,
+            "route_to_hitl" => execute_route_to_hitl(input, ctx).await,
             "run_evaluator_registry" => execute_run_evaluator_registry(input, ctx).await,
 
             // Fallthrough: a name no builtin claims may be a remote MCP
@@ -4379,25 +4497,22 @@ async fn execute_execute_agent(
         // further cross-workspace calls from the sub-agent's tool list.
         if let Some(ref db) = ctx.db {
             // Look up workspace slug for git context
-            let slug: String = sqlx::query_scalar(
-                "SELECT slug FROM teams WHERE id = $1",
-            )
-            .bind(ws_id)
-            .fetch_optional(db)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_default();
+            let slug: String = sqlx::query_scalar("SELECT slug FROM teams WHERE id = $1")
+                .bind(ws_id)
+                .fetch_optional(db)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default();
 
             // Look up the calling agent's DB UUID for current_agent_id
-            let calling_agent_id: Option<uuid::Uuid> = sqlx::query_scalar(
-                "SELECT agent_id FROM agents WHERE agent_name = $1 LIMIT 1",
-            )
-            .bind(agent_name)
-            .fetch_optional(db)
-            .await
-            .ok()
-            .flatten();
+            let calling_agent_id: Option<uuid::Uuid> =
+                sqlx::query_scalar("SELECT agent_id FROM agents WHERE agent_name = $1 LIMIT 1")
+                    .bind(agent_name)
+                    .fetch_optional(db)
+                    .await
+                    .ok()
+                    .flatten();
 
             let target_tool_context = std::sync::Arc::new(ToolContext {
                 memory_store: ctx.memory_store.clone(),
@@ -4593,11 +4708,7 @@ async fn execute_delegate_to_agent(
     // Pass the raw LLM response through verbatim (see issue #2 / docs/specs/
     // 09_RESEARCH_AGENT_OUTPUT_STRIPPED.md). Falling back to evidence summaries
     // alone destroys structured JSON outputs from research-tier agents.
-    let raw_response = output
-        .metadata
-        .reasoning
-        .clone()
-        .unwrap_or_default();
+    let raw_response = output.metadata.reasoning.clone().unwrap_or_default();
     let evidence_text = output
         .evidence
         .iter()
@@ -5592,11 +5703,15 @@ async fn execute_call_football_api(input: &serde_json::Value) -> Result<String, 
     }
 
     // Return the response, truncated if very large
-    let result = serde_json::to_string_pretty(&data)
-        .map_err(|e| format!("Serialization error: {}", e))?;
+    let result =
+        serde_json::to_string_pretty(&data).map_err(|e| format!("Serialization error: {}", e))?;
 
     if result.len() > 16000 {
-        Ok(format!("{}... [truncated, {} total chars]", &result[..16000], result.len()))
+        Ok(format!(
+            "{}... [truncated, {} total chars]",
+            &result[..16000],
+            result.len()
+        ))
     } else {
         Ok(result)
     }
@@ -5616,9 +5731,7 @@ async fn execute_web_search(input: &serde_json::Value) -> Result<String, String>
         .and_then(|v| v.as_u64())
         .unwrap_or(5)
         .min(10) as usize;
-    let freshness = input
-        .get("freshness")
-        .and_then(|v| v.as_str());
+    let freshness = input.get("freshness").and_then(|v| v.as_str());
 
     let api_key = std::env::var("BRAVE_SEARCH_API_KEY")
         .map_err(|_| "BRAVE_SEARCH_API_KEY environment variable not set. Get a free API key at https://brave.com/search/api/".to_string())?;
@@ -5628,7 +5741,11 @@ async fn execute_web_search(input: &serde_json::Value) -> Result<String, String>
         .get("https://api.search.brave.com/res/v1/web/search")
         .header("Accept", "application/json")
         .header("X-Subscription-Token", &api_key)
-        .query(&[("q", query), ("count", &count.to_string()), ("search_lang", "en")]);
+        .query(&[
+            ("q", query),
+            ("count", &count.to_string()),
+            ("search_lang", "en"),
+        ]);
 
     if let Some(f) = freshness {
         req = req.query(&[("freshness", f)]);
@@ -5665,16 +5782,16 @@ async fn execute_web_search(input: &serde_json::Value) -> Result<String, String>
 
     let mut output = format!("## Web Search Results for: {}\n\n", query);
     for (i, result) in results.iter().enumerate() {
-        let title = result.get("title").and_then(|v| v.as_str()).unwrap_or("(no title)");
+        let title = result
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(no title)");
         let url = result.get("url").and_then(|v| v.as_str()).unwrap_or("");
         let description = result
             .get("description")
             .and_then(|v| v.as_str())
             .unwrap_or("(no description)");
-        let age = result
-            .get("age")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let age = result.get("age").and_then(|v| v.as_str()).unwrap_or("");
         let published = result
             .get("page_age")
             .and_then(|v| v.as_str())
@@ -5683,7 +5800,11 @@ async fn execute_web_search(input: &serde_json::Value) -> Result<String, String>
 
         output.push_str(&format!(
             "**{}. {}**\n{}\n{}\n{}\n\n",
-            i + 1, title, url, published, description
+            i + 1,
+            title,
+            url,
+            published,
+            description
         ));
     }
 
@@ -6159,10 +6280,7 @@ async fn execute_run_evaluator_registry(
         .user_id
         .clone()
         .ok_or("run_evaluator_registry requires user_id in ToolContext")?;
-    let judge = input
-        .get("judge")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
+    let judge = input.get("judge").and_then(|v| v.as_bool()).unwrap_or(true);
     let tags: Vec<String> = input
         .get("tags")
         .and_then(|v| v.as_array())
@@ -6192,19 +6310,42 @@ async fn execute_run_evaluator_registry(
 /// iNaturalist observations near a lat/lng.
 /// Uses the iNaturalist API v2 — no authentication required for reads.
 async fn execute_inat_observations(input: &serde_json::Value) -> Result<String, String> {
-    let lat = input.get("lat").and_then(|v| v.as_f64())
+    let lat = input
+        .get("lat")
+        .and_then(|v| v.as_f64())
         .ok_or("lat is required")?;
-    let lng = input.get("lng").and_then(|v| v.as_f64())
+    let lng = input
+        .get("lng")
+        .and_then(|v| v.as_f64())
         .ok_or("lng is required")?;
-    let radius_km = input.get("radius_km").and_then(|v| v.as_f64()).unwrap_or(5.0).min(50.0);
-    let taxon = input.get("taxon").and_then(|v| v.as_str()).unwrap_or("Fungi");
-    let days_back = input.get("days_back").and_then(|v| v.as_u64()).unwrap_or(30).min(365);
-    let quality_grade = input.get("quality_grade").and_then(|v| v.as_str()).unwrap_or("needs_id");
-    let limit = input.get("limit").and_then(|v| v.as_u64()).unwrap_or(20).min(50);
+    let radius_km = input
+        .get("radius_km")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(5.0)
+        .min(50.0);
+    let taxon = input
+        .get("taxon")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Fungi");
+    let days_back = input
+        .get("days_back")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(30)
+        .min(365);
+    let quality_grade = input
+        .get("quality_grade")
+        .and_then(|v| v.as_str())
+        .unwrap_or("needs_id");
+    let limit = input
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(20)
+        .min(50);
 
     // Calculate date range
     let d1 = (chrono::Utc::now() - chrono::Duration::days(days_back as i64))
-        .format("%Y-%m-%d").to_string();
+        .format("%Y-%m-%d")
+        .to_string();
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -6235,37 +6376,65 @@ async fn execute_inat_observations(input: &serde_json::Value) -> Result<String, 
         return Err(format!("iNaturalist API error: {}", resp.status()));
     }
 
-    let data: serde_json::Value = resp.json().await
+    let data: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| format!("Failed to parse iNaturalist response: {}", e))?;
 
-    let results = data.get("results").and_then(|r| r.as_array()).cloned().unwrap_or_default();
-    let total = data.get("total_results").and_then(|v| v.as_u64()).unwrap_or(0);
+    let results = data
+        .get("results")
+        .and_then(|r| r.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let total = data
+        .get("total_results")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
 
     // Summarise into a compact form for the agent
-    let observations: Vec<serde_json::Value> = results.iter().map(|obs| {
-        let taxon_name = obs.pointer("/taxon/name").and_then(|v| v.as_str()).unwrap_or("Unknown");
-        let common_name = obs.pointer("/taxon/preferred_common_name").and_then(|v| v.as_str()).unwrap_or("");
-        let date = obs.get("observed_on").and_then(|v| v.as_str()).unwrap_or("");
-        let grade = obs.get("quality_grade").and_then(|v| v.as_str()).unwrap_or("");
-        let location = obs.get("location").and_then(|v| v.as_str()).unwrap_or("");
-        let has_photo = obs.pointer("/photos/0/url").is_some();
-        json!({
-            "species": taxon_name,
-            "common_name": common_name,
-            "observed_on": date,
-            "quality_grade": grade,
-            "location": location,
-            "has_photo": has_photo,
+    let observations: Vec<serde_json::Value> = results
+        .iter()
+        .map(|obs| {
+            let taxon_name = obs
+                .pointer("/taxon/name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown");
+            let common_name = obs
+                .pointer("/taxon/preferred_common_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let date = obs
+                .get("observed_on")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let grade = obs
+                .get("quality_grade")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let location = obs.get("location").and_then(|v| v.as_str()).unwrap_or("");
+            let has_photo = obs.pointer("/photos/0/url").is_some();
+            json!({
+                "species": taxon_name,
+                "common_name": common_name,
+                "observed_on": date,
+                "quality_grade": grade,
+                "location": location,
+                "has_photo": has_photo,
+            })
         })
-    }).collect();
+        .collect();
 
     // Count unique species
     let mut species_counts: std::collections::HashMap<&str, u32> = std::collections::HashMap::new();
     for obs in &results {
-        let name = obs.pointer("/taxon/name").and_then(|v| v.as_str()).unwrap_or("Unknown");
+        let name = obs
+            .pointer("/taxon/name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown");
         *species_counts.entry(name).or_insert(0) += 1;
     }
-    let mut species_summary: Vec<(&str, u32)> = species_counts.iter().map(|(k, v)| (*k, *v)).collect();
+    let mut species_summary: Vec<(&str, u32)> =
+        species_counts.iter().map(|(k, v)| (*k, *v)).collect();
     species_summary.sort_by(|a, b| b.1.cmp(&a.1));
 
     serde_json::to_string_pretty(&json!({
@@ -6289,9 +6458,14 @@ async fn execute_inat_observations(input: &serde_json::Value) -> Result<String, 
 /// Requires MYCOBANK_API_KEY environment variable (Bearer token).
 /// Falls back to a descriptive error if key is not set.
 async fn execute_mycobank_lookup(input: &serde_json::Value) -> Result<String, String> {
-    let name = input.get("name").and_then(|v| v.as_str())
+    let name = input
+        .get("name")
+        .and_then(|v| v.as_str())
         .ok_or("name is required")?;
-    let include_synonyms = input.get("include_synonyms").and_then(|v| v.as_bool()).unwrap_or(true);
+    let include_synonyms = input
+        .get("include_synonyms")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
 
     let api_key = std::env::var("MYCOBANK_API_KEY").unwrap_or_default();
 
@@ -6306,13 +6480,18 @@ async fn execute_mycobank_lookup(input: &serde_json::Value) -> Result<String, St
         let gbif_url = "https://api.gbif.org/v1/species/match";
         let resp = client
             .get(gbif_url)
-            .header("User-Agent", "AgentBestiaryWorld/1.0 (kask.bio/projects/wild)")
+            .header(
+                "User-Agent",
+                "AgentBestiaryWorld/1.0 (kask.bio/projects/wild)",
+            )
             .query(&[("name", name), ("kingdom", "Fungi"), ("verbose", "true")])
             .send()
             .await
             .map_err(|e| format!("GBIF fallback request failed: {}", e))?;
 
-        let data: serde_json::Value = resp.json().await
+        let data: serde_json::Value = resp
+            .json()
+            .await
             .map_err(|e| format!("Failed to parse GBIF response: {}", e))?;
 
         return serde_json::to_string_pretty(&json!({
@@ -6339,7 +6518,10 @@ async fn execute_mycobank_lookup(input: &serde_json::Value) -> Result<String, St
     let resp = client
         .get(base_url)
         .header("Authorization", format!("Bearer {}", api_key))
-        .header("User-Agent", "AgentBestiaryWorld/1.0 (kask.bio/projects/wild)")
+        .header(
+            "User-Agent",
+            "AgentBestiaryWorld/1.0 (kask.bio/projects/wild)",
+        )
         .query(&[("filter", format!("name startWith '{}'", name))])
         .send()
         .await
@@ -6349,10 +6531,16 @@ async fn execute_mycobank_lookup(input: &serde_json::Value) -> Result<String, St
         return Err(format!("MycoBank API error: {}", resp.status()));
     }
 
-    let data: serde_json::Value = resp.json().await
+    let data: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| format!("Failed to parse MycoBank response: {}", e))?;
 
-    let items = data.get("items").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let items = data
+        .get("items")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
 
     if items.is_empty() {
         return Ok(serde_json::to_string_pretty(&json!({
@@ -6360,18 +6548,25 @@ async fn execute_mycobank_lookup(input: &serde_json::Value) -> Result<String, St
             "query": name,
             "found": false,
             "message": "No records found in MycoBank for this name"
-        })).unwrap_or_default());
+        }))
+        .unwrap_or_default());
     }
 
     // Find the best match — prefer exact name match with valid status
-    let best = items.iter().find(|item| {
-        item.get("name").and_then(|v| v.as_str())
-            .map(|n| n.to_lowercase() == name.to_lowercase())
-            .unwrap_or(false)
-        && item.get("nameStatus").and_then(|v| v.as_str())
-            .map(|s| s != "Illegitimate" && s != "Invalid")
-            .unwrap_or(true)
-    }).or_else(|| items.first());
+    let best = items
+        .iter()
+        .find(|item| {
+            item.get("name")
+                .and_then(|v| v.as_str())
+                .map(|n| n.to_lowercase() == name.to_lowercase())
+                .unwrap_or(false)
+                && item
+                    .get("nameStatus")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s != "Illegitimate" && s != "Invalid")
+                    .unwrap_or(true)
+        })
+        .or_else(|| items.first());
 
     let result = best.cloned().unwrap_or(json!({}));
 
@@ -6400,14 +6595,22 @@ async fn execute_mycobank_lookup(input: &serde_json::Value) -> Result<String, St
 /// OpenWeather current conditions + 5-day forecast.
 /// Requires OPENWEATHER_API_KEY environment variable.
 async fn execute_openweather_forecast(input: &serde_json::Value) -> Result<String, String> {
-    let lat = input.get("lat").and_then(|v| v.as_f64())
+    let lat = input
+        .get("lat")
+        .and_then(|v| v.as_f64())
         .ok_or("lat is required")?;
-    let lng = input.get("lng").and_then(|v| v.as_f64())
+    let lng = input
+        .get("lng")
+        .and_then(|v| v.as_f64())
         .ok_or("lng is required")?;
-    let include_forecast = input.get("include_forecast").and_then(|v| v.as_bool()).unwrap_or(true);
+    let include_forecast = input
+        .get("include_forecast")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
 
-    let api_key = std::env::var("OPENWEATHER_API_KEY")
-        .map_err(|_| "OPENWEATHER_API_KEY not set. Get a free key at https://openweathermap.org/api".to_string())?;
+    let api_key = std::env::var("OPENWEATHER_API_KEY").map_err(|_| {
+        "OPENWEATHER_API_KEY not set. Get a free key at https://openweathermap.org/api".to_string()
+    })?;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
@@ -6431,7 +6634,9 @@ async fn execute_openweather_forecast(input: &serde_json::Value) -> Result<Strin
         return Err(format!("OpenWeather API error: {}", current_resp.status()));
     }
 
-    let current: serde_json::Value = current_resp.json().await
+    let current: serde_json::Value = current_resp
+        .json()
+        .await
         .map_err(|e| format!("Failed to parse current weather: {}", e))?;
 
     let current_summary = json!({
@@ -6471,18 +6676,30 @@ async fn execute_openweather_forecast(input: &serde_json::Value) -> Result<Strin
         .await
         .map_err(|e| format!("OpenWeather forecast request failed: {}", e))?;
 
-    let forecast: serde_json::Value = forecast_resp.json().await
+    let forecast: serde_json::Value = forecast_resp
+        .json()
+        .await
         .map_err(|e| format!("Failed to parse forecast: {}", e))?;
 
     // Summarise by day
-    let mut daily: std::collections::BTreeMap<String, serde_json::Value> = std::collections::BTreeMap::new();
+    let mut daily: std::collections::BTreeMap<String, serde_json::Value> =
+        std::collections::BTreeMap::new();
     if let Some(list) = forecast.get("list").and_then(|v| v.as_array()) {
         for entry in list {
             let dt_txt = entry.get("dt_txt").and_then(|v| v.as_str()).unwrap_or("");
             let day = dt_txt.split(' ').next().unwrap_or(dt_txt).to_string();
-            let temp = entry.pointer("/main/temp").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let rain = entry.pointer("/rain/3h").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let humidity = entry.pointer("/main/humidity").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let temp = entry
+                .pointer("/main/temp")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let rain = entry
+                .pointer("/rain/3h")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let humidity = entry
+                .pointer("/main/humidity")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
 
             let d = daily.entry(day).or_insert(json!({
                 "temps": [], "rain_total_mm": 0.0, "humidity_avg": 0.0, "count": 0
@@ -6491,38 +6708,66 @@ async fn execute_openweather_forecast(input: &serde_json::Value) -> Result<Strin
                 if let Some(arr) = obj.get_mut("temps").and_then(|v| v.as_array_mut()) {
                     arr.push(json!(temp));
                 }
-                let rain_total = obj.get("rain_total_mm").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let hum_acc = obj.get("humidity_avg").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let rain_total = obj
+                    .get("rain_total_mm")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                let hum_acc = obj
+                    .get("humidity_avg")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
                 let count = obj.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
                 obj.insert("rain_total_mm".to_string(), json!(rain_total + rain));
-                obj.insert("humidity_avg".to_string(), json!((hum_acc * count as f64 + humidity) / (count + 1) as f64));
+                obj.insert(
+                    "humidity_avg".to_string(),
+                    json!((hum_acc * count as f64 + humidity) / (count + 1) as f64),
+                );
                 obj.insert("count".to_string(), json!(count + 1));
             }
         }
     }
 
-    let forecast_summary: Vec<serde_json::Value> = daily.iter().map(|(day, d)| {
-        let temps = d.get("temps").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-        let temps_f: Vec<f64> = temps.iter().filter_map(|v| v.as_f64()).collect();
-        let min_t = temps_f.iter().cloned().fold(f64::INFINITY, f64::min);
-        let max_t = temps_f.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        json!({
-            "date": day,
-            "temp_min_c": if min_t.is_finite() { min_t } else { 0.0 },
-            "temp_max_c": if max_t.is_finite() { max_t } else { 0.0 },
-            "rain_total_mm": d.get("rain_total_mm"),
-            "humidity_avg_pct": d.get("humidity_avg"),
+    let forecast_summary: Vec<serde_json::Value> = daily
+        .iter()
+        .map(|(day, d)| {
+            let temps = d
+                .get("temps")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let temps_f: Vec<f64> = temps.iter().filter_map(|v| v.as_f64()).collect();
+            let min_t = temps_f.iter().cloned().fold(f64::INFINITY, f64::min);
+            let max_t = temps_f.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            json!({
+                "date": day,
+                "temp_min_c": if min_t.is_finite() { min_t } else { 0.0 },
+                "temp_max_c": if max_t.is_finite() { max_t } else { 0.0 },
+                "rain_total_mm": d.get("rain_total_mm"),
+                "humidity_avg_pct": d.get("humidity_avg"),
+            })
         })
-    }).collect();
+        .collect();
 
     // Foraging condition assessment
-    let current_temp = current.pointer("/main/temp").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let current_humidity = current.pointer("/main/humidity").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let recent_rain: f64 = forecast_summary.iter().take(2)
+    let current_temp = current
+        .pointer("/main/temp")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let current_humidity = current
+        .pointer("/main/humidity")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let recent_rain: f64 = forecast_summary
+        .iter()
+        .take(2)
         .filter_map(|d| d.get("rain_total_mm").and_then(|v| v.as_f64()))
         .sum();
 
-    let foraging_signal = if current_temp > 5.0 && current_temp < 25.0 && current_humidity > 70.0 && recent_rain > 5.0 {
+    let foraging_signal = if current_temp > 5.0
+        && current_temp < 25.0
+        && current_humidity > 70.0
+        && recent_rain > 5.0
+    {
         "good"
     } else if current_temp > 0.0 && current_temp < 30.0 && current_humidity > 50.0 {
         "fair"

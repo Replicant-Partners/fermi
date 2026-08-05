@@ -873,6 +873,12 @@ async fn run_migrations(db: &PgPool) {
         // read the column, actively wrong now that it is the source of
         // truth for agent config (resolve_agent_card). Idempotent.
         "migrations/177_agents_mcp_servers_legacy_cleanup.sql",
+        // agents.mcp_tools — DB-backed list of tools an agent PUBLISHES
+        // over /mcp/agents/:id. Symmetric with mcp_servers (which tools it
+        // may CALL). Without it, the ~87% of agents that have no
+        // filesystem card published nothing and were reachable only via
+        // the catch-all `execute` path.
+        "migrations/178_agents_mcp_tools.sql",
     ];
 
     for file in &migration_files {
@@ -2020,6 +2026,15 @@ async fn main() {
         .route(
             "/api/agents/:agent_id/mcp-servers/test",
             post(handlers::agents::test_agent_mcp_server_handler),
+        )
+        // Published tools (outbound server direction): what this agent
+        // exposes over /mcp/agents/:id, plus the menu of what it could
+        // expose. Writes go through PUT /api/agents/:agent_id with an
+        // `mcp_tools` field, which validates every name against the
+        // dispatch table so phantom tools can't be saved.
+        .route(
+            "/api/agents/:agent_id/published-tools",
+            get(handlers::agents::get_agent_published_tools_handler),
         )
         .route(
             "/api/agents/:agent_id/eval/test-cases/:test_case_id",
@@ -4284,6 +4299,7 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
             model: card.capabilities.model.clone(),
             temperature: card.capabilities.temperature,
             mcp_servers: None,
+            mcp_tools: None,
             description: Some(card.metadata.description.clone()),
             author: card.metadata.author.clone(),
             current_ontology_commit: None,
@@ -4913,6 +4929,34 @@ pub(crate) fn resolve_agent_card(state: &AppState, db_agent: &Agent) -> AgentCar
     if let Some(raw) = db_agent.mcp_servers.as_ref() {
         if let Some(servers) = fermi::agent_backend::mcp_client::interpret_db_column(raw) {
             card.capabilities.mcp_servers = servers;
+        }
+    }
+
+    // Bridge published tools from DB — the server direction, symmetric with
+    // mcp_servers above.
+    //
+    // Without this, `agent_card_from_db` returns `mcp_tools: vec![]` and any
+    // agent lacking an `agent_card.json` on disk (~709 DB rows against 95
+    // card files) publishes nothing over `/mcp/agents/:id`: `tools/list`
+    // shows only the catch-all `execute`, and every typed `tools/call` is
+    // rejected as "not declared". The agent's own tool access was never
+    // affected — `to_claude_tools_with_card` starts from all builtins — so
+    // this gap only ever broke ABW-as-MCP-server.
+    //
+    // Same precedence as mcp_servers: NULL inherits from the file card,
+    // `[]` publishes nothing, non-empty is authoritative.
+    if let Some(raw) = db_agent.mcp_tools.as_ref() {
+        if !raw.is_null() {
+            match serde_json::from_value::<Vec<fermi::agent_backend::agent_card::McpTool>>(
+                raw.clone(),
+            ) {
+                Ok(tools) => card.capabilities.mcp_tools = tools,
+                Err(e) => eprintln!(
+                    "[mcp] agent '{}' has an unparseable mcp_tools column ({e}); \
+                     falling back to the filesystem card",
+                    db_agent.agent_name
+                ),
+            }
         }
     }
 

@@ -57,7 +57,7 @@ async fn insert_provenance_row(
 /// Common SELECT columns for agent queries
 const AGENT_COLUMNS: &str = r#"
     agent_id, agent_name, agent_type, version, tier,
-    executor_type, model, temperature, mcp_servers, description, author,
+    executor_type, model, temperature, mcp_servers, mcp_tools, description, author,
     system_prompt, visibility, user_id, tags,
     current_ontology_commit, current_ontology_snapshot_id,
     last_consolidated_at, total_executions, successful_executions,
@@ -678,6 +678,10 @@ impl MemoryStore {
             set_clauses.push(format!("mcp_servers = ${}", param_idx));
             param_idx += 1;
         }
+        if updates.mcp_tools.is_some() {
+            set_clauses.push(format!("mcp_tools = ${}", param_idx));
+            param_idx += 1;
+        }
         if updates.llm_provider.is_some() {
             set_clauses.push(format!("llm_provider = ${}", param_idx));
             param_idx += 1;
@@ -770,6 +774,9 @@ impl MemoryStore {
         // Must stay in the same relative position as the SET clause above:
         // this block's order defines the $N binding order.
         if let Some(ref v) = updates.mcp_servers {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = updates.mcp_tools {
             query = query.bind(v);
         }
         if let Some(ref v) = updates.llm_provider {
@@ -985,6 +992,7 @@ impl MemoryStore {
             model: row.try_get("model")?,
             temperature: row.try_get("temperature")?,
             mcp_servers: row.try_get("mcp_servers")?,
+            mcp_tools: row.try_get("mcp_tools")?,
             description: row.try_get("description")?,
             author: row.try_get("author")?,
             system_prompt: row.try_get("system_prompt")?,
@@ -4559,6 +4567,7 @@ mod tests {
             model: "test-model".to_string(),
             temperature: 0.3,
             mcp_servers: None,
+            mcp_tools: None,
             description: Some("Test agent".to_string()),
             author: "Test".to_string(),
             current_ontology_commit: None,

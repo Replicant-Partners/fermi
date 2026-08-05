@@ -499,6 +499,12 @@ pub struct Agent {
     pub model: String,
     pub temperature: f64,
     pub mcp_servers: Option<serde_json::Value>, // Array of MCP server configs
+    /// Tools this agent PUBLISHES over `/mcp/agents/:id`. NULL means
+    /// inherit from the filesystem card; see `resolve_agent_card`.
+    /// Not written by the create/upsert paths on purpose — a new agent
+    /// inherits its card's declarations until an operator publishes
+    /// explicitly. Writes go through `AgentUpdate`.
+    pub mcp_tools: Option<serde_json::Value>,
     pub description: Option<String>,
     pub author: String,
     pub system_prompt: Option<String>,
@@ -644,6 +650,15 @@ pub struct AgentUpdate {
     /// Accepts the ecosystem map form or a sequence; see
     /// `mcp_client::deserialize_mcp_servers`.
     pub mcp_servers: Option<serde_json::Value>,
+    /// Tools this agent publishes over `/mcp/agents/:id` — an export
+    /// allowlist, not a capability grant (every agent already receives all
+    /// platform builtins internally).
+    ///
+    /// Same precedence as `mcp_servers`: NULL inherits from the filesystem
+    /// card, `[]` publishes nothing, non-empty is authoritative. Validate
+    /// with `tools::invalid_tool_declarations` before writing — a name with
+    /// no dispatch arm becomes a phantom tool.
+    pub mcp_tools: Option<serde_json::Value>,
     pub llm_provider: Option<String>,
     // ADR-011: cognition economy
     pub model_ladder: Option<serde_json::Value>,

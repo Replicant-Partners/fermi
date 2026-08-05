@@ -1,4 +1,4 @@
-# Remote MCP servers as an ABW agent capability
+# MCP, both directions, as an ABW agent capability
 
 **Status:** Implemented — client, dispatch, DB-backed config, API, UI.
 **Code:** `src/agent_backend/mcp_client.rs`, `src/handlers/agents.rs`, `templates/agent_detail.html`
@@ -130,7 +130,11 @@ to be answered with either `application/json` or `text/event-stream`;
   integer, not a Polymarket `conditionId`, `questionID`, or slug. Any
   agent bridging two systems must resolve and *verify* the mapping; a
   silent mis-join returns another entity's data, which is worse than an
-  error. The shipped card enforces this in its system prompt.
+  error.
+- **`mcp_tools` and `mcp_servers` are easy to confuse**, and the codebase
+  already got it wrong once (the create path wrote one into the other for
+  years). Mnemonic: `mcp_servers` = **inbound** capability, who I can call;
+  `mcp_tools` = **outbound** surface, what I expose.
 
 ---
 
@@ -184,6 +188,72 @@ has no stable mapping to Polymarket identifiers). Deferred deliberately.
 
 ---
 
+## The server direction: published tools
+
+Symmetric with `mcp_servers`. `agents.mcp_tools` (mig-178) controls which
+tools an agent exposes over `/mcp/agents/:agent_name` to external clients
+(Claude Desktop, Cursor, Zed).
+
+**`mcp_tools` is an export allowlist, not a capability grant.** Every agent
+already receives every platform builtin internally —
+`to_claude_tools_with_card` starts from all of them and
+`ToolRegistry::execute` performs no per-agent check. Unpublishing a tool
+does not remove the agent's ability to use it; it only hides it from
+external MCP clients.
+
+### The gap this closed
+
+`resolve_agent_card` falls back to `agent_card_from_db`, which hardcoded
+`mcp_tools: vec![]`. With ~709 rows in `agents` against 95 card files on
+disk, the overwhelming majority of agents declared no tools — so
+`tools/list` showed only the catch-all `execute` and every typed
+`tools/call` was rejected as "not declared". Agents were reachable over
+MCP only by sending prose and getting prose back.
+
+Internal execution was never affected, which is why this went unnoticed:
+the gap only ever broke ABW-as-MCP-server.
+
+### Phantom tools
+
+A name in `mcp_tools` must resolve to a dispatch arm in
+`ToolRegistry::execute`, or be a `server__tool` name from a server the
+agent declares in `mcp_servers`. Anything else is a **phantom tool**:
+advertised to the model and over MCP, called, then answered
+`Unknown tool: X`.
+
+Nothing validated this before, so cards could assert capabilities that were
+never wired. Now:
+
+- `tools::invalid_tool_declarations` is the check;
+  `tools::platform_tool_names` is the dispatch table it measures against.
+- `PUT /api/agents/:id` rejects undispatchable names with a 400 naming each
+  one and why.
+- The remote case is validated by **namespace**, not live discovery — a
+  save must not fail because a third-party endpoint is briefly down.
+- `GET .../published-tools` reports any existing `phantom` entries so
+  pre-validation cards can be cleaned up.
+
+This also fixed 7 curated cards (`enemy_sensor`, `flavor_profiler`,
+`football_institution_agent`, `forage_scout`, `genome_profiler`,
+`harvest_advisor`, `simops_dynamics_runner`) that declared optional
+dependencies but no `execute_agent`, so they could not reach the agents
+they depended on.
+
+### Composition: republishing remote tools
+
+An agent can publish a `server__tool` name it consumes, making ABW an MCP
+**hub** — an external client calls the agent, the agent proxies to the
+third-party server. `handlers/mcp.rs` resolves the agent's remote catalogue
+before dispatch so these are genuinely callable, using the **agent owner's**
+secret scope rather than the caller's, so an external client cannot borrow
+someone else's credential by invoking their agent.
+
+The same handler now builds `ToolRegistry::with_workspace()` rather than
+`standard()`; previously a card could declare a workspace tool that the
+endpoint then silently filtered out.
+
+---
+
 ## Where config lives: the DB is the source of truth
 
 Agent cards are files loaded into an in-memory registry at boot. They are
@@ -232,9 +302,10 @@ The writer itself is fixed. Regression test:
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/agents/:agent_id/mcp-servers` | Effective config + provenance + diagnostics. |
+| `GET` | `/api/agents/:agent_id/mcp-servers` | Effective server config + provenance + diagnostics. |
 | `POST` | `/api/agents/:agent_id/mcp-servers/test` | Discover against a candidate config **before** saving. |
-| `PUT` | `/api/agents/:agent_id` | Write, via the normal agent update with an `mcp_servers` field. |
+| `GET` | `/api/agents/:agent_id/published-tools` | What the agent publishes, the full menu of what it could publish, phantom entries, and the MCP endpoint URL. |
+| `PUT` | `/api/agents/:agent_id` | Write, via the normal agent update with an `mcp_servers` and/or `mcp_tools` field. |
 
 Writes deliberately reuse the existing agent PUT so they inherit the RBAC
 ladder, agent versioning, and the `agent_card.updated` broadcast. Both
@@ -265,9 +336,20 @@ test a connection and see the namespaced tool list it would expose, and
 supply a missing secret — written to `/api/secrets` scoped to that agent
 by `agent_name`, never displayed or pre-filled.
 
-The panel distinguishes DB-owned config from card-inherited config,
-because saving takes ownership: after the first save, edits to the file
-card no longer take effect.
+A companion **Published Tools** panel covers the server direction:
+checkboxes over the available platform and remote tools (filterable — there
+are ~70), the endpoint URL to paste into an MCP client, visible flags for
+delegation and workspace-requiring tools, and phantom entries called out as
+an error state.
+
+Both panels distinguish DB-owned config from card-inherited config, because
+saving takes ownership: after the first save, edits to the file card no
+longer take effect.
+
+One behaviour worth knowing: saving an empty published list stores `[]`,
+which is authoritative-and-empty. `handlers/mcp.rs` then falls back to the
+catch-all `execute` tool, so "publish nothing" is really "publish only
+`execute`". The UI says so at the point of saving.
 
 One sharp edge surfaced in the UI rather than hidden: `store_secret` is
 `ON CONFLICT (user_id, secret_name) DO UPDATE ... scope = $5`, so storing

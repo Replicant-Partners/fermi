@@ -365,6 +365,7 @@ pub async fn create_workspace_agent_handler(
         model: req.model,
         temperature: req.temperature,
         mcp_servers: None,
+            mcp_tools: None,
         description: req.description,
         author: principal.user_id(),
         system_prompt: req.system_prompt,

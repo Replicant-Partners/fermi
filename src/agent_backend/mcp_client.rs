@@ -180,6 +180,15 @@ impl RemoteMcpServer {
     }
 
     /// Sanitised namespace, safe for a tool name.
+    ///
+    /// Public alias so declaration-validation can compare a published
+    /// `server__tool` name against the namespace this server will actually
+    /// generate, rather than against the raw card `name`.
+    pub fn namespace(&self) -> String {
+        self.ns()
+    }
+
+    /// Sanitised namespace, safe for a tool name.
     fn ns(&self) -> String {
         self.name
             .chars()
@@ -1013,6 +1022,67 @@ mod tests {
         let got = interpret_db_column(&mixed).expect("should keep the real one");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].name, "svc");
+    }
+
+    /// Published tool names must resolve to something dispatchable, or they
+    /// become phantom tools: advertised to the model and over
+    /// `/mcp/agents/:id`, called, then answered `Unknown tool: X`.
+    #[test]
+    fn tool_declaration_validation() {
+        use crate::agent_backend::tools::{invalid_tool_declarations, ToolDeclarationError};
+
+        let servers = vec![RemoteMcpServer {
+            name: "my.svc".into(), // sanitises to my_svc
+            endpoint: Some("https://svc.test/mcp".into()),
+            ..Default::default()
+        }];
+
+        // A real platform tool passes.
+        assert!(invalid_tool_declarations(&["execute_agent".to_string()], &servers).is_empty());
+
+        // A remote tool passes when its server is declared — matched on the
+        // SANITISED namespace, which is what dispatch actually generates.
+        assert!(
+            invalid_tool_declarations(&["my_svc__search".to_string()], &servers).is_empty(),
+            "namespace should be compared post-sanitisation"
+        );
+
+        // A remote tool whose server isn't declared is rejected, and names
+        // the server so the error is actionable.
+        let bad = invalid_tool_declarations(&["other__search".to_string()], &servers);
+        assert_eq!(
+            bad,
+            vec![(
+                "other__search".to_string(),
+                ToolDeclarationError::UnknownRemoteServer {
+                    server: "other".to_string()
+                }
+            )]
+        );
+
+        // A plain invented name is rejected.
+        let bad = invalid_tool_declarations(&["totally_made_up_tool".to_string()], &servers);
+        assert_eq!(bad.len(), 1);
+        assert_eq!(bad[0].1, ToolDeclarationError::NotDispatchable);
+
+        // Empty publishes nothing and is always valid.
+        assert!(invalid_tool_declarations(&[], &servers).is_empty());
+    }
+
+    /// The dispatch table must be non-empty and self-consistent — this is
+    /// what validation is measured against, so a regression here silently
+    /// disables the guard.
+    #[test]
+    fn platform_tool_catalogue_is_populated_and_unique() {
+        use crate::agent_backend::tools::platform_tool_names;
+        let names = platform_tool_names();
+        assert!(names.len() > 20, "expected a populated catalogue");
+        let unique: std::collections::HashSet<_> = names.iter().collect();
+        assert_eq!(unique.len(), names.len(), "duplicate builtin tool name");
+        // Spot-check a few the platform depends on.
+        for expected in ["execute_agent", "delegate_to_agent", "search_knowledge"] {
+            assert!(names.contains(&expected), "missing builtin: {expected}");
+        }
     }
 
     #[test]

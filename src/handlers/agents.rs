@@ -703,6 +703,7 @@ pub async fn create_agent_handler(
         model: req.model,
         temperature: req.temperature,
         mcp_servers: None,
+        mcp_tools: None,
         description: req.description,
         author: user_id.clone(),
         system_prompt: req.system_prompt,
@@ -972,6 +973,12 @@ pub async fn import_agent_handler(
         // field or a new agent would come up with a server list that is
         // actually a tool list.
         mcp_servers: caps.and_then(|c| c.get("mcp_servers")).cloned(),
+        // Persisted, not left to inherit: an agent created through this
+        // path has no filesystem card to inherit from (the card arrives in
+        // the request body), so dropping this would mean the agent
+        // publishes nothing over /mcp/agents/:id. Validated against the
+        // dispatch table below.
+        mcp_tools: caps.and_then(|c| c.get("mcp_tools")).cloned(),
         description,
         author: user_id.clone(),
         system_prompt,
@@ -2002,6 +2009,59 @@ pub async fn update_agent_handler(
     )
     .await?;
 
+    // Reject phantom tool declarations before they reach the DB.
+    //
+    // A name in `mcp_tools` must resolve to a dispatch arm in
+    // `ToolRegistry::execute`, or be a `server__tool` name from a server the
+    // agent declares. Anything else is advertised to the model and over
+    // `/mcp/agents/:id`, gets called, and answers `Unknown tool: X`.
+    // Nothing validated this before, which is how cards ended up asserting
+    // capabilities that were never wired.
+    //
+    // Servers are taken from this same update when it changes them, so a
+    // single PUT can add a server and publish its tools atomically.
+    if let Some(raw_tools) = updates.mcp_tools.as_ref() {
+        if !raw_tools.is_null() {
+            let declared: Vec<String> = serde_json::from_value::<
+                Vec<fermi::agent_backend::agent_card::McpTool>,
+            >(raw_tools.clone())
+            .map(|v| v.into_iter().map(|t| t.name).collect())
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!("mcp_tools must be [{{name, description, input_schema}}]: {e}"),
+                )
+            })?;
+
+            let servers = match updates.mcp_servers.as_ref() {
+                Some(raw) if !raw.is_null() => {
+                    fermi::agent_backend::mcp_client::interpret_db_column(raw).unwrap_or_default()
+                }
+                // Not being changed in this PUT — validate against whatever
+                // the agent effectively has today.
+                _ => {
+                    resolve_agent_card(&state, &db_agent)
+                        .capabilities
+                        .mcp_servers
+                }
+            };
+
+            let invalid =
+                fermi::agent_backend::tools::invalid_tool_declarations(&declared, &servers);
+            if !invalid.is_empty() {
+                let detail = invalid
+                    .iter()
+                    .map(|(name, why)| format!("'{name}': {why}"))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    format!("cannot publish undispatchable tools — {detail}"),
+                ));
+            }
+        }
+    }
+
     // Capture pre-update version number for the activity-feed event (Doc 12 §
     // Capability 3). Snapshotting *after* the update means the previous max
     // is the from-version; cheap query, runs once per PUT.
@@ -2119,6 +2179,9 @@ fn collect_changed_fields(updates: &AgentUpdate) -> Vec<&'static str> {
     }
     if updates.mcp_servers.is_some() {
         fields.push("mcp_servers");
+    }
+    if updates.mcp_tools.is_some() {
+        fields.push("mcp_tools");
     }
     if updates.llm_provider.is_some() {
         fields.push("llm_provider");
@@ -3327,6 +3390,118 @@ pub async fn test_agent_mcp_server_handler(
     })))
 }
 
+/// `GET /api/agents/:agent_id/published-tools`
+///
+/// What this agent publishes over `/mcp/agents/:id`, plus the full menu of
+/// what it *could* publish, so the UI can render checkboxes rather than
+/// asking an operator to type tool names from memory.
+///
+/// Writes go through `PUT /api/agents/:agent_id` with an `mcp_tools` field,
+/// which validates every name against the dispatch table.
+pub async fn get_agent_published_tools_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+
+    rbac::require_edit(
+        &state.db,
+        &principal,
+        ObjectType::Agent,
+        &db_agent.agent_id.to_string(),
+        db_agent.owner_id.as_deref().unwrap_or(""),
+        agent_effective_visibility(&db_agent),
+    )
+    .await?;
+
+    let db_declared = db_agent
+        .mcp_tools
+        .as_ref()
+        .map(|v| !v.is_null())
+        .unwrap_or(false);
+
+    let card = resolve_agent_card(&state, &db_agent);
+    let published: Vec<String> = card
+        .capabilities
+        .mcp_tools
+        .iter()
+        .map(|t| t.name.clone())
+        .collect();
+
+    // Everything the compile-time dispatcher can run.
+    let platform: Vec<Value> = fermi::agent_backend::tools::platform_tools()
+        .into_iter()
+        .map(|t| {
+            json!({
+                "name": t.name,
+                "description": t.description,
+                "input_schema": t.input_schema,
+                "requires_workspace": t.requires_workspace,
+                "is_delegation": t.is_delegation,
+                "published": published.iter().any(|p| p == t.name),
+                "kind": "platform",
+            })
+        })
+        .collect();
+
+    // Remote tools this agent could re-publish, namespaced as dispatch will
+    // generate them. Discovery is best-effort: a third-party endpoint being
+    // down must not stop an operator editing the rest of the list.
+    let mut remote: Vec<Value> = Vec::new();
+    let mut remote_errors: Vec<Value> = Vec::new();
+    if !card.capabilities.mcp_servers.is_empty() {
+        let owner_secrets = crate::resolve_agent_owner_secrets(&state, &db_agent).await;
+        let cat = fermi::agent_backend::mcp_client::RemoteMcpCatalogue::discover(
+            &card.capabilities.mcp_servers,
+            owner_secrets.as_ref(),
+        )
+        .await;
+        for t in cat.tools() {
+            remote.push(json!({
+                "name": t.qualified_name,
+                "description": t.description,
+                "input_schema": t.input_schema,
+                "requires_workspace": false,
+                "is_delegation": false,
+                "published": published.iter().any(|p| p == &t.qualified_name),
+                "kind": "remote",
+            }));
+        }
+        for (server, err) in &cat.failures {
+            remote_errors.push(json!({ "server": server, "error": err }));
+        }
+    }
+
+    // Anything published that we can't account for is a phantom tool: it
+    // will be advertised and then fail with `Unknown tool`. Surfaced rather
+    // than hidden, because pre-validation cards could contain these.
+    let known: Vec<&str> = platform
+        .iter()
+        .chain(remote.iter())
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    let phantom: Vec<&String> = published
+        .iter()
+        .filter(|p| !known.contains(&p.as_str()))
+        .collect();
+
+    Ok(Json(json!({
+        "agent_id": db_agent.agent_id,
+        "agent_name": db_agent.agent_name,
+        "published": published,
+        "available": platform.into_iter().chain(remote).collect::<Vec<_>>(),
+        "remote_discovery_errors": remote_errors,
+        "phantom": phantom,
+        // false => inherited from the filesystem card; the first save
+        // copies it into the DB, which then becomes authoritative.
+        "db_is_authoritative": db_declared,
+        "source": if db_declared { "database" } else { "agent_card_file" },
+        // The MCP endpoint external clients point at.
+        "mcp_endpoint": format!("/mcp/agents/{}", db_agent.agent_name),
+    })))
+}
+
 // ─── Tests ───────────────────────────────────────────────
 
 #[cfg(test)]
@@ -3383,6 +3558,7 @@ mod tests {
             prompt_template: Some("p".into()),
             requires_secrets: Some(json!([])),
             mcp_servers: Some(json!([])),
+            mcp_tools: Some(json!([])),
             llm_provider: Some("anthropic".into()),
             model_ladder: Some(json!([])),
             min_tier: Some("free".into()),
@@ -3393,12 +3569,12 @@ mod tests {
             version: Some("1.0.0".into()),
         };
         let fields = collect_changed_fields(&updates);
-        // 24 fields on AgentUpdate today — if the count drifts here,
+        // 25 fields on AgentUpdate today — if the count drifts here,
         // either a field was added (good — wire it up above) or a
         // maintainer wired one twice (bad — dedupe).
         assert_eq!(
             fields.len(),
-            24,
+            25,
             "AgentUpdate has fields that collect_changed_fields doesn't cover: got {:?}",
             fields
         );

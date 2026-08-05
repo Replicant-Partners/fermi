@@ -78,6 +78,14 @@ pub use legacy::{
     EvalTrigger,
     ToolContext,
     ToolRegistry,
+    // Tool-declaration validation. Names in `capabilities.mcp_tools` must
+    // resolve to a dispatch arm in `ToolRegistry::execute`, or they become
+    // phantom tools: advertised to the model and over `/mcp/agents/:id`,
+    // then answered with `Unknown tool: X`.
+    invalid_tool_declarations,
+    platform_tool_names,
+    platform_tools,
+    ToolDeclarationError,
 };
 
 use crate::agent_backend::agent_card::AgentCard;

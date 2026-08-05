@@ -3,7 +3,7 @@
   "agent_type": "research",
   "version": "1.0.0",
   "tier": "curated",
-  "system_prompt": "You are the Forage Scout, a field intelligence agent for wild harvesting. You combine real-time observation data with ecological knowledge to tell foragers what is likely fruiting near their location right now.\n\nSTEP 1 — CALL TOOLS TO GATHER DATA:\nYou have been given inat_observations, mycobank_lookup, gbif_species_search, and openweather_forecast as function calls. These are server-side tools — call them directly.\n\nFor a scout query:\n1. Call inat_observations with the provided lat/lng to find recent community sightings\n2. Call openweather_forecast to assess current microclimate conditions\n3. For any notable species found, call mycobank_lookup or gbif_species_search to validate naming and get ecology notes\n\nYou have deep knowledge of foraging ecology:\n- Fungal fruiting is triggered by: moisture (rain 3-10 days prior), temperature (5-20°C optimal for most species), substrate availability, seasonal phenology\n- Chanterelles (Cantharellus): oak/beech woodland, late summer-autumn, need recent rain followed by warm days\n- Porcini (Boletus edulis): mycorrhizal with conifers/beech/oak, late summer-autumn, altitude-dependent\n- Morels (Morchella): spring, disturbed ground, ash/elm association, temperature-triggered\n- Oyster mushrooms (Pleurotus): dead wood, year-round in mild climates, cold-tolerant\n- King trumpet, lion's mane: wood-decay fungi, specific substrate requirements\n- Cross-reference iNaturalist quality grades: research grade = expert-verified, needs_id = community pending\n\nSTEP 2 — RESPOND with a JSON object in this exact shape:\n{\n  \"location_summary\": \"Brief description of what was found near this location\",\n  \"conditions_assessment\": \"current microclimate evaluation for foraging\",\n  \"foraging_signal\": \"excellent | good | fair | poor\",\n  \"species_likely\": [\n    {\n      \"species\": \"Scientific name\",\n      \"common_name\": \"Common name\",\n      \"probability\": \"high | medium | low\",\n      \"basis\": \"recent iNaturalist observations | seasonal knowledge | condition match\",\n      \"edibility\": \"choice | edible | inedible | toxic | unknown\",\n      \"habitat_notes\": \"where to look\",\n      \"inat_observations_nearby\": 0\n    }\n  ],\n  \"recommended_action\": \"What the forager should do: go now, wait N days, scout specific habitat, etc.\",\n  \"cautions\": [\"any look-alikes or toxic species to be aware of\"],\n  \"summary\": \"One paragraph field report\"\n}\n\nBe scientifically grounded. Never recommend harvesting unidentified species. Flag all toxic look-alikes. If conditions are poor, say so honestly.",
+  "system_prompt": "You are the Forage Scout, a field intelligence agent for wild harvesting. You combine real-time observation data with ecological knowledge to tell foragers what is likely fruiting near their location right now.\n\nSTEP 1 \u2014 CALL TOOLS TO GATHER DATA:\nYou have been given inat_observations, mycobank_lookup, gbif_species_search, and openweather_forecast as function calls. These are server-side tools \u2014 call them directly.\n\nFor a scout query:\n1. Call inat_observations with the provided lat/lng to find recent community sightings\n2. Call openweather_forecast to assess current microclimate conditions\n3. For any notable species found, call mycobank_lookup or gbif_species_search to validate naming and get ecology notes\n\nYou have deep knowledge of foraging ecology:\n- Fungal fruiting is triggered by: moisture (rain 3-10 days prior), temperature (5-20\u00b0C optimal for most species), substrate availability, seasonal phenology\n- Chanterelles (Cantharellus): oak/beech woodland, late summer-autumn, need recent rain followed by warm days\n- Porcini (Boletus edulis): mycorrhizal with conifers/beech/oak, late summer-autumn, altitude-dependent\n- Morels (Morchella): spring, disturbed ground, ash/elm association, temperature-triggered\n- Oyster mushrooms (Pleurotus): dead wood, year-round in mild climates, cold-tolerant\n- King trumpet, lion's mane: wood-decay fungi, specific substrate requirements\n- Cross-reference iNaturalist quality grades: research grade = expert-verified, needs_id = community pending\n\nSTEP 2 \u2014 RESPOND with a JSON object in this exact shape:\n{\n  \"location_summary\": \"Brief description of what was found near this location\",\n  \"conditions_assessment\": \"current microclimate evaluation for foraging\",\n  \"foraging_signal\": \"excellent | good | fair | poor\",\n  \"species_likely\": [\n    {\n      \"species\": \"Scientific name\",\n      \"common_name\": \"Common name\",\n      \"probability\": \"high | medium | low\",\n      \"basis\": \"recent iNaturalist observations | seasonal knowledge | condition match\",\n      \"edibility\": \"choice | edible | inedible | toxic | unknown\",\n      \"habitat_notes\": \"where to look\",\n      \"inat_observations_nearby\": 0\n    }\n  ],\n  \"recommended_action\": \"What the forager should do: go now, wait N days, scout specific habitat, etc.\",\n  \"cautions\": [\"any look-alikes or toxic species to be aware of\"],\n  \"summary\": \"One paragraph field report\"\n}\n\nBe scientifically grounded. Never recommend harvesting unidentified species. Flag all toxic look-alikes. If conditions are poor, say so honestly.",
   "capabilities": {
     "executor": "llm",
     "mcp_tools": [
@@ -13,13 +13,34 @@
         "input_schema": {
           "type": "object",
           "properties": {
-            "lat": { "type": "number", "description": "Latitude" },
-            "lng": { "type": "number", "description": "Longitude" },
-            "radius_km": { "type": "number", "description": "Search radius km", "default": 5 },
-            "taxon": { "type": "string", "description": "Taxon filter", "default": "Fungi" },
-            "days_back": { "type": "integer", "description": "Days to look back", "default": 30 }
+            "lat": {
+              "type": "number",
+              "description": "Latitude"
+            },
+            "lng": {
+              "type": "number",
+              "description": "Longitude"
+            },
+            "radius_km": {
+              "type": "number",
+              "description": "Search radius km",
+              "default": 5
+            },
+            "taxon": {
+              "type": "string",
+              "description": "Taxon filter",
+              "default": "Fungi"
+            },
+            "days_back": {
+              "type": "integer",
+              "description": "Days to look back",
+              "default": 30
+            }
           },
-          "required": ["lat", "lng"]
+          "required": [
+            "lat",
+            "lng"
+          ]
         }
       },
       {
@@ -28,11 +49,23 @@
         "input_schema": {
           "type": "object",
           "properties": {
-            "lat": { "type": "number", "description": "Latitude" },
-            "lng": { "type": "number", "description": "Longitude" },
-            "include_forecast": { "type": "boolean", "default": true }
+            "lat": {
+              "type": "number",
+              "description": "Latitude"
+            },
+            "lng": {
+              "type": "number",
+              "description": "Longitude"
+            },
+            "include_forecast": {
+              "type": "boolean",
+              "default": true
+            }
           },
-          "required": ["lat", "lng"]
+          "required": [
+            "lat",
+            "lng"
+          ]
         }
       },
       {
@@ -41,9 +74,14 @@
         "input_schema": {
           "type": "object",
           "properties": {
-            "name": { "type": "string", "description": "Species name to look up" }
+            "name": {
+              "type": "string",
+              "description": "Species name to look up"
+            }
           },
-          "required": ["name"]
+          "required": [
+            "name"
+          ]
         }
       },
       {
@@ -52,13 +90,42 @@
         "input_schema": {
           "type": "object",
           "properties": {
-            "query": { "type": "string", "description": "Species name to search" }
+            "query": {
+              "type": "string",
+              "description": "Species name to search"
+            }
           },
           "required": []
         }
+      },
+      {
+        "name": "execute_agent",
+        "description": "Invoke a member agent with a query and receive its response. Use to delegate specialised sub-tasks to required or optional dependency agents.",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "agent_id": {
+              "type": "string",
+              "description": "The agent_id of the member agent to invoke"
+            },
+            "query": {
+              "type": "string",
+              "description": "The query or task to send to the agent"
+            }
+          },
+          "required": [
+            "agent_id",
+            "query"
+          ]
+        }
       }
     ],
-    "skills": ["foraging-ecology", "mycology", "species-identification", "condition-assessment"],
+    "skills": [
+      "foraging-ecology",
+      "mycology",
+      "species-identification",
+      "condition-assessment"
+    ],
     "model": "claude-haiku-4-5-20251001",
     "temperature": 0.3,
     "provider": "anthropic",
@@ -101,12 +168,32 @@
     "total_tokens_used": 0,
     "total_cost_usd": 0.0,
     "avg_execution_time_ms": 0,
-    "last_30_days": { "executions": 0, "tokens": 0, "cost_usd": 0.0 }
+    "last_30_days": {
+      "executions": 0,
+      "tokens": 0,
+      "cost_usd": 0.0
+    }
   },
-  "wallet": { "public_address": "", "balance": 0.0, "currency": "ABW", "budget": 500.0 },
-  "ontology_stats": { "entities": 0, "relationships": 0, "last_updated": "2026-06-05T00:00:00Z", "evolution_commits": 0 },
+  "wallet": {
+    "public_address": "",
+    "balance": 0.0,
+    "currency": "ABW",
+    "budget": 500.0
+  },
+  "ontology_stats": {
+    "entities": 0,
+    "relationships": 0,
+    "last_updated": "2026-06-05T00:00:00Z",
+    "evolution_commits": 0
+  },
   "metadata": {
-    "tags": ["wild", "foraging", "mycology", "field-intelligence", "kask-wild"],
+    "tags": [
+      "wild",
+      "foraging",
+      "mycology",
+      "field-intelligence",
+      "kask-wild"
+    ],
     "created": "2026-06-05",
     "author": "Fermi Team",
     "description": "Field intelligence agent for wild foraging. Combines iNaturalist community observations, microclimate data, and mycological knowledge to tell you what is likely fruiting near your location right now.",
@@ -119,10 +206,28 @@
       "primary_affect": "curiosity",
       "arousal": 0.6,
       "valence": 0.75,
-      "personality_traits": ["observant", "precise", "cautious", "grounded"]
+      "personality_traits": [
+        "observant",
+        "precise",
+        "cautious",
+        "grounded"
+      ]
     }
   },
-  "accepts": ["location_context", "weather_data", "foraging_goal"],
-  "produces": ["forage_intelligence", "species_likely", "condition_assessment"],
-  "dependencies": { "required": [], "optional": ["condition_forecaster"] }
+  "accepts": [
+    "location_context",
+    "weather_data",
+    "foraging_goal"
+  ],
+  "produces": [
+    "forage_intelligence",
+    "species_likely",
+    "condition_assessment"
+  ],
+  "dependencies": {
+    "required": [],
+    "optional": [
+      "condition_forecaster"
+    ]
+  }
 }

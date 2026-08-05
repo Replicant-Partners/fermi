@@ -145,6 +145,7 @@ impl SeedData {
                 mcp_servers: Some(
                     json!([{"name": "market-data", "url": "https://api.marketdata.example"}]),
                 ),
+                mcp_tools: None,
                 description: Some("Semiconductor market analysis and forecasting".to_string()),
                 author: "fermi-lab".to_string(),
                 current_ontology_commit: None,
@@ -202,6 +203,7 @@ impl SeedData {
                     {"name": "news-feed", "url": "https://news.example"},
                     {"name": "sanctions-db", "url": "https://sanctions.example"}
                 ])),
+                mcp_tools: None,
                 description: Some(
                     "Geopolitical conflict and sanctions risk assessment".to_string(),
                 ),
@@ -258,6 +260,7 @@ impl SeedData {
                 model: "qwen-max".to_string(),
                 temperature: 0.5,
                 mcp_servers: None,
+                mcp_tools: None,
                 description: Some("Crypto and DeFi sentiment tracking".to_string()),
                 author: "community".to_string(),
                 current_ontology_commit: None,

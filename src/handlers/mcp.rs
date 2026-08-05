@@ -60,11 +60,17 @@ pub async fn mcp_agent_manifest(
         })]
     } else {
         // Each mcp_tool already has name + description + input_schema from the card
-        card.capabilities.mcp_tools.iter().map(|t| json!({
-            "name": t.name,
-            "description": t.description,
-            "inputSchema": t.input_schema,
-        })).collect()
+        card.capabilities
+            .mcp_tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "name": t.name,
+                    "description": t.description,
+                    "inputSchema": t.input_schema,
+                })
+            })
+            .collect()
     };
 
     Ok(Json(json!({
@@ -142,11 +148,17 @@ pub async fn mcp_agent_rpc(
                     }
                 })]
             } else {
-                card.capabilities.mcp_tools.iter().map(|t| json!({
-                    "name": t.name,
-                    "description": t.description,
-                    "inputSchema": t.input_schema,
-                })).collect()
+                card.capabilities
+                    .mcp_tools
+                    .iter()
+                    .map(|t| {
+                        json!({
+                            "name": t.name,
+                            "description": t.description,
+                            "inputSchema": t.input_schema,
+                        })
+                    })
+                    .collect()
             };
 
             Ok(Json(json!({
@@ -177,7 +189,11 @@ pub async fn mcp_agent_rpc(
             // fall through to the LLM execution path below.
             let db_agent = resolve_agent(&state, &agent_id).await?;
             let card = resolve_agent_card(&state, &db_agent);
-            let declares_tool = card.capabilities.mcp_tools.iter().any(|t| t.name == tool_name);
+            let declares_tool = card
+                .capabilities
+                .mcp_tools
+                .iter()
+                .any(|t| t.name == tool_name);
 
             if tool_name == "execute" || (!declares_tool && tool_name != "execute") {
                 if tool_name != "execute" {
@@ -194,7 +210,11 @@ pub async fn mcp_agent_rpc(
                     .unwrap_or("")
                     .to_string();
                 if query.is_empty() {
-                    return Ok(Json(mcp_error(rpc_id, -32602, "Missing required parameter: query")));
+                    return Ok(Json(mcp_error(
+                        rpc_id,
+                        -32602,
+                        "Missing required parameter: query",
+                    )));
                 }
                 return run_llm_execute(&state, &principal, &agent_id, &query, rpc_id).await;
             }
@@ -216,6 +236,28 @@ pub async fn mcp_agent_rpc(
                 .and_then(|v| v.as_str())
                 .map(String::from);
 
+            // Resolve this agent's remote MCP tools so a *published*
+            // remote tool is actually callable here. Without it, an agent
+            // could declare `someserver__sometool` in its published list and
+            // an external client would get `Unknown tool` — a phantom tool
+            // introduced by the very feature meant to remove them.
+            //
+            // Uses the agent owner's secret scope (not the caller's), so an
+            // external MCP client cannot borrow someone else's credential by
+            // invoking their agent.
+            let owner_secrets = crate::resolve_agent_owner_secrets(&state, &db_agent).await;
+            let remote_mcp = if card.capabilities.mcp_servers.is_empty() {
+                None
+            } else {
+                Some(Arc::new(
+                    fermi::agent_backend::mcp_client::RemoteMcpCatalogue::discover(
+                        &card.capabilities.mcp_servers,
+                        owner_secrets.as_ref(),
+                    )
+                    .await,
+                ))
+            };
+
             let tool_ctx = Arc::new(ToolContext {
                 memory_store: state.memory_store.clone(),
                 embedder: state.embedder.clone(),
@@ -231,10 +273,12 @@ pub async fn mcp_agent_rpc(
                 eval_trigger: Some(Arc::new(crate::handlers::eval::EvalTriggerImpl {
                     state: state.clone(),
                 })),
-                remote_mcp: None,
+                remote_mcp,
             });
 
-            let registry = ToolRegistry::standard();
+            // with_workspace: a card that declares a workspace tool should
+            // be able to serve it. `standard()` silently filtered those out.
+            let registry = ToolRegistry::with_workspace();
             match registry.execute(&tool_name, &arguments, &tool_ctx).await {
                 Ok(result_str) => {
                     // Try to parse as JSON for a cleaner response; fall back to text
@@ -248,7 +292,11 @@ pub async fn mcp_agent_rpc(
                         "result": { "content": [content] }
                     })))
                 }
-                Err(e) => Ok(Json(mcp_error(rpc_id, -32000, &format!("Tool error: {}", e)))),
+                Err(e) => Ok(Json(mcp_error(
+                    rpc_id,
+                    -32000,
+                    &format!("Tool error: {}", e),
+                ))),
             }
         }
 
@@ -261,7 +309,11 @@ pub async fn mcp_agent_rpc(
                 .unwrap_or("")
                 .to_string();
             if query.is_empty() {
-                return Ok(Json(mcp_error(rpc_id, -32602, "Missing required parameter: query")));
+                return Ok(Json(mcp_error(
+                    rpc_id,
+                    -32602,
+                    "Missing required parameter: query",
+                )));
             }
             run_llm_execute(&state, &principal, &agent_id, &query, rpc_id).await
         }

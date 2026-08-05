@@ -2955,6 +2955,34 @@
                 </div>
               </div>
 
+              <!-- Published Tools (MCP endpoint) -->
+              <!-- Companion to the panel above, pointing the other way: that one
+                   is which servers this agent may CALL, this one is what it
+                   PUBLISHES. Hidden until the GET confirms edit rights. -->
+              <div class="section" id="pub-tools-section" style="display:none">
+                <div class="section-title">Published Tools (MCP endpoint)</div>
+                <div style="color:var(--fg3);font-size:0.8em;margin-bottom:14px;line-height:1.5">
+                  Which tools this agent advertises over <em>its own</em> MCP endpoint, for external clients such as Claude Desktop, Cursor and Zed.<br>
+                  <span style="color:var(--gray)">An <strong style="color:var(--yellow)">export allowlist, not a capability grant.</strong> This agent already receives every platform builtin internally, whatever is checked here — unchecking a tool hides it from external MCP clients, it never takes the tool away from the agent.</span>
+                </div>
+                <div id="pub-tools-endpoint" style="display:none;margin-bottom:12px;padding:8px 10px;background:var(--bg0);border:1px solid var(--bg3);border-radius:4px"></div>
+                <div id="pub-tools-source-note" style="display:none;font-size:0.78em;line-height:1.5;margin-bottom:12px;padding:8px 10px;background:var(--bg0);border-radius:4px;border-left:2px solid var(--yellow);color:var(--fg3)"></div>
+                <div id="pub-tools-phantom" style="display:none;font-size:0.78em;line-height:1.5;margin-bottom:12px;padding:8px 10px;background:var(--bg1);border-left:2px solid var(--red);border-radius:4px;color:var(--fg3)"></div>
+                <div id="pub-tools-remote-errors" style="display:none;font-size:0.78em;line-height:1.5;margin-bottom:12px;padding:8px 10px;background:var(--bg1);border-left:2px solid var(--yellow);border-radius:4px;color:var(--fg3)"></div>
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+                  <input type="text" id="pub-tools-filter" placeholder="Filter tools by name or description…" oninput="renderPublishedToolList()"
+                    style="flex:1;min-width:180px;background:var(--bg0);border:1px solid var(--bg3);color:var(--fg1);padding:6px 8px;font-family:inherit;font-size:0.85em;box-sizing:border-box" />
+                  <span id="pub-tools-count" style="font-size:0.78em;color:var(--gray)"></span>
+                </div>
+                <div id="pub-tools-list" style="max-height:340px;overflow-y:auto;border:1px solid var(--bg3);border-radius:6px;padding:6px;background:var(--bg0);font-size:0.85em;color:var(--fg3)">Loading published tools...</div>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap">
+                  <button class="owner-btn" style="font-size:0.8em;padding:3px 10px" onclick="setPublishedToolsVisible(true)">Check shown</button>
+                  <button class="owner-btn" style="font-size:0.8em;padding:3px 10px" onclick="setPublishedToolsVisible(false)">Uncheck shown</button>
+                  <button class="owner-btn" style="border-color:var(--green);color:var(--green)" onclick="savePublishedTools('${agentId}')">Save Published Tools</button>
+                  <span id="pub-tools-save-status" style="font-size:0.8em;color:var(--gray)"></span>
+                </div>
+              </div>
+
               ${
                 status === "published"
                   ? `
@@ -3041,6 +3069,7 @@
             loadAgentWallet(agentId);
             loadOrchestras(agentId);
             loadMcpServers(agentId);
+            loadPublishedTools(agentId);
           }
         });
       }
@@ -5682,6 +5711,432 @@
           setTimeout(() => setMcpStatus("", "var(--gray)"), 3000);
         } catch (e) {
           setMcpStatus("Network error.", "var(--red)");
+        }
+      }
+
+      // ── Published Tools / MCP endpoint (Manage tab) ──────────────────
+      //
+      // The mirror image of the Remote MCP Servers panel above.
+      // `mcp_servers` is which remote servers this agent may CALL;
+      // `mcp_tools` is which tools it PUBLISHES over its own endpoint at
+      // `/mcp/agents/:agent_name`, for external clients.
+      //
+      // Critically this is an *export allowlist, not a capability grant*:
+      // every agent already receives all platform builtin tools internally
+      // regardless of this list, so no copy here may suggest that
+      // unchecking a tool removes the agent's ability to use it. Before
+      // this existed, an agent with no filesystem card published nothing
+      // and was reachable only through the catch-all `execute` endpoint.
+      //
+      // Reads `GET /api/agents/:id/published-tools`, which returns both the
+      // published names and the full menu of dispatchable ones. Writes go
+      // back through the ordinary `PUT /api/agents/:id` with a full
+      // `mcp_tools` array, so they inherit the same RBAC ladder and version
+      // bumping as every other field on this tab.
+
+      let _pubToolsAgentId = null;
+      let _pubToolsAgentName = null;
+      let _pubTools = [];
+      let _pubToolsChecked = new Set();
+      let _pubToolsPhantom = [];
+      let _pubToolsRemoteErrors = [];
+      let _pubToolsMeta = {
+        db_is_authoritative: true,
+        source: "database",
+        mcp_endpoint: "",
+      };
+
+      // Render order for the groups. Anything the API reports with an
+      // unrecognised `kind` is folded into platform by the loader, so no
+      // tool can go missing from the list just because it is new.
+      const PUB_TOOL_KINDS = [
+        ["platform", "Platform tools"],
+        ["remote", "Remote MCP tools"],
+      ];
+
+      function setPubToolsStatus(text, color) {
+        const el = document.getElementById("pub-tools-save-status");
+        if (!el) return;
+        el.style.color = color || "var(--gray)";
+        el.textContent = text;
+      }
+
+      async function loadPublishedTools(agentId) {
+        const section = document.getElementById("pub-tools-section");
+        if (!section) return;
+        _pubToolsAgentId = agentId;
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/published-tools`,
+          );
+          if (res.status === 403 || res.status === 404) {
+            // Same rule as the servers panel: without edit rights every
+            // control here would fail, so stay hidden rather than tease.
+            section.style.display = "none";
+            return;
+          }
+          section.style.display = "";
+          const listEl = document.getElementById("pub-tools-list");
+          if (!res.ok) {
+            listEl.innerHTML = `<span style="color:var(--red)">Failed to load: ${escapeHtml(await res.text())}</span>`;
+            return;
+          }
+          const data = await res.json();
+          _pubToolsAgentName = data.agent_name || null;
+          _pubToolsMeta = {
+            db_is_authoritative: !!data.db_is_authoritative,
+            source: data.source || "database",
+            mcp_endpoint: data.mcp_endpoint || "",
+          };
+          _pubTools = (data.available || []).map((t) => ({
+            name: t.name || "",
+            description: t.description || "",
+            // Held verbatim so the save can echo it straight back. A schema
+            // we invented here would publish a contract the dispatcher
+            // never agreed to honour.
+            input_schema: t.input_schema == null ? null : t.input_schema,
+            requires_workspace: !!t.requires_workspace,
+            is_delegation: !!t.is_delegation,
+            kind: t.kind === "remote" ? "remote" : "platform",
+          }));
+          // Pre-checked from each entry's own `published` flag rather than
+          // by intersecting the `published` array, so a name the API could
+          // not account for stays out of the checkbox state entirely and is
+          // reported as a phantom instead.
+          _pubToolsChecked = new Set(
+            (data.available || [])
+              .filter((t) => t.published)
+              .map((t) => t.name || ""),
+          );
+          _pubToolsPhantom = data.phantom || [];
+          _pubToolsRemoteErrors = data.remote_discovery_errors || [];
+          renderPublishedTools();
+        } catch (e) {
+          section.style.display = "";
+          const listEl = document.getElementById("pub-tools-list");
+          if (listEl)
+            listEl.innerHTML = `<span style="color:var(--red)">Network error: ${escapeHtml(e.message)}</span>`;
+        }
+      }
+
+      function renderPublishedTools() {
+        renderPubToolsEndpoint();
+        renderPubToolsSourceNote();
+        renderPubToolsPhantom();
+        renderPubToolsRemoteErrors();
+        renderPublishedToolList();
+      }
+
+      // The one string an operator actually copies out of this page, so it
+      // is shown absolute: the origin is the only part the backend cannot
+      // know, and a bare path is not pasteable into an MCP client.
+      function renderPubToolsEndpoint() {
+        const el = document.getElementById("pub-tools-endpoint");
+        if (!el) return;
+        if (!_pubToolsMeta.mcp_endpoint) {
+          el.style.display = "none";
+          el.innerHTML = "";
+          return;
+        }
+        const abs = pubToolsEndpointUrl();
+        el.style.display = "";
+        el.innerHTML =
+          `<div style="font-size:0.7em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">MCP endpoint</div>` +
+          `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">` +
+          `<code style="flex:1;min-width:200px;font-family:'JetBrains Mono',monospace;font-size:0.95em;color:var(--aqua);word-break:break-all">${escapeHtml(abs)}</code>` +
+          `<button class="owner-btn" style="font-size:0.8em;padding:3px 10px" onclick="copyPubToolsEndpoint()">Copy</button>` +
+          `<span id="pub-tools-copy-status" style="font-size:0.78em;color:var(--gray)"></span>` +
+          `</div>` +
+          `<div style="font-size:0.72em;color:var(--fg4);margin-top:6px;line-height:1.5">Paste into an MCP client. GET returns the manifest of the tools checked below; POST is the JSON-RPC dispatcher that runs them.</div>`;
+      }
+
+      function pubToolsEndpointUrl() {
+        return window.location.origin + (_pubToolsMeta.mcp_endpoint || "");
+      }
+
+      function copyPubToolsEndpoint() {
+        const el = document.getElementById("pub-tools-copy-status");
+        const done = (ok) => {
+          if (!el) return;
+          el.style.color = ok ? "var(--green)" : "var(--red)";
+          el.textContent = ok ? "Copied." : "Copy blocked — select it manually.";
+          setTimeout(() => {
+            el.textContent = "";
+          }, 2500);
+        };
+        // Clipboard access is origin- and permission-gated; failing loudly
+        // beats leaving the operator thinking they hold the URL.
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(pubToolsEndpointUrl()).then(
+            () => done(true),
+            () => done(false),
+          );
+        } else {
+          done(false);
+        }
+      }
+
+      function renderPubToolsSourceNote() {
+        const note = document.getElementById("pub-tools-source-note");
+        if (!note) return;
+        if (_pubToolsMeta.db_is_authoritative) {
+          note.style.display = "none";
+          note.innerHTML = "";
+          return;
+        }
+        note.style.display = "";
+        const takeover =
+          `Saving copies this list into the database, which becomes authoritative from that point on — later edits to the card file will no longer take effect.`;
+        if (_pubToolsChecked.size > 0 || _pubToolsPhantom.length > 0) {
+          note.innerHTML =
+            `<strong style="color:var(--yellow)">Inherited from this agent's card file</strong> (<code>source: ${escapeHtml(_pubToolsMeta.source)}</code>). Nothing is stored in the database yet.<br>` +
+            takeover;
+        } else {
+          // No card file and no DB row: this is the historical default, and
+          // the reason the catch-all endpoint exists at all.
+          note.innerHTML =
+            `<strong style="color:var(--yellow)">Publishing nothing today</strong> (<code>source: ${escapeHtml(_pubToolsMeta.source)}</code>). External clients can only reach this agent through the catch-all <code>execute</code> tool, which takes a prose query.<br>` +
+            takeover;
+        }
+      }
+
+      // Published names that resolve to no dispatch arm. These are already
+      // advertised in the manifest and already answer `Unknown tool` when
+      // called, so this is an error state, not a warning. They cannot be
+      // re-sent either — the PUT validates every name — so the only cure is
+      // a save, which drops them.
+      function renderPubToolsPhantom() {
+        const el = document.getElementById("pub-tools-phantom");
+        if (!el) return;
+        if (!_pubToolsPhantom.length) {
+          el.style.display = "none";
+          el.innerHTML = "";
+          return;
+        }
+        const n = _pubToolsPhantom.length;
+        const plural = n === 1 ? "" : "s";
+        const chips = _pubToolsPhantom
+          .map(
+            (name) =>
+              `<span style="background:var(--bg2);color:var(--red);border:1px solid var(--bg3);border-radius:3px;padding:1px 6px;font-family:'JetBrains Mono',monospace;font-size:0.9em">${escapeHtml(name)}</span>`,
+          )
+          .join("");
+        el.style.display = "";
+        el.innerHTML =
+          `<div style="color:var(--red);font-weight:600;margin-bottom:5px">${n} phantom tool${plural} published</div>` +
+          `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px">${chips}</div>` +
+          `<div>Advertised on the endpoint but resolving to nothing, so any client that calls ${n === 1 ? "it" : "them"} gets <code>Unknown tool</code> back. ${n === 1 ? "It is" : "They are"} absent from the list below and cannot be re-sent — the backend rejects undispatchable names — so saving removes ${n === 1 ? "it" : "them"}.</div>` +
+          `<div style="margin-top:7px"><button class="owner-btn danger" style="font-size:0.8em;padding:3px 10px" onclick="savePublishedTools(_pubToolsAgentId)">Remove phantom tool${plural} (saves the list below)</button></div>`;
+      }
+
+      // A server whose discovery failed contributes no rows to the list, so
+      // without this the operator would just see its tools missing with no
+      // explanation. Almost always a credential, which is fixed in the
+      // panel above rather than here.
+      function renderPubToolsRemoteErrors() {
+        const el = document.getElementById("pub-tools-remote-errors");
+        if (!el) return;
+        if (!_pubToolsRemoteErrors.length) {
+          el.style.display = "none";
+          el.innerHTML = "";
+          return;
+        }
+        const n = _pubToolsRemoteErrors.length;
+        const rows = _pubToolsRemoteErrors
+          .map(
+            (e) =>
+              `<div style="margin-bottom:3px"><code style="font-family:'JetBrains Mono',monospace;color:var(--fg1)">${escapeHtml(e.server || "(unnamed server)")}</code> <span style="color:var(--fg4)">—</span> ${escapeHtml(e.error || "discovery failed")}</div>`,
+          )
+          .join("");
+        el.style.display = "";
+        el.innerHTML =
+          `<div style="color:var(--yellow);font-weight:600;margin-bottom:5px">${n} remote server${n === 1 ? "" : "s"} failed discovery</div>` +
+          rows +
+          `<div style="margin-top:6px">Their tools cannot be listed or published until discovery succeeds — usually a missing credential, which is stored in <strong>Remote MCP Servers</strong> above. Fix it there, then reopen this tab.</div>`;
+      }
+
+      function pubToolsQuery() {
+        const el = document.getElementById("pub-tools-filter");
+        return ((el && el.value) || "").trim().toLowerCase();
+      }
+
+      function pubToolMatches(t, q) {
+        return (
+          !q ||
+          t.name.toLowerCase().includes(q) ||
+          t.description.toLowerCase().includes(q)
+        );
+      }
+
+      function pubToolsGroupCount(all, hits, q) {
+        const pub = all.filter((t) => _pubToolsChecked.has(t.name)).length;
+        return (
+          `${pub} of ${all.length} published` +
+          (q ? ` · ${hits.length} shown` : "")
+        );
+      }
+
+      function renderPublishedToolList() {
+        const listEl = document.getElementById("pub-tools-list");
+        if (!listEl) return;
+        if (!_pubTools.length) {
+          listEl.innerHTML = `<em style="color:var(--fg4)">No dispatchable tools reported.</em>`;
+          updatePubToolsCount();
+          return;
+        }
+
+        const q = pubToolsQuery();
+        let html = "";
+        for (const [kind, label] of PUB_TOOL_KINDS) {
+          const all = _pubTools.filter((t) => t.kind === kind);
+          // An empty group is dropped entirely — most agents declare no
+          // remote servers, and a permanently empty heading is noise.
+          if (!all.length) continue;
+          const hits = all.filter((t) => pubToolMatches(t, q));
+          html +=
+            `<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:7px 4px 4px;border-bottom:1px solid var(--bg3);margin-bottom:4px">` +
+            `<span style="font-size:0.72em;color:var(--gray);text-transform:uppercase;letter-spacing:0.05em">${escapeHtml(label)}</span>` +
+            `<span id="pub-tools-group-count-${kind}" style="font-size:0.72em;color:var(--fg4);white-space:nowrap">${pubToolsGroupCount(all, hits, q)}</span>` +
+            `</div>`;
+          html += hits.length
+            ? hits.map(pubToolRow).join("")
+            : `<div style="padding:4px 6px;font-size:0.78em;color:var(--fg4)"><em>Nothing matches the filter in this group.</em></div>`;
+        }
+        listEl.innerHTML = html;
+        updatePubToolsCount();
+      }
+
+      function pubToolRow(t) {
+        // Both flags carry a caveat worth reading before exposing the tool
+        // to an anonymous client, so each gets a pill and a one-line reason.
+        const pills = [];
+        if (t.is_delegation) pills.push(mcpPill("DELEGATION", "var(--purple)"));
+        if (t.requires_workspace)
+          pills.push(mcpPill("NEEDS WORKSPACE", "var(--yellow)"));
+        const caveats = [];
+        if (t.is_delegation)
+          caveats.push(
+            "Invokes other agents when called, spending their budget.",
+          );
+        if (t.requires_workspace)
+          caveats.push(
+            "Needs workspace context in the call params — an unauthenticated client cannot use it.",
+          );
+
+        // `value` carries the name so the handler never has to be quoted
+        // into an inline attribute.
+        return `
+          <label style="display:flex;align-items:flex-start;gap:8px;padding:5px 6px;border-radius:4px;cursor:pointer">
+            <input type="checkbox" class="pub-tool-cb" value="${escAttr(t.name)}" ${_pubToolsChecked.has(t.name) ? "checked" : ""}
+              onchange="togglePublishedTool(this.value, this.checked)"
+              style="margin-top:3px;flex:none;accent-color:var(--green)" />
+            <span style="flex:1;min-width:0">
+              <span style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                <code style="font-family:'JetBrains Mono',monospace;font-size:0.95em;color:var(--fg1)">${escapeHtml(t.name)}</code>
+                ${pills.join("")}
+              </span>
+              ${t.description ? `<span style="display:block;font-size:0.78em;color:var(--fg3);line-height:1.4">${escapeHtml(t.description)}</span>` : ""}
+              ${caveats.length ? `<span style="display:block;font-size:0.72em;color:var(--yellow);line-height:1.4">${escapeHtml(caveats.join(" "))}</span>` : ""}
+            </span>
+          </label>`;
+      }
+
+      function togglePublishedTool(name, checked) {
+        if (checked) _pubToolsChecked.add(name);
+        else _pubToolsChecked.delete(name);
+        // Only the counters move. Re-rendering the list would throw away
+        // scroll position and focus in the middle of triaging ~70
+        // checkboxes, so the DOM is left alone.
+        updatePubToolsCount();
+      }
+
+      function updatePubToolsCount() {
+        const q = pubToolsQuery();
+        let shown = 0;
+        for (const [kind] of PUB_TOOL_KINDS) {
+          const all = _pubTools.filter((t) => t.kind === kind);
+          const hits = all.filter((t) => pubToolMatches(t, q));
+          shown += hits.length;
+          const el = document.getElementById(`pub-tools-group-count-${kind}`);
+          if (el) el.textContent = pubToolsGroupCount(all, hits, q);
+        }
+        const countEl = document.getElementById("pub-tools-count");
+        if (!countEl) return;
+        const n = _pubToolsChecked.size;
+        countEl.innerHTML = n
+          ? `${n} checked to publish · ${shown} of ${_pubTools.length} shown`
+          : `<span style="color:var(--yellow)">Nothing checked</span> — the endpoint falls back to the catch-all <code>execute</code> tool · ${shown} of ${_pubTools.length} shown`;
+      }
+
+      function setPublishedToolsVisible(checked) {
+        const boxes = document.querySelectorAll("#pub-tools-list .pub-tool-cb");
+        if (!boxes.length) return;
+        // Deliberately scoped to what the filter is showing, so a bulk
+        // action can never silently touch a tool the operator cannot see.
+        boxes.forEach((b) => {
+          b.checked = checked;
+          if (checked) _pubToolsChecked.add(b.value);
+          else _pubToolsChecked.delete(b.value);
+        });
+        updatePubToolsCount();
+        setPubToolsStatus(
+          `${boxes.length} shown tool${boxes.length === 1 ? "" : "s"} ${checked ? "checked" : "unchecked"}. Press Save Published Tools to persist.`,
+          "var(--yellow)",
+        );
+      }
+
+      async function savePublishedTools(agentId) {
+        // Description and input_schema are echoed back from the matching
+        // `available` entry. Composing our own would advertise a contract
+        // the dispatcher does not implement.
+        const wire = _pubTools
+          .filter((t) => _pubToolsChecked.has(t.name))
+          .map((t) => ({
+            name: t.name,
+            description: t.description,
+            input_schema: t.input_schema,
+          }));
+
+        if (
+          wire.length === 0 &&
+          !confirm(
+            "Publish no tools?\n\nThis records an empty list in the database, overriding any list in the agent's card file. The MCP endpoint then falls back to the single catch-all 'execute' tool, which takes a prose query.\n\nThe agent keeps every platform builtin internally either way — this only changes what external MCP clients can see.",
+          )
+        )
+          return;
+        if (
+          !_pubToolsMeta.db_is_authoritative &&
+          wire.length > 0 &&
+          !confirm(
+            "This list is currently inherited from the agent's card file.\n\nSaving copies it into the database, which becomes authoritative from now on — later edits to the card file will no longer take effect.",
+          )
+        )
+          return;
+
+        setPubToolsStatus("Saving…", "var(--fg3)");
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}`,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ mcp_tools: wire }),
+            },
+          );
+          if (!res.ok) {
+            // A 400 body names each offending tool and why it is not
+            // dispatchable. That detail is the only actionable part, so it
+            // is shown verbatim rather than paraphrased.
+            setPubToolsStatus("Error: " + (await res.text()), "var(--red)");
+            return;
+          }
+          // Re-read so the published flags, phantom list and
+          // db_is_authoritative reflect what was actually stored.
+          await loadPublishedTools(agentId);
+          setPubToolsStatus("Saved.", "var(--green)");
+          setTimeout(() => setPubToolsStatus("", "var(--gray)"), 3000);
+        } catch (e) {
+          setPubToolsStatus("Network error.", "var(--red)");
         }
       }
     </script>

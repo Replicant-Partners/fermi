@@ -956,6 +956,7 @@ mod tests {
             model: "test-model".to_string(),
             temperature: 0.3,
             mcp_servers: None,
+            mcp_tools: None,
             description: None,
             author: "test".to_string(),
             current_ontology_commit: None,
