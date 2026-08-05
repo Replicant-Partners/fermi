@@ -851,18 +851,47 @@ pub async fn withdraw_orchestra_request_handler(
 // Called from execute_agent_handler and execute_agent_stream_handler.
 // Non-strategist agents pass through unchanged.
 
-/// Names that trigger roster injection. Kept in sync with the
-/// strategist_agent_name entries in the ORCHESTRAS const above.
-const STRATEGIST_AGENTS: &[(&str, &str)] = &[
-    ("fermi", "orchestra_fermi_members"),
-    // `xaman_ek` intentionally skipped: it has 100+ members and its
-    // own list_agents tool for catalogue queries. Injecting the full
-    // roster into every invocation is prompt-token wasteful. Add
-    // here when we build a compact per-tier / per-tag digest view.
-];
+/// Injection strategy per strategist. Small orchestras get a full
+/// per-member roster; large orchestras get a per-tier digest so the
+/// prompt-token budget doesn't blow up as the catalogue grows.
+enum InjectionStrategy {
+    /// One line per member with `agent_type` and a short description.
+    /// Suitable up to ~30 members (±1k tokens).
+    FullRoster { view: &'static str },
+    /// Per-tier counts + N exemplar names per tier, plus a nudge to
+    /// use `list_agents` for anything not in the digest. Bounded
+    /// regardless of catalogue size.
+    TierDigest {
+        view: &'static str,
+        exemplars_per_tier: usize,
+    },
+}
 
-/// Mutates `card.system_prompt` to append a live-roster block if the
-/// agent is a known strategist. Returns the (possibly mutated) card.
+/// Strategist agents that get roster context injected into their
+/// system prompt at execute time. Kept in sync with the
+/// strategist_agent_name entries in the ORCHESTRAS const above.
+///
+/// - `fermi` gets a full roster (small, curated, structural).
+/// - `xaman_ek` gets a tier digest (large, open, ontological).
+fn strategist_injection(agent_id: &str) -> Option<InjectionStrategy> {
+    match agent_id {
+        "fermi" => Some(InjectionStrategy::FullRoster {
+            view: "orchestra_fermi_members",
+        }),
+        "xaman_ek" => Some(InjectionStrategy::TierDigest {
+            view: "orchestra_xaman_ek_members",
+            // 8 names per tier keeps the block ~500 tokens even at
+            // 500+ members. `list_agents` handles anything beyond
+            // the digest.
+            exemplars_per_tier: 8,
+        }),
+        _ => None,
+    }
+}
+
+/// Mutates `card.system_prompt` to append a roster/digest block if
+/// the agent is a known strategist. Returns the (possibly mutated)
+/// card.
 ///
 /// Never fails: if the DB query errors out, we log and return the
 /// card unchanged. A missing roster is far better than a failed
@@ -871,18 +900,41 @@ pub async fn inject_orchestra_context(
     db: &sqlx::PgPool,
     mut card: fermi::agent_backend::AgentCard,
 ) -> fermi::agent_backend::AgentCard {
-    let Some((_, view_name)) = STRATEGIST_AGENTS
-        .iter()
-        .find(|(name, _)| *name == card.agent_id.as_str())
-    else {
+    let Some(strategy) = strategist_injection(card.agent_id.as_str()) else {
         return card;
     };
 
+    let block_opt = match strategy {
+        InjectionStrategy::FullRoster { view } => {
+            build_full_roster_block(db, &card.agent_id, view).await
+        }
+        InjectionStrategy::TierDigest {
+            view,
+            exemplars_per_tier,
+        } => build_tier_digest_block(db, &card.agent_id, view, exemplars_per_tier).await,
+    };
+
+    let Some(block) = block_opt else {
+        return card;
+    };
+
+    // Append; don't replace. The curated prompt has the strategist's
+    // methodology and output shape — the roster is context added to
+    // that. If the card has no system prompt at all (unusual for a
+    // strategist), the roster still lands as the whole prompt.
+    let existing = card.system_prompt.clone().unwrap_or_default();
+    card.system_prompt = Some(format!("{}{}", existing, block));
+
+    card
+}
+
+/// Full-roster block: one line per member. See `FullRoster`.
+async fn build_full_roster_block(db: &sqlx::PgPool, agent_id: &str, view: &str) -> Option<String> {
     let rows = match sqlx::query(&format!(
         "SELECT agent_name, agent_type, description \
            FROM public.{} \
           ORDER BY agent_name",
-        view_name
+        view
     ))
     .fetch_all(db)
     .await
@@ -890,22 +942,19 @@ pub async fn inject_orchestra_context(
         Ok(rows) => rows,
         Err(e) => {
             eprintln!(
-                "[orchestras] roster injection failed for {}: {} — continuing with static prompt",
-                card.agent_id, e
+                "[orchestras] full-roster injection failed for {}: {} — continuing with static prompt",
+                agent_id, e
             );
-            return card;
+            return None;
         }
     };
 
     if rows.is_empty() {
         // No approved members yet. Skip injection rather than emit
         // an empty roster block (which would just confuse the LLM).
-        return card;
+        return None;
     }
 
-    // Build the roster block. Format is compact so it doesn't
-    // dominate the strategist's prompt token budget — one line per
-    // member with agent_type + short description.
     let mut block = String::from(
         "\n\n## CURRENT ROSTER (dynamic, v0.11.3+)\n\n\
          You are the strategist of this orchestra. The following members are \
@@ -931,17 +980,257 @@ pub async fn inject_orchestra_context(
         block.push_str(&format!("- `{}` ({}) — {}\n", name, agent_type, short_desc));
     }
 
-    // Append; don't replace. The curated prompt has the strategist's
-    // methodology and output shape — the roster is context added to
-    // that. If the card has no system prompt at all (unusual for a
-    // strategist), the roster still lands as the whole prompt.
-    let existing = card.system_prompt.clone().unwrap_or_default();
-    card.system_prompt = Some(format!("{}{}", existing, block));
-
-    card
+    Some(block)
 }
 
-// ═══════════════════════════════════════════════════════════════════
+/// Tier-digest block: per-tier counts + N exemplar names per tier,
+/// plus a nudge to use `list_agents` for anything not shown. See
+/// `TierDigest`.
+///
+/// Bounded output: regardless of catalogue size, the block is roughly
+/// (n_tiers * (exemplars_per_tier + 2 lines of context)) — typically
+/// well under 500 tokens.
+async fn build_tier_digest_block(
+    db: &sqlx::PgPool,
+    agent_id: &str,
+    view: &str,
+    exemplars_per_tier: usize,
+) -> Option<String> {
+    // One query, one round-trip: aggregate counts + top-N exemplar
+    // names per tier via a windowed subselect. `array_agg` respects
+    // the FILTER clause, so we get exactly the first N alphabetical
+    // names per tier without post-processing in Rust.
+    //
+    // ORDER BY agent_name is deterministic and human-scannable.
+    // A future refinement can order by total_executions once the
+    // xaman_ek view exposes it.
+    let sql = format!(
+        "SELECT tier, \
+                COUNT(*) AS n_total, \
+                array_agg(agent_name ORDER BY agent_name) \
+                    FILTER (WHERE rn <= $1) AS exemplars \
+           FROM (SELECT tier, agent_name, \
+                        row_number() OVER (PARTITION BY tier ORDER BY agent_name) AS rn \
+                   FROM public.{}) t \
+          GROUP BY tier \
+          ORDER BY \
+            CASE tier \
+              WHEN 'system'    THEN 0 \
+              WHEN 'curated'   THEN 1 \
+              WHEN 'community' THEN 2 \
+              ELSE 3 \
+            END, tier",
+        view
+    );
+
+    let rows = match sqlx::query(&sql)
+        .bind(exemplars_per_tier as i64)
+        .fetch_all(db)
+        .await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            eprintln!(
+                "[orchestras] tier-digest injection failed for {}: {} — continuing with static prompt",
+                agent_id, e
+            );
+            return None;
+        }
+    };
+
+    if rows.is_empty() {
+        return None;
+    }
+
+    // Compute the grand total for the header line.
+    let n_total: i64 = rows
+        .iter()
+        .map(|r| r.try_get::<i64, _>("n_total").unwrap_or(0))
+        .sum();
+
+    let mut block = format!(
+        "\n\n## CATALOGUE DIGEST (dynamic, v0.11.3+)\n\n\
+         You are the platform navigator. The Bestiary currently has \
+         {} published agents across the tiers below. Per-tier counts \
+         plus a small alphabetical sample of names are shown so you \
+         can answer catalogue-shape questions inline. For any \
+         specific agent or capability not visible in this digest, \
+         use your `list_agents` tool — don't guess or invent names.\n\n",
+        n_total
+    );
+
+    for row in &rows {
+        let tier: String = row.try_get("tier").unwrap_or_default();
+        let n: i64 = row.try_get("n_total").unwrap_or(0);
+        let names: Vec<String> = row
+            .try_get::<Vec<String>, _>("exemplars")
+            .unwrap_or_default();
+        let sample = names.join(", ");
+        let overflow = (n as usize).saturating_sub(names.len());
+        let overflow_str = if overflow > 0 {
+            format!(" (+{} more)", overflow)
+        } else {
+            String::new()
+        };
+        block.push_str(&format!(
+            "- **{}** ({} agents): {}{}\n",
+            tier, n, sample, overflow_str
+        ));
+    }
+
+    Some(block)
+}
+
+// ════════════════════════════════════════════════════════════════
+// v0.11.3-follow-up — Manager-effect readout
+// ════════════════════════════════════════════════════════════════
+//
+// GET /api/orchestras/:name/manager-effect
+//
+// Returns the strategist's public track record: aggregate Brier and
+// counterfactual Brier over resolved forecasts that used the
+// strategist, plus the last N rows for a timeline chart. The
+// per-forecast `manager_effect = brier_score - counterfactual_brier`
+// is the roster-orthogonal signal defined by the football-manager
+// model.
+//
+// Only meaningful for strategist orchestras (fermi). Anonymous-
+// visible — leaderboards are public-facing.
+
+#[derive(Deserialize)]
+pub struct ManagerEffectQuery {
+    /// Cap on the returned forecast rows. Default 50, hard max 200.
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+pub async fn orchestra_manager_effect_handler(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Query(q): Query<ManagerEffectQuery>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let spec = orchestra_by_name(&name).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("Unknown orchestra: {}", name),
+        )
+    })?;
+    let strategist = spec.strategist_agent_name.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Orchestra '{}' has no strategist — manager-effect is undefined",
+                name
+            ),
+        )
+    })?;
+
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+
+    // Aggregate row. Both averages are over the same predicate
+    // (resolved forecasts that used the strategist), so counts and
+    // NULL handling stay consistent. `n_with_counterfactual` <=
+    // `n_resolved` because pre-v0.11.3-follow-up forecasts and
+    // drafts saved before base-rate research populate NULL.
+    let agg_row = sqlx::query(
+        r#"SELECT
+             COUNT(*) FILTER (WHERE brier_score IS NOT NULL)             AS n_resolved,
+             COUNT(*) FILTER (WHERE counterfactual_brier IS NOT NULL)    AS n_with_counterfactual,
+             AVG(brier_score)::float8                                    AS mean_brier,
+             AVG(counterfactual_brier)::float8                           AS mean_counterfactual,
+             AVG(brier_score - counterfactual_brier)
+                 FILTER (WHERE counterfactual_brier IS NOT NULL)::float8 AS mean_manager_effect
+           FROM public.fermi_forecasts
+          WHERE status = 'resolved'
+            AND brier_score IS NOT NULL
+            AND agents_used @> jsonb_build_array(
+                    jsonb_build_object('agent_name', $1::text))"#,
+    )
+    .bind(strategist)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let n_resolved: i64 = agg_row.try_get("n_resolved").unwrap_or(0);
+    let n_with_counterfactual: i64 = agg_row.try_get("n_with_counterfactual").unwrap_or(0);
+    let mean_brier: Option<f64> = agg_row.try_get("mean_brier").ok().flatten();
+    let mean_counterfactual: Option<f64> = agg_row.try_get("mean_counterfactual").ok().flatten();
+    let mean_manager_effect: Option<f64> = agg_row.try_get("mean_manager_effect").ok().flatten();
+
+    // Timeline rows — resolved forecasts, most recent first. We
+    // include NULL-counterfactual rows so the client can render
+    // brier-only history for pre-v0.11.3-follow-up data with a
+    // "cf: n/a" marker; charts filter to rows where both fields
+    // exist.
+    let rows = sqlx::query(
+        r#"SELECT id::text                       AS id,
+                  question_text,
+                  predicted_probability,
+                  counterfactual_probability,
+                  actual_outcome,
+                  brier_score,
+                  counterfactual_brier,
+                  resolved_at
+             FROM public.fermi_forecasts
+            WHERE status = 'resolved'
+              AND brier_score IS NOT NULL
+              AND agents_used @> jsonb_build_array(
+                      jsonb_build_object('agent_name', $1::text))
+            ORDER BY resolved_at DESC
+            LIMIT $2"#,
+    )
+    .bind(strategist)
+    .bind(limit)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let forecasts: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            // Compute manager_effect out of the json! macro — same
+            // reason as get_forecast_handler in forecasts.rs.
+            let brier: Option<f64> = r
+                .try_get::<Option<f32>, _>("brier_score")
+                .ok()
+                .flatten()
+                .map(|v| v as f64);
+            let cf_brier: Option<f64> = r
+                .try_get::<Option<f32>, _>("counterfactual_brier")
+                .ok()
+                .flatten()
+                .map(|v| v as f64);
+            let manager_effect: Option<f64> = match (brier, cf_brier) {
+                (Some(b), Some(c)) => Some(b - c),
+                _ => None,
+            };
+            json!({
+                "id":                          r.try_get::<String, _>("id").ok(),
+                "question_text":               r.try_get::<String, _>("question_text").ok(),
+                "predicted_probability":       r.try_get::<Option<f32>, _>("predicted_probability").ok().flatten().map(|v| v as f64),
+                "counterfactual_probability":  r.try_get::<Option<f32>, _>("counterfactual_probability").ok().flatten().map(|v| v as f64),
+                "actual_outcome":              r.try_get::<Option<bool>, _>("actual_outcome").ok().flatten(),
+                "brier_score":                 brier,
+                "counterfactual_brier":        cf_brier,
+                "manager_effect":              manager_effect,
+                "resolved_at":                 r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("resolved_at").ok().flatten().map(|d| d.to_rfc3339()),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "orchestra":              name,
+        "strategist":             strategist,
+        "n_resolved":             n_resolved,
+        "n_with_counterfactual":  n_with_counterfactual,
+        "mean_brier":             mean_brier,
+        "mean_counterfactual":    mean_counterfactual,
+        "mean_manager_effect":    mean_manager_effect,
+        "forecasts":              forecasts,
+    })))
+}
+
+// ════════════════════════════════════════════════════════════════
 // Helpers
 // ═══════════════════════════════════════════════════════════════════
 

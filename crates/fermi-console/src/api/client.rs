@@ -223,6 +223,27 @@ pub struct ForecastListResponse {
 pub struct CreateForecastRequest {
     pub question_text: String,
     pub predicted_probability: f64,
+    /// v0.11.4: naive-baseline counterfactual probability.
+    ///
+    /// What a naive baseline model (the raw reference-class base
+    /// rate, before any Fermi/specialist adjustments) would have
+    /// predicted for the same question. The server persists this
+    /// verbatim and, at resolution, computes
+    /// `counterfactual_brier = (cf_prob - outcome)^2`, exposing
+    /// `manager_effect = brier - counterfactual_brier` — the
+    /// football-manager metric that separates roster-locked team
+    /// performance from roster-orthogonal manager skill.
+    ///
+    /// **POST-only.** The counterfactual is defined at
+    /// forecast-creation-time and is not updated on PUT. If the
+    /// base rate wasn't known when the operator first saved, this
+    /// field stays `NULL` and the manager-effect delta stays
+    /// unavailable for that row — an honest gap, not a bug.
+    ///
+    /// Range: `[0, 1]`. Server enforces via `CHECK` constraint
+    /// (v0.11.3). Client should clamp defensively before send.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub counterfactual_probability: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

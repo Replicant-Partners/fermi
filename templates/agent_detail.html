@@ -1033,6 +1033,42 @@
                     </div>
                   </div>
 
+                  <!--
+                    v0.11.3-follow-up: Manager Effect section.
+
+                    Only rendered for strategist agents (currently
+                    only `fermi`). The football-manager metric — team
+                    Brier vs naive-baseline (counterfactual) Brier —
+                    separates roster-locked performance from the
+                    strategist's roster-orthogonal synthesis skill.
+                    Data source: GET /api/orchestras/:name/manager-effect.
+
+                    Hidden by default; populated by
+                    `loadManagerEffect` after agent load if agent_name
+                    matches a known strategist. See main script block.
+                  -->
+                  <div class="section" id="manager-effect-section" style="display:none">
+                    <div class="section-title">
+                      Manager Effect
+                      <span style="color:var(--fg3);font-size:0.75em;font-weight:normal;margin-left:8px">
+                        team Brier vs naive baseline
+                      </span>
+                    </div>
+                    <p style="color:var(--fg3);font-size:0.85rem;margin:0 0 12px 0">
+                      Each resolved forecast produces a Brier score
+                      (lower is better). The counterfactual is what
+                      the raw reference-class base rate alone would
+                      have scored on the same outcome. <b>Manager
+                      effect</b> = <code>team Brier − counterfactual
+                      Brier</code>. Negative = the strategist beat
+                      the naive baseline; positive = the baseline
+                      would have done better.
+                    </p>
+                    <div id="manager-effect-summary" class="stats-grid"></div>
+                    <div id="manager-effect-chart-wrap" style="margin-top:14px"></div>
+                    <div id="manager-effect-recent" style="margin-top:14px"></div>
+                  </div>
+
                   <div class="section">
                     <div class="section-title">Configuration</div>
                     <div class="field-grid">
@@ -1399,6 +1435,16 @@
 
       loadAgentDetail().then(() => {
         initCognitionCanvases();
+        // v0.11.3-follow-up: strategist agents (currently only
+        // `fermi`) get the Manager Effect readout on the Overview
+        // tab. Kept in sync with STRATEGIST_AGENTS in
+        // handlers/orchestras.rs.
+        const STRATEGIST_ORCHESTRAS = { fermi: "fermi" };
+        const agentName = _agentData?.agent_name || _agentData?.name;
+        const orchestra = STRATEGIST_ORCHESTRAS[agentName];
+        if (orchestra) {
+          loadManagerEffect(orchestra);
+        }
         // Render mermaid workflow diagram if present
         const mermaidEl = document.getElementById("workflow-mermaid");
         if (mermaidEl && typeof mermaid !== "undefined") {
@@ -1420,6 +1466,210 @@
           mermaid.run({ nodes: [mermaidEl] });
         }
       });
+
+      // v0.11.3-follow-up: Manager Effect loader for strategists.
+      //
+      // Fetches aggregate + per-forecast Brier / counterfactual Brier
+      // from GET /api/orchestras/:name/manager-effect, then renders
+      // three chunks into #manager-effect-section:
+      //   * a stats-grid summary (N resolved, mean Brier, mean
+      //     counterfactual, mean delta)
+      //   * a delta bar chart (SVG, one bar per resolved forecast;
+      //     green below zero = strategist beat baseline)
+      //   * a compact recent-forecasts table
+      //
+      // Silent-hide on error or empty data — the section only appears
+      // when there's a real signal to show. Debug info flows to the
+      // browser console.
+      async function loadManagerEffect(orchestraName) {
+        const section = document.getElementById("manager-effect-section");
+        if (!section) return;
+        let data;
+        try {
+          const res = await fetch(
+            `/api/orchestras/${encodeURIComponent(orchestraName)}/manager-effect`,
+          );
+          if (!res.ok) {
+            console.warn(
+              "[manager-effect] fetch failed:",
+              res.status,
+              await res.text(),
+            );
+            return;
+          }
+          data = await res.json();
+        } catch (e) {
+          console.warn("[manager-effect] fetch error:", e);
+          return;
+        }
+
+        // Even a strategist with zero resolved forecasts is a real
+        // state — render an explanatory empty state rather than
+        // hiding, so operators know the metric exists and will
+        // populate as forecasts resolve.
+        section.style.display = "";
+
+        const nResolved = data.n_resolved || 0;
+        const nCf = data.n_with_counterfactual || 0;
+        const meanBrier = data.mean_brier;
+        const meanCf = data.mean_counterfactual;
+        const meanDelta = data.mean_manager_effect;
+
+        // ── Summary cards ────────────────────────────────────────
+        const fmt = (v, digits = 3) =>
+          v == null || !isFinite(v) ? "—" : Number(v).toFixed(digits);
+        // Delta colouring: negative (beat baseline) is green,
+        // positive (worse than baseline) is red, exact zero neutral.
+        const deltaColor =
+          meanDelta == null
+            ? "var(--fg2)"
+            : meanDelta < 0
+              ? "var(--green)"
+              : meanDelta > 0
+                ? "var(--red)"
+                : "var(--fg2)";
+        const deltaSign =
+          meanDelta != null && meanDelta > 0 ? "+" : "";
+
+        const summary = document.getElementById("manager-effect-summary");
+        summary.innerHTML = `
+          <div class="stat-card">
+            <div class="stat-value">${nResolved}</div>
+            <div class="stat-label">Resolved</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">${nCf}</div>
+            <div class="stat-label">With counterfactual</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">${fmt(meanBrier)}</div>
+            <div class="stat-label">Mean Brier</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">${fmt(meanCf)}</div>
+            <div class="stat-label">Mean counterfactual</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" style="color:${deltaColor}">${meanDelta == null ? "—" : `${deltaSign}${fmt(meanDelta)}`}</div>
+            <div class="stat-label">Mean manager effect</div>
+          </div>`;
+
+        // ── Chart + recent — need forecasts with both fields ────
+        const forecasts = Array.isArray(data.forecasts) ? data.forecasts : [];
+        const paired = forecasts.filter(
+          (f) => f.manager_effect != null && isFinite(f.manager_effect),
+        );
+
+        const chartWrap = document.getElementById("manager-effect-chart-wrap");
+        if (paired.length === 0) {
+          chartWrap.innerHTML = `
+            <div style="border:1px dashed var(--bg3);border-radius:6px;padding:16px;color:var(--fg3);font-size:0.85rem;text-align:center">
+              No forecasts with counterfactuals yet. The metric populates as forecasts resolve with a base-rate anchor set at creation time.
+            </div>`;
+        } else {
+          chartWrap.innerHTML = renderManagerEffectChart(paired);
+        }
+
+        // ── Recent-forecasts table ───────────────────────────────
+        const recent = document.getElementById("manager-effect-recent");
+        if (forecasts.length === 0) {
+          recent.innerHTML = "";
+        } else {
+          const rows = forecasts
+            .slice(0, 10)
+            .map((f) => {
+              const when = f.resolved_at
+                ? new Date(f.resolved_at).toLocaleDateString()
+                : "—";
+              const delta = f.manager_effect;
+              const dColor =
+                delta == null
+                  ? "var(--fg3)"
+                  : delta < 0
+                    ? "var(--green)"
+                    : delta > 0
+                      ? "var(--red)"
+                      : "var(--fg2)";
+              const dText =
+                delta == null
+                  ? "—"
+                  : `${delta > 0 ? "+" : ""}${delta.toFixed(3)}`;
+              const q = (f.question_text || "").slice(0, 80);
+              return `
+                <tr>
+                  <td style="color:var(--fg3);font-size:0.8rem;white-space:nowrap">${when}</td>
+                  <td style="font-size:0.85rem"><a href="/forecast/${encodeURIComponent(f.id)}" style="color:var(--aqua);text-decoration:none">${escapeHtml(q)}</a></td>
+                  <td style="text-align:right;font-family:monospace;font-size:0.85rem">${f.brier_score == null ? "—" : f.brier_score.toFixed(3)}</td>
+                  <td style="text-align:right;font-family:monospace;font-size:0.85rem;color:var(--fg3)">${f.counterfactual_brier == null ? "—" : f.counterfactual_brier.toFixed(3)}</td>
+                  <td style="text-align:right;font-family:monospace;font-size:0.85rem;color:${dColor};font-weight:bold">${dText}</td>
+                </tr>`;
+            })
+            .join("");
+          recent.innerHTML = `
+            <div style="color:var(--fg3);font-size:0.8rem;margin-bottom:6px">Recent resolutions (most recent first)</div>
+            <table style="width:100%;border-collapse:collapse;font-size:0.9rem">
+              <thead>
+                <tr style="color:var(--fg3);font-size:0.75rem;text-align:left">
+                  <th style="padding:4px 8px">Resolved</th>
+                  <th style="padding:4px 8px">Question</th>
+                  <th style="padding:4px 8px;text-align:right">Brier</th>
+                  <th style="padding:4px 8px;text-align:right">Counterf.</th>
+                  <th style="padding:4px 8px;text-align:right">Δ</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>`;
+        }
+      }
+
+      // Delta bar chart: one vertical bar per paired forecast, sorted
+      // chronologically (oldest → newest so time reads left → right).
+      // Zero baseline at mid-height. Bars extend downward for
+      // negative delta (green = strategist beat baseline) and upward
+      // for positive (red = baseline beat strategist).
+      function renderManagerEffectChart(forecasts) {
+        // API returns most-recent-first; reverse for chronological.
+        const rows = forecasts.slice().reverse();
+        const values = rows.map((f) => f.manager_effect);
+        const absMax = Math.max(0.05, ...values.map(Math.abs));
+        const w = 640;
+        const h = 120;
+        const pad = 6;
+        const chartH = h - pad * 2;
+        const mid = pad + chartH / 2;
+        const bw = Math.max(2, (w - pad * 2) / rows.length - 1);
+
+        const bars = rows
+          .map((f, i) => {
+            const x = pad + i * ((w - pad * 2) / rows.length);
+            const v = f.manager_effect;
+            const scaled = (v / absMax) * (chartH / 2);
+            const y = v < 0 ? mid : mid - scaled;
+            const barH = Math.max(1, Math.abs(scaled));
+            const color = v < 0 ? "var(--green)" : "var(--red)";
+            const q = (f.question_text || "").replace(/"/g, "&quot;");
+            const title = `${new Date(f.resolved_at).toLocaleDateString()}\n${q}\nBrier ${f.brier_score?.toFixed(3) ?? "—"} vs cf ${f.counterfactual_brier?.toFixed(3) ?? "—"}\nΔ ${v > 0 ? "+" : ""}${v.toFixed(3)}`;
+            return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${barH.toFixed(1)}" fill="${color}" opacity="0.85"><title>${title}</title></rect>`;
+          })
+          .join("");
+
+        return `
+          <div style="border:1px solid var(--bg3);border-radius:6px;padding:10px;background:var(--bg0-soft)">
+            <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--fg3);margin-bottom:4px">
+              <span>oldest</span>
+              <span>← chronological →</span>
+              <span>newest</span>
+            </div>
+            <svg width="${w}" height="${h}" style="display:block;width:100%;height:${h}px" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+              <line x1="${pad}" y1="${mid}" x2="${w - pad}" y2="${mid}" stroke="var(--bg3)" stroke-width="1" stroke-dasharray="3,3" />
+              ${bars}
+            </svg>
+            <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--fg3);margin-top:4px">
+              <span style="color:var(--green)">below zero → beat baseline</span>
+              <span style="color:var(--red)">above zero → baseline better</span>
+            </div>
+          </div>`;
+      }
 
       async function loadExecutionActivity() {
         const agentId = window.location.pathname
