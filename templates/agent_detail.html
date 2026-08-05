@@ -1037,15 +1037,23 @@
                     v0.11.3-follow-up: Manager Effect section.
 
                     Only rendered for strategist agents (currently
-                    only `fermi`). The football-manager metric — team
+                    only "fermi"). The football-manager metric — team
                     Brier vs naive-baseline (counterfactual) Brier —
                     separates roster-locked performance from the
                     strategist's roster-orthogonal synthesis skill.
                     Data source: GET /api/orchestras/:name/manager-effect.
 
-                    Hidden by default; populated by
-                    `loadManagerEffect` after agent load if agent_name
-                    matches a known strategist. See main script block.
+                    NOTE: this whole block sits inside a JS template
+                    literal (agent-content.innerHTML = ...). Do NOT
+                    introduce backticks anywhere in this comment or
+                    the HTML below — backticks close the template
+                    literal and everything after becomes JS. This
+                    used to hang the page with:
+                        Uncaught SyntaxError: Unexpected identifier ...
+
+                    Hidden by default; populated by loadManagerEffect
+                    (see the main script block) after agent load if
+                    agent_name matches a known strategist.
                   -->
                   <div class="section" id="manager-effect-section" style="display:none">
                     <div class="section-title">
