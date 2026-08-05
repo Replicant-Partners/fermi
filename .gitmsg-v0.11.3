@@ -1,0 +1,61 @@
+v0.11.3: orchestra follow-ups — admin inbox, manager-effect substrate, live roster
+
+Three items requested after v0.11.2 (orchestra registry) that all
+answer the same practical question: Mario successfully published
+`guidance_tracker`, now what? Folded into one release because they
+share a domain and complete the join loop end-to-end.
+
+Item 1 — Admin inbox UI (templates/admin.html)
+- New Orchestras tab in /admin. Filter by orchestra + status;
+  Approve/Reject pending requests inline.
+- Approve prompts for optional note; Reject requires a note
+  (server enforces, UI blocks empty).
+- Cards show finding_labels + multiplier_range summary plus a
+  collapsible full proposed_contract JSON.
+- Endpoints unchanged from v0.11.2 — pure frontend addition.
+
+Item 2 — Counterfactual Brier substrate (football-manager model)
+- New column fermi_forecasts.counterfactual_probability REAL,
+  CHECK [0,1], via ensure_critical_schema (PgBouncer-safe).
+- CreateForecastRequest.counterfactual_probability: Option<f64>,
+  clamped defensively before insert.
+- resolve_forecast_handler runs a best-effort UPDATE to compute
+  counterfactual_brier = (cf_prob − outcome)² when populated.
+  Failure does not roll back the resolve.
+- GET /forecast and resolve response surface counterfactual_probability,
+  counterfactual_brier, and manager_effect = brier − counterfactual_brier.
+- Split of responsibility: client (Fermi harness) owns the naive-
+  baseline formula and sends cf_prob at creation; server persists
+  and computes the delta at resolution.
+
+Item 3 — Dynamic roster injection into strategist system prompts
+- New handlers::orchestras::inject_orchestra_context(db, card).
+  Appends a `## CURRENT ROSTER` block listing live approved members
+  from orchestra_*_members view when card.agent_id is a strategist.
+- STRATEGIST_AGENTS = [("fermi", "orchestra_fermi_members")].
+  xaman_ek intentionally deferred (100+ members = 4-5k tokens);
+  waits on a compact digest view.
+- Wired into both execute_agent_handler and
+  execute_agent_stream_handler. Non-strategists pass through.
+- Never fails: DB error logs and returns card unchanged. Empty
+  roster skips injection.
+- Solves the observed bug where Mario's approved guidance_tracker
+  did not appear in Fermi's decompositions because the curated
+  card hard-coded its original 4-specialist roster.
+
+Migrations: none. Item 2 uses ensure_critical_schema.
+
+Files:
+- src/api_server.rs
+- src/handlers/forecasts.rs
+- src/handlers/orchestras.rs
+- src/handlers/execution.rs
+- src/handlers/execution_stream.rs
+- templates/admin.html
+- RELEASE_NOTES_v0.11.3.md
+
+Validation:
+- cargo check --bin api-server -p fermi: clean
+- cargo test test_all_migrations_registered: pass
+- scripts/lint-schema-consistency.py: pass
+- scripts/lint-migrations.sh: pass

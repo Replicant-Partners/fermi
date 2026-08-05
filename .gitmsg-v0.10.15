@@ -1,0 +1,41 @@
+v0.10.15: admin force-publish, agents.user_id, UUID-safe resolve_agent
+
+Three surgical fixes over v0.10.13/v0.10.14, all discovered under
+real admin use trying to publish Mario's EFRA agents:
+
+1. Admin "Publish (as admin)" now offers force-with-reason when
+   publish-readiness checks fail. Previously the UI told admin to
+   "ask the owner to fix these first" — contradicting the button
+   label and leaving efra_gorilla (thin description/tags/prompt)
+   un-publishable. Backend has supported ?force=true&reason=… since
+   v0.10.5; the frontend just wasn't calling it. Every force lands
+   in admin_bypass_events (mig-164) with the reason string.
+
+   templates/agent_detail.html — adminPublishAgentDetail
+   templates/admin.html         — adminPublishAgent
+
+2. eval_brier.rs SQL fixed: agents.owner_id → agents.user_id.
+   The column has never existed; agents.user_id (mig-006) is the
+   real owner. Flagged in v0.10.13 as a v0.10.14 candidate;
+   v0.10.14 punted for chip-publish UX. Both sides TEXT after
+   mig-006 / mig-165 — clean.
+
+3. resolve_agent now accepts UUID as well as agent_name. Try
+   Uuid::parse_str first, fall back to get_agent_by_name. No valid
+   agent_name can also parse as a UUID (slug::validate rejects `-`),
+   so the branches are disjoint. Fixes 404s for admin scripts hitting
+   /api/agents/<uuid> — e.g. output of /api/admin/rbac/orphans.
+
+Deferred (v0.10.16 candidate, needs Ivan's call):
+
+  - Legacy agent names containing `-` or `/` (efra-ai/04-forensic).
+    Unrouteable regardless of resolve_agent because axum splits on
+    `/`. Options: DB rename migration, by-name query fallback, or
+    catch-all page route. Ivan picks the trade-off.
+
+Related:
+  - v0.10.5  ?force + admin_bypass_events (mig-164)
+  - v0.10.9  fermi FK realign
+  - v0.10.10 optional_auth_middleware accepts API keys
+  - v0.10.13 text=uuid sweep; flagged eval_brier as this release
+  - v0.10.14 chip-publish UX (UI-only)

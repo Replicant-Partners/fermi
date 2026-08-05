@@ -1,0 +1,75 @@
+viz: vector charts with invertible geometry — fixes flicker, adds direct manipulation
+
+Replaces the plotters→bitmap chart pipeline with vector rendering painted
+straight into the GPUI scene, and splits every chart into tested geometry
+(lib target) plus a painter that decides nothing (bin target).
+
+## The flicker was a texture-atlas leak
+
+Not a rendering glitch. `RenderImage::new` mints an id from a global
+counter (gpui assets.rs:61), `paint_image` allocates an atlas tile per id
+(window.rs:3143), and `ImageSource::Render` is excluded from cleanup
+(img.rs:561). Every re-render leaked a tile that was never reclaimed.
+
+The trajectory view made it pathological: it laid 60 invisible hit-strips
+across the plot purely because a bitmap can't report cursor position, each
+firing cx.notify(). One mouse sweep ≈ 45 MB of atlas churn. The driver
+list did the same at nine 120×24 tiles per frame.
+
+Caching the bitmap would have papered over it while leaving the deeper
+problem: a rasteriser is one-way. Scrubbing, brushing and dragging all
+need the inverse.
+
+## Charts
+
+- Trajectory: event markers now carry the before/after delta they caused
+  (plot::events::correlate) instead of sitting decoratively at the nearest
+  worm point — an agent run that swung 11pp and a market tick that moved
+  nothing used to render identically. Colour = kind, size = consequence,
+  ring = selection, stem to a collision-packed rug lane. Continuous scrub
+  replaces the 60 strips.
+
+- Driver sensitivity: bars split into first-order (cyan) + interaction
+  (purple). A driver at S1 0.05 / St 0.40 is a coupling to find, not a
+  prior to tighten; total-order-only rendering made those identical.
+  Adds run-over-run rank deltas and SobolLayout::verdict(), which decides
+  whether "go tighten X" is sound advice at all.
+
+- Outcome histogram: click/drag sets a decision threshold, P(≥ t) updates
+  live, bars recolour cleared/straddling/short.
+
+- Distribution: honest curves. The old sparkline drew a triangle through
+  (p5,0)→(p50,peak)→(p95,0), which cannot show a second mode. Density now
+  tags provenance (Samples/Histogram/Quantiles) and captions itself.
+
+## Bug fixed: anchor lines were in the wrong place
+
+The histogram's model/base/crowd reference lines were positioned from
+[p5,p95] while the bars span the output's full [min,max]. Every anchor was
+mispositioned, and any anchor outside the middle 90% vanished rather than
+sitting near the tail. Same disease as charts::trajectory_plot_bounds:
+two derivations of one geometry. There is now one LinearScale per chart,
+consulted by painter and hit-tester alike.
+
+## Testing
+
+118 tests, all in the lib target — the bin target cannot be compiled under
+--test (rustc overflows its stack on GPUI element chains, see lib.rs), so
+all geometry and statistics live where they can actually be asserted on.
+
+Pinned invariants include the pixel→value round trip that the old
+duplicated geometry could not guarantee, and the agreement between bar
+colouring and the printed threshold probability.
+
+## On longbridge/gpui-component
+
+Evaluated and declined as a dependency: it requires gpui + gpui_platform
+from Zed's git main (edition 2024, no crates.io release) against our
+pinned gpui 0.2.2. Its charts are also presentational — no event
+annotation, brushing, zoom or tornado — so the substance would have been
+built on top anyway. Its plot-module architecture was adopted instead.
+
+Net −1693/+892 lines. charts.rs is down to the index chart, the last
+bitmap and the last hit-strip workaround.
+
+See docs/fermi/VISUALIZATION_ARCHITECTURE.md.

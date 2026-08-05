@@ -1,0 +1,64 @@
+v0.10.18: updater resolves by version, not by publish time
+
+v0.10.17 shipped the Activity panel and nobody got it. Root cause and
+fix, plus the test-infrastructure change that would have caught it.
+
+1. GET /releases/latest returns the most recently PUBLISHED release,
+   not the highest version
+
+   v0.10.15/16/17 were tagged together → three concurrent CI builds.
+   v0.10.17 had the smallest diff and published first (13:44:29);
+   v0.10.16 finished last (13:45:53) and took the `latest` pointer.
+   Clients installed v0.10.16 and reported "up to date" while a newer
+   release sat on the releases page.
+
+   Publish order is a race between build times. Not controllable by
+   the release process, and not something clients should depend on.
+   Same bug bites back-ported hotfixes (0.9.x published after 0.10.x
+   → every 0.10.x client offered a downgrade) and workflow re-runs.
+
+   updater.rs: /releases/latest → /releases?per_page=30 plus
+   pick_best_release(), which takes the max by parsed semver and
+   discards list order entirely.
+
+   Also skips releases missing the platform asset. A workflow that
+   dies between publish and upload previously produced a hard error
+   that blocked updating; now we fall through to the newest release
+   that's actually installable.
+
+2. New [lib] target so updater.rs is testable
+
+   updater.rs already had #[cfg(test)] mod tests with 4 tests. They
+   had never run: `cargo test --bin fermi-console` segfaults rustc
+   expanding GPUI element chains (the same condition behind
+   recursion_limit = 4096 in main.rs). A version-comparison bug in
+   untested code is exactly how this shipped.
+
+   updater.rs has no GPUI dependency, so it moves to src/lib.rs.
+   main.rs consumes `fermi_console::updater` — one definition.
+
+     cargo test -p fermi-console --lib   13 passed, 3s
+
+   9 new tests. picks_highest_version_regardless_of_publish_order
+   reproduces the incident exactly: releases supplied in publish
+   order, asserting v0.10.17 wins. Plus downgrade refusal, back-port
+   masking, asset-less releases, drafts, pre-releases, empty list,
+   and a guard against returning one release's notes attached to
+   another's version.
+
+   Queued to migrate to the lib as they decouple from GPUI:
+   chat.rs action-marker parser, cockpit.rs Anthropic error
+   extractor — both have tests in the same never-run state.
+
+3. Dropped GhRelease.name (dead field; nothing read it).
+
+Operational note: the `latest` flag on the v0.10.17 release was
+corrected by hand via `gh release edit v0.10.17 --latest`. From
+v0.10.18 on, pushing several tags together is safe.
+
+Validation:
+  cargo test -p fermi-console --lib   13/13
+  cargo check --workspace              0 errors
+
+Related:
+  v0.10.17  Activity panel — the release this bug hid

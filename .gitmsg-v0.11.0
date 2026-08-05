@@ -1,0 +1,78 @@
+v0.11.0: schema trust contract — boot-time drift detection
+
+Six consecutive hotfixes (v0.10.15 → v0.10.29) on variations of
+the same underlying bug: the code assumed X but the DB shipped Y.
+Every one would have been caught at deploy line by a substrate
+that walks the code's schema assumptions against the actual DB
+state at boot.
+
+  v0.10.15  agents.owner_id (never existed)
+  v0.10.16  fork.rs owner_id (same)
+  v0.10.18  agents.updated_at (mig-166 shipped)
+  v0.10.19  resolve_forecast() returns REAL not FLOAT8
+  v0.10.27  mig-166 never actually applied — PgBouncer ate DO $$
+  v0.10.29  JSON case: "Error" vs "error" (wire drift, not schema)
+
+Five of six are schema drift. This release ships the substrate.
+
+Change:
+
+  src/schema_trust.rs (new)
+    * SCHEMA_TABLES:    ~40 tables the code SELECTs / INSERTs / FKs against
+    * SCHEMA_COLUMNS:   ~70 columns whose absence produces user-facing 500s
+                        (expanded 14× from the existing 5-entry list)
+    * SCHEMA_FUNCTIONS: 4 functions with args AND return-type checks
+                        (return-type field is new — catches v0.10.19)
+    * verify(db) -> SchemaVerdict with itemized drift lists
+    * emit_boot_report(v, strict) -> BootDecision (Healthy /
+                                     DriftContinueBoot / DriftAbortBoot)
+    * verify_and_report(db) — one-call convenience
+
+  src/api_server.rs::main
+    * boot-time invocation after run_migrations + ensure_critical_schema
+    * SCHEMA_STRICT=1 → exit(2) on drift (production-strict posture)
+    * SCHEMA_STRICT unset → log-loud-and-continue (rollout mode)
+    * mod schema_trust registered
+
+  src/handlers/admin.rs
+    * admin_schema_health_handler refactored to delegate to
+      schema_trust::verify (5 lines). Response body shape preserved
+      (backwards compatible with existing dashboard).
+    * legacy inline body cfg'd out (#[cfg(any())]) — can be deleted
+      after operators confirm the new handler output is a superset.
+
+Modes:
+
+  Default (SCHEMA_STRICT unset)
+    Warn-loud-and-continue. On drift, stderr shows a boxed banner
+    plus one line per issue. Deploy still serves traffic — the
+    operator sees the drift in Railway logs immediately instead
+    of on the first user click.
+
+  Strict (SCHEMA_STRICT=1)
+    Same banner + itemized list, then exit(2). Railway restarts
+    the container; if the drift persists, boot loops. Intended
+    posture once the contract is production-quiet.
+
+Rule for adding entries to SCHEMA_COLUMNS:
+  If losing this column would produce a user-facing 500, it
+  belongs here.
+
+Would-have-caught coverage:
+  5 of 6 v0.10.x schema-drift bugs → yes (schema axis)
+  1 of 6 (v0.10.29 case drift)     → no (wire-format axis — v0.12.0)
+
+Not in scope:
+  * Wire-format (Rust↔JS case) drift check — v0.12.0 candidate.
+  * Auto-populate SCHEMA_COLUMNS from build.rs. Hand-declared
+    is high signal / low false-positive to start.
+  * Query-plan drift check. Useful once tables get big.
+
+Related:
+  scripts/lint-schema-consistency.py  — sibling: catches drift at
+                                        commit time (pre-deploy)
+  ensure_critical_schema              — sibling: lands columns at
+                                        boot via single-statement ALTERs
+
+Three substrates now, one substrate mission: DB and code agree
+on what exists.

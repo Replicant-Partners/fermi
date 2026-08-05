@@ -1,0 +1,75 @@
+v0.11.2: orchestra registry — first-class membership with admin-gated joins
+
+Confirmed with Ivan first: the football-manager model. Fermi's
+Brier is roster-locked (lives in forecasts made by this team),
+but Fermi's manager skill is roster-orthogonal (Team − Counterfactual
+isolates the synthesis contribution). This release owns the roster
+substrate; counterfactual computation is a placeholder column.
+
+Change:
+
+  Migration 172 — orchestra_membership_requests table + views
+  ───────────────────────────────────────────────────────────
+  * orchestra_membership_requests (audit trail: pending/approved/
+    rejected/withdrawn, reviewer + note + proposed_contract)
+  * VIEW orchestra_fermi_members     — published + fermi_contract set
+  * VIEW orchestra_xaman_ek_members  — every published agent (implicit)
+  * fermi_forecasts.counterfactual_brier (nullable placeholder for
+    the manager-effect metric)
+
+  src/handlers/orchestras.rs (new)
+  ────────────────────────────────
+  Seven endpoints, all governance-gated:
+
+    GET  /api/orchestras                              # list + counts
+    GET  /api/orchestras/:name/members                # full roster
+    GET  /api/orchestras/:name/requests               # admin inbox
+    POST /api/orchestras/:name/requests               # submit (owner)
+    POST /api/orchestras/:name/requests/:id/approve   # admin
+    POST /api/orchestras/:name/requests/:id/reject    # admin (note req'd)
+    POST /api/orchestras/:name/requests/:id/withdraw  # requester
+    GET  /api/agents/:id/orchestras                   # per-agent
+
+  Owner-gate on submit (agent's owner or platform admin).
+  Admin-gate on approve/reject: owner of strategist agent card
+  (for fermi, whoever owns the `fermi` card) OR platform admin.
+  Transactional approve: sets fermi_contract + updates request +
+  writes admin_bypass_events audit row in one tx. Partial state
+  is impossible.
+
+  templates/agent_detail.html
+  ────────────────────────────
+  New Orchestras section on the Manage tab. Shows current
+  memberships + pending requests per orchestra. "Request
+  Membership" button on Fermi opens a three-prompt flow
+  (finding_labels, multiplier_range, rationale) then submits.
+  Pending requests show admin's review note inline.
+
+  schema_trust manifest extended
+  ──────────────────────────────
+  New table + 8 columns + counterfactual_brier added. v0.11.0
+  boot check would surface any drift.
+
+Governance model (the football-manager framing, locked):
+  roster-locked:      Fermi Brier IS the team's Brier
+  roster-orthogonal:  Manager skill = Team − Counterfactual Brier
+                      (same roster, without cep_weighted synthesis)
+
+  This release: roster substrate.
+  Next release:  counterfactual computation + delta.
+
+Not in scope (v0.11.3+ candidates):
+  * Admin-inbox UI page (approve via curl for now)
+  * Counterfactual Brier computation
+  * Wire Fermi's dispatcher to query orchestra_fermi_members view
+  * Wire xaman_ek's list_agents to query orchestra_xaman_ek_members
+  * Additional orchestras (simops, coherence)
+
+The last two are agent-card / prompt tuning, not infra. The
+substrate is done here.
+
+Related:
+  v0.10.29  publish-checks UX (unblocked Mario, surfaced this need)
+  v0.11.0   schema trust contract (v0.11.2 extends its manifest)
+  v0.11.1   viz vector index (parallel, unrelated)
+  mig-164   admin_bypass_events (audit trail we write to on approve)

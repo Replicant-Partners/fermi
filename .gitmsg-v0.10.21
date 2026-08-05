@@ -1,0 +1,75 @@
+v0.10.21: simulations persist; Activity panel fills
+
+Two console bugs. One is silent data loss.
+
+1. Every simulation on a base-rate-less forecast was discarded on save
+
+   run_simulation decides "is this a probability?" by asking whether
+   the question carries a base_rate:
+
+     if is_probability_forecast {
+         self.predicted_probability = results.mean.clamp(0.01, 0.99);
+     } else {
+         self.predicted_probability = results.mean;   // unclamped
+     }
+
+   The else branch is for counts/magnitudes/durations. But the
+   default Fermi decomposition emits a multiplier chain —
+   strength_factor * conditions * disruption, all centred on 1.0 —
+   whose product sits near 1.0 and routinely exceeds it. Observed:
+   1.068.
+
+   create_forecast_handler and update_forecast_handler both reject
+   outside [0,1] with "predicted_probability must be between 0 and
+   1". So the backend write failed on every save, the local snapshot
+   still succeeded, the chip said "Saved just now", and reopening
+   showed the pre-simulation value.
+
+   The 400 was visible only in the old three-line banner, truncated
+   at "Work will not survive c".
+
+   Fix: clamp_wire_probability at the persistence boundary — both
+   persist_backend_save and publish_forecast — so no call path can
+   reintroduce it. True mean preserved in simulation_results (no
+   range constraint) and on the Trajectory tab. Non-finite → 0.5
+   rather than propagating, since NaN/inf serialise to JSON null and
+   fail deserialisation with a worse error.
+
+   Clamping emits an Activity warning explaining that a multiplier
+   chain isn't a probability, pointing at the base-rate fix.
+
+   Helper lives in the lib target with 5 tests, including the exact
+   production value.
+
+2. Seven of eight cockpits were never observed
+
+   CockpitState can't reach FermiConsole, so it queues intent in
+   pending_* fields that only a cx.observe handler drains. That
+   observer was registered inline in navigate() and nowhere else,
+   while eight sites construct a cockpit: navigate, open_forecast,
+   open_workspace_forecast, on_new_forecast, on_reset_cockpit,
+   on_import_forecast, import_polymarket_forecast, dashboard hero.
+
+   Seven produced an unobserved cockpit. Everything queued from
+   those sessions was dropped: toasts, invite-share modal,
+   forecast-list refresh, and since v0.10.17 the Activity mirror and
+   panel-open request.
+
+   Pre-existing, not a v0.10.17 regression — invisible because a
+   toast that never fires reads as "no news". An empty log and a
+   dead button don't. The banner's Activity pill is the clearest
+   case: sets pending_open_activity, calls notify, nothing drains
+   it, no error.
+
+   Fix: install_cockpit() owns adoption AND observation together.
+   All eight sites route through it; the only direct assignment to
+   self.cockpit is inside it.
+
+Validation:
+  cargo test -p fermi-console --lib   18/18
+  cargo test -p fermi-activity        18/18
+  cargo check --workspace              0 errors
+
+Related:
+  v0.10.17  the Activity panel these fixes make usable
+  v0.10.18  the lib target that makes the clamp testable at all

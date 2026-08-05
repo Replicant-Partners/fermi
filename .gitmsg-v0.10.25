@@ -1,0 +1,82 @@
+v0.10.25: clean up test-fixture cruft, plug the leak
+
+The v0.10.20/v0.10.24 legacy-slug tools surfaced 565 orphan
+`test_agent_<uuid>` rows in the `agents` table — accumulated
+over months from 6 leaking test fixtures in
+agent-bestiary/memory/src/ that upsert but never clean up. The
+rename tool preserves them; correct remedy is DELETE gated by
+strong safety criteria. This release delivers both the cleanup
+tool and the test-side leak fix.
+
+Read side has been coping with `WHERE agent_name NOT LIKE
+'test_agent_%'` in every listing endpoint. Fine as belt+braces
+but the invariant should be "DB doesn't contain garbage" not
+"every read remembers to filter garbage."
+
+Changes:
+
+  Migration 169 — CASCADE the mig-049 FKs on agents(agent_id)
+  ────────────────────────────────────────────────────────────
+  Every other FK on that column already declares ON DELETE
+  CASCADE. The 4 in mig-049 (agent_alignments, pairwise_coherence,
+  knowledge_transfers, agent_interaction_policies) didn't, which
+  would block DELETE FROM agents. Semantically these should
+  cascade — derived data is meaningless without the source.
+  Idempotent, PgBouncer-safe, per-constraint EXCEPTION handlers.
+
+  admin_cleanup_test_cruft_handler (src/handlers/admin.rs)
+  ──────────────────────────────────────────────────────────
+  Route: GET/POST /api/admin/agents/cleanup-test-cruft
+  POST ?apply=true executes.
+
+  Safety criteria (server-side, always enforced):
+    * agent_name LIKE '<prefix>%'  (default test_agent_)
+    * total_executions = 0         (never ran real work)
+    * created_at older than grace  (default 24h)
+    * tier NOT IN ('curated', 'system')
+
+  Deliberately NOT gated on visibility/status: the leaking test
+  fixtures set visibility='public' (either explicit factory or
+  mig-010 default), so that gate would PROTECT the exact rows
+  we want cleaned. The remaining 4 layers are enough defense.
+
+  Every deletion → admin_bypass_events with full row snapshot.
+  Audit INSERT before DELETE in same tx: trail can't outrun the
+  action.
+
+  CLI: abw admin agents cleanup-test-cruft
+  ─────────────────────────────────────────
+  Flags: --apply --prefix --older-than-hours --limit --json.
+  Pretty table with compact preview (first 10 + last 5 for big
+  batches). Truncation state + resume tip surfaced in summary.
+
+  Test-side leak plugged
+  ──────────────────────
+  * locking.rs: 4 tests → all call cleanup_test_agent() at end
+  * store.rs:   6 tests → all call cleanup_test_agent() at end
+                also flipped test_agent() factory visibility from
+                "public" to "private" — fixtures shouldn't pollute
+                the catalogue regardless
+  * consolidation.rs: 1 test → inline cleanup
+
+  Panics still leak (Rust unwind skips post-panic cleanup) but
+  the server-side handler sweeps those up on demand.
+
+Suggested workflow:
+
+  abw admin agents cleanup-test-cruft               # dry-run
+  abw admin agents cleanup-test-cruft --limit 100 --apply
+  # → repeat until: summary reports 0 matched.
+
+Not in scope:
+  - Drop-guard / macro-wrapped test cleanup for the panic case.
+    v0.10.26 candidate (real infra work, not a hotfix).
+  - Removing the read-side NOT LIKE filters. Left as defense
+    until prod is proven clean.
+
+Related:
+  v0.10.20  legacy-slug rename tool (sibling for unroutable names)
+  v0.10.23  perf fix (GIN + N+1→1) — made these tools usable
+  v0.10.24  --prefix/--limit pattern applied here to cleanup
+  v0.11.0   trust-contract would refuse deploy on non-zero
+            test_agent count

@@ -1,0 +1,53 @@
+viz: vector index chart — removes the last bitmap and the last flicker source
+
+Follow-up to v0.10.28. Two composer charts still flickered on hover;
+neither for the reason it looked like.
+
+## The histogram flickered because of its neighbour
+
+It is built from plain divs and touches no bitmap. Two separate causes,
+neither in its own drawing:
+
+1. The index chart beside it was the last RenderImage in the console.
+   GPUI re-renders the whole view on any cx.notify(), so hovering a
+   histogram *bar* re-rasterised the *index chart*, leaking a sprite
+   atlas tile per mouse-move. The histogram looked like it flickered;
+   its neighbour was doing it.
+
+2. Both charts had a readout above them that grew on hover — one line to
+   six for the histogram, one to four for the index chart — inside a
+   flex column. Hovering pushed the chart down, out from under the
+   cursor, clearing the hover, shrinking the readout, moving the chart
+   back up. A self-sustaining layout oscillation, visually identical to
+   flicker and independent of the atlas leak.
+
+Both readouts are now a fixed two lines at fixed height.
+
+## The index chart wasn't drawing what it claimed
+
+It plotted three "series", but the base rate and crowd price were copied
+unchanged into every version row — two constants given the same visual
+weight as the one line that varied. That is why it did not read like the
+trajectory chart: it was not drawing the same kind of thing.
+
+Now the crowd is a real series, sampled from recorded price history at
+each version's timestamp; the base rate is drawn as the level it is; the
+model–crowd gap is shaded; revisions that moved the number carry a delta
+badge; and hover is continuous rather than N invisible per-version
+columns.
+
+events::sample_within returns None outside the recorded span rather than
+clamping — a version saved before polling began shows "crowd —", not
+today's price wearing last week's date.
+
+## No bitmaps remain
+
+charts.rs deleted. plotters, plotters-bitmap, ab_glyph,
+ab_glyph_rasterizer, owned_ttf_parser and image dropped from the
+console's dependency tree. With no RenderImage left in the application
+this class of flicker is not fixed so much as structurally unavailable.
+
+131 lib tests, up from 118 — including the version-pixel round trip,
+snap-to-nearest-version, and the refusal to extrapolate crowd prices.
+
+See docs/fermi/VISUALIZATION_ARCHITECTURE.md.

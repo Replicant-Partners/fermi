@@ -1,0 +1,79 @@
+v0.10.19: REAL/f64 aggregates + agents.updated_at — two drift families closed
+
+NOTE: also carries mig-166 (agents.updated_at), authored for a
+v0.10.18 hotfix. That number went to an unrelated console updater
+fix from a parallel session, so mig-166 ships here with mig-167.
+References below to v0.10.18 as already-shipped mean "this release".
+
+Mo hit this in the Resolve Forecast modal (Alcaraz US Open 2026):
+
+  Server error: error occurred while decoding column 0: mismatched
+  types; Rust type `f64` (as SQL type `FLOAT8`) is not compatible
+  with SQL type `FLOAT4`
+
+Same shape as v0.10.15/16/18 (owner_id/updated_at column drift),
+different axis: numeric precision instead of column existence.
+
+  * fermi_forecasts.brier_score is REAL (mig-048).
+  * resolve_forecast() returns REAL (mig-094).
+  * MIN(REAL) / MAX(REAL) return REAL.
+  * AVG(REAL) / STDDEV(REAL) widen to DOUBLE PRECISION.
+
+sqlx enforces exact SQL↔Rust type match. Every site binding f64
+against a REAL column 400s. AVG/STDDEV happened to work because
+Postgres widened; MIN/MAX and resolve_forecast() did not.
+
+Why now: forecast resolution requires auth + RBAC + non-admin FK
+realignment + owner check. Every gate before v0.10.15 masked
+this. Mo's account is clean end-to-end after v0.10.9→v0.10.13,
+so his click is the first request to reach the decoding step.
+
+Substrate rule (v0.10.19 onwards):
+
+  Every numeric aggregate or scalar-returning SQL function
+  published to Rust returns DOUBLE PRECISION — naturally
+  (AVG/STDDEV) or by explicit ::float8 cast (MIN/MAX,
+  resolve_forecast). Rust reads f64. No f32 in the read path.
+
+Changes:
+
+  handlers/forecasts.rs (4 sites)
+    * resolve_forecast_handler:  SELECT resolve_forecast(...)::float8
+    * portfolio_stats_handler:   MIN/MAX ::float8 (parens for prec.)
+    * my_stats_handler:          MIN/MAX ::float8
+    * leaderboard_handler:       MIN/MAX ::float8 in fallback branch
+
+  migrations/167_fermi_leaderboard_float8_minmax.sql
+    * DROP + recreate materialized view with ::float8 on MIN/MAX
+    * CREATE OR REPLACE doesn't exist for matviews — column types
+      are fixed at creation, so drop is unavoidable.
+    * CASCADE takes indexes; recreated after WITH DATA rebuild.
+    * Idempotent, PgBouncer-safe DO blocks, RAISE NOTICE
+      observability, post-migration column-type assertion.
+
+  src/api_server.rs
+    * Registers mig-167. test_all_migrations_registered passes.
+
+The three drift families, all now closed:
+
+  v0.10.15  agents.owner_id (never existed)   eval_brier.rs
+  v0.10.16  agents.owner_id (never existed)   fork.rs
+  v0.10.18  agents.updated_at (mig-166 adds)  publish_pipeline+lifecycle
+  v0.10.19  REAL vs f64 on aggregates         forecasts.rs + mig-167
+
+Elevates v0.11.0 trust-contract from "blocking on spec" to "start
+immediately, spec inline." Four consecutive hotfixes shipping the
+same underlying invariant is enough evidence.
+
+(v0.10.17 was Ivan's parallel Activity-panel work, unrelated.)
+
+Not in scope: general audit of every REAL column across the DB.
+The four sites here are covered by direct evidence + code review;
+others (forecast_commitments, confidence_interval_low/high,
+sim_probability) need the v0.11.0 substrate to sweep properly.
+
+Related:
+  mig-048   fermi_forecasts REAL columns declared
+  mig-094   resolve_forecast() + fermi_leaderboard defined
+  v0.10.13  text=uuid family (row-type drift)
+  v0.10.18  column-existence drift, mig-166

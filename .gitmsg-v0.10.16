@@ -1,0 +1,61 @@
+v0.10.16: close creation-time bypasses that produced EFRA legacy names
+
+Root-cause answer for how Mario's `efra-ai/04-forensic` and 42
+sibling un-routable agents landed in the DB. `slug::validate`
+landed 2026-05-23 (d0f94e8) and locked down POST /api/agents +
+POST /api/agents/import at the same time, but two more write paths
+kept a door open. Both closed here.
+
+1. create_workspace_agent_handler — added slug::validate_http
+
+   POST /api/workspaces/:id/agents was the live bypass. Any
+   workspace member could submit agent_name = "anything/at/all"
+   and land un-routable data in the DB. Sibling handlers had the
+   check since d0f94e8; this one didn't. One-line fix at the top
+   of the handler, matches the pattern in create_agent_handler
+   and import_agent_handler.
+
+2. fork::fork_agent — two bugs stacked
+
+   Bug A: SELECT and INSERT both referenced agents.owner_id — a
+   column that has never existed (agents.user_id is the owner
+   column since mig-006). Every fork attempt has been 500'ing at
+   the SELECT since mig-006 shipped. Fixed by aliasing user_id
+   AS owner_id in the SELECT (Rust struct field stable) and
+   writing user_id in the INSERT. Sibling of the eval_brier.rs
+   fix shipped in v0.10.15.
+
+   Bug B: with Bug A fixed, fork_name = "{source_name}_fork_{n}"
+   would inherit bad shape from legacy-named sources. Added
+   slug::validate on the derived name; refuses with 400 + detailed
+   error pointing the forker at the rename path when the source
+   has a legacy name. Slug-compliant sources unaffected.
+
+3. Deleted dead Vercel-function files under api/: agents.rs,
+   execute.rs, health.rs. Not registered in vercel.json, don't
+   compile against current Agent shape, no auth, no validation.
+   Skeletons from a Feb 2026 deploy attempt that never landed.
+   Kept only as a trap. Gone.
+
+Complete audit of writes to `agents`:
+  create_agent_handler                 ✓ slug ✓ user_id
+  import_agent_handler                 ✓ slug ✓ user_id
+  seed_agents_to_database              ✓ (trusted) ✓ user_id
+  create_workspace_agent_handler       ✓ slug ✓ user_id   ← fixed
+  fork::fork_agent                     ✓ slug ✓ user_id   ← fixed
+
+No writes remain that skip slug validation or reference the
+non-existent agents.owner_id column.
+
+Not in scope (v0.10.17 candidate):
+  - Rename migration for the un-routable data already in the DB.
+    abw-cli agents legacy-slugs --dry-run / --apply. Same
+    invariant, different verb (heal existing data vs guard new
+    writes).
+
+Related:
+  d0f94e8    slug::validate introduced
+  mig-006    agents.user_id (owner column)
+  v0.10.5    RBAC substrate + admin_bypass_events
+  v0.10.13   text=uuid sweep on fermi tables
+  v0.10.15   admin force-publish + eval_brier.rs + resolve_agent UUID

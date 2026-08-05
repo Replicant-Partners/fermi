@@ -1,0 +1,80 @@
+v0.10.29: publish-checks UX — case-sensitivity bug + actionable checklist
+
+Mario clicked Publish on efra_ai_01_scout and saw literally
+"Cannot publish:" in the toast pill — no reasons, no guidance.
+Screenshot showed all three required fields empty (description,
+system_prompt, tags) but the toast rendered as if there were no
+failing checks.
+
+Root cause: case-sensitivity bug in the frontend filter.
+
+  Rust side (src/workflows/types.rs):
+    #[derive(Serialize, Deserialize)]
+    #[serde(rename_all = "lowercase")]
+    pub enum CheckSeverity { Error, Warning, Info }
+
+  → JSON emits severity as "error" / "warning" / "info".
+
+  Frontend filter (three sites):
+    checks.filter(c => !c.passed && c.severity === "Error")
+                                              ↑ capitalized, matches NOTHING
+
+  → `failing` always empty → toast renders "Cannot publish: " with
+  no content after.
+
+The App-creation path in xaman-ek.js had the right filter
+(severity === "error") from day one. Only the agent-publish flow
+had the typo. Every "Cannot publish" pill on this platform has
+been misleading since the code shipped — silent because the
+codepath wasn't reachable end-to-end until v0.10.15 (admin bypass)
+and v0.10.27 (agents.updated_at) opened it up.
+
+Change (three sites, all one-liner case fixes):
+
+  templates/agent_detail.html::publishAgent
+    * severity === "Error" → "error"
+    * Toast.show(...) → alert(...) so the checklist is legible on
+      narrow viewports (Toast has no max-width guard)
+    * Formatted as bulleted list + "how to fix" hint
+
+  templates/agent_detail.html::adminPublishAgentDetail
+    * severity === "Error" → "error"
+    * (existing alert format preserved)
+
+  templates/admin.html::adminPublishAgent
+    * severity === "Error" → "error"
+    * (existing alert format preserved)
+
+Mario now sees:
+
+  Cannot publish yet — fix the following before retrying:
+
+    • Description is required for publication
+    • System prompt is required for publication
+    • At least one tag is required
+
+  Edit these fields in the Manage tab, then click Publish again.
+
+(v0.10.28 was Ivan's parallel fermi-console charts release,
+unrelated to this hotfix.)
+
+Not in scope:
+  - Persistent publish-readiness checklist on the Manage tab
+    (live-updating as-you-type). Nicer UX than modal-on-click;
+    v0.10.30 candidate.
+  - Admin bulk view "agents that would fail publish checks"
+    dashboard. Mario has clear per-agent feedback now; bulk view
+    can wait.
+
+Sixth "platform assumed X but shipped Y" bug in the run since
+v0.10.15. The v0.11.0 trust-contract now needs BOTH DB-schema-
+drift and wire-format-drift checks — a Rust↔JSON case-consistency
+sweep (all serde rename_all values documented + JS/TS shape tests)
+would have caught this at CI.
+
+Related:
+  v0.10.15   admin force-publish (introduced the bug in admin flows)
+  v0.10.27   agents.updated_at unblocked the codepath end-to-end
+  v0.10.28   Ivan's parallel charts release (unrelated)
+  v0.10.30   candidate: persistent readiness checklist + admin bulk view
+  v0.11.0    trust-contract, now covering wire-format drift too

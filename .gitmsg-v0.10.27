@@ -1,0 +1,70 @@
+v0.10.27: agents.updated_at via ensure_critical_schema — publish path fixed
+
+Ivan tried to force-publish Mario's key_metrics agent and hit
+the exact error we thought v0.10.18 had fixed:
+
+  Publish failed: 400 DB error: column "updated_at" of relation
+  "agents" does not exist
+
+mig-166 didn't apply to prod. It wraps ADD COLUMN inside DO $$
+blocks. PgBouncer in transaction mode can split multi-statement
+DDL at dollar-quoted body boundaries, and sqlx::raw_sql is a
+single execute() on a shared pool. Migration runner logged
+"completed" but the column was never added.
+
+This is a known failure mode. api_server.rs has a function
+ensure_critical_schema with this exact warning in its header:
+
+  "Each ALTER is its own single-statement sqlx::query — bypasses
+   any interaction between raw_sql, DO blocks, and PgBouncer in
+   transaction mode that has eaten multi-statement DDL in the
+   past."
+
+mig-166 should have been landed via ensure_critical_schema from
+the start.
+
+Change (src/api_server.rs::ensure_critical_schema):
+
+  ("agents.updated_at",
+   "ALTER TABLE public.agents
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL
+      DEFAULT NOW()")
+
+  ("agents.updated_at.backfill",
+   "UPDATE public.agents SET updated_at = created_at
+    WHERE updated_at IS NULL")
+
+Each is a single statement — PgBouncer can't split. Idempotent
+(IF NOT EXISTS + WHERE IS NULL). Runs every boot after
+run_migrations.
+
+mig-166 not removed. On envs where it applied, this ensure is a
+no-op probe. On envs where PgBouncer ate it, ensure_critical_schema
+now backstops.
+
+The three sightings:
+  v0.10.18   mig-166 shipped, thought fixed
+  v0.10.27   Ivan re-hit same error, root cause = PgBouncer ate
+             DO $$ block. Fixed via single-statement path.
+
+Numbering note: my code fix accidentally rolled into d5901a88
+(ci-console version-stamp commit) during Ivan's `git commit -a`.
+v0.10.26 is Ivan's parallel embedder fix (commit 03edd0d6).
+v0.10.27 is this release: agents.updated_at + the ci-console
+version-stamp — both already at HEAD on origin/main. Tag deploys
+both together.
+
+Elevates v0.11.0 trust-contract from "next release" to
+UNAMBIGUOUSLY next. Four consecutive "schema didn't land the way
+the code expected" hotfixes.
+
+Migration authoring guideline (interim): production-critical
+column ADD/ALTER should also be listed in ensure_critical_schema
+as a single-statement ALTER. DO $$ form is fine for audit; the
+bare single-statement form is what actually lands under PgBouncer.
+
+Related:
+  v0.10.18   mig-166 first attempt
+  v0.10.15   admin force-publish path (surfaced this bug)
+  v0.10.26   Ivan's parallel embedder fix
+  v0.11.0    trust-contract — now unambiguously next

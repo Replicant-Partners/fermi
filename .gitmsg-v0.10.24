@@ -1,0 +1,60 @@
+v0.10.24: legacy-slugs — --prefix and --limit for targeted, safe batches
+
+Ivan ran the v0.10.23-perf-fixed audit and hit two problems the
+perf fix couldn't solve:
+
+1. The 574 "legacy" names are two very different sets:
+     - 9 real Mario `efra-ai/*` agents worth renaming.
+     - 565 test_agent_<uuid> fixtures that are dead code.
+   Bulk-renaming everything preserves garbage that should just
+   be deleted.
+
+2. --apply on 574 rows in one transaction timed out client-side.
+   3 statements per rename × 574 = ~1,700 sequential statements
+   on one connection. Well over the reqwest 60s timeout.
+
+Fix: give the operator scope + batch controls.
+
+Backend (src/handlers/admin.rs):
+
+  ?prefix=<str>  Pushed down to SQL via WHERE agent_name LIKE $1.
+                 Fast (leading-anchor match).
+  ?limit=<n>     Applied AFTER the slug-rule filter, so N means
+                 "first N legacy rows" not "first N alphabetically".
+                 Deterministic (ORDER BY agent_name) — safe to
+                 resume by re-invoking with same flags.
+
+Response gains: prefix, limit, total_matched, truncated. Drives
+multi-batch loops without extra endpoints.
+
+CLI (crates/abw-cli/src/commands/admin.rs):
+
+  abw admin agents legacy-slugs [--prefix <PREFIX>] [--limit <N>]
+                                [--apply] [--json]
+
+  Filter/batch controls surfaced up-front in the pretty table
+  header. Truncation state explicitly reported in the summary
+  with a "re-run for next batch" tip.
+
+Suggested workflow — the surgical path for Mario's 9 EFRA agents:
+
+  abw admin agents legacy-slugs --prefix efra-ai/           # audit
+  abw admin agents legacy-slugs --prefix efra-ai/ --apply   # execute
+
+For the test-fixture backfill (until v0.10.25 ships DELETE-based
+cleanup), chunk to stay under the timeout:
+
+  abw admin agents legacy-slugs --prefix test_agent_ --limit 50 --apply
+  # → renames 50, reports truncated=true + remaining count
+  # Re-run until truncated=false.
+
+Not in scope:
+  - Test-fixture cleanup (~565 test_agent_<uuid> rows). Correct
+    remedy is DELETE, not RENAME. v0.10.25 candidate: dry-run
+    tool + delete endpoint gated on total_executions=0 and age.
+
+Related:
+  v0.10.20  legacy-slug audit + rename tool (endpoint)
+  v0.10.23  mig-168 GIN index + N+1→1 aggregate — read perf fix
+  v0.10.25  test-fixture DELETE cleanup (candidate)
+  v0.11.0   trust-contract boot check (elevated)

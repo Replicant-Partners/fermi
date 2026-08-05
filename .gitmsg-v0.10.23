@@ -1,0 +1,64 @@
+v0.10.23: legacy-slugs perf — N+1 → 1 + GIN index on agents_used
+
+Ivan hit this running the v0.10.20 audit tool:
+
+  $ abw admin agents legacy-slugs
+  error: operation timed out (60s)
+
+The v0.10.20 handler was correct but slow. Two problems stacked:
+
+1. N+1 JSONB queries: one COUNT per legacy name, ~43 sequential.
+2. No GIN index on fermi_forecasts.agents_used — every containment
+   query seq-scanned the whole table.
+
+43 × seq-scan >> 60s reqwest timeout. Request never completed.
+
+(v0.10.21/v0.10.22 were parallel forecast-save fixes — simulation
+persistence and confidence-interval clamping. Unrelated to this
+hotfix.)
+
+Fixes:
+
+Migration 168 — CREATE INDEX ... USING gin(agents_used).
+Idempotent, PgBouncer-safe, no CONCURRENTLY (can't run inside a
+tx, and the table is small enough that the exclusive lock is
+sub-second). Registered in run_migrations().
+
+Handler rewrite — src/handlers/admin.rs::admin_legacy_agent_slugs_handler.
+Replaced the per-name COUNT loop with one query:
+
+  SELECT ln.name, COUNT(f.id)::int8 AS refs
+    FROM unnest($1::text[]) AS ln(name)
+    LEFT JOIN fermi_forecasts f
+           ON f.agents_used @> jsonb_build_array(
+                jsonb_build_object('agent_name', ln.name))
+   GROUP BY ln.name
+
+LEFT JOIN preserves zero-ref names. Bound $1 = the array of all
+legacy names. One round trip, one seq-scan (or fast GIN lookups
+post-mig-168).
+
+Combined effect: audit endpoint returns in milliseconds instead
+of timing out.
+
+Other read sites that get faster for free (same GIN index):
+  * handlers/eval_brier.rs (Brier lookup by agent_name)
+  * handlers/agents.rs::get_agent_calibration_handler
+  * handlers/forecasts.rs::loop_health_handler
+
+No client timeout bump — a well-connected request that can't
+complete in 60s is a server perf issue, not a client-timeout
+issue. Fixed at the right layer.
+
+Post-deploy:
+  psql -c "\d public.fermi_forecasts" | grep agents_used_gin
+  time curl -s $URL/api/admin/agents/legacy-slugs | jq .total_legacy
+  abw admin agents legacy-slugs
+
+Related:
+  v0.10.20   legacy-slug audit + rename tool (the endpoint)
+  v0.10.21   forecast simulations persist (parallel, unrelated)
+  v0.10.22   confidence-interval clamping (parallel, unrelated)
+  mig-094    created fermi_forecasts with un-indexed agents_used JSONB
+  v0.11.0    trust-contract check would flag hot JSONB columns
+             missing supporting indexes
