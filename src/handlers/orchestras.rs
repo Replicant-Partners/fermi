@@ -834,6 +834,114 @@ pub async fn withdraw_orchestra_request_handler(
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// v0.11.3 — Dynamic roster injection into strategist system prompts
+// ═══════════════════════════════════════════════════════════════════
+//
+// Fermi's system prompt in agents/curated/fermi/agent_card.json used
+// to hard-code its specialist roster (macro_forecaster, equity_analyst,
+// sentiment_analyzer, entity_investigator). That meant Mario's
+// approved guidance_tracker never appeared in Fermi's decomposition
+// plan — the curated prompt didn't know about it.
+//
+// Fix: at execute time, look up the strategist's live roster from the
+// orchestra_*_members view and append a `## CURRENT ROSTER` block to
+// the system prompt. Fermi sees the actual approved members as of
+// this invocation, no card edit required when new members join.
+//
+// Called from execute_agent_handler and execute_agent_stream_handler.
+// Non-strategist agents pass through unchanged.
+
+/// Names that trigger roster injection. Kept in sync with the
+/// strategist_agent_name entries in the ORCHESTRAS const above.
+const STRATEGIST_AGENTS: &[(&str, &str)] = &[
+    ("fermi", "orchestra_fermi_members"),
+    // `xaman_ek` intentionally skipped: it has 100+ members and its
+    // own list_agents tool for catalogue queries. Injecting the full
+    // roster into every invocation is prompt-token wasteful. Add
+    // here when we build a compact per-tier / per-tag digest view.
+];
+
+/// Mutates `card.system_prompt` to append a live-roster block if the
+/// agent is a known strategist. Returns the (possibly mutated) card.
+///
+/// Never fails: if the DB query errors out, we log and return the
+/// card unchanged. A missing roster is far better than a failed
+/// execution.
+pub async fn inject_orchestra_context(
+    db: &sqlx::PgPool,
+    mut card: fermi::agent_backend::AgentCard,
+) -> fermi::agent_backend::AgentCard {
+    let Some((_, view_name)) = STRATEGIST_AGENTS
+        .iter()
+        .find(|(name, _)| *name == card.agent_id.as_str())
+    else {
+        return card;
+    };
+
+    let rows = match sqlx::query(&format!(
+        "SELECT agent_name, agent_type, description \
+           FROM public.{} \
+          ORDER BY agent_name",
+        view_name
+    ))
+    .fetch_all(db)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            eprintln!(
+                "[orchestras] roster injection failed for {}: {} — continuing with static prompt",
+                card.agent_id, e
+            );
+            return card;
+        }
+    };
+
+    if rows.is_empty() {
+        // No approved members yet. Skip injection rather than emit
+        // an empty roster block (which would just confuse the LLM).
+        return card;
+    }
+
+    // Build the roster block. Format is compact so it doesn't
+    // dominate the strategist's prompt token budget — one line per
+    // member with agent_type + short description.
+    let mut block = String::from(
+        "\n\n## CURRENT ROSTER (dynamic, v0.11.3+)\n\n\
+         You are the strategist of this orchestra. The following members are \
+         currently approved for consultation. Prefer these members when \
+         decomposing your task via execute_agent. If a needed specialty isn't \
+         covered by the current roster, note the gap in your decomposition \
+         rather than inventing an agent name that doesn't exist.\n\n",
+    );
+
+    for row in &rows {
+        let name: String = row.try_get("agent_name").unwrap_or_default();
+        let agent_type: String = row.try_get("agent_type").unwrap_or_default();
+        let desc: Option<String> = row.try_get("description").ok().flatten();
+        let short_desc = desc
+            .as_deref()
+            .unwrap_or("")
+            .lines()
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(140)
+            .collect::<String>();
+        block.push_str(&format!("- `{}` ({}) — {}\n", name, agent_type, short_desc));
+    }
+
+    // Append; don't replace. The curated prompt has the strategist's
+    // methodology and output shape — the roster is context added to
+    // that. If the card has no system prompt at all (unusual for a
+    // strategist), the roster still lands as the whole prompt.
+    let existing = card.system_prompt.clone().unwrap_or_default();
+    card.system_prompt = Some(format!("{}{}", existing, block));
+
+    card
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Helpers
 // ═══════════════════════════════════════════════════════════════════
 

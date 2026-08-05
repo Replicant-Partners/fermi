@@ -81,6 +81,13 @@ pub async fn execute_agent_handler(
     .await;
     tracing::info!(elapsed_ms = t_kg.elapsed().as_millis() as u64, agent = %agent_id, "kg_context_enrich");
 
+    // v0.11.3: dynamic-roster injection. When `card` is an orchestra
+    // strategist (currently `fermi`), append a `## CURRENT ROSTER`
+    // block listing the live approved members from the corresponding
+    // orchestra_*_members view. Non-strategist agents pass through
+    // unchanged. See handlers/orchestras.rs for the full logic.
+    let card = crate::handlers::orchestras::inject_orchestra_context(&state.db, card).await;
+
     // 2. Build execution context
     let agent_stmt = ast::AgentStmt {
         name: agent_id.clone(),

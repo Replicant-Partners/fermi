@@ -97,6 +97,11 @@ pub async fn execute_agent_stream_handler(
     let model = card.capabilities.model.clone();
 
     // ── Build execution context ────────────────────────────────────
+    // v0.11.3: dynamic-roster injection into strategist system prompts.
+    // Non-strategist agents pass through unchanged. See
+    // handlers/orchestras.rs::inject_orchestra_context.
+    let card = crate::handlers::orchestras::inject_orchestra_context(&state.db, card).await;
+
     let agent_stmt = ast::AgentStmt {
         name: agent_id.clone(),
         agent_type: Some(card.agent_type.clone()),
