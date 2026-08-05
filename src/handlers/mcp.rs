@@ -9,6 +9,22 @@
 //! `mcp_tools` array is callable directly by MCP clients (kask, Cursor,
 //! Claude Desktop, etc.) without going through a freeform LLM execution.
 //!
+//! # Two distinct modes on one endpoint
+//!
+//! These are easy to conflate, and they behave very differently:
+//!
+//! - **`execute`** — runs the AGENT. Prose in, prose out, via the LLM
+//!   executor with the agent's system prompt, memory, and full tool loop.
+//!   Costs inference. Available on every agent with no configuration.
+//! - **A published tool** (anything in `capabilities.mcp_tools`) — runs
+//!   THAT TOOL directly through `ToolRegistry::execute`. No LLM, no system
+//!   prompt, no agent loop; the agent record only supplies the allowlist,
+//!   memory scoping, and the owner's credentials. This is ABW's
+//!   deterministic compute surface, not its reasoning surface.
+//!
+//! Publishing a tool therefore does not "connect the endpoint to the
+//! agent" — it deliberately bypasses the agent.
+//!
 //! Auth: the MCP endpoint sits on public_routes (optional auth middleware).
 //! Workspace-scoped tools (read_workspace_file, list_workspace_agents, etc.)
 //! require a workspace_id in params and a valid Bearer token / API key.
@@ -35,6 +51,70 @@ use fermi_auth::AuthPrincipal;
 
 use crate::{resolve_agent, resolve_agent_card, AppState};
 
+// ─── Advertised tool list ───────────────────────────────────────────────
+
+/// The synthetic tool that runs the agent itself. Not a platform builtin —
+/// it exists only on this endpoint, and `ToolRegistry` has no arm for it;
+/// the dispatcher intercepts the name and routes to the LLM executor.
+const EXECUTE_TOOL: &str = "execute";
+
+/// Tools advertised for an agent, in MCP `tools/list` shape.
+///
+/// Shared by the GET manifest and the POST `tools/list` so the two can't
+/// drift. They previously carried duplicate copies of this logic.
+///
+/// # `execute` is always advertised
+///
+/// The old logic was either/or: `execute` appeared **only** when the agent
+/// published nothing. So publishing a single tool silently removed the
+/// discoverable "run this agent" capability — the dispatcher still accepted
+/// `execute`, but no client could find out it existed. An operator ticking
+/// one box in the Published Tools panel would unknowingly hide the agent's
+/// primary purpose from Claude Desktop / Cursor / Zed.
+///
+/// `execute` is now always first. Published tools are additive: they expose
+/// deterministic compute *alongside* the agent, never instead of it.
+fn advertised_tools(
+    card: &fermi::agent_backend::agent_card::AgentCard,
+    agent_name: &str,
+) -> Vec<Value> {
+    let mut tools = vec![json!({
+        "name": EXECUTE_TOOL,
+        "description": format!(
+            "Run the {agent_name} agent: send a natural-language query and receive its \
+             reasoned response. Uses the agent's system prompt, memory, and full tool loop. \
+             Other tools listed here run directly without invoking the agent."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "The query to execute" }
+            },
+            "required": ["query"]
+        }
+    })];
+
+    // Defensive dedupe: `execute` is not a platform builtin, so
+    // `invalid_tool_declarations` rejects it on write — but a card authored
+    // before validation existed could still contain it, and a duplicate
+    // name makes some MCP clients reject the whole manifest.
+    tools.extend(
+        card.capabilities
+            .mcp_tools
+            .iter()
+            .filter(|t| t.name != EXECUTE_TOOL)
+            .map(|t| {
+                json!({
+                    "name": t.name,
+                    "description": t.description,
+                    "inputSchema": t.input_schema,
+                })
+            }),
+    );
+
+    tools
+}
+
 // ─── Manifest (GET) ──────────────────────────────────────────────────────────
 
 pub async fn mcp_agent_manifest(
@@ -43,35 +123,7 @@ pub async fn mcp_agent_manifest(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db_agent = resolve_agent(&state, &agent_id).await?;
     let card = resolve_agent_card(&state, &db_agent);
-
-    // Build the tools list from the card's declared mcp_tools.
-    // Fall back to the generic `execute` tool for agents that declare none.
-    let tools: Vec<Value> = if card.capabilities.mcp_tools.is_empty() {
-        vec![json!({
-            "name": "execute",
-            "description": format!("Execute the {} agent with a query", agent_id),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string", "description": "The query to execute" }
-                },
-                "required": ["query"]
-            }
-        })]
-    } else {
-        // Each mcp_tool already has name + description + input_schema from the card
-        card.capabilities
-            .mcp_tools
-            .iter()
-            .map(|t| {
-                json!({
-                    "name": t.name,
-                    "description": t.description,
-                    "inputSchema": t.input_schema,
-                })
-            })
-            .collect()
-    };
+    let tools = advertised_tools(&card, &db_agent.agent_name);
 
     Ok(Json(json!({
         "jsonrpc": "2.0",
@@ -135,31 +187,7 @@ pub async fn mcp_agent_rpc(
             let db_agent = resolve_agent(&state, &agent_id).await?;
             let card = resolve_agent_card(&state, &db_agent);
 
-            let tools: Vec<Value> = if card.capabilities.mcp_tools.is_empty() {
-                vec![json!({
-                    "name": "execute",
-                    "description": format!("Execute the {} agent", db_agent.agent_name),
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "query": { "type": "string", "description": "The research query" }
-                        },
-                        "required": ["query"]
-                    }
-                })]
-            } else {
-                card.capabilities
-                    .mcp_tools
-                    .iter()
-                    .map(|t| {
-                        json!({
-                            "name": t.name,
-                            "description": t.description,
-                            "inputSchema": t.input_schema,
-                        })
-                    })
-                    .collect()
-            };
+            let tools = advertised_tools(&card, &db_agent.agent_name);
 
             Ok(Json(json!({
                 "jsonrpc": "2.0",
@@ -426,4 +454,74 @@ fn mcp_error(id: Value, code: i64, message: &str) -> Value {
         "id": id,
         "error": { "code": code, "message": message }
     })
+}
+
+// ─── Tests ────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fermi::agent_backend::agent_card::{AgentCard, McpTool};
+
+    fn card_with(tool_names: &[&str]) -> AgentCard {
+        let mut card = AgentCard::new("t".into(), "research".into());
+        card.capabilities.mcp_tools = tool_names
+            .iter()
+            .map(|n| McpTool {
+                name: (*n).to_string(),
+                description: format!("desc for {n}"),
+                input_schema: Some(json!({ "type": "object" })),
+            })
+            .collect();
+        card
+    }
+
+    fn names(tools: &[Value]) -> Vec<String> {
+        tools
+            .iter()
+            .filter_map(|t| t["name"].as_str().map(String::from))
+            .collect()
+    }
+
+    /// An agent publishing nothing is still usable: `execute` is advertised.
+    #[test]
+    fn execute_is_advertised_when_nothing_is_published() {
+        let tools = advertised_tools(&card_with(&[]), "my_agent");
+        assert_eq!(names(&tools), vec![EXECUTE_TOOL]);
+        assert!(tools[0]["inputSchema"]["properties"]["query"].is_object());
+    }
+
+    /// The regression this test exists for: the old either/or logic dropped
+    /// `execute` from the manifest as soon as anything was published, so
+    /// ticking one box in the Published Tools panel silently hid the agent's
+    /// primary capability from every MCP client.
+    #[test]
+    fn execute_survives_publishing_and_stays_first() {
+        let tools = advertised_tools(&card_with(&["run_monte_carlo", "h3_resolve"]), "my_agent");
+        assert_eq!(
+            names(&tools),
+            vec![EXECUTE_TOOL, "run_monte_carlo", "h3_resolve"],
+            "published tools must be additive to `execute`, not a replacement"
+        );
+    }
+
+    /// A duplicate name can make an MCP client reject the whole manifest.
+    /// `execute` is not a platform builtin so validation rejects it on write,
+    /// but cards authored before validation existed could still carry it.
+    #[test]
+    fn execute_is_not_duplicated_if_a_card_declares_it() {
+        let tools = advertised_tools(&card_with(&["execute", "h3_resolve"]), "my_agent");
+        assert_eq!(names(&tools), vec![EXECUTE_TOOL, "h3_resolve"]);
+    }
+
+    /// Published entries pass through their own description and schema — the
+    /// manifest must not substitute anything of its own.
+    #[test]
+    fn published_tools_keep_their_schema_and_description() {
+        let tools = advertised_tools(&card_with(&["h3_resolve"]), "my_agent");
+        let published = &tools[1];
+        assert_eq!(published["name"], "h3_resolve");
+        assert_eq!(published["description"], "desc for h3_resolve");
+        assert_eq!(published["inputSchema"]["type"], "object");
+    }
 }

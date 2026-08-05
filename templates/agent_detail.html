@@ -2966,6 +2966,8 @@
                   <span style="color:var(--gray)">An <strong style="color:var(--yellow)">export allowlist, not a capability grant.</strong> This agent already receives every platform builtin internally, whatever is checked here — unchecking a tool hides it from external MCP clients, it never takes the tool away from the agent.</span>
                 </div>
                 <div id="pub-tools-endpoint" style="display:none;margin-bottom:12px;padding:8px 10px;background:var(--bg0);border:1px solid var(--bg3);border-radius:4px"></div>
+                <!-- Informational, never conditional: execute is on every endpoint. -->
+                <div id="pub-tools-execute-note" style="font-size:0.78em;line-height:1.5;margin-bottom:12px;padding:8px 10px;background:var(--bg0);border-radius:4px;border-left:2px solid var(--aqua);color:var(--fg3)"></div>
                 <div id="pub-tools-source-note" style="display:none;font-size:0.78em;line-height:1.5;margin-bottom:12px;padding:8px 10px;background:var(--bg0);border-radius:4px;border-left:2px solid var(--yellow);color:var(--fg3)"></div>
                 <div id="pub-tools-phantom" style="display:none;font-size:0.78em;line-height:1.5;margin-bottom:12px;padding:8px 10px;background:var(--bg1);border-left:2px solid var(--red);border-radius:4px;color:var(--fg3)"></div>
                 <div id="pub-tools-remote-errors" style="display:none;font-size:0.78em;line-height:1.5;margin-bottom:12px;padding:8px 10px;background:var(--bg1);border-left:2px solid var(--yellow);border-radius:4px;color:var(--fg3)"></div>
@@ -5724,9 +5726,14 @@
       // Critically this is an *export allowlist, not a capability grant*:
       // every agent already receives all platform builtin tools internally
       // regardless of this list, so no copy here may suggest that
-      // unchecking a tool removes the agent's ability to use it. Before
-      // this existed, an agent with no filesystem card published nothing
-      // and was reachable only through the catch-all `execute` endpoint.
+      // unchecking a tool removes the agent's ability to use it.
+      //
+      // `execute` is deliberately absent from this list. It is a synthetic
+      // tool that runs the agent itself, is always advertised first on the
+      // endpoint, and cannot be switched off — so everything here is
+      // *additive* to it, never a replacement. That used to be either/or,
+      // and the panel must say so plainly or a column of unchecked boxes
+      // reads as "this endpoint exposes nothing".
       //
       // Reads `GET /api/agents/:id/published-tools`, which returns both the
       // published names and the full menu of dispatchable ones. Writes go
@@ -5765,6 +5772,9 @@
         const section = document.getElementById("pub-tools-section");
         if (!section) return;
         _pubToolsAgentId = agentId;
+        // Data-independent, so it is painted before the fetch and survives
+        // every failure path below.
+        renderPubToolsExecuteNote();
         try {
           const res = await fetch(
             `/api/agents/${encodeURIComponent(agentId)}/published-tools`,
@@ -5847,7 +5857,24 @@
           `<button class="owner-btn" style="font-size:0.8em;padding:3px 10px" onclick="copyPubToolsEndpoint()">Copy</button>` +
           `<span id="pub-tools-copy-status" style="font-size:0.78em;color:var(--gray)"></span>` +
           `</div>` +
-          `<div style="font-size:0.72em;color:var(--fg4);margin-top:6px;line-height:1.5">Paste into an MCP client. GET returns the manifest of the tools checked below; POST is the JSON-RPC dispatcher that runs them.</div>`;
+          `<div style="font-size:0.72em;color:var(--fg4);margin-top:6px;line-height:1.5">Paste into an MCP client. GET returns the manifest — <code>execute</code> plus whatever is checked below; POST is the JSON-RPC dispatcher that runs them.</div>`;
+      }
+
+      // `execute` is not in the `available` array and has no checkbox: it is
+      // always present on the endpoint. Without this note an operator sees a
+      // column of unchecked boxes and reasonably concludes the endpoint
+      // exposes nothing at all.
+      function renderPubToolsExecuteNote() {
+        const el = document.getElementById("pub-tools-execute-note");
+        if (!el) return;
+        el.innerHTML =
+          `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">` +
+          mcpPill("ALWAYS ON", "var(--aqua)") +
+          `<code style="font-family:'JetBrains Mono',monospace;font-size:0.95em;color:var(--fg1)">execute</code>` +
+          `<span style="color:var(--fg4)">advertised first, not switchable off</span>` +
+          `</div>` +
+          `<div>Runs <em>the agent itself</em> — a natural-language query in, a reasoned answer out, using its system prompt, memory and full tool loop. It costs inference.</div>` +
+          `<div style="margin-top:3px">Everything checked below is additive to it and works differently: direct tool calls with typed arguments, no LLM and no agent reasoning. Publishing nothing still leaves a working endpoint, serving <code>execute</code> on its own.</div>`;
       }
 
       function pubToolsEndpointUrl() {
@@ -5892,10 +5919,10 @@
             `<strong style="color:var(--yellow)">Inherited from this agent's card file</strong> (<code>source: ${escapeHtml(_pubToolsMeta.source)}</code>). Nothing is stored in the database yet.<br>` +
             takeover;
         } else {
-          // No card file and no DB row: this is the historical default, and
-          // the reason the catch-all endpoint exists at all.
+          // No card file and no DB row. Still a working endpoint, so this
+          // states what is missing rather than implying a broken one.
           note.innerHTML =
-            `<strong style="color:var(--yellow)">Publishing nothing today</strong> (<code>source: ${escapeHtml(_pubToolsMeta.source)}</code>). External clients can only reach this agent through the catch-all <code>execute</code> tool, which takes a prose query.<br>` +
+            `<strong style="color:var(--yellow)">Publishing nothing today</strong> (<code>source: ${escapeHtml(_pubToolsMeta.source)}</code>). External clients see <code>execute</code> and nothing else — no direct tool calls.<br>` +
             takeover;
         }
       }
@@ -6063,9 +6090,12 @@
         const countEl = document.getElementById("pub-tools-count");
         if (!countEl) return;
         const n = _pubToolsChecked.size;
+        // Nothing checked is a legitimate state now that `execute` is always
+        // advertised, so this is stated flatly rather than coloured as a
+        // warning.
         countEl.innerHTML = n
           ? `${n} checked to publish · ${shown} of ${_pubTools.length} shown`
-          : `<span style="color:var(--yellow)">Nothing checked</span> — the endpoint falls back to the catch-all <code>execute</code> tool · ${shown} of ${_pubTools.length} shown`;
+          : `Nothing checked — the endpoint serves <code>execute</code> only · ${shown} of ${_pubTools.length} shown`;
       }
 
       function setPublishedToolsVisible(checked) {
@@ -6100,7 +6130,7 @@
         if (
           wire.length === 0 &&
           !confirm(
-            "Publish no tools?\n\nThis records an empty list in the database, overriding any list in the agent's card file. The MCP endpoint then falls back to the single catch-all 'execute' tool, which takes a prose query.\n\nThe agent keeps every platform builtin internally either way — this only changes what external MCP clients can see.",
+            "Publish no tools?\n\nThis records an empty list in the database, overriding any list in the agent's card file.\n\nThe endpoint keeps working: 'execute' is always advertised, so clients can still run the agent with a prose query. What they lose is the direct, typed tool calls.\n\nThe agent keeps every platform builtin internally either way — this only changes what external MCP clients can see.",
           )
         )
           return;
