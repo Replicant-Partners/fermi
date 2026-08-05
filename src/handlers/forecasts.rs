@@ -526,14 +526,16 @@ pub async fn create_forecast_handler(
         let _ = crate::handlers::forecast_benchmark::ensure_split(pool, &forecast_id, &salt).await;
     }
 
-    // Auto-add to portfolio if specified
+    // Auto-add to portfolio if specified. Attributed (Spec 26 §4.1) —
+    // same curation event as an explicit add, just bundled into create.
     if let Some(ref portfolio_id) = req.portfolio_id {
         sqlx::query(
-            "INSERT INTO fermi_portfolio_forecasts (portfolio_id, forecast_id)
-             VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            "INSERT INTO fermi_portfolio_forecasts (portfolio_id, forecast_id, added_by)
+             VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
         )
         .bind(portfolio_id)
         .bind(&forecast_id)
+        .bind(&user_id)
         .execute(pool)
         .await
         .ok(); // Non-fatal if portfolio doesn't exist
@@ -622,13 +624,25 @@ pub async fn get_forecast_handler(
         })
         .collect();
 
-    // Get portfolio memberships
+    // Get portfolio memberships. `portfolios` stays a bare id array (the
+    // cockpit's portfolio-chip editor deserializes it as Vec<String>);
+    // `portfolio_refs` (Spec 26 §3.2) carries the titles and curation
+    // attribution the collaboration surfaces need.
     let portfolios: Vec<String> = sqlx::query_scalar(
         "SELECT portfolio_id FROM fermi_portfolio_forecasts WHERE forecast_id = $1",
     )
     .bind(&forecast_id)
     .fetch_all(pool)
     .await
+    .unwrap_or_default();
+
+    let portfolio_refs = crate::handlers::collab::forecast_portfolio_memberships(
+        pool,
+        &user_id,
+        std::slice::from_ref(&forecast_id),
+    )
+    .await
+    .remove(&forecast_id)
     .unwrap_or_default();
 
     // v0.11.3: derive manager-effect from team+counterfactual Brier.
@@ -693,6 +707,7 @@ pub async fn get_forecast_handler(
         "metadata": row.try_get::<Option<JsonValue>, _>("metadata").ok().flatten(),
         "tags": row.try_get::<Vec<String>, _>("tags").ok(),
         "portfolios": portfolios,
+        "portfolio_refs": portfolio_refs,
         "update_history": update_history,
         "created_at": row.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").ok().map(|t| t.to_rfc3339()),
         "updated_at": row.try_get::<chrono::DateTime<chrono::Utc>, _>("updated_at").ok().map(|t| t.to_rfc3339()),
@@ -716,10 +731,25 @@ pub async fn list_forecasts_handler(
     let mut binds: Vec<String> = Vec::new();
 
     // Default scope: own forecasts + shared/public + team-shared +
-    // directly-shared. Spec 24 §3.2 Wave 2 (Sprint 2.4b): added the
-    // object_shares user-share branch so that `permission='view'` (or
-    // edit/admin) shares grant list visibility. The team-share branch
-    // (via team_members) was already there from Wave 1.
+    // directly-shared + portfolio-inherited.
+    //
+    // Spec 24 §3.2 Wave 2 (Sprint 2.4b) added the object_shares
+    // user-share branch so that `permission='view'` (or edit/admin)
+    // shares grant list visibility. The team-share branch (via
+    // team_members) was already there from Wave 1.
+    //
+    // Spec 26 §2.3 adds the fifth branch: a forecast reachable only
+    // because it sits in a portfolio shared with the caller (or with a
+    // team the caller is on). Without it, `can_access` would let the
+    // operator OPEN such a forecast by id while the list pretended it
+    // didn't exist — the worst kind of inconsistency, because the row
+    // is discoverable through the portfolio detail but absent from every
+    // list that should contain it.
+    //
+    // The inheritance branch is NOT written out here: it comes from
+    // `fermi_auth::visibility::inherited_access_ids_sql`, the same
+    // relation `can_access` enforces and `handlers::collab` explains.
+    // One rule, three consumers — see Spec 26 §2.2.
     bind_idx += 1;
     conditions.push(format!(
         "(f.owner_id = ${idx} \
@@ -731,8 +761,10 @@ pub async fn list_forecasts_handler(
                      WHERE s.object_type = 'forecast' \
                        AND s.object_id = f.id::text \
                        AND s.share_type = 'user' \
-                       AND s.share_target = ${idx}))",
-        idx = bind_idx
+                       AND s.share_target = ${idx}) \
+          OR f.id IN ({inherited}))",
+        idx = bind_idx,
+        inherited = fermi_auth::visibility::inherited_access_ids_sql(bind_idx)
     ));
     binds.push(user_id.clone());
 
@@ -808,7 +840,7 @@ pub async fn list_forecasts_handler(
     let sql = format!(
         "SELECT f.id, f.owner_id::text AS owner_id, f.question_text, f.domain, f.predicted_probability,
                 f.status, f.brier_score, f.actual_outcome, f.target_date, f.visibility,
-                f.tags, f.created_at, f.updated_at, f.resolved_at,
+                f.tags, f.created_at, f.updated_at, f.resolved_at, f.team_id,
                 COALESCE(u.display_name, u.name, u.email, u.user_id) AS owner_display_name
          FROM fermi_forecasts f
          LEFT JOIN users u ON u.user_id = f.owner_id
@@ -829,11 +861,32 @@ pub async fn list_forecasts_handler(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Spec 26 §3.2: two batched follow-ups that turn an anonymous list
+    // into a legible one. Both are keyed off the page we just fetched, so
+    // the cost is O(1) queries regardless of page size — the console
+    // previously fanned out one /shares call PER ROW to approximate this,
+    // and still couldn't see who granted the share or when.
+    //
+    //   `access`     — the strongest true access path plus grantor and
+    //                  timestamp. Answers "who shared this with me".
+    //   `portfolios` — which books this forecast sits in. Empty means
+    //                  standalone. Answers "portfolio or stand-alone
+    //                  context".
+    let page_ids: Vec<String> = rows
+        .iter()
+        .filter_map(|r| r.try_get::<String, _>("id").ok())
+        .collect();
+    let provenance =
+        crate::handlers::collab::forecast_access_provenance(pool, &user_id, &page_ids).await;
+    let memberships =
+        crate::handlers::collab::forecast_portfolio_memberships(pool, &user_id, &page_ids).await;
+
     let forecasts: Vec<JsonValue> = rows
         .iter()
         .map(|r| {
+            let id: Option<String> = r.try_get::<String, _>("id").ok();
             json!({
-                "id": r.try_get::<String, _>("id").ok(),
+                "id": id.clone(),
                 "owner_id": r.try_get::<String, _>("owner_id").ok(),
                 "owner_display_name": r.try_get::<Option<String>, _>("owner_display_name").ok().flatten(),
                 "question_text": r.try_get::<String, _>("question_text").ok(),
@@ -850,6 +903,31 @@ pub async fn list_forecasts_handler(
                 "created_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").ok().map(|t| t.to_rfc3339()),
                 "updated_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("updated_at").ok().map(|t| t.to_rfc3339()),
                 "resolved_at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("resolved_at").ok().flatten().map(|t| t.to_rfc3339()),
+                "team_id": r.try_get::<Option<Uuid>, _>("team_id").ok().flatten().map(|u| u.to_string()),
+                // Spec 26 collaboration context.
+                "access": id.as_ref()
+                    .and_then(|i| provenance.get(i))
+                    .map(|p| p.to_json()),
+                "share_count": id.as_ref()
+                    .and_then(|i| provenance.get(i))
+                    .map(|p| p.share_count)
+                    .unwrap_or(0),
+                // Rich membership objects. Kept under a NEW key rather
+                // than overloading `portfolios` — get_forecast_handler has
+                // returned that as a bare id array since mig 094 and the
+                // cockpit's portfolio-chip editor deserializes it as
+                // Vec<String>. Changing its shape would silently break
+                // that editor on older clients.
+                "portfolio_refs": id.as_ref()
+                    .and_then(|i| memberships.get(i))
+                    .cloned()
+                    .unwrap_or_default(),
+                "portfolios": id.as_ref()
+                    .and_then(|i| memberships.get(i))
+                    .map(|v| v.iter()
+                        .filter_map(|p| p.get("id").and_then(|x| x.as_str()).map(String::from))
+                        .collect::<Vec<_>>())
+                    .unwrap_or_default(),
             })
         })
         .collect();
@@ -924,16 +1002,21 @@ pub async fn update_forecast_handler(
         // column type) on insert.
         let new_prob_f32 = new_prob as f32;
         if (new_prob - current_prob as f64).abs() > 0.001 {
-            // Record the probability update
+            // Record the probability update, attributed (Spec 26 §4.1).
+            // `actor_user_id` is what makes this show up as "Alice
+            // revised 41% → 47%" in the team feed instead of an
+            // anonymous number change.
             sqlx::query(
                 "INSERT INTO fermi_forecast_updates
-                 (id, forecast_id, previous_probability, new_probability, reason, created_at)
-                 VALUES ($1, $2, $3, $4, 'Manual update via API', NOW())",
+                 (id, forecast_id, previous_probability, new_probability, reason,
+                  actor_user_id, revision_trigger, created_at)
+                 VALUES ($1, $2, $3, $4, 'Manual update via API', $5, 'manual', NOW())",
             )
             .bind(Uuid::new_v4().to_string())
             .bind(&forecast_id)
             .bind(current_prob)
             .bind(new_prob_f32)
+            .bind(&user_id)
             .execute(pool)
             .await
             .ok();
@@ -1800,10 +1883,24 @@ pub async fn update_probability_handler(
 
     // Trajectory row reflects the DISPLAYED (recomposed) value so the
     // trajectory tab shows the smart number, not the bare standalone.
+    //
+    // Spec 26 §4.1: `actor_user_id` alongside `agent_id`. Both, not
+    // either — an agent-assisted revision has a human who pointed the
+    // agent at the problem, and dropping that half is why the team feed
+    // could never say who was responsible for a move.
+    // revision_trigger: 'agent_correction' when an agent produced the
+    // number, 'manual' otherwise, so forecast_spacetime's categorisation
+    // (migration 149) stops flattening everything to 'evidence_update'.
+    let revision_trigger = if req.agent_id.is_some() {
+        "agent_correction"
+    } else {
+        "manual"
+    };
     sqlx::query(
         "INSERT INTO fermi_forecast_updates
-         (id, forecast_id, previous_probability, new_probability, reason, agent_id, evidence_added, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())",
+         (id, forecast_id, previous_probability, new_probability, reason, agent_id,
+          evidence_added, actor_user_id, revision_trigger, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())",
     )
     .bind(&update_id)
     .bind(&forecast_id)
@@ -1812,6 +1909,8 @@ pub async fn update_probability_handler(
     .bind(&req.reason)
     .bind(&req.agent_id)
     .bind(&req.evidence_added)
+    .bind(&user_id)
+    .bind(revision_trigger)
     .execute(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -1952,11 +2051,23 @@ pub async fn list_portfolios_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Spec 26 §3.2: one batched provenance resolution for the page. The
+    // console previously had to fan out a /shares call per portfolio just
+    // to colour a team dot, and even then couldn't say who shared it.
+    let page_ids: Vec<String> = rows
+        .iter()
+        .filter_map(|r| r.try_get::<String, _>("id").ok())
+        .collect();
+    let provenance =
+        crate::handlers::collab::portfolio_access_provenance(pool, &user_id, &page_ids).await;
+
     let portfolios: Vec<JsonValue> = rows
         .iter()
         .map(|r| {
+            let id: Option<String> = r.try_get::<String, _>("id").ok();
+            let prov = id.as_ref().and_then(|i| provenance.get(i));
             json!({
-                "id": r.try_get::<String, _>("id").ok(),
+                "id": id.clone(),
                 "title": r.try_get::<String, _>("title").ok(),
                 "description": r.try_get::<Option<String>, _>("description").ok().flatten(),
                 "owner_id": r.try_get::<String, _>("owner_id").ok(),
@@ -1965,6 +2076,8 @@ pub async fn list_portfolios_handler(
                 "forecast_count": r.try_get::<i64, _>("forecast_count").ok(),
                 "resolved_count": r.try_get::<i64, _>("resolved_count").ok(),
                 "avg_brier": r.try_get::<Option<f64>, _>("avg_brier").ok().flatten(),
+                "access": prov.map(|p| p.to_json()),
+                "share_count": prov.map(|p| p.share_count).unwrap_or(0),
                 // Owning team (Spec 24 §3.5.4). Exposed here so the
                 // console's Teams panel can filter portfolios owned by
                 // a specific team without an extra per-portfolio round
@@ -2164,12 +2277,16 @@ pub async fn add_forecast_to_portfolio_handler(
         None => return Err((StatusCode::NOT_FOUND, "Portfolio not found".into())),
     }
 
+    // Spec 26 §4.1: record WHO curated. On a shared portfolio the adder
+    // is frequently not the portfolio owner, and "Bo pulled this into the
+    // WC book" is a real team event the activity feeds surface.
     sqlx::query(
-        "INSERT INTO fermi_portfolio_forecasts (portfolio_id, forecast_id)
-         VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        "INSERT INTO fermi_portfolio_forecasts (portfolio_id, forecast_id, added_by)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
     )
     .bind(&portfolio_id)
     .bind(&req.forecast_id)
+    .bind(&user_id)
     .execute(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -2469,7 +2586,11 @@ pub async fn list_portfolio_forecasts_handler(
                 f.metadata,
                 f.tags,
                 f.team_id,
+                f.owner_id::text AS owner_id,
+                COALESCE(ou.display_name, ou.name, ou.email, ou.user_id) AS owner_display_name,
                 pf.added_at,
+                pf.added_by,
+                COALESCE(au.display_name, au.name, au.email, au.user_id) AS added_by_display_name,
                 (SELECT COUNT(*) FROM fermi_forecast_updates u
                  WHERE u.forecast_id = f.id
                    AND u.created_at > NOW() - INTERVAL '7 days') AS n_recent_updates,
@@ -2478,6 +2599,11 @@ pub async fn list_portfolio_forecasts_handler(
                    AND s.object_id = f.id) AS share_count
          FROM fermi_portfolio_forecasts pf
          JOIN fermi_forecasts f ON f.id = pf.forecast_id
+         -- Spec 26: who owns the row, and who pulled it into this book.
+         -- A portfolio is joint curation; both attributions are team
+         -- context the operator needs and neither was exposed before.
+         LEFT JOIN users ou ON ou.user_id = f.owner_id::text
+         LEFT JOIN users au ON au.user_id = pf.added_by
          WHERE pf.portfolio_id = $1
          ORDER BY pf.added_at DESC",
     )
@@ -2486,11 +2612,27 @@ pub async fn list_portfolio_forecasts_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Spec 26 §3.2: per-row access provenance + cross-portfolio
+    // membership. Inside a portfolio detail, "also in: Base rates" is the
+    // signal that a forecast is shared curation rather than exclusive to
+    // this book — which matters a lot when a team is reasoning about
+    // whether a cascade edit here will surprise someone over there.
+    let page_ids: Vec<String> = rows
+        .iter()
+        .filter_map(|r| r.try_get::<String, _>("id").ok())
+        .collect();
+    let provenance =
+        crate::handlers::collab::forecast_access_provenance(pool, &user_id, &page_ids).await;
+    let memberships =
+        crate::handlers::collab::forecast_portfolio_memberships(pool, &user_id, &page_ids).await;
+
     let forecasts: Vec<JsonValue> = rows
         .iter()
         .map(|r| {
             // Defensive try_get on every column — a single bad row should
             // never bring down the response.
+            let id: Option<String> = r.try_get::<String, _>("id").ok();
+            let prov = id.as_ref().and_then(|i| provenance.get(i));
             let prob: Option<f64> = r.try_get::<Option<f32>, _>("predicted_probability")
                 .ok().flatten().map(|v| v as f64);
             let metadata: Option<JsonValue> = r.try_get("metadata").ok();
@@ -2514,7 +2656,7 @@ pub async fn list_portfolio_forecasts_handler(
                 None => (None, None, None, None),
             };
             json!({
-                "id":                   r.try_get::<String, _>("id").ok(),
+                "id":                   id.clone(),
                 "question_text":        r.try_get::<String, _>("question_text").ok(),
                 "predicted_probability":prob,
                 "status":               r.try_get::<String, _>("status").ok(),
@@ -2524,6 +2666,8 @@ pub async fn list_portfolio_forecasts_handler(
                 "visibility":           r.try_get::<String, _>("visibility").ok(),
                 "updated_at":           r.try_get::<chrono::DateTime<chrono::Utc>, _>("updated_at").ok().map(|d| d.to_rfc3339()),
                 "added_at":             r.try_get::<chrono::DateTime<chrono::Utc>, _>("added_at").ok().map(|d| d.to_rfc3339()),
+                "added_by":             r.try_get::<Option<String>, _>("added_by").ok().flatten(),
+                "added_by_display_name":r.try_get::<Option<String>, _>("added_by_display_name").ok().flatten(),
                 "tags":                 r.try_get::<Vec<String>, _>("tags").ok(),
                 "team_id":              r.try_get::<Option<Uuid>, _>("team_id").ok().flatten().map(|u| u.to_string()),
                 "n_recent_updates":     r.try_get::<i64, _>("n_recent_updates").ok(),
@@ -2532,6 +2676,16 @@ pub async fn list_portfolio_forecasts_handler(
                 "pm_url":               pm_url,
                 "pm_volume_24h":        pm_volume_24h,
                 "pm_divergence_pp":     pm_divergence_pp,
+                // Spec 26 collaboration context. `share_count` is now
+                // authoritative (it used to be a placeholder that was
+                // always 0 while the console rendered badges off it).
+                "access":               prov.map(|p| p.to_json()),
+                "owner_id":             r.try_get::<String, _>("owner_id").ok(),
+                "owner_display_name":   r.try_get::<Option<String>, _>("owner_display_name").ok().flatten(),
+                "portfolio_refs":       id.as_ref()
+                                            .and_then(|i| memberships.get(i))
+                                            .cloned()
+                                            .unwrap_or_default(),
             })
         })
         .collect();

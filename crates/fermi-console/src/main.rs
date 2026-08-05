@@ -27,10 +27,11 @@ mod viz;
 use fermi_console::updater;
 
 use api::client::{
-    ApiClient, ApiConfig, CalibrationData, CreatePortfolioRequest, CreateTeamRequest, Forecast,
-    ForecastQuery, Invite, InviteRequest, LeaderboardEntry, LeaderboardQuery, MyStats,
-    PatchPortfolioRequest, Portfolio, PortfolioForecast, PortfolioStats, ShareEntry, ShareRequest,
-    Team, TeamDetail, Wallet,
+    AccessSummary, ActivityEvent, ApiClient, ApiConfig, CalibrationData, CreatePortfolioRequest,
+    CreateTeamRequest, Forecast, ForecastQuery, Invite, InviteRequest, LeaderboardEntry,
+    LeaderboardQuery, MemberContribution, MyStats, PatchPortfolioRequest, Portfolio,
+    PortfolioForecast, PortfolioStats, ShareEntry, ShareRequest, Team, TeamDetail,
+    TeamSharedResponse, Wallet,
 };
 use cockpit::CockpitState;
 use composer::ComposerState;
@@ -880,6 +881,64 @@ struct FermiConsole {
     team_invite_loading: bool,
     team_action_error: Option<String>,
 
+    // ── Collaboration v2: server-side team surfaces (Spec 26) ────────
+    //
+    // The Teams panel's Shared and Activity tabs used to be derived
+    // client-side by filtering `active_forecasts` / `portfolios` — i.e.
+    // the caller's OWN objects. That could structurally never show work a
+    // teammate had shared with the team, which is the root of the "team
+    // views feel anemic" problem: the panel was a mirror, not a window.
+    //
+    // These three caches hold the server's answer instead. All keyed by
+    // team_id so switching teams doesn't discard what was already loaded,
+    // and all with a matching in-flight set so a re-select mid-fetch
+    // doesn't double-request.
+    /// `GET /api/teams/:id/shared` — the canonical inventory of what is
+    /// shared with a team: forecasts and portfolios, each carrying `via`
+    /// (team-owned / team-share / inherited-from-portfolio), the grantor,
+    /// the timestamp and the permission.
+    team_shared: std::collections::HashMap<String, TeamSharedResponse>,
+    team_shared_in_flight: std::collections::HashSet<String>,
+    /// `GET /api/teams/:id/activity` — attributed events across that
+    /// whole surface. Real per-member attribution, not a guess derived
+    /// from `updated_at`.
+    team_activity: std::collections::HashMap<String, Vec<ActivityEvent>>,
+    team_activity_in_flight: std::collections::HashSet<String>,
+    /// `GET /api/teams/:id/contributions` — per-member roll-up that turns
+    /// the Roster tab from a list of names into a working document.
+    team_contributions: std::collections::HashMap<String, Vec<MemberContribution>>,
+    team_contributions_in_flight: std::collections::HashSet<String>,
+    /// Actor filter for the Activity tab. `Some(user_id)` narrows the
+    /// feed to one teammate — the "which team members did which things"
+    /// query, driven by clicking a roster row. Cleared on team switch so
+    /// a filter can't silently persist onto a team that member isn't in.
+    team_activity_actor: Option<String>,
+    /// Kind filter for the Activity tab (comma-separated wire value, e.g.
+    /// `"revised,resolved"`). `None` = everything.
+    team_activity_kind: Option<&'static str>,
+    /// Whether the Shared tab's "share a portfolio with this team" picker
+    /// is open. Sharing a whole book with a team is the highest-leverage
+    /// collaboration act in the product (it cascades to every forecast
+    /// inside) and it previously had no entry point outside the portfolio
+    /// detail's Access panel — three panels away from the team you were
+    /// looking at.
+    team_share_portfolio_showing: bool,
+
+    // ── Collaboration v2: portfolio access + activity (Spec 26) ──────
+    /// `GET /api/portfolios/:id/access` for the selected portfolio. Drives
+    /// the detail header's access strip: owner, teams (with rosters), and
+    /// `cascades_to` — how many member forecasts inherit these grants.
+    portfolio_access: std::collections::HashMap<String, AccessSummary>,
+    portfolio_access_in_flight: std::collections::HashSet<String>,
+    /// `GET /api/portfolios/:id/activity` — portfolio-level events plus
+    /// every event on every member forecast, attributed.
+    portfolio_activity: std::collections::HashMap<String, Vec<ActivityEvent>>,
+    portfolio_activity_in_flight: std::collections::HashSet<String>,
+    /// Whether the portfolio detail is showing its Activity feed instead
+    /// of the forecast list. A toggle rather than a second scroll region
+    /// so the detail pane keeps one job at a time.
+    portfolio_showing_activity: bool,
+
     // ── Inbox: pending invites (Spec 24 §3.5.5) ───────────────────
     inbox_invites: Vec<Invite>,
     inbox_loading: bool,
@@ -1209,6 +1268,20 @@ impl FermiConsole {
             team_invite_role: "member".into(),
             team_invite_loading: false,
             team_action_error: None,
+            team_shared: std::collections::HashMap::new(),
+            team_shared_in_flight: std::collections::HashSet::new(),
+            team_activity: std::collections::HashMap::new(),
+            team_activity_in_flight: std::collections::HashSet::new(),
+            team_contributions: std::collections::HashMap::new(),
+            team_contributions_in_flight: std::collections::HashSet::new(),
+            team_activity_actor: None,
+            team_activity_kind: None,
+            team_share_portfolio_showing: false,
+            portfolio_access: std::collections::HashMap::new(),
+            portfolio_access_in_flight: std::collections::HashSet::new(),
+            portfolio_activity: std::collections::HashMap::new(),
+            portfolio_activity_in_flight: std::collections::HashSet::new(),
+            portfolio_showing_activity: false,
             inbox_invites: Vec::new(),
             inbox_loading: false,
             inbox_sheet_showing: false,
@@ -3700,8 +3773,257 @@ impl FermiConsole {
         // so a stale confirm can't accidentally delete the newly
         // selected team on the next click.
         self.team_delete_confirm_id = None;
+        // An actor filter is scoped to the team it was set from — keeping
+        // it across a switch would silently filter the new team's feed by
+        // someone who isn't on it, producing an empty feed that looks
+        // like "this team does nothing".
+        self.team_activity_actor = None;
+        self.team_share_portfolio_showing = false;
         self.fetch_team_detail(&team_id, cx);
+        // Spec 26: the three server-side surfaces. Fired together on
+        // select rather than lazily per tab, because the tab bar shows
+        // live counts for all three and a lazy fetch would leave two of
+        // the three pills reading (0) until clicked — which reads as
+        // "nothing here" rather than "not loaded yet".
+        self.fetch_team_shared(team_id.clone(), cx);
+        self.fetch_team_activity(team_id.clone(), cx);
+        self.fetch_team_contributions(team_id, cx);
         cx.notify();
+    }
+
+    // ── Spec 26 team surfaces ──────────────────────────────────
+    //
+    // All three follow the same shape: in-flight guard, cache on
+    // success, warn-and-keep-stale on failure. Failure keeps the previous
+    // data rather than blanking the tab, so a transient 500 doesn't make
+    // the operator think their team's work vanished.
+
+    /// `GET /api/teams/:id/shared` — what is shared with this team, by
+    /// whom, and how (direct vs inherited from a portfolio).
+    fn fetch_team_shared(&mut self, team_id: String, cx: &mut Context<Self>) {
+        if !self.connected || !self.team_shared_in_flight.insert(team_id.clone()) {
+            return;
+        }
+        cx.notify();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.team_shared(&team_id).await;
+            this.update(cx, |this, cx| {
+                this.team_shared_in_flight.remove(&team_id);
+                match result {
+                    Ok(resp) => {
+                        this.team_shared.insert(team_id, resp);
+                    }
+                    Err(e) => log::warn!("[team-shared] fetch failed: {}", e),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// `GET /api/teams/:id/activity` — attributed event feed. Re-fired
+    /// whenever the actor or kind filter changes, because filtering
+    /// happens server-side (it narrows the *result*, not a client-side
+    /// window over an already-truncated page).
+    fn fetch_team_activity(&mut self, team_id: String, cx: &mut Context<Self>) {
+        if !self.connected {
+            return;
+        }
+        // Filters change the request, so a filter flip has to be allowed
+        // to supersede an in-flight fetch. The cache write is keyed by
+        // team so a late response only ever overwrites its own team's
+        // feed; a stale-filter response is at worst one frame of old data
+        // that the next notify replaces.
+        self.team_activity_in_flight.insert(team_id.clone());
+        cx.notify();
+        let api = self.api.clone();
+        let actor = self.team_activity_actor.clone();
+        let kind = self.team_activity_kind;
+        cx.spawn(async move |this, cx| {
+            let result = api
+                .team_activity(&team_id, 80, actor.as_deref(), kind)
+                .await;
+            this.update(cx, |this, cx| {
+                this.team_activity_in_flight.remove(&team_id);
+                match result {
+                    Ok(resp) => {
+                        this.team_activity.insert(team_id, resp.events);
+                    }
+                    Err(e) => log::warn!("[team-activity] fetch failed: {}", e),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// `GET /api/teams/:id/contributions` — per-member roll-up.
+    fn fetch_team_contributions(&mut self, team_id: String, cx: &mut Context<Self>) {
+        if !self.connected || !self.team_contributions_in_flight.insert(team_id.clone()) {
+            return;
+        }
+        cx.notify();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.team_contributions(&team_id).await;
+            this.update(cx, |this, cx| {
+                this.team_contributions_in_flight.remove(&team_id);
+                match result {
+                    Ok(resp) => {
+                        this.team_contributions.insert(team_id, resp.members);
+                    }
+                    Err(e) => log::warn!("[team-contributions] fetch failed: {}", e),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Set (or clear) the Activity tab's actor filter and refetch.
+    /// Clicking the already-selected actor clears it — a toggle, matching
+    /// how the portfolio virtual-bucket cards behave.
+    fn set_team_activity_actor(&mut self, actor: Option<String>, cx: &mut Context<Self>) {
+        if self.team_activity_actor == actor {
+            self.team_activity_actor = None;
+        } else {
+            self.team_activity_actor = actor;
+        }
+        self.selected_team_tab = TeamTab::Activity;
+        if let Some(tid) = self.selected_team_id.clone() {
+            self.fetch_team_activity(tid, cx);
+        }
+        cx.notify();
+    }
+
+    /// Set (or clear) the Activity tab's event-kind filter and refetch.
+    fn set_team_activity_kind(&mut self, kind: Option<&'static str>, cx: &mut Context<Self>) {
+        if self.team_activity_kind == kind {
+            self.team_activity_kind = None;
+        } else {
+            self.team_activity_kind = kind;
+        }
+        if let Some(tid) = self.selected_team_id.clone() {
+            self.fetch_team_activity(tid, cx);
+        }
+        cx.notify();
+    }
+
+    /// Share a portfolio with the selected team from the Teams panel.
+    ///
+    /// The highest-leverage collaboration act in the product: because a
+    /// portfolio share cascades to its member forecasts (Spec 26 §2),
+    /// this one click can hand a whole book of work to the team. Doing it
+    /// from the team you're looking at — rather than navigating to the
+    /// portfolio, opening its Access panel, and finding the team in a
+    /// pill list — is the difference between a feature that exists and
+    /// one that gets used.
+    fn share_portfolio_with_selected_team(&mut self, portfolio_id: String, cx: &mut Context<Self>) {
+        let Some(team_id) = self.selected_team_id.clone() else {
+            return;
+        };
+        if !self
+            .portfolio_team_share_in_flight
+            .insert(portfolio_id.clone())
+        {
+            return;
+        }
+        cx.notify();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let body = ShareRequest {
+                share_type: "team".into(),
+                share_target: team_id.clone(),
+                // 'edit' not 'view': sharing a book with a team is a
+                // statement of joint management, and a team that can't
+                // revise the forecasts inside it can't actually
+                // collaborate on them.
+                permission: Some("edit".into()),
+            };
+            let result = api.add_portfolio_share(&portfolio_id, &body).await;
+            this.update(cx, |this, cx| {
+                this.portfolio_team_share_in_flight.remove(&portfolio_id);
+                match result {
+                    Ok(_) => {
+                        this.show_toast("Portfolio shared with team", "✓", theme::GREEN, cx);
+                        this.team_share_portfolio_showing = false;
+                        // Invalidate both the local share cache and the
+                        // server surface — the new share also changes what
+                        // forecasts the team can see via inheritance, so a
+                        // partial refresh would show the book without its
+                        // contents.
+                        this.portfolio_team_shares.remove(&portfolio_id);
+                        this.fetch_team_shared(team_id.clone(), cx);
+                        this.fetch_team_activity(team_id, cx);
+                    }
+                    Err(e) => {
+                        this.show_toast(format!("Share failed: {}", e), "✕", theme::RED, cx);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    // ── Spec 26 portfolio surfaces ───────────────────────────────
+
+    /// `GET /api/portfolios/:id/access` — who can see this book and how,
+    /// plus `cascades_to`: how many member forecasts inherit its grants.
+    fn fetch_portfolio_access(&mut self, portfolio_id: String, cx: &mut Context<Self>) {
+        if !self.connected || !self.portfolio_access_in_flight.insert(portfolio_id.clone()) {
+            return;
+        }
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.portfolio_access(&portfolio_id).await;
+            this.update(cx, |this, cx| {
+                this.portfolio_access_in_flight.remove(&portfolio_id);
+                match result {
+                    Ok(resp) => {
+                        this.portfolio_access.insert(portfolio_id, resp);
+                    }
+                    Err(e) => log::warn!("[portfolio-access] fetch failed: {}", e),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// `GET /api/portfolios/:id/activity` — attributed events across the
+    /// book and every forecast in it.
+    fn fetch_portfolio_activity(&mut self, portfolio_id: String, cx: &mut Context<Self>) {
+        if !self.connected
+            || !self
+                .portfolio_activity_in_flight
+                .insert(portfolio_id.clone())
+        {
+            return;
+        }
+        cx.notify();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.portfolio_activity(&portfolio_id, 60).await;
+            this.update(cx, |this, cx| {
+                this.portfolio_activity_in_flight.remove(&portfolio_id);
+                match result {
+                    Ok(resp) => {
+                        this.portfolio_activity.insert(portfolio_id, resp.events);
+                    }
+                    Err(e) => log::warn!("[portfolio-activity] fetch failed: {}", e),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Create a team from the modal inputs, then refresh the team list.
@@ -5902,6 +6224,230 @@ impl FermiConsole {
             .ok();
         })
         .detach();
+    }
+
+    /// Collaboration strip for the portfolio detail header (Spec 26 §5).
+    ///
+    /// Three facts, one line, always visible:
+    ///
+    ///   * **who owns this book** — and, when it isn't the caller, how
+    ///     the caller has access and who granted it;
+    ///   * **who can see it** — the effective-viewer count with team
+    ///     shares already expanded to people, because "shared with 2
+    ///     teams" is not an answer to "who can read this";
+    ///   * **what sharing it costs** — `cascades_to`, the number of member
+    ///     forecasts that inherit the book's grants. This is the number
+    ///     that makes portfolio sharing comprehensible: it is not one
+    ///     share, it is N.
+    ///
+    /// Renders a thin placeholder while the fetch is in flight rather
+    /// than nothing, so the header doesn't reflow under the operator's
+    /// cursor when it lands.
+    fn render_portfolio_collab_strip(&self, pid: &str, cx: &Context<Self>) -> AnyElement {
+        let _ = cx;
+        let Some(access) = self.portfolio_access.get(pid) else {
+            return div()
+                .px(px(14.0))
+                .py(px(4.0))
+                .text_size(px(10.0))
+                .text_color(theme::fg_faint())
+                .child(if self.portfolio_access_in_flight.contains(pid) {
+                    "⟳ resolving access…"
+                } else {
+                    ""
+                })
+                .into_any_element();
+        };
+
+        let owner = access
+            .owner_display_name
+            .clone()
+            .or_else(|| access.owner_id.as_ref().map(|o| short_user_label(o)))
+            .unwrap_or_else(|| "—".into());
+        let owned = access.my_access.is_owned();
+        let viewer_count = access.viewers.len();
+        // Team shares are the interesting ones — they're how a book
+        // becomes joint property rather than a loan to an individual.
+        let team_names: Vec<String> = access
+            .direct_shares
+            .iter()
+            .filter(|s| s.share_type == "team")
+            .filter_map(|s| {
+                s.share_target_display_name
+                    .clone()
+                    .or_else(|| Some(short_user_label(&s.share_target)))
+            })
+            .collect();
+        let user_share_count = access
+            .direct_shares
+            .iter()
+            .filter(|s| s.share_type == "user")
+            .count();
+
+        div()
+            .px(px(14.0))
+            .py(px(6.0))
+            .border_b_1()
+            .border_color(theme::fg_faint())
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(px(10.0))
+            .text_size(px(10.0))
+            // Owner / how-you-have-it
+            .child(
+                div()
+                    .text_color(if owned {
+                        theme::fg_dim()
+                    } else {
+                        theme::gold()
+                    })
+                    .child(if owned {
+                        format!("◉ yours · {}", access.my_permission)
+                    } else {
+                        match access.my_access.provenance_line() {
+                            Some(line) => format!("{} · owned by {}", line, owner),
+                            None => format!("owned by {} · {}", owner, access.my_permission),
+                        }
+                    }),
+            )
+            // Team shares, named. A count alone ('2 teams') is useless
+            // when the question is 'which teams'.
+            .when(!team_names.is_empty(), |el| {
+                el.child(
+                    div()
+                        .text_color(rgb(theme::BLUE))
+                        .child(format!("👥 {}", team_names.join(", "))),
+                )
+            })
+            .when(user_share_count > 0, |el| {
+                el.child(div().text_color(theme::fg_dim()).child(format!(
+                    "→ {} individual{}",
+                    user_share_count,
+                    if user_share_count == 1 { "" } else { "s" }
+                )))
+            })
+            // Effective viewers — teams already flattened to people.
+            .when(viewer_count > 1, |el| {
+                el.child(
+                    div()
+                        .text_color(theme::fg_dim())
+                        .child(format!("👁 {} can see this", viewer_count)),
+                )
+            })
+            // The cascade number. Only shown when the book is actually
+            // shared AND the cascade is non-trivial — on a private book it
+            // would be a hypothetical, and hypotheticals in a status strip
+            // train the eye to ignore it.
+            .when(
+                access.cascades_to > 0 && (!team_names.is_empty() || user_share_count > 0),
+                |el| {
+                    let partial = access.cascades_to < access.forecast_count;
+                    el.child(div().text_color(theme::gold()).child(if partial {
+                        // The leak guard (Spec 26 §2.1) means not
+                        // every member forecast inherits — saying
+                        // so prevents a false sense of coverage.
+                        format!(
+                            "◈ {} of {} forecasts inherit this access",
+                            access.cascades_to, access.forecast_count
+                        )
+                    } else {
+                        format!("◈ all {} forecasts inherit this access", access.cascades_to)
+                    }))
+                },
+            )
+            .into_any_element()
+    }
+
+    /// The portfolio's attributed activity feed (Spec 26 §4.3).
+    ///
+    /// Portfolio-level events (created, shared) plus every event on every
+    /// member forecast, so "what has the team been doing in this book"
+    /// has a single answer. Reuses `render_activity_event_row` so an
+    /// event reads identically here and in the Teams panel.
+    fn render_portfolio_activity_body(&self, pid: &str, cx: &Context<Self>) -> AnyElement {
+        let container = div().flex().flex_col().px(px(14.0)).py(px(10.0));
+
+        let Some(events) = self.portfolio_activity.get(pid) else {
+            return container
+                .child(div().text_size(px(11.0)).text_color(theme::fg_dim()).child(
+                    if self.portfolio_activity_in_flight.contains(pid) {
+                        "⟳ Loading portfolio activity…"
+                    } else {
+                        "Could not load portfolio activity."
+                    },
+                ))
+                .into_any_element();
+        };
+
+        if events.is_empty() {
+            return container
+                .child(div().text_size(px(11.0)).text_color(theme::fg_dim()).child(
+                    "No activity in this portfolio yet. Adding, revising, \
+                             resolving or sharing anything in it shows up here — \
+                             attributed to whoever did it.",
+                ))
+                .into_any_element();
+        }
+
+        // Same day-grouping as the team feed; see render_team_activity_body
+        // for why absolute dates beat "3 days ago" past yesterday.
+        let mut current_day: Option<String> = None;
+        let mut rows: Vec<AnyElement> = Vec::new();
+        for (i, e) in events.iter().enumerate() {
+            let day =
+                e.ts.as_deref()
+                    .and_then(|t| t.split('T').next())
+                    .unwrap_or("")
+                    .to_string();
+            if current_day.as_deref() != Some(day.as_str()) {
+                rows.push(
+                    div()
+                        .pt(if current_day.is_some() {
+                            px(10.0)
+                        } else {
+                            px(0.0)
+                        })
+                        .pb(px(2.0))
+                        .text_size(px(10.0))
+                        .text_color(theme::fg_faint())
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(humanise_day(&day))
+                        .into_any_element(),
+                );
+                current_day = Some(day);
+            }
+            rows.push(self.render_activity_event_row(e, i, cx));
+        }
+
+        container.children(rows).into_any_element()
+    }
+
+    /// Select a named portfolio and warm every cache its detail view
+    /// needs.
+    ///
+    /// Extracted so the Portfolio panel's own card click and the Teams
+    /// panel's "open this book" click cannot drift apart — they were
+    /// separate inline blocks before, and the Teams one silently skipped
+    /// the stats fetch, so arriving from Teams showed a detail pane with
+    /// no calibration data.
+    ///
+    /// Also warms the Spec 26 access + activity caches, so the detail
+    /// header can state who can see this book and what the team has been
+    /// doing in it without a second click.
+    fn select_named_portfolio(&mut self, portfolio_id: String, cx: &mut Context<Self>) {
+        self.selected_portfolio_id = Some(portfolio_id.clone());
+        // Selecting a named portfolio clears any active virtual bucket so
+        // the right pane isn't rendering two headers at once.
+        self.selected_virtual_portfolio = None;
+        self.portfolio_confirm_delete_id = None;
+        self.portfolio_rename_id = None;
+        self.portfolio_showing_activity = false;
+        self.fetch_portfolio_forecasts(portfolio_id.clone(), cx);
+        self.fetch_portfolio_stats_if_needed(portfolio_id.clone(), cx);
+        self.fetch_portfolio_access(portfolio_id.clone(), cx);
+        self.fetch_portfolio_activity(portfolio_id, cx);
+        cx.notify();
     }
 
     /// Switch the Portfolio panel to a virtual bucket. Clears any
@@ -10372,20 +10918,19 @@ impl FermiConsole {
                                                 .cursor_pointer()
                                                 .hover(|s| s.bg(theme::bg_hover()))
                                                 .on_click(cx.listener(move |this, _event, _window, cx| {
+                                                    // Toggle: re-clicking the selected card
+                                                    // deselects. Selection itself goes through
+                                                    // select_named_portfolio so this path and the
+                                                    // Teams panel's navigation warm exactly the
+                                                    // same caches.
                                                     if this.selected_portfolio_id.as_deref() == Some(&pid_sel) {
                                                         this.selected_portfolio_id = None;
+                                                        this.portfolio_confirm_delete_id = None;
+                                                        this.portfolio_rename_id = None;
+                                                        cx.notify();
                                                     } else {
-                                                        this.selected_portfolio_id = Some(pid_sel.clone());
-                                                        // Selecting a named portfolio clears any
-                                                        // active virtual bucket so the right pane
-                                                        // isn't rendering two headers at once.
-                                                        this.selected_virtual_portfolio = None;
-                                                        this.fetch_portfolio_forecasts(pid_sel.clone(), cx);
-                                                        this.fetch_portfolio_stats_if_needed(pid_sel.clone(), cx);
+                                                        this.select_named_portfolio(pid_sel.clone(), cx);
                                                     }
-                                                    this.portfolio_confirm_delete_id = None;
-                                                    this.portfolio_rename_id = None;
-                                                    cx.notify();
                                                 }))
                                                 // Portfolio icon
                                                 .child(
@@ -10492,6 +11037,12 @@ impl FermiConsole {
                                 let pid = selected.clone().unwrap_or_default();
                                 let is_loading = self.portfolio_forecasts_loading.contains(&pid);
                                 let forecasts = self.portfolio_forecasts.get(&pid).cloned().unwrap_or_default();
+                                // Spec 26: the Activity toggle swaps the whole
+                                // analytical body for the attributed feed. Gating
+                                // every numeric section on one flag keeps the two
+                                // modes mutually exclusive without duplicating the
+                                // detail pane.
+                                let show_numbers = !self.portfolio_showing_activity;
                                 let portfolio_title = self.portfolios.iter()
                                     .find(|p| p.id == pid)
                                     .map(|p| p.title.clone())
@@ -10532,6 +11083,51 @@ impl FermiConsole {
                                             })
                                             // Push the Share chip to the right edge.
                                             .child(div().flex_grow())
+                                            // 📊 Activity toggle (Spec 26 §5). A
+                                            // toggle rather than a second scroll
+                                            // region so the detail pane keeps one
+                                            // job at a time — either you're reading
+                                            // the book's numbers or you're reading
+                                            // who changed them.
+                                            .child({
+                                                let showing = self.portfolio_showing_activity;
+                                                let pid_act = pid.clone();
+                                                div()
+                                                    .id("portfolio-activity-btn")
+                                                    .px(px(10.0))
+                                                    .py(px(3.0))
+                                                    .rounded(px(4.0))
+                                                    .border_1()
+                                                    .border_color(if showing {
+                                                        rgb(theme::GOLD)
+                                                    } else {
+                                                        rgb(theme::FG_FAINT)
+                                                    })
+                                                    .text_size(px(11.0))
+                                                    .text_color(if showing {
+                                                        rgb(theme::GOLD)
+                                                    } else {
+                                                        rgb(theme::FG_DIM)
+                                                    })
+                                                    .cursor_pointer()
+                                                    .hover(|s| s.bg(theme::bg_hover()))
+                                                    .on_click(cx.listener(move |this, _, _w, cx| {
+                                                        this.portfolio_showing_activity =
+                                                            !this.portfolio_showing_activity;
+                                                        if this.portfolio_showing_activity {
+                                                            this.fetch_portfolio_activity(
+                                                                pid_act.clone(),
+                                                                cx,
+                                                            );
+                                                        }
+                                                        cx.notify();
+                                                    }))
+                                                    .child(if showing {
+                                                        "📊 Activity •"
+                                                    } else {
+                                                        "📊 Activity"
+                                                    })
+                                            })
                                             // 🔗 Share toggle (Spec 24 §3.5.3)
                                             .child(
                                                 div()
@@ -10559,12 +11155,27 @@ impl FermiConsole {
                                                     .child("🔗 Share"),
                                             ),
                                     )
+                                    // Spec 26 §5: who can see this book, and what
+                                    // sharing it actually costs. Always visible —
+                                    // unlike the Share panel below it this is
+                                    // read-only orientation, and burying "this is
+                                    // shared with 5 people" behind a toggle is how
+                                    // a team ends up surprised by its own
+                                    // permissions.
+                                    .child(self.render_portfolio_collab_strip(&pid, cx))
                                     // Access panel (collapsible)
                                     .when(self.portfolio_share_showing, |el| {
                                         el.child(self.render_portfolio_access_panel(cx))
                                     })
+                                    // Activity feed replaces the numbers when
+                                    // toggled. Early-returns the rest of the
+                                    // detail body via the inverse `when` guards
+                                    // below.
+                                    .when(self.portfolio_showing_activity, |el| {
+                                        el.child(self.render_portfolio_activity_body(&pid, cx))
+                                    })
                                     // Stats + calibration curve (when stats fetched)
-                                    .when(self.portfolio_stats_cache.contains_key(&pid), |el| {
+                                    .when(show_numbers && self.portfolio_stats_cache.contains_key(&pid), |el| {
                                         let stats = self.portfolio_stats_cache.get(&pid).unwrap().clone();
                                         el.child(render_portfolio_stats_panel(&stats))
                                     })
@@ -10573,7 +11184,7 @@ impl FermiConsole {
                                     // loaded portfolio_forecasts. Rendered unconditionally
                                     // once the list is loaded so the operator sees the
                                     // book at a glance even before opening any row.
-                                    .when(!forecasts.is_empty(), {
+                                    .when(show_numbers && !forecasts.is_empty(), {
                                         let forecasts_for_hud = forecasts.clone();
                                         move |el| el.child(render_portfolio_hud(&forecasts_for_hud))
                                     })
@@ -10581,7 +11192,7 @@ impl FermiConsole {
                                     // Top six active forecasts by |Delta-vs-crowd|, each
                                     // rendered as a one-line mini-worm with a probability
                                     // bar + crowd tick + divergence chip.
-                                    .when(!forecasts.is_empty(), {
+                                    .when(show_numbers && !forecasts.is_empty(), {
                                         let forecasts_for_rollup = forecasts.clone();
                                         move |el| el.child(render_portfolio_rollup_strip(&forecasts_for_rollup))
                                     })
@@ -10591,7 +11202,7 @@ impl FermiConsole {
                                     // Uses `WeakEntity` so the click
                                     // handler on rho chips can update the
                                     // console without borrow gymnastics.
-                                    .when(!forecasts.is_empty(), {
+                                    .when(show_numbers && !forecasts.is_empty(), {
                                         let forecasts_for_risk = forecasts.clone();
                                         let rho = self.portfolio_risk_rho;
                                         let handle = cx.weak_entity();
@@ -10613,9 +11224,11 @@ impl FermiConsole {
                                     // Sprint B: Relationships / cascades
                                     // sub-panel. Collapsible; declare +
                                     // remove per-relationship inline.
-                                    .child(self.render_relationships_panel(&forecasts, cx))
+                                    .when(show_numbers, |el| {
+                                        el.child(self.render_relationships_panel(&forecasts, cx))
+                                    })
                                     // Loading spinner
-                                    .when(is_loading, |el| {
+                                    .when(show_numbers && is_loading, |el| {
                                         el.child(
                                             div()
                                                 .p(px(14.0))
@@ -10625,7 +11238,7 @@ impl FermiConsole {
                                         )
                                     })
                                     // Empty state
-                                    .when(!is_loading && forecasts.is_empty(), |el| {
+                                    .when(show_numbers && !is_loading && forecasts.is_empty(), |el| {
                                         el.child(
                                             div()
                                                 .p(px(14.0))
@@ -10635,7 +11248,7 @@ impl FermiConsole {
                                         )
                                     })
                                     // Search + sort toolbar + enriched rows
-                                    .when(!is_loading && !forecasts.is_empty(), move |el| {
+                                    .when(show_numbers && !is_loading && !forecasts.is_empty(), move |el| {
                                         // Read live from the input entity. We don't keep
                                         // portfolio_filter_text in sync via on_change because
                                         // the entity already owns the source-of-truth string —
@@ -12063,9 +12676,10 @@ impl FermiConsole {
             match bucket {
                 VirtualPortfolio::SharedWithMe => (
                     "📥 Shared with me",
-                    "Forecasts other people have shared with you — via team \
-                 membership, direct share, or public visibility. Read-only \
-                 unless the share grants edit/admin.",
+                    "Forecasts other people have shared with you — directly, \
+                 with a team you're on, or because they sit in a portfolio \
+                 you've been given. Each row names who shared it and how. \
+                 Read-only unless the share grants edit/admin.",
                     &self.shared_with_me_forecasts,
                     self.shared_with_me_loading,
                 ),
@@ -12146,6 +12760,15 @@ impl FermiConsole {
                             .text_size(px(11.0))
                             .text_color(theme::fg_dim())
                             .child(blurb),
+                    )
+                    // Spec 26 §5: a provenance roll-up for the shared
+                    // bucket. Per-row attribution answers "who shared
+                    // THIS"; this answers "where is all of this coming
+                    // from" without reading 40 rows — which is the actual
+                    // shape of the original complaint.
+                    .when(
+                        bucket == VirtualPortfolio::SharedWithMe && count > 0,
+                        |el| el.child(render_shared_provenance_summary(forecasts)),
                     ),
             )
             .when(loading, |el| {
@@ -12292,7 +12915,15 @@ impl FermiConsole {
                                                 .unwrap_or("?")
                                         ))
                                     }),
-                            ),
+                            )
+                            // Spec 26 §5: collaboration context. Two facts
+                            // the row could never state before — who put
+                            // this in front of me, and whether it lives in
+                            // a book or on its own. Both are suppressed
+                            // for plain owned standalone forecasts, which
+                            // is the majority case; adding chrome there
+                            // would bury the signal in noise.
+                            .child(render_forecast_collab_line(forecast)),
                     )
                     .child(
                         // Status badge
@@ -13516,8 +14147,19 @@ impl FermiConsole {
         };
 
         let team_id = detail.team.id.clone();
-        let team_forecasts = self.forecasts_for_team(&team_id);
-        let team_portfolios = self.portfolios_for_team(&team_id);
+        // Spec 26: counts come from the server surface when it has
+        // loaded, and fall back to the old client-side derivation while
+        // it's in flight. The fallback is a strict subset (it can only see
+        // the caller's OWN objects) so the number can shrink-then-grow on
+        // load; that's preferable to showing (0) for a team that has work.
+        let shared = self.team_shared.get(&team_id);
+        let (shared_forecast_count, shared_portfolio_count) = match shared {
+            Some(s) => (s.forecasts.len(), s.portfolios.len()),
+            None => (
+                self.forecasts_for_team(&team_id).len(),
+                self.portfolios_for_team(&team_id).len(),
+            ),
+        };
         let tab = self.selected_team_tab;
 
         container
@@ -13546,21 +14188,27 @@ impl FermiConsole {
             // Sub-tab bar (Roster / Shared / Activity). Each pill's
             // count is computed above from the same helpers the tab
             // bodies read, so the number and content can't drift.
-            .child(self.render_team_tab_bar(
-                detail.members.len(),
-                team_forecasts.len() + team_portfolios.len(),
-                cx,
-            ))
+            .child(
+                self.render_team_tab_bar(
+                    detail.members.len(),
+                    shared_forecast_count + shared_portfolio_count,
+                    self.team_activity
+                        .get(&team_id)
+                        .map(|e| e.len())
+                        .unwrap_or(0),
+                    cx,
+                ),
+            )
             // Tab body dispatch. Each branch is self-contained so the
             // scroll position, focus, and lifecycle stay simple.
             .when(tab == TeamTab::Roster, |el| {
                 el.child(self.render_team_roster_body(cx))
             })
             .when(tab == TeamTab::Shared, |el| {
-                el.child(self.render_team_shared_body(&team_forecasts, &team_portfolios, cx))
+                el.child(self.render_team_shared_body(&team_id, cx))
             })
             .when(tab == TeamTab::Activity, |el| {
-                el.child(self.render_team_activity_body(&team_forecasts, cx))
+                el.child(self.render_team_activity_body(&team_id, cx))
             })
             .into_any_element()
     }
@@ -13572,6 +14220,7 @@ impl FermiConsole {
         &self,
         member_count: usize,
         shared_count: usize,
+        activity_count: usize,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let tab = self.selected_team_tab;
@@ -13639,7 +14288,15 @@ impl FermiConsole {
             ))
             .child(pill(
                 "team-tab-activity",
-                "📊 Activity".into(),
+                // Count included now that it's a real server feed rather
+                // than a client-side guess — the number is meaningful, and
+                // an empty Activity tab needs to be distinguishable from
+                // an unloaded one.
+                if activity_count > 0 {
+                    format!("📊 Activity ({})", activity_count)
+                } else {
+                    "📊 Activity".to_string()
+                },
                 TeamTab::Activity,
                 theme::GOLD,
                 cx,
@@ -13761,94 +14418,8 @@ impl FermiConsole {
                         .child(self.team_action_error.clone().unwrap_or_default()),
                 )
             })
-            // Member rows
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.0))
-                    .children(detail.members.iter().map(|m| {
-                        let mid = m.member_id.clone();
-                        let is_owner_role = m.role == "owner";
-                        // Prefer server-resolved display name. Fall back
-                        // to a short-id (first 8 of a UUID) so the row
-                        // stays readable when the users JOIN missed.
-                        let label = m
-                            .member_display_name
-                            .clone()
-                            .unwrap_or_else(|| short_user_label(&m.member_id));
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.0))
-                            .px(px(12.0))
-                            .py(px(8.0))
-                            .rounded(px(6.0))
-                            .bg(theme::bg_elevated())
-                            .child(
-                                div()
-                                    .text_size(px(13.0))
-                                    .child(if m.member_type == "agent" {
-                                        "🤖"
-                                    } else {
-                                        "🧑"
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .flex_grow()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(1.0))
-                                    .child(
-                                        div()
-                                            .text_size(px(12.0))
-                                            .text_color(theme::fg())
-                                            .child(label),
-                                    )
-                                    .when(m.member_display_name.is_some(), |el| {
-                                        el.child(
-                                            div()
-                                                .text_size(px(9.0))
-                                                .text_color(theme::fg_faint())
-                                                .child(short_user_label(&m.member_id)),
-                                        )
-                                    }),
-                            )
-                            // Role chip
-                            .child(
-                                div()
-                                    .px(px(8.0))
-                                    .py(px(2.0))
-                                    .rounded(px(4.0))
-                                    .bg(theme::bg_active())
-                                    .text_size(px(10.0))
-                                    .text_color(theme::gold())
-                                    .child(m.role.clone()),
-                            )
-                            // Remove (✕) — not shown for owners
-                            .when(!is_owner_role, |el| {
-                                el.child(
-                                    div()
-                                        .id(SharedString::from(format!("rm-{}", mid)))
-                                        .px(px(6.0))
-                                        .py(px(2.0))
-                                        .rounded(px(4.0))
-                                        .text_size(px(12.0))
-                                        .text_color(theme::fg_dim())
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(theme::bg_hover()).text_color(theme::red()))
-                                        .on_click(cx.listener({
-                                            let mid = mid.clone();
-                                            move |this, _, _w, cx| {
-                                                this.remove_team_member(mid.clone(), cx);
-                                            }
-                                        }))
-                                        .child("✕"),
-                                )
-                            })
-                    })),
-            )
+            // Member rows, each carrying its contribution roll-up.
+            .child(self.render_team_member_rows(cx))
             // ── Pending / recent invites ───────────────────────────
             .child(self.render_team_invites_section(cx))
             // ── Danger zone ─────────────────────────────────
@@ -13861,22 +14432,245 @@ impl FermiConsole {
             .into_any_element()
     }
 
-    /// Shared tab body — forecasts + portfolios owned by or shared
-    /// with the team. Purely a client-side view over data already
-    /// loaded for other panels; the fan-out that populates the team
-    /// shares caches runs on `fetch_forecasts` / `fetch_portfolios`
-    /// completion. Empty state coaches the operator through the
-    /// two ways items get associated with a team.
-    fn render_team_shared_body(
-        &self,
-        forecasts: &[&Forecast],
-        portfolios: &[&Portfolio],
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    /// Member rows for the Roster tab, each carrying its contribution
+    /// roll-up (Spec 26 §5).
+    ///
+    /// The roster used to be a list of names and roles — organisational
+    /// trivia that told you nothing about how the team was actually
+    /// working. Each row now shows revisions / resolutions / authored /
+    /// curations over the team's shared surface, plus when the member was
+    /// last active, and clicking a row filters the Activity tab to that
+    /// person. That click is the "which team members did which things"
+    /// question, answered in one interaction.
+    ///
+    /// Contribution data is a separate fetch, so rows render immediately
+    /// with the roster and gain their numbers when it lands. Members with
+    /// no contribution row (agents, or a member the surface query didn't
+    /// touch) render without the strip rather than showing zeros — a zero
+    /// and an unknown are different claims.
+    fn render_team_member_rows(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(detail) = self.selected_team_detail.as_ref() else {
+            return div().into_any_element();
+        };
+        let team_id = detail.team.id.clone();
+        let contributions = self.team_contributions.get(&team_id);
+        let filtered_actor = self.team_activity_actor.clone();
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
+            .children(detail.members.iter().map(|m| {
+                let mid = m.member_id.clone();
+                let is_owner_role = m.role == "owner";
+                let is_agent = m.member_type == "agent";
+                let is_filtered = filtered_actor.as_deref() == Some(mid.as_str());
+                // Prefer server-resolved display name. Fall back to a
+                // short-id (first 8 of a UUID) so the row stays readable
+                // when the users JOIN missed.
+                let label = m
+                    .member_display_name
+                    .clone()
+                    .unwrap_or_else(|| short_user_label(&m.member_id));
+                let contrib = contributions.and_then(|cs| cs.iter().find(|c| c.member_id == mid));
+                let mid_click = mid.clone();
+
+                div()
+                    .id(SharedString::from(format!("member-{}", mid)))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .px(px(12.0))
+                    .py(px(8.0))
+                    .rounded(px(6.0))
+                    .bg(if is_filtered {
+                        theme::bg_active()
+                    } else {
+                        theme::bg_elevated()
+                    })
+                    .border_l_2()
+                    // A gold rule marks the member whose work the Activity
+                    // tab is currently filtered to, so the filter's origin
+                    // stays visible while you read the feed.
+                    .border_color(if is_filtered {
+                        rgb(theme::GOLD)
+                    } else {
+                        rgb(theme::BG_ELEVATED)
+                    })
+                    // Humans are filterable actors; agents aren't (their
+                    // work is attributed to the human who ran them, so
+                    // filtering by an agent would return nothing).
+                    .when(!is_agent, |el| {
+                        el.cursor_pointer()
+                            .hover(|s| s.bg(theme::bg_hover()))
+                            .on_click(cx.listener(move |this, _, _w, cx| {
+                                this.set_team_activity_actor(Some(mid_click.clone()), cx);
+                            }))
+                    })
+                    .child(
+                        div()
+                            .text_size(px(13.0))
+                            .child(if is_agent { "🤖" } else { "🧑" }),
+                    )
+                    .child(
+                        div()
+                            .flex_grow()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(theme::fg())
+                                    .child(label),
+                            )
+                            // Contribution strip. Only the non-zero
+                            // counters are rendered: a row reading
+                            // "12 revisions · 3 resolved" is scannable,
+                            // whereas five counters four of which are 0
+                            // is noise that hides the one that matters.
+                            .when_some(contrib, |el, c| {
+                                let mut bits: Vec<String> = Vec::new();
+                                if c.revisions > 0 {
+                                    bits.push(format!("{} revisions", c.revisions));
+                                }
+                                if c.resolutions > 0 {
+                                    bits.push(format!("{} resolved", c.resolutions));
+                                }
+                                if c.authored > 0 {
+                                    bits.push(format!("{} authored", c.authored));
+                                }
+                                if c.curations > 0 {
+                                    bits.push(format!("{} curated", c.curations));
+                                }
+                                if c.shares_granted > 0 {
+                                    bits.push(format!("{} shared", c.shares_granted));
+                                }
+                                let summary = if bits.is_empty() {
+                                    "no activity on this team's work yet".to_string()
+                                } else {
+                                    bits.join(" · ")
+                                };
+                                let last = c
+                                    .last_active_at
+                                    .as_deref()
+                                    .map(|t| format!(" · last active {}", format_relative_time(t)))
+                                    .unwrap_or_default();
+                                el.child(
+                                    div()
+                                        .text_size(px(9.5))
+                                        .text_color(if bits.is_empty() {
+                                            theme::fg_faint()
+                                        } else {
+                                            theme::fg_dim()
+                                        })
+                                        .child(format!("{}{}", summary, last)),
+                                )
+                            })
+                            .when(contrib.is_none(), |el| {
+                                el.child(
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(theme::fg_faint())
+                                        .child(short_user_label(&mid)),
+                                )
+                            }),
+                    )
+                    // Total-actions badge — one number for "who is
+                    // carrying this team". Unweighted on purpose; any
+                    // weighting would be a judgement the operator makes.
+                    .when_some(contrib.filter(|c| c.total_actions > 0), |el, c| {
+                        el.child(
+                            div()
+                                .px(px(7.0))
+                                .py(px(2.0))
+                                .rounded(px(10.0))
+                                .bg(theme::bg_active())
+                                .text_size(px(10.0))
+                                .text_color(theme::cyan())
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(c.total_actions.to_string()),
+                        )
+                    })
+                    // Role chip
+                    .child(
+                        div()
+                            .px(px(8.0))
+                            .py(px(2.0))
+                            .rounded(px(4.0))
+                            .bg(theme::bg_active())
+                            .text_size(px(10.0))
+                            .text_color(theme::gold())
+                            .child(m.role.clone()),
+                    )
+                    // Remove (✕) — not shown for owners
+                    .when(!is_owner_role, |el| {
+                        el.child(
+                            div()
+                                .id(SharedString::from(format!("rm-{}", mid)))
+                                .px(px(6.0))
+                                .py(px(2.0))
+                                .rounded(px(4.0))
+                                .text_size(px(12.0))
+                                .text_color(theme::fg_dim())
+                                .cursor_pointer()
+                                .hover(|s| s.bg(theme::bg_hover()).text_color(theme::red()))
+                                .on_click(cx.listener({
+                                    let mid = mid.clone();
+                                    move |this, _, _w, cx| {
+                                        this.remove_team_member(mid.clone(), cx);
+                                    }
+                                }))
+                                .child("✕"),
+                        )
+                    })
+            }))
+            .into_any_element()
+    }
+
+    /// Shared tab body — the team's inventory, from the server (Spec 26
+    /// §3).
+    ///
+    /// This used to be a client-side filter over `self.active_forecasts`
+    /// and `self.portfolios`, i.e. over the *caller's own* objects. That
+    /// meant a forecast a teammate had shared with the team was
+    /// structurally invisible here while being perfectly visible in the
+    /// Portfolio panel's "Shared with me" bucket — the single most
+    /// confusing thing about the old Teams panel, and the reason it felt
+    /// like a mirror rather than a window.
+    ///
+    /// `GET /api/teams/:id/shared` is now the source. Every row states
+    /// *why* it's on the surface: owned by the team, shared with the
+    /// team (by whom, when, at what permission), or inherited because it
+    /// lives in a book the team has. The inherited group is separated
+    /// out, because "you get this because you have the portfolio" is a
+    /// materially different fact from "someone handed you this".
+    fn render_team_shared_body(&self, team_id: &str, cx: &mut Context<Self>) -> AnyElement {
         let container = div().flex().flex_col().gap(px(16.0));
 
-        if forecasts.is_empty() && portfolios.is_empty() {
+        let Some(shared) = self.team_shared.get(team_id) else {
+            let loading = self.team_shared_in_flight.contains(team_id);
             return container
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(theme::fg_dim())
+                        .child(if loading {
+                            "⟳ Loading the team's shared surface…"
+                        } else {
+                            "Could not load the team's shared items."
+                        }),
+                )
+                .into_any_element();
+        };
+
+        let (inherited, direct): (Vec<_>, Vec<_>) =
+            shared.forecasts.iter().partition(|f| f.is_inherited());
+
+        let mut result = container.child(self.render_team_share_portfolio_picker(cx));
+
+        if shared.forecasts.is_empty() && shared.portfolios.is_empty() {
+            return result
                 .child(
                     div()
                         .p(px(16.0))
@@ -13895,44 +14689,23 @@ impl FermiConsole {
                                 .child("Nothing shared with this team yet"),
                         )
                         .child(div().text_size(px(11.0)).text_color(theme::fg_dim()).child(
-                            "Two ways to associate work with a team:\n\
-                                       • Own the forecast or portfolio as the team (team_id).\n\
-                                       • Share it with the team from the item's Access panel.",
+                            "Three ways work reaches a team:\n\
+                             • Share a portfolio with the team (above) — every forecast \
+                             inside comes with it.\n\
+                             • Share a single forecast with the team from its Access tab.\n\
+                             • Create the forecast or portfolio as the team.",
                         )),
                 )
                 .into_any_element();
         }
 
-        // Forecasts section
-        let mut result = container;
-        if !forecasts.is_empty() {
-            result = result.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.0))
-                    .child(
-                        div()
-                            .text_size(px(12.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme::cyan())
-                            .child(format!("Forecasts ({})", forecasts.len())),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .rounded(px(6.0))
-                            .overflow_hidden()
-                            .border_1()
-                            .border_color(theme::fg_faint())
-                            .children(forecasts.iter().map(|f| self.render_forecast_row(f, cx))),
-                    ),
-            );
-        }
-
-        // Portfolios section
-        if !portfolios.is_empty() {
+        // ── Portfolios first ──────────────────────────────────────────
+        //
+        // Deliberately above forecasts: a portfolio is the unit a team
+        // manages jointly, and its share is what pulls the forecasts
+        // below into view. Reading top-to-bottom now tells a causal
+        // story instead of two unrelated lists.
+        if !shared.portfolios.is_empty() {
             result = result.child(
                 div()
                     .flex()
@@ -13943,13 +14716,80 @@ impl FermiConsole {
                             .text_size(px(12.0))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme::blue())
-                            .child(format!("Portfolios ({})", portfolios.len())),
+                            .child(format!("Portfolios ({})", shared.portfolios.len())),
                     )
                     .child(
                         div().flex().flex_col().gap(px(6.0)).children(
-                            portfolios
+                            shared
+                                .portfolios
                                 .iter()
                                 .map(|p| self.render_team_portfolio_row(p, cx)),
+                        ),
+                    ),
+            );
+        }
+
+        // ── Directly-shared / team-owned forecasts ────────────────────
+        if !direct.is_empty() {
+            result = result.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme::cyan())
+                            .child(format!("Forecasts ({})", direct.len())),
+                    )
+                    .child(
+                        div().flex().flex_col().gap(px(4.0)).children(
+                            direct
+                                .into_iter()
+                                .map(|f| self.render_team_forecast_row(f, cx)),
+                        ),
+                    ),
+            );
+        }
+
+        // ── Inherited via a portfolio ─────────────────────────────────
+        if !inherited.is_empty() {
+            result = result.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .flex()
+                            .items_baseline()
+                            .gap(px(8.0))
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(theme::gold())
+                                    .child(format!(
+                                        "Inherited from portfolios ({})",
+                                        inherited.len()
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(theme::fg_faint())
+                                    .child(
+                                        "the team has these because it has the book \
+                                         — not shared individually",
+                                    ),
+                            ),
+                    )
+                    .child(
+                        div().flex().flex_col().gap(px(4.0)).children(
+                            inherited
+                                .into_iter()
+                                .map(|f| self.render_team_forecast_row(f, cx)),
                         ),
                     ),
             );
@@ -13958,23 +14798,282 @@ impl FermiConsole {
         result.into_any_element()
     }
 
-    /// One row in the Shared tab's portfolio list. Compact tile:
-    /// title + counts, click navigates to Portfolio panel with the
-    /// portfolio selected. Uses the existing selection state so the
-    /// two panels stay in lockstep.
+    /// The "share a portfolio with this team" affordance at the top of
+    /// the Shared tab.
+    ///
+    /// Sharing a book with a team is the highest-leverage collaboration
+    /// act available, because it cascades to every forecast inside
+    /// (Spec 26 §2). Before this it lived only in the portfolio detail's
+    /// Access panel — two panels away from the team you were looking at,
+    /// which is why teams ended up with a pile of individually-shared
+    /// forecasts and no shared books.
+    ///
+    /// Only portfolios not already on the team's surface are offered, so
+    /// the list is always actionable.
+    fn render_team_share_portfolio_picker(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(team_id) = self.selected_team_id.clone() else {
+            return div().into_any_element();
+        };
+        let already: std::collections::HashSet<&str> = self
+            .team_shared
+            .get(&team_id)
+            .map(|s| s.portfolios.iter().map(|p| p.id.as_str()).collect())
+            .unwrap_or_default();
+        let candidates: Vec<&Portfolio> = self
+            .portfolios
+            .iter()
+            .filter(|p| !already.contains(p.id.as_str()))
+            .collect();
+
+        let header = div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .id("team-share-portfolio-toggle")
+                    .px(px(10.0))
+                    .py(px(5.0))
+                    .rounded(px(5.0))
+                    .border_1()
+                    .border_color(rgb(theme::BLUE))
+                    .text_size(px(11.0))
+                    .text_color(rgb(theme::BLUE))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::bg_hover()))
+                    .on_click(cx.listener(|this, _, _w, cx| {
+                        this.team_share_portfolio_showing = !this.team_share_portfolio_showing;
+                        cx.notify();
+                    }))
+                    .child(if self.team_share_portfolio_showing {
+                        "Cancel"
+                    } else {
+                        "◈ Share a portfolio with this team"
+                    }),
+            )
+            .when(!self.team_share_portfolio_showing, |el| {
+                el.child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(theme::fg_faint())
+                        .child("every forecast in it comes along"),
+                )
+            });
+
+        if !self.team_share_portfolio_showing {
+            return header.into_any_element();
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .child(header)
+            .child(if candidates.is_empty() {
+                div()
+                    .text_size(px(11.0))
+                    .text_color(theme::fg_dim())
+                    .child(
+                        "Every portfolio you can administer is already on this \
+                         team's surface.",
+                    )
+                    .into_any_element()
+            } else {
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(6.0))
+                    .children(candidates.into_iter().map(|p| {
+                        let pid = p.id.clone();
+                        let in_flight = self.portfolio_team_share_in_flight.contains(&p.id);
+                        let count = p.forecast_count.unwrap_or(0);
+                        div()
+                            .id(SharedString::from(format!("share-pf-to-team-{}", p.id)))
+                            .px(px(9.0))
+                            .py(px(4.0))
+                            .rounded(px(4.0))
+                            .border_1()
+                            .border_color(theme::fg_faint())
+                            .bg(theme::bg_elevated())
+                            .text_size(px(10.5))
+                            .text_color(theme::fg())
+                            .when(!in_flight, |el| {
+                                el.cursor_pointer()
+                                    .hover(|s| {
+                                        s.bg(theme::bg_hover()).border_color(rgb(theme::BLUE))
+                                    })
+                                    .on_click(cx.listener(move |this, _, _w, cx| {
+                                        this.share_portfolio_with_selected_team(pid.clone(), cx);
+                                    }))
+                            })
+                            .when(in_flight, |el| el.opacity(0.5))
+                            .child(if in_flight {
+                                format!("⟳ {}", truncate(&p.title, 24))
+                            } else {
+                                format!("+ {} ({})", truncate(&p.title, 24), count)
+                            })
+                    }))
+                    .into_any_element()
+            })
+            .into_any_element()
+    }
+
+    /// One forecast row on the team's shared surface.
+    ///
+    /// Distinct from the generic `render_forecast_row` because the
+    /// interesting fact here isn't the forecast's own metadata — it's the
+    /// provenance: who put it in front of this team, how, and at what
+    /// permission. The owner is named too, which the old team view never
+    /// showed and which matters when the answer to "who moved this" turns
+    /// out to be someone outside the team.
+    fn render_team_forecast_row(
+        &self,
+        f: &api::client::TeamSharedForecast,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let fid = f.id.clone();
+        let inherited = f.is_inherited();
+        let status = f.status.clone().unwrap_or_default();
+        let status_color = match status.as_str() {
+            "active" => theme::CYAN,
+            "resolved" => theme::GREEN,
+            "draft" => theme::FG_DIM,
+            "voided" => theme::RED,
+            _ => theme::FG_DIM,
+        };
+        let prob = f
+            .predicted_probability
+            .map(|p| format!("{:.0}%", p * 100.0))
+            .unwrap_or_else(|| "—".into());
+        let owner = f
+            .owner_display_name
+            .clone()
+            .or_else(|| f.owner_id.as_ref().map(|o| short_user_label(o)))
+            .unwrap_or_else(|| "—".into());
+        let when = f
+            .shared_at
+            .as_deref()
+            .or(f.updated_at.as_deref())
+            .map(format_relative_time)
+            .unwrap_or_default();
+
+        div()
+            .id(SharedString::from(format!("team-fc-{}", fid)))
+            .flex()
+            .items_center()
+            .gap(px(10.0))
+            .px(px(12.0))
+            .py(px(9.0))
+            .rounded(px(6.0))
+            .bg(theme::bg_elevated())
+            .border_l_2()
+            // Inherited rows get a gold rule so the eye can separate
+            // "came with a book" from "handed to us" without reading.
+            .border_color(if inherited {
+                rgb(theme::GOLD)
+            } else {
+                rgb(status_color)
+            })
+            .cursor_pointer()
+            .hover(|s| s.bg(theme::bg_hover()))
+            .on_click(cx.listener(move |this, _e, _w, cx| {
+                this.open_forecast(&fid, cx);
+            }))
+            .child(
+                div()
+                    .w(px(42.0))
+                    .text_size(px(13.0))
+                    .text_color(rgb(status_color))
+                    .font_weight(FontWeight::BOLD)
+                    .child(prob),
+            )
+            .child(
+                div()
+                    .flex_grow()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(theme::fg())
+                            .child(truncate(&f.question_text, 58)),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(9.5))
+                            .text_color(theme::fg_dim())
+                            .child(format!("{} · {}", owner, f.provenance_line())),
+                    ),
+            )
+            // "Moving" marker: revisions in the last 7 days. On a team
+            // surface this is the signal that tells you where the
+            // disagreement currently is.
+            .when(f.n_recent_updates > 0, |el| {
+                el.child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(theme::cyan())
+                        .child(format!("↑{}", f.n_recent_updates)),
+                )
+            })
+            .when(!when.is_empty(), |el| {
+                el.child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(theme::fg_faint())
+                        .child(when.clone()),
+                )
+            })
+    }
+
+    /// One row in the Shared tab's portfolio list.
+    ///
+    /// Click navigates to the Portfolio panel with this book selected, so
+    /// the team view is a jumping-off point rather than a dead end.
     fn render_team_portfolio_row(
         &self,
-        portfolio: &Portfolio,
+        portfolio: &api::client::TeamSharedPortfolio,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let pid = portfolio.id.clone();
         let pid_click = pid.clone();
         let title = portfolio.title.clone();
-        let count = portfolio.forecast_count.unwrap_or(0);
-        let resolved = portfolio.resolved_count.unwrap_or(0);
+        let count = portfolio.forecast_count;
+        let resolved = portfolio.resolved_count;
         let brier_text = portfolio
             .avg_brier
-            .map(|b| format!("· avg Brier {:.3}", b))
+            .map(|b| format!(" · avg Brier {:.3}", b))
+            .unwrap_or_default();
+        let owner = portfolio
+            .owner_display_name
+            .clone()
+            .or_else(|| portfolio.owner_id.as_ref().map(|o| short_user_label(o)))
+            .unwrap_or_else(|| "—".into());
+        // Provenance line: team-owned books need no explanation; shared
+        // ones need to name the grantor, because "who decided this team
+        // should have this" is exactly the question the old UI dropped.
+        let provenance = match portfolio.via.as_deref() {
+            Some("team_owned") => "owned by this team".to_string(),
+            _ => {
+                let by = portfolio
+                    .shared_by_display_name
+                    .clone()
+                    .or_else(|| portfolio.shared_by.clone())
+                    .unwrap_or_else(|| "—".into());
+                let perm = portfolio
+                    .permission
+                    .clone()
+                    .unwrap_or_else(|| "view".into());
+                format!("shared by {} · {}", by, perm)
+            }
+        };
+        let when = portfolio
+            .shared_at
+            .as_deref()
+            .or(portfolio.updated_at.as_deref())
+            .map(format_relative_time)
             .unwrap_or_default();
 
         div()
@@ -13991,10 +15090,7 @@ impl FermiConsole {
             .cursor_pointer()
             .hover(|s| s.bg(theme::bg_hover()).border_color(rgb(theme::BLUE)))
             .on_click(cx.listener(move |this, _e, _w, cx| {
-                this.selected_portfolio_id = Some(pid_click.clone());
-                this.selected_virtual_portfolio = None;
-                this.fetch_portfolio_forecasts(pid_click.clone(), cx);
-                this.fetch_portfolio_stats_if_needed(pid_click.clone(), cx);
+                this.select_named_portfolio(pid_click.clone(), cx);
                 this.navigate(Panel::Portfolio, cx);
             }))
             .child(
@@ -14021,117 +15117,63 @@ impl FermiConsole {
                             .text_size(px(10.0))
                             .text_color(theme::fg_dim())
                             .child(format!(
-                                "{} forecast{} · {} resolved {}",
+                                "{} forecast{} · {} resolved{} · {} · {}",
                                 count,
                                 if count == 1 { "" } else { "s" },
                                 resolved,
-                                brier_text
+                                brier_text,
+                                owner,
+                                provenance
                             )),
                     ),
             )
+            .when(!when.is_empty(), |el| {
+                el.child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(theme::fg_faint())
+                        .child(when.clone()),
+                )
+            })
     }
 
-    /// Activity tab body — recent revisions / publications /
-    /// resolutions across the team's forecasts. Client-side derived
-    /// from the same fields the Dashboard's Recent Activity feed
-    /// reads (updated_at, created_at, resolved_at, status). Sorted
-    /// newest-first, truncated to the top 15 to keep it scannable.
+    /// Activity tab body — the real, attributed team feed (Spec 26 §4.4).
     ///
-    /// This is the team-scoped counterpart of `recompute_recent_activity`;
-    /// kept as an on-demand derivation rather than a cached feed
-    /// because it changes every time a team gains or loses a
-    /// forecast, and the input size is small (< N forecasts * 1
-    /// event each).
-    fn render_team_activity_body(
-        &self,
-        forecasts: &[&Forecast],
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        // Build a flat event list. Each forecast contributes at most
-        // one event: the most recent milestone we can derive without
-        // the full update_history (which isn't populated on list
-        // responses). Precedence: resolved > revised > published >
-        // draft.
-        struct Event<'a> {
-            forecast: &'a Forecast,
-            ts: String,
-            icon: &'static str,
-            color: u32,
-            verb: &'static str,
-            trailing: String,
-        }
+    /// The old implementation derived at most ONE synthetic event per
+    /// forecast from `updated_at`/`resolved_at`/`status`, over the
+    /// caller's own forecasts only. It could not name an actor, could not
+    /// show two revisions of the same forecast, and could not see a
+    /// teammate's work at all. It looked like an activity feed and was
+    /// really a list of forecasts sorted by date.
+    ///
+    /// This renders `GET /api/teams/:id/activity`: every event, by any
+    /// actor, across everything the team can see — day-grouped, with
+    /// actor and kind filters. The actor filter is also what a Roster row
+    /// click sets, making "what has Bo been doing" a one-click question.
+    fn render_team_activity_body(&self, team_id: &str, cx: &mut Context<Self>) -> AnyElement {
+        let container = div().flex().flex_col().gap(px(10.0));
+        let loading = self.team_activity_in_flight.contains(team_id);
 
-        let mut events: Vec<Event> = Vec::new();
-        for f in forecasts.iter().copied() {
-            let ts = f
-                .resolved_at
-                .clone()
-                .or_else(|| f.updated_at.clone())
-                .or_else(|| f.created_at.clone())
-                .unwrap_or_default();
-            if ts.is_empty() {
-                continue;
-            }
-            let (icon, color, verb, trailing): (&'static str, u32, &'static str, String) =
-                if f.status == "resolved" {
-                    let outcome = if f.actual_outcome == Some(true) {
-                        "Yes"
-                    } else {
-                        "No"
-                    };
-                    let brier = f.brier_score.unwrap_or(0.5);
-                    let color = if brier < 0.15 {
-                        theme::GREEN
-                    } else if brier < 0.3 {
-                        theme::GOLD
-                    } else {
-                        theme::ORANGE
-                    };
-                    (
-                        "✓",
-                        color,
-                        "Resolved",
-                        format!("{} · Brier {:.2}", outcome, brier),
-                    )
-                } else if f.status == "draft" {
-                    (
-                        "✎",
-                        theme::GOLD,
-                        "Draft",
-                        format!("{:.0}%", f.predicted_probability * 100.0),
-                    )
-                } else {
-                    // active — distinguish first publish from later revision
-                    let was_revised = f.created_at.as_ref().map(|c| c != &ts).unwrap_or(false);
-                    let (icon, verb) = if was_revised {
-                        ("→", "Revised")
-                    } else {
-                        ("◐", "Published")
-                    };
-                    (
-                        icon,
-                        theme::CYAN,
-                        verb,
-                        format!("{:.0}%", f.predicted_probability * 100.0),
-                    )
-                };
-            events.push(Event {
-                forecast: f,
-                ts,
-                icon,
-                color,
-                verb,
-                trailing,
-            });
-        }
+        let Some(events) = self.team_activity.get(team_id) else {
+            return container
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(theme::fg_dim())
+                        .child(if loading {
+                            "⟳ Loading team activity…"
+                        } else {
+                            "Could not load team activity."
+                        }),
+                )
+                .into_any_element();
+        };
 
-        events.sort_by(|a, b| b.ts.cmp(&a.ts));
-        events.truncate(15);
-
-        let container = div().flex().flex_col().gap(px(8.0));
+        let mut result = container.child(self.render_team_activity_filters(cx));
 
         if events.is_empty() {
-            return container
+            let filtered = self.team_activity_actor.is_some() || self.team_activity_kind.is_some();
+            return result
                 .child(
                     div()
                         .p(px(16.0))
@@ -14141,75 +15183,287 @@ impl FermiConsole {
                         .border_color(theme::fg_faint())
                         .text_size(px(11.0))
                         .text_color(theme::fg_dim())
-                        .child(
-                            "No activity yet. Publish or revise a forecast \
-                             associated with this team to see events here.",
-                        ),
+                        .child(if filtered {
+                            // Distinguishing "no matches" from "no
+                            // activity" matters: the first is a filter the
+                            // operator set, the second is a fact about the
+                            // team.
+                            "No events match these filters. Clear them to see the \
+                             whole feed."
+                        } else {
+                            "No activity yet. Publishing, revising, resolving, sharing \
+                             or curating anything on this team's surface will show up \
+                             here — attributed."
+                        }),
                 )
                 .into_any_element();
         }
 
-        container
+        // Day grouping. A flat list of 80 timestamps is unreadable;
+        // "Today / Yesterday / <date>" headers give the eye somewhere to
+        // land and make gaps in team activity visible.
+        let mut current_day: Option<String> = None;
+        let mut rows: Vec<AnyElement> = Vec::new();
+        for (i, e) in events.iter().enumerate() {
+            let day =
+                e.ts.as_deref()
+                    .and_then(|t| t.split('T').next())
+                    .unwrap_or("")
+                    .to_string();
+            if current_day.as_deref() != Some(day.as_str()) {
+                rows.push(
+                    div()
+                        .pt(if current_day.is_some() {
+                            px(10.0)
+                        } else {
+                            px(0.0)
+                        })
+                        .pb(px(2.0))
+                        .text_size(px(10.0))
+                        .text_color(theme::fg_faint())
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(humanise_day(&day))
+                        .into_any_element(),
+                );
+                current_day = Some(day);
+            }
+            rows.push(self.render_activity_event_row(e, i, cx));
+        }
+
+        result = result.child(div().flex().flex_col().children(rows));
+        result.into_any_element()
+    }
+
+    /// Actor + kind filter strip for the Activity tab.
+    ///
+    /// Filtering happens server-side (`?actor=` / `?kind=`), so each chip
+    /// refetches. That's deliberate: a client-side filter over an
+    /// already-truncated 80-event page would silently hide older matches
+    /// and make the feed lie about how much a teammate has done.
+    fn render_team_activity_filters(&self, cx: &mut Context<Self>) -> AnyElement {
+        let actor = self.team_activity_actor.clone();
+        let actor_name = actor.as_ref().and_then(|a| {
+            self.selected_team_detail.as_ref().and_then(|d| {
+                d.members.iter().find(|m| &m.member_id == a).map(|m| {
+                    m.member_display_name
+                        .clone()
+                        .unwrap_or_else(|| short_user_label(&m.member_id))
+                })
+            })
+        });
+        let active_kind = self.team_activity_kind;
+
+        // (label, wire value). Grouped rather than one chip per kind:
+        // "Revisions" meaning revised+resolved is the question an
+        // operator actually asks ("what moved?"), and five single-kind
+        // chips would push the useful ones off the row.
+        let kinds: [(&'static str, &'static str); 3] = [
+            ("Revisions", "revised,resolved"),
+            ("Sharing", "shared,invited,member_joined"),
+            (
+                "Curation",
+                "portfolio_add,portfolio_created,created,published",
+            ),
+        ];
+
+        div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(px(6.0))
             .child(
                 div()
+                    .text_size(px(10.0))
+                    .text_color(theme::fg_faint())
+                    .child("Filter:"),
+            )
+            .children(kinds.into_iter().map(|(label, wire)| {
+                let is_active = active_kind == Some(wire);
+                div()
+                    .id(SharedString::from(format!("act-kind-{}", label)))
+                    .px(px(9.0))
+                    .py(px(3.0))
+                    .rounded(px(10.0))
+                    .border_1()
+                    .border_color(if is_active {
+                        rgb(theme::GOLD).into()
+                    } else {
+                        theme::fg_faint()
+                    })
+                    .text_size(px(10.0))
+                    .text_color(if is_active {
+                        theme::gold()
+                    } else {
+                        theme::fg_dim()
+                    })
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::bg_hover()))
+                    .on_click(cx.listener(move |this, _, _w, cx| {
+                        this.set_team_activity_kind(Some(wire), cx);
+                    }))
+                    .child(label)
+            }))
+            // Active actor filter renders as a dismissible chip rather
+            // than a silent state, so the operator can always see why
+            // the feed is short.
+            .when_some(actor.clone(), |el, a| {
+                let label = actor_name.clone().unwrap_or_else(|| short_user_label(&a));
+                el.child(
+                    div()
+                        .id("act-actor-clear")
+                        .px(px(9.0))
+                        .py(px(3.0))
+                        .rounded(px(10.0))
+                        .bg(theme::bg_active())
+                        .border_1()
+                        .border_color(rgb(theme::CYAN))
+                        .text_size(px(10.0))
+                        .text_color(theme::cyan())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::bg_hover()))
+                        .on_click(cx.listener(|this, _, _w, cx| {
+                            this.set_team_activity_actor(None, cx);
+                        }))
+                        .child(format!("🧑 {} ✕", label)),
+                )
+            })
+            .when(actor.is_none(), |el| {
+                el.child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(theme::fg_faint())
+                        .child("· click a roster member to filter by person"),
+                )
+            })
+            .into_any_element()
+    }
+
+    /// One row in any attributed activity feed (team or portfolio).
+    ///
+    /// Shared by both feeds so an event reads identically wherever it
+    /// appears. The actor is the leading fact — the whole point of Spec
+    /// 26 is that these events have authors — followed by the
+    /// server-rendered summary, so the console never re-derives wording
+    /// the backend already settled on.
+    fn render_activity_event_row(
+        &self,
+        e: &ActivityEvent,
+        idx: usize,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let color = match e.kind.as_str() {
+            "resolved" => theme::GREEN,
+            "revised" => theme::CYAN,
+            "shared" | "invited" => theme::BLUE,
+            "portfolio_add" | "portfolio_created" => theme::GOLD,
+            "member_joined" => theme::CYAN,
+            _ => theme::FG_DIM,
+        };
+        let is_forecast = e.object_type == "forecast" && !e.object_id.is_empty();
+        let target = e.object_id.clone();
+        let time =
+            e.ts.as_deref()
+                .map(format_relative_time)
+                .unwrap_or_default();
+        let actor = e.actor_label();
+        let actor_id = e.actor_id.clone();
+        // Unattributed rows (pre-migration-176 history, cron writers) are
+        // rendered as such. The server refuses to guess an actor and the
+        // UI refuses to hide the gap: a dim "—" is honest, silently
+        // crediting the owner would not be.
+        let unattributed = e.actor_kind == "system";
+
+        div()
+            .id(SharedString::from(format!("act-{}-{}", idx, e.object_id)))
+            .flex()
+            .items_center()
+            .gap(px(10.0))
+            .px(px(10.0))
+            .py(px(7.0))
+            .border_b_1()
+            .border_color(theme::fg_faint())
+            .when(is_forecast, |el| {
+                el.cursor_pointer()
+                    .hover(|s| s.bg(theme::bg_hover()))
+                    .on_click(cx.listener(move |this, _e, _w, cx| {
+                        this.open_forecast(&target, cx);
+                    }))
+            })
+            .child(
+                div()
+                    .w(px(18.0))
+                    .text_size(px(12.0))
+                    .text_color(rgb(color))
+                    .child(e.glyph()),
+            )
+            // Actor column, fixed width so the eye can scan down it and
+            // read the team's division of labour at a glance.
+            .child(
+                div()
+                    .w(px(96.0))
+                    .flex_shrink_0()
+                    .text_size(px(11.0))
+                    .text_color(if unattributed {
+                        theme::fg_faint()
+                    } else {
+                        theme::fg()
+                    })
+                    .font_weight(if unattributed {
+                        FontWeight::NORMAL
+                    } else {
+                        FontWeight::SEMIBOLD
+                    })
+                    // Clicking an actor pivots the feed to that person.
+                    // Needs its own element id because GPUI only accepts
+                    // handlers on identified elements, and the row id
+                    // belongs to the row's own open-forecast handler.
+                    .id(SharedString::from(format!("act-actor-{}-{}", idx, actor)))
+                    .when(!unattributed, |el| {
+                        el.cursor_pointer().hover(|s| s.text_color(theme::cyan()))
+                    })
+                    .when_some(actor_id.filter(|_| !unattributed), |el, aid| {
+                        el.on_click(cx.listener(move |this, _e, _w, cx| {
+                            this.set_team_activity_actor(Some(aid.clone()), cx);
+                        }))
+                    })
+                    .child(truncate(&actor, 14)),
+            )
+            .child(
+                div()
+                    .flex_grow()
                     .flex()
                     .flex_col()
-                    .rounded(px(6.0))
-                    .overflow_hidden()
-                    .border_1()
-                    .border_color(theme::fg_faint())
-                    .bg(theme::bg_elevated())
-                    .children(events.into_iter().map(|e| {
-                        let fid = e.forecast.id.clone();
-                        let question = truncate(&e.forecast.question_text, 48).to_string();
-                        let time = format_relative_time(&e.ts);
+                    .gap(px(1.0))
+                    .child(
                         div()
-                            .id(SharedString::from(format!("team-act-{}", fid)))
-                            .flex()
-                            .items_center()
-                            .gap(px(10.0))
-                            .px(px(12.0))
-                            .py(px(8.0))
-                            .border_b_1()
-                            .border_color(theme::fg_faint())
-                            .cursor_pointer()
-                            .hover(|s| s.bg(theme::bg_hover()))
-                            .on_click(cx.listener(move |this, _ev, _w, cx| {
-                                this.open_forecast(&fid, cx);
-                            }))
-                            .child(
-                                div()
-                                    .w(px(20.0))
-                                    .text_size(px(13.0))
-                                    .text_color(rgb(e.color))
-                                    .child(e.icon),
-                            )
-                            .child(
-                                div()
-                                    .flex_grow()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(2.0))
-                                    .child(
-                                        div()
-                                            .text_size(px(12.0))
-                                            .text_color(theme::fg())
-                                            .child(format!("{}: {}", e.verb, question)),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(10.0))
-                                            .text_color(theme::fg_dim())
-                                            .child(e.trailing),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(10.0))
-                                    .text_color(theme::fg_faint())
-                                    .child(time),
-                            )
-                    })),
+                            .text_size(px(11.0))
+                            .text_color(theme::fg())
+                            .child(e.summary.clone()),
+                    )
+                    .when_some(e.object_title.clone(), |el, t| {
+                        el.child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(theme::fg_dim())
+                                .child(truncate(&t, 62)),
+                        )
+                    }),
+            )
+            // Agent attribution rides alongside the human rather than
+            // replacing them: "Alice · via elo-scout" is the true event.
+            .when_some(e.agent_id.clone(), |el, a| {
+                el.child(
+                    div()
+                        .text_size(px(9.5))
+                        .text_color(theme::gold())
+                        .child(format!("🤖 {}", truncate(&a, 16))),
+                )
+            })
+            .child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(theme::fg_faint())
+                    .child(time),
             )
             .into_any_element()
     }
@@ -18018,6 +19272,189 @@ pub(crate) fn format_relative_time(rfc3339: &str) -> String {
         return format!("{}mo", days / 30);
     }
     format!("{}y", days / 365)
+}
+
+/// Turn a `YYYY-MM-DD` date into a day header for the activity feeds.
+///
+/// "Today" / "Yesterday" for the two days that actually get read, an
+/// absolute date for everything older. Relative labels beyond yesterday
+/// ("3 days ago") force the reader to do arithmetic to correlate two
+/// events, which is the opposite of what a grouped feed is for.
+fn humanise_day(day: &str) -> String {
+    if day.is_empty() {
+        return "—".into();
+    }
+    let today = chrono::Utc::now().date_naive();
+    match chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d") {
+        Ok(d) if d == today => "Today".into(),
+        Ok(d) if d == today.pred_opt().unwrap_or(today) => "Yesterday".into(),
+        // %-d/%b avoids a leading zero, matching the compact typography
+        // the rest of the panel uses.
+        Ok(d) => d.format("%-d %b %Y").to_string(),
+        Err(_) => day.to_string(),
+    }
+}
+
+/// Roll-up of where a "Shared with me" list actually came from
+/// (Spec 26 §5).
+///
+/// The original complaint was "I can see that some forecasts are shared
+/// with my account but I can't see who has shared them". Per-row
+/// provenance answers that one row at a time; this answers it for the
+/// whole bucket at once:
+///
+///   `from Alice (6) · Bo (2)   ·   👥 WC analysts (5) · ◈ via 2 portfolios`
+///
+/// Counts are grouped by grantor and by path rather than listed, because
+/// the useful question is "is this mostly one person's work?" not "what
+/// are all forty grantors". Top three grantors, then a spillover count.
+fn render_shared_provenance_summary(forecasts: &[Forecast]) -> impl IntoElement {
+    use std::collections::HashMap;
+
+    let mut by_grantor: HashMap<String, usize> = HashMap::new();
+    let mut by_team: HashMap<String, usize> = HashMap::new();
+    let mut via_portfolio = 0usize;
+    let mut public_or_link = 0usize;
+
+    for f in forecasts {
+        let Some(a) = f.access.as_ref() else { continue };
+        match a.access_via.as_str() {
+            "public" | "link" => public_or_link += 1,
+            "portfolio" => via_portfolio += 1,
+            _ => {}
+        }
+        if let Some(name) = a
+            .shared_by_display_name
+            .clone()
+            .or_else(|| a.shared_by.as_ref().map(|s| short_user_label(s)))
+        {
+            *by_grantor.entry(name).or_insert(0) += 1;
+        }
+        if let Some(team) = a.team_name.clone() {
+            *by_team.entry(team).or_insert(0) += 1;
+        }
+    }
+
+    let mut grantors: Vec<(String, usize)> = by_grantor.into_iter().collect();
+    grantors.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let grantor_overflow = grantors.len().saturating_sub(3);
+    let grantor_text = if grantors.is_empty() {
+        None
+    } else {
+        let head: Vec<String> = grantors
+            .iter()
+            .take(3)
+            .map(|(n, c)| format!("{} ({})", truncate(n, 18), c))
+            .collect();
+        let mut s = format!("from {}", head.join(" · "));
+        if grantor_overflow > 0 {
+            s.push_str(&format!(" +{} more", grantor_overflow));
+        }
+        Some(s)
+    };
+
+    let mut teams: Vec<(String, usize)> = by_team.into_iter().collect();
+    teams.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let team_text = if teams.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "👥 {}",
+            teams
+                .iter()
+                .take(3)
+                .map(|(n, c)| format!("{} ({})", truncate(n, 18), c))
+                .collect::<Vec<_>>()
+                .join(" · ")
+        ))
+    };
+
+    div()
+        .pt(px(4.0))
+        .flex()
+        .flex_wrap()
+        .gap(px(10.0))
+        .text_size(px(10.0))
+        .when_some(grantor_text, |el, t| {
+            el.child(div().text_color(theme::gold()).child(t))
+        })
+        .when_some(team_text, |el, t| {
+            el.child(div().text_color(rgb(theme::BLUE)).child(t))
+        })
+        .when(via_portfolio > 0, |el| {
+            el.child(
+                div()
+                    .text_color(theme::fg_dim())
+                    .child(format!("◈ {} inherited from a portfolio", via_portfolio)),
+            )
+        })
+        .when(public_or_link > 0, |el| {
+            el.child(
+                div()
+                    .text_color(theme::fg_faint())
+                    .child(format!("🌐 {} public / link", public_or_link)),
+            )
+        })
+}
+
+/// The collaboration context line under a forecast row (Spec 26 §5).
+///
+/// Answers the two questions the old row could not:
+///
+///   * **"who shared this with me?"** — from `access.provenance_line()`,
+///     e.g. `shared by Alice · via WC analysts · edit`. Suppressed for
+///     owned rows, where there is nothing to explain.
+///   * **"portfolio or standalone?"** — from `portfolio_refs`. An empty
+///     list is a real answer (`standalone`), not missing data, so it is
+///     stated explicitly for non-owned rows where the distinction drives
+///     whether an edit here will surprise a teammate reading it there.
+///
+/// Renders nothing at all for the majority case (you own it, it's yours,
+/// context is obvious). Chrome that appears on every row is chrome the
+/// eye learns to skip.
+fn render_forecast_collab_line(f: &Forecast) -> impl IntoElement {
+    let provenance = f.access.as_ref().and_then(|a| a.provenance_line());
+    let badge = f.access.as_ref().map(|a| a.badge().0).unwrap_or("·");
+    let owned = f.access.as_ref().map(|a| a.is_owned()).unwrap_or(true);
+
+    // Portfolio context. Named books, truncated to two plus a spillover
+    // count so a forecast in six portfolios doesn't blow out the row.
+    let refs = f.portfolio_refs.as_deref().unwrap_or(&[]);
+    let titles: Vec<String> = refs
+        .iter()
+        .filter_map(|p| p.title.clone())
+        .map(|t| truncate(&t, 20))
+        .collect();
+    let portfolio_text = match titles.len() {
+        0 => {
+            // Only worth saying on shared rows: on your own book-less
+            // forecasts "standalone" is noise.
+            if owned {
+                None
+            } else {
+                Some("◈ standalone".to_string())
+            }
+        }
+        1 => Some(format!("◈ {}", titles[0])),
+        2 => Some(format!("◈ {} · {}", titles[0], titles[1])),
+        n => Some(format!("◈ {} · {} +{}", titles[0], titles[1], n - 2)),
+    };
+
+    div()
+        .flex()
+        .flex_wrap()
+        .gap(px(8.0))
+        .text_size(px(10.0))
+        .when_some(provenance, |el, line| {
+            el.child(
+                div()
+                    .text_color(theme::gold())
+                    .child(format!("{} {}", badge, line)),
+            )
+        })
+        .when_some(portfolio_text, |el, t| {
+            el.child(div().text_color(theme::fg_faint()).child(t))
+        })
 }
 
 /// Render the expanded detail panel for a forecast.

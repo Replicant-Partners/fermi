@@ -14,6 +14,9 @@ pub mod auth;
 pub mod bayesops;
 pub mod beacons;
 pub mod billing;
+/// Team collaboration surfaces — share provenance, actor attribution,
+/// activity feeds. See docs/specs/SPEC_26_TEAM_COLLABORATION.md.
+pub mod collab;
 pub mod composition;
 pub mod consolidation;
 pub mod creatures;

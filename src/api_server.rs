@@ -857,6 +857,17 @@ async fn run_migrations(db: &PgPool) {
         // columns had any writer. Derived data only — does not touch the
         // mig-174 audit anchors. Idempotent.
         "migrations/175_forecast_spacetime_loop5_backfill.sql",
+        // Spec 26 (v0.11.7): collaboration attribution.
+        // fermi_forecast_updates.actor_user_id — WHO made a revision
+        // (orthogonal to agent_id, which records WHICH agent produced
+        // the number). fermi_portfolio_forecasts.added_by — who pulled
+        // a forecast into a portfolio. Both were missing, which is why
+        // the Teams Activity tab had to guess team activity from
+        // updated_at timestamps instead of showing real per-member
+        // events. Plus the covering indexes the derived activity feeds
+        // and provenance queries need. See
+        // docs/specs/SPEC_26_TEAM_COLLABORATION.md.
+        "migrations/176_collab_attribution.sql",
         // Clear legacy `mcp_tools` data out of agents.mcp_servers. The
         // old create path wrote the wrong field; harmless while nothing
         // read the column, actively wrong now that it is the source of
@@ -2381,6 +2392,34 @@ async fn main() {
             post(handlers::invites::invite_to_team_handler)
                 .get(handlers::invites::list_team_invites_handler),
         )
+        // ── Spec 26: team collaboration surfaces ─────────────────────
+        //
+        // Members-only, all three. The console's Teams panel used to
+        // derive its Shared and Activity tabs client-side by filtering
+        // the caller's OWN forecasts — which structurally could not show
+        // work a teammate shared with the team. These three endpoints
+        // are the server-side truth:
+        //
+        //   /shared        — inventory: what's shared, by whom, when, how
+        //                    (direct vs inherited from a team portfolio)
+        //   /activity      — attributed event feed over that surface,
+        //                    filterable by ?actor= and ?kind=
+        //   /contributions — per-member roll-up: revisions, resolutions,
+        //                    authored, shares granted, curations, last
+        //                    active. Turns the Roster from a name list
+        //                    into a working document.
+        .route(
+            "/api/teams/:team_id/shared",
+            get(handlers::collab::team_shared_handler),
+        )
+        .route(
+            "/api/teams/:team_id/activity",
+            get(handlers::collab::team_activity_handler),
+        )
+        .route(
+            "/api/teams/:team_id/contributions",
+            get(handlers::collab::team_contributions_handler),
+        )
         // ── Invite inbox + state-transition routes (Spec 24 §3.3) ──────
         //
         // The standalone /api/invites/:id verbs decouple the invite's
@@ -3154,6 +3193,21 @@ async fn main() {
             "/api/forecasts/:forecast_id/shares/:share_id",
             delete(handlers::shares::revoke_forecast_share_handler),
         )
+        // ── Spec 26: collaboration surfaces ─────────────────────────
+        //
+        // /access answers "who can see this, and how" — direct shares,
+        // shares inherited from a containing portfolio, and the
+        // flattened effective-viewer list with teams expanded.
+        // /activity answers "which teammate did which thing" from
+        // derived events (no event-log table; see the module docs).
+        .route(
+            "/api/forecasts/:forecast_id/access",
+            get(handlers::collab::forecast_access_handler),
+        )
+        .route(
+            "/api/forecasts/:forecast_id/activity",
+            get(handlers::collab::forecast_activity_handler),
+        )
         // Spec 24 §3.3 / Sprint 2.3a: invite someone to a forecast.
         // The invitee discovers the invite via /api/me/invites and
         // accepts in Sprint 2.3b. Permission vocab: view|edit|admin.
@@ -3280,6 +3334,18 @@ async fn main() {
         .route(
             "/api/portfolios/:portfolio_id/shares/:share_id",
             delete(handlers::shares::revoke_portfolio_share_handler),
+        )
+        // Spec 26: portfolio collaboration surfaces. /access additionally
+        // reports `cascades_to` — how many member forecasts inherit the
+        // portfolio's grants — so the consequence of sharing a book is
+        // legible before you click.
+        .route(
+            "/api/portfolios/:portfolio_id/access",
+            get(handlers::collab::portfolio_access_handler),
+        )
+        .route(
+            "/api/portfolios/:portfolio_id/activity",
+            get(handlers::collab::portfolio_activity_handler),
         )
         // Spec 24 §3.3 / Sprint 2.3a: invite someone to a portfolio.
         .route(

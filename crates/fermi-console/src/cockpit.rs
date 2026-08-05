@@ -40,8 +40,9 @@ use crate::activity_log::{LogEvent, LogSource, Remedy, Severity};
 // Lives in the lib target so it can be unit-tested — the bin target's
 // tests can't build (see src/lib.rs).
 use crate::api::client::{
-    AgentExecutionResult, ApiClient, ApiError, CreateForecastRequest, ForecastSchedule, Invite,
-    InviteRequest, ShareEntry, ShareRequest, Team, UpsertScheduleRequest,
+    AccessSummary, AgentExecutionResult, ApiClient, ApiError, CreateForecastRequest,
+    ForecastSchedule, Invite, InviteRequest, RichShare, ShareEntry, ShareMember, ShareRequest,
+    Team, UpsertScheduleRequest,
 };
 use crate::text_input::TextInput;
 use crate::theme;
@@ -476,6 +477,25 @@ pub struct CockpitState {
     /// Team IDs currently being shared with (button disabled until
     /// the API call returns) so double-clicks don't create dupes.
     pub share_team_in_flight: HashSet<String>,
+    /// Spec 26 §4.3 — the server's complete access picture for this
+    /// forecast (`GET /api/forecasts/:id/access`). Kept separate from
+    /// `shares` because it answers questions `object_shares` rows
+    /// structurally cannot: grants inherited from a containing
+    /// portfolio (which don't exist as rows on this forecast at all)
+    /// and the team-expanded list of humans who can actually see it.
+    /// `None` until the first fetch lands, or if it failed — the tab
+    /// degrades to the raw share list rather than blocking.
+    pub access_summary: Option<AccessSummary>,
+    /// In-flight guard for `load_access_summary`. The Access tab can be
+    /// re-entered (and `load_shares` re-run after every grant) while a
+    /// fetch is still outstanding; without this the same GET stacks up.
+    pub access_summary_loading: bool,
+    /// Team-share rows whose member roster is currently disclosed, keyed
+    /// by `rich_share_key`. Disclosure state lives here rather than in
+    /// the summary so a refetch (e.g. right after sharing with another
+    /// team) doesn't collapse a roster the operator is mid-way through
+    /// reading.
+    pub expanded_team_shares: HashSet<String>,
     /// Share targets collected in the commit sheet (target, permission),
     /// applied right after the forecast row is created/updated on publish.
     pub pending_publish_shares: Vec<(String, String)>,
@@ -1036,6 +1056,9 @@ impl CockpitState {
             share_teams: Vec::new(),
             share_teams_loading: false,
             share_team_in_flight: HashSet::new(),
+            access_summary: None,
+            access_summary_loading: false,
+            expanded_team_shares: HashSet::new(),
             pending_publish_shares: Vec::new(),
             pending_publish_team_shares: Vec::new(),
             pending_publish_portfolios: HashSet::new(),
@@ -9277,6 +9300,14 @@ impl CockpitState {
         let Some(fid) = self.forecast_id.clone() else {
             return;
         };
+        // Switching forecasts invalidates the whole access picture. Drop
+        // it up front rather than letting the previous forecast's viewer
+        // list render for the duration of the refetch — a stale "who can
+        // see this" is worse than a momentarily empty one.
+        if self.shares_loaded_for.as_deref() != Some(fid.as_str()) {
+            self.access_summary = None;
+            self.expanded_team_shares.clear();
+        }
         self.shares_loading = true;
         self.share_error = None;
         self.shares_loaded_for = Some(fid.clone());
@@ -9302,6 +9333,54 @@ impl CockpitState {
         // Populate the "Share with a team" section's dropdown.
         // Cheap noop when teams are already loaded.
         self.load_share_teams(cx);
+        // Inherited grants and the effective-viewer list only exist
+        // server-side, so the Access tab needs this alongside the raw
+        // share rows to be able to answer "why can Bo see this".
+        self.load_access_summary(cx);
+    }
+
+    /// Fetch the Spec 26 access summary: how the caller has access, the
+    /// direct shares enriched with team rosters, the grants inherited
+    /// from containing portfolios, and the flattened viewer list.
+    ///
+    /// Failure is deliberately non-fatal and silent in the UI: the tab's
+    /// primary function (list and revoke direct shares) is served by
+    /// `load_shares`, so a summary outage should degrade the tab, not
+    /// break it. It logs so the cause is still recoverable.
+    pub fn load_access_summary(&mut self, cx: &mut Context<Self>) {
+        let Some(fid) = self.forecast_id.clone() else {
+            return;
+        };
+        if self.access_summary_loading {
+            return;
+        }
+        self.access_summary_loading = true;
+        cx.notify();
+
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.forecast_access(&fid).await;
+            this.update(cx, |state, cx| {
+                state.access_summary_loading = false;
+                match result {
+                    Ok(summary) => {
+                        // The operator may have switched forecasts while
+                        // this was in flight; adopting the response then
+                        // would attribute one forecast's viewers to
+                        // another.
+                        if state.forecast_id.as_deref() == Some(fid.as_str()) {
+                            state.access_summary = Some(summary);
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("[access] load_access_summary failed: {}", e);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Fetch pending/terminal invites for this forecast into
@@ -18202,6 +18281,19 @@ fn render_access_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> im
 
     let perm = state.share_permission.clone();
 
+    // Spec 26 sections are gated here rather than self-suppressing so an
+    // absent summary costs no stray flex gap in the tab's column.
+    let has_team_rosters = state.access_summary.as_ref().is_some_and(|s| {
+        s.direct_shares
+            .iter()
+            .any(|sh| sh.share_type == "team" && sh.members.as_ref().is_some_and(|m| !m.is_empty()))
+    });
+    let has_inherited = state
+        .access_summary
+        .as_ref()
+        .is_some_and(|s| !s.inherited_shares.is_empty());
+    let show_viewers = state.access_summary.is_some() || state.access_summary_loading;
+
     container
         .child(
             div()
@@ -18210,6 +18302,10 @@ fn render_access_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> im
                 .text_color(rgb(theme::CYAN))
                 .child("🔗 Access"),
         )
+        // Orientation before anything else: the operator's own standing
+        // on this forecast. Everything below is only actionable if you
+        // know whether you're the owner or a guest here.
+        .child(render_my_access_line(state))
         .child(
             div()
                 .text_size(px(10.0))
@@ -18382,6 +18478,20 @@ fn render_access_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> im
         // permission chip as the user share row — whichever role you've
         // cycled to is what the team gets on click.
         .child(render_team_share_section(state, cx))
+        // ── Spec 26 §5: the three questions the raw share list can't
+        // answer — who is inside a team share, what reaches this
+        // forecast from a containing portfolio, and who that adds up
+        // to. All three are server-computed, so they appear only once
+        // `access_summary` lands; the tab above stays usable meanwhile.
+        .when(has_team_rosters, |el| {
+            el.child(render_team_roster_section(state, cx))
+        })
+        .when(has_inherited, |el| {
+            el.child(render_inherited_shares_section(state))
+        })
+        .when(show_viewers, |el| {
+            el.child(render_effective_viewers_section(state))
+        })
         // ── Sent invites (pending + recent terminal) ──────────────────
         //
         // Distinct from shares: an invite is an INTENT to grant access,
@@ -18480,6 +18590,528 @@ fn render_team_share_section(
     });
 
     container.child(div().flex().flex_wrap().gap(px(6.0)).children(pills))
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Access tab — Spec 26 (provenance, inheritance, effective viewers)
+// ═══════════════════════════════════════════════════════════════════
+
+/// Stable per-row key for disclosure state. `RichShare::id` is the
+/// `object_shares` PK and is what we want, but it is `Option` on the
+/// wire (inherited rows can be synthesised server-side), so fall back to
+/// the type+target pair — unique within one summary either way.
+fn rich_share_key(share: &RichShare) -> String {
+    share
+        .id
+        .clone()
+        .unwrap_or_else(|| format!("{}:{}", share.share_type, share.share_target))
+}
+
+/// Server-resolved display name, falling back to the raw id. Never
+/// invents a name — an unresolvable target shows its id, which is at
+/// least actionable.
+fn share_member_name(member: &ShareMember) -> String {
+    member
+        .member_display_name
+        .clone()
+        .or_else(|| member.member_id.clone())
+        .unwrap_or_else(|| "—".to_string())
+}
+
+/// "4 people: Alice, Bo, Cy, +1" — enough to answer "is this the group I
+/// think it is" without expanding the roster.
+fn team_member_peek(members: &[ShareMember]) -> String {
+    const PEEK: usize = 3;
+    let names: Vec<String> = members.iter().map(share_member_name).collect();
+    let head = names
+        .iter()
+        .take(PEEK)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let hidden = names.len().saturating_sub(PEEK);
+    let noun = if names.len() == 1 { "person" } else { "people" };
+    if hidden > 0 {
+        format!("{} {}: {}, +{}", names.len(), noun, head, hidden)
+    } else {
+        format!("{} {}: {}", names.len(), noun, head)
+    }
+}
+
+/// The permission chip used by every Access-tab row, kept in one place
+/// so the direct, inherited and viewer lists stay visually comparable —
+/// the operator scans this column to spot an over-broad grant.
+fn render_permission_chip(permission: &str) -> impl IntoElement {
+    let label = if permission.is_empty() {
+        "—".to_string()
+    } else {
+        permission.to_string()
+    };
+    div()
+        .px(px(8.0))
+        .py(px(2.0))
+        .rounded(px(4.0))
+        .bg(rgb(theme::BG_ACTIVE))
+        .text_size(px(10.0))
+        .text_color(rgb(theme::GOLD))
+        .child(label)
+}
+
+/// Fallback prose for `EffectiveViewer::via` when the server sends no
+/// `via_label`. The raw enum values leak schema vocabulary
+/// (`portfolio_team_share`) that means nothing to an operator.
+fn humanise_viewer_via(via: &str) -> &'static str {
+    match via {
+        "owner" => "owner",
+        "user_share" => "shared directly",
+        "team_share" => "via a team share",
+        "portfolio_team_share" => "via a portfolio shared with their team",
+        "portfolio_user_share" => "via a portfolio shared with them",
+        "public" => "public visibility",
+        _ => "",
+    }
+}
+
+/// Spec 26 §3 — "how you have access", one true sentence.
+///
+/// `provenance_line()` already folds the permission into its output and
+/// returns `None` for owned objects (there is nothing to explain), so
+/// the owned case is rendered from the badge plus `my_permission`: an
+/// owner can still be looking at a downgraded role in principle, and
+/// stating it costs one word.
+fn render_my_access_line(state: &CockpitState) -> impl IntoElement {
+    let row = div()
+        .flex()
+        .items_center()
+        .gap(px(8.0))
+        .px(px(10.0))
+        .py(px(6.0))
+        .rounded(px(6.0))
+        .bg(rgb(theme::BG_ELEVATED));
+
+    let Some(summary) = state.access_summary.as_ref() else {
+        return row.child(
+            div()
+                .text_size(px(10.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .child(if state.access_summary_loading {
+                    "Resolving your access…"
+                } else {
+                    // The summary endpoint failed. Say so rather than
+                    // guessing a permission the operator may not have.
+                    "Access details unavailable."
+                }),
+        );
+    };
+
+    let (glyph, badge) = summary.my_access.badge();
+    let permission = if summary.my_permission.is_empty() {
+        "—"
+    } else {
+        summary.my_permission.as_str()
+    };
+    let line = summary.my_access.provenance_line().unwrap_or_else(|| {
+        if badge.is_empty() {
+            permission.to_string()
+        } else {
+            format!("{} · {}", badge, permission)
+        }
+    });
+
+    row.child(
+        div()
+            .text_size(px(10.0))
+            .text_color(rgb(theme::FG_DIM))
+            .child("How you have access"),
+    )
+    .child(div().text_size(px(12.0)).child(glyph))
+    .child(
+        div()
+            .flex_grow()
+            .overflow_hidden()
+            .text_size(px(11.0))
+            .text_color(rgb(theme::FG))
+            .child(line),
+    )
+}
+
+/// Spec 26 §5 — team shares, opened up.
+///
+/// A team share is one opaque row in the direct-shares list above
+/// ("👥 WC analysts"), which cannot answer "does the whole team actually
+/// have this". The server now ships the roster inline, so each team
+/// share gets a peek line plus a click-to-expand member list. Agents are
+/// rendered distinctly: "shared with 6 people" reads very differently
+/// once two of them are bots.
+///
+/// Only rendered when at least one team share carries a roster — see the
+/// `has_team_rosters` gate in `render_access_tab`.
+fn render_team_roster_section(
+    state: &CockpitState,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let team_shares: Vec<&RichShare> = state
+        .access_summary
+        .as_ref()
+        .map(|s| {
+            s.direct_shares
+                .iter()
+                .filter(|sh| {
+                    sh.share_type == "team" && sh.members.as_ref().is_some_and(|m| !m.is_empty())
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .mt(px(8.0))
+        .child(
+            div()
+                .text_size(px(11.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(theme::FG_DIM))
+                .child(format!("Team rosters ({})", team_shares.len())),
+        )
+        .children(team_shares.into_iter().map(|share| {
+            let key = rich_share_key(share);
+            let expanded = state.expanded_team_shares.contains(&key);
+            let team_label = share
+                .share_target_display_name
+                .clone()
+                .unwrap_or_else(|| share.share_target.clone());
+            let members = share.members.clone().unwrap_or_default();
+            let peek = team_member_peek(&members);
+            let granted = share.created_at.as_deref().map(crate::format_relative_time);
+            let granted_by = share
+                .granted_by_display_name
+                .clone()
+                .or_else(|| share.granted_by.clone());
+
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .px(px(10.0))
+                .py(px(7.0))
+                .rounded(px(6.0))
+                .bg(rgb(theme::BG_ELEVATED))
+                .child(
+                    div()
+                        .id(SharedString::from(format!("team-roster-{}", key)))
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .cursor_pointer()
+                        .hover(|s| s.opacity(0.8))
+                        .on_click(cx.listener({
+                            let key = key.clone();
+                            move |this, _, _w, cx| {
+                                // `remove` reports whether it was present,
+                                // so one call does the whole toggle.
+                                if !this.expanded_team_shares.remove(&key) {
+                                    this.expanded_team_shares.insert(key.clone());
+                                }
+                                cx.notify();
+                            }
+                        }))
+                        .child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(rgb(theme::FG_DIM))
+                                .child(if expanded { "▾" } else { "▸" }),
+                        )
+                        .child(div().text_size(px(12.0)).child("👥"))
+                        .child(
+                            div()
+                                .flex_grow()
+                                .overflow_hidden()
+                                .flex()
+                                .flex_col()
+                                .gap(px(1.0))
+                                .child(
+                                    div()
+                                        .text_size(px(11.0))
+                                        .text_color(rgb(theme::FG))
+                                        .child(team_label),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(rgb(theme::FG_FAINT))
+                                        .child(peek),
+                                ),
+                        )
+                        .child(render_permission_chip(
+                            share.permission.as_deref().unwrap_or(""),
+                        ))
+                        .when_some(granted, |el, when| {
+                            el.child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(theme::FG_FAINT))
+                                    .child(when),
+                            )
+                        }),
+                )
+                .when(expanded, |el| {
+                    el.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .pl(px(24.0))
+                            .pt(px(2.0))
+                            .children(members.iter().map(|m| {
+                                let is_agent = m.member_type.as_deref() == Some("agent");
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(6.0))
+                                    .child(div().text_size(px(10.0)).child(if is_agent {
+                                        "🤖"
+                                    } else {
+                                        "🧑"
+                                    }))
+                                    .child(
+                                        div()
+                                            .flex_grow()
+                                            .overflow_hidden()
+                                            .text_size(px(10.0))
+                                            // Agents in blue: a bot on the
+                                            // roster is a materially
+                                            // different disclosure from a
+                                            // colleague and shouldn't have
+                                            // to be read to be noticed.
+                                            .text_color(rgb(if is_agent {
+                                                theme::BLUE
+                                            } else {
+                                                theme::FG
+                                            }))
+                                            .child(share_member_name(m)),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(9.0))
+                                            .text_color(rgb(theme::FG_DIM))
+                                            .child(
+                                                m.role.clone().unwrap_or_else(|| "member".into()),
+                                            ),
+                                    )
+                            })),
+                    )
+                })
+                .when_some(granted_by, |el, by| {
+                    el.child(
+                        div()
+                            .pl(px(24.0))
+                            .text_size(px(9.0))
+                            .text_color(rgb(theme::FG_FAINT))
+                            .child(format!("granted by {}", by)),
+                    )
+                })
+        }))
+}
+
+/// Spec 26 §2 — grants that reach this forecast from a containing
+/// portfolio.
+///
+/// These are the answer to "why can Bo see this? I never shared it with
+/// him". They have no `object_shares` row on this forecast, so nothing
+/// here is revocable: the grant lives on the portfolio and that is where
+/// it has to be removed. Rendered deliberately without a ✕ so the
+/// affordance doesn't promise something the endpoint won't honour.
+///
+/// The portfolio title is the prominent element because the portfolio,
+/// not the share, is the object the operator has to act on. It stays
+/// plain text: cross-panel navigation lives in the app shell above the
+/// cockpit, and faking a click target here would be worse than none.
+fn render_inherited_shares_section(state: &CockpitState) -> impl IntoElement {
+    let inherited: Vec<&RichShare> = state
+        .access_summary
+        .as_ref()
+        .map(|s| s.inherited_shares.iter().collect())
+        .unwrap_or_default();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .mt(px(8.0))
+        .child(
+            div()
+                .text_size(px(11.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(theme::FG_DIM))
+                .child(format!("Inherited from portfolios ({})", inherited.len())),
+        )
+        .child(
+            div()
+                .text_size(px(9.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .child("Granted on the portfolio. Revoke it there to remove this access."),
+        )
+        .children(inherited.into_iter().map(|share| {
+            let portfolio = share
+                .portfolio_title
+                .clone()
+                .or_else(|| share.portfolio_id.clone())
+                .unwrap_or_else(|| "unknown portfolio".to_string());
+            let target = share
+                .share_target_display_name
+                .clone()
+                .unwrap_or_else(|| share.share_target.clone());
+            let icon = if share.share_type == "team" {
+                "👥"
+            } else {
+                "🧑"
+            };
+            let mut trailing: Vec<String> = Vec::new();
+            if let Some(by) = share
+                .granted_by_display_name
+                .clone()
+                .or_else(|| share.granted_by.clone())
+            {
+                trailing.push(format!("granted by {}", by));
+            }
+            if let Some(at) = share.created_at.as_deref() {
+                trailing.push(crate::format_relative_time(at));
+            }
+
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .px(px(10.0))
+                .py(px(7.0))
+                .rounded(px(6.0))
+                // Flatter than the editable rows above, and marked with a
+                // left rule, so "read-only" is legible before reading the
+                // caption.
+                .bg(rgb(theme::BG))
+                .border_l(px(2.0))
+                .border_color(rgb(theme::FG_FAINT))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(rgb(theme::CYAN))
+                                .child(format!("◈ {}", portfolio)),
+                        )
+                        .child(
+                            div()
+                                .flex_grow()
+                                .overflow_hidden()
+                                .text_size(px(9.0))
+                                .text_color(rgb(theme::FG_FAINT))
+                                .child("via portfolio"),
+                        )
+                        .child(render_permission_chip(
+                            share.permission.as_deref().unwrap_or(""),
+                        )),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .child(div().text_size(px(10.0)).child(icon))
+                        .child(
+                            div()
+                                .flex_grow()
+                                .overflow_hidden()
+                                .text_size(px(10.0))
+                                .text_color(rgb(theme::FG))
+                                .child(target),
+                        )
+                        .when(!trailing.is_empty(), |el| {
+                            el.child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(rgb(theme::FG_FAINT))
+                                    .child(trailing.join(" · ")),
+                            )
+                        }),
+                )
+        }))
+}
+
+/// Spec 26 §5 — "who can see this", the flattened truth.
+///
+/// Teams are already expanded and the list already sorted server-side
+/// (owner first, then strongest permission, then name), so this renders
+/// it verbatim: re-sorting client-side would only risk disagreeing with
+/// the server about precedence. This is the one list that answers the
+/// question directly, hence the count in the header — "11 people" is
+/// itself the finding when you expected three.
+fn render_effective_viewers_section(state: &CockpitState) -> impl IntoElement {
+    let container = div().flex().flex_col().gap(px(4.0)).mt(px(8.0));
+
+    let Some(summary) = state.access_summary.as_ref() else {
+        return container.child(
+            div()
+                .text_size(px(11.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(theme::FG_DIM))
+                .child("Who can see this…"),
+        );
+    };
+
+    container
+        .child(
+            div()
+                .text_size(px(11.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(theme::FG_DIM))
+                .child(format!("Who can see this ({})", summary.viewers.len())),
+        )
+        .when(summary.viewers.is_empty(), |el| {
+            el.child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(rgb(theme::FG_FAINT))
+                    // Not "nobody": public/link visibility is reachable
+                    // without being an enumerable principal, so the
+                    // honest claim is about named viewers only.
+                    .child("No named viewers — only you."),
+            )
+        })
+        .children(summary.viewers.iter().map(|v| {
+            let name = v.display_name.clone().unwrap_or_else(|| v.user_id.clone());
+            let via = v
+                .via_label
+                .clone()
+                .unwrap_or_else(|| humanise_viewer_via(&v.via).to_string());
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .px(px(10.0))
+                .py(px(4.0))
+                .rounded(px(4.0))
+                .bg(rgb(theme::BG_ELEVATED))
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(theme::FG))
+                        .child(name),
+                )
+                .child(render_permission_chip(&v.permission))
+                .child(
+                    div()
+                        .flex_grow()
+                        .overflow_hidden()
+                        .text_size(px(9.0))
+                        .text_color(rgb(theme::FG_FAINT))
+                        .child(via),
+                )
+        }))
 }
 
 fn render_forecast_invites_section(

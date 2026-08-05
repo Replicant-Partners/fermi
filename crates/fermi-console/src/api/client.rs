@@ -195,6 +195,16 @@ pub struct Forecast {
     pub metadata: Option<JsonValue>,
     pub tags: Option<Vec<String>>,
     pub portfolios: Option<Vec<String>>,
+    /// Spec 26 §3.2: rich portfolio membership — titles plus who curated.
+    /// An empty vec means **standalone**; that distinction was previously
+    /// invisible in every list.
+    #[serde(default)]
+    pub portfolio_refs: Option<Vec<PortfolioRef>>,
+    /// Spec 26 §3.1: why the caller can see this, and who is responsible.
+    /// `None` against older API builds — the UI then renders no
+    /// provenance chrome rather than guessing.
+    #[serde(default)]
+    pub access: Option<AccessProvenance>,
     pub update_history: Option<Vec<ForecastUpdate>>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
@@ -318,6 +328,12 @@ pub struct Portfolio {
     /// owned by a specific team.
     #[serde(default)]
     pub team_id: Option<String>,
+    /// Spec 26 §3.1. Lets the portfolio list say "shared by Alice via WC
+    /// analysts" without a per-row /shares round trip.
+    #[serde(default)]
+    pub access: Option<AccessProvenance>,
+    #[serde(default)]
+    pub share_count: Option<i64>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -424,9 +440,30 @@ pub struct PortfolioForecast {
     /// COUNT of `object_shares` rows targeting this forecast. Spec 24
     /// §3.2 Wave 1 #4: ships the wire format ahead of need so the
     /// console badge logic doesn't require a second backend pass once
-    /// Sprint 2 starts producing share rows. Always 0 today.
+    /// Sprint 2 starts producing share rows.
+    ///
+    /// Spec 26: this is now authoritative — it counts real `object_shares`
+    /// rows. It was a permanent 0 for the whole Spec 24 era while the
+    /// console rendered badges off it.
     #[serde(default)]
     pub share_count: Option<i64>,
+    /// Spec 26 §3.1 — owner + access path for rows inside a shared book.
+    #[serde(default)]
+    pub owner_id: Option<String>,
+    #[serde(default)]
+    pub owner_display_name: Option<String>,
+    #[serde(default)]
+    pub access: Option<AccessProvenance>,
+    /// Which other books this forecast also sits in. Signals shared
+    /// curation — relevant when a cascade edit here will surprise someone
+    /// reading it over there.
+    #[serde(default)]
+    pub portfolio_refs: Option<Vec<PortfolioRef>>,
+    /// Spec 26 §4.1: who pulled this forecast into *this* portfolio.
+    #[serde(default)]
+    pub added_by: Option<String>,
+    #[serde(default)]
+    pub added_by_display_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -797,6 +834,515 @@ pub struct InviteListResponse {
     pub invites: Vec<Invite>,
     #[serde(default)]
     pub count: usize,
+}
+
+// ── Collaboration v2: provenance, attribution, activity (Spec 26) ────
+
+/// Why the caller can see an object, and who is responsible for that.
+///
+/// Attached as `access` to every forecast and portfolio list row by the
+/// server. Before this existed the console could see *that* something
+/// was shared with it and nothing more — no grantor, no timestamp, no
+/// distinction between "a teammate shared this with the whole team" and
+/// "this is public". Rendering one true sentence per row is the whole
+/// point.
+///
+/// `access_via` ∈ `owner` | `user_share` | `team_owned` | `team_share` |
+/// `portfolio` | `public` | `link` | `unknown`, in that precedence order
+/// (matches the server's `can_access` chain exactly).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AccessProvenance {
+    #[serde(default)]
+    pub access_via: String,
+    #[serde(default)]
+    pub permission: String,
+    #[serde(default)]
+    pub shared_by: Option<String>,
+    #[serde(default)]
+    pub shared_by_display_name: Option<String>,
+    #[serde(default)]
+    pub shared_at: Option<String>,
+    #[serde(default)]
+    pub team_id: Option<String>,
+    #[serde(default)]
+    pub team_name: Option<String>,
+    /// Set when `access_via == "portfolio"`: the book whose share reached
+    /// this forecast.
+    #[serde(default)]
+    pub via_portfolio_id: Option<String>,
+    #[serde(default)]
+    pub via_portfolio_title: Option<String>,
+    #[serde(default)]
+    pub share_count: i64,
+}
+
+impl AccessProvenance {
+    /// True when the caller owns the object — the common case, for which
+    /// the UI renders no provenance chrome at all.
+    pub fn is_owned(&self) -> bool {
+        self.access_via == "owner"
+    }
+
+    /// Short badge glyph + label for the access path.
+    pub fn badge(&self) -> (&'static str, &'static str) {
+        match self.access_via.as_str() {
+            "owner" => ("◉", "yours"),
+            "user_share" => ("→", "shared with you"),
+            "team_owned" => ("👥", "team-owned"),
+            "team_share" => ("👥", "team share"),
+            "portfolio" => ("◈", "via portfolio"),
+            "public" => ("🌐", "public"),
+            "link" => ("🔗", "link"),
+            _ => ("·", ""),
+        }
+    }
+
+    /// The single sentence the operator actually needs: "shared by Alice
+    /// via WC analysts · edit". Returns `None` for owned rows, where
+    /// there is nothing to explain.
+    pub fn provenance_line(&self) -> Option<String> {
+        if self.is_owned() {
+            return None;
+        }
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(by) = self
+            .shared_by_display_name
+            .clone()
+            .or_else(|| self.shared_by.clone())
+        {
+            parts.push(format!("shared by {}", by));
+        }
+        match self.access_via.as_str() {
+            "team_share" | "team_owned" => {
+                if let Some(t) = &self.team_name {
+                    parts.push(format!("via {}", t));
+                }
+            }
+            "portfolio" => {
+                if let Some(p) = &self.via_portfolio_title {
+                    parts.push(format!("via portfolio ‹{}›", p));
+                }
+                if let Some(t) = &self.team_name {
+                    parts.push(format!("→ {}", t));
+                }
+            }
+            "public" => parts.push("public".into()),
+            "link" => parts.push("anyone with the link".into()),
+            _ => {}
+        }
+        if !self.permission.is_empty() {
+            parts.push(self.permission.clone());
+        }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join(" · "))
+        }
+    }
+}
+
+/// One portfolio a forecast belongs to, with curation attribution.
+///
+/// An empty `portfolio_refs` list means the forecast is **standalone** —
+/// which the console previously had no way to know, so every forecast
+/// looked equally context-free.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortfolioRef {
+    pub id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub owner_id: Option<String>,
+    #[serde(default)]
+    pub team_id: Option<String>,
+    #[serde(default)]
+    pub added_at: Option<String>,
+    /// Who pulled this forecast into that book. On a shared portfolio
+    /// this is frequently not the portfolio owner.
+    #[serde(default)]
+    pub added_by: Option<String>,
+    #[serde(default)]
+    pub added_by_display_name: Option<String>,
+}
+
+/// One attributed event from any of the three activity feeds.
+///
+/// `actor_kind`: `user` | `agent` | `system`. `system` means the row
+/// predates attribution (migration 176) or was written by a cron path —
+/// the server deliberately does not guess an actor, so the UI renders
+/// these as unattributed rather than blaming the owner.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActivityEvent {
+    #[serde(default)]
+    pub ts: Option<String>,
+    pub kind: String,
+    #[serde(default)]
+    pub actor_id: Option<String>,
+    #[serde(default)]
+    pub actor_display_name: Option<String>,
+    #[serde(default)]
+    pub actor_kind: String,
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    #[serde(default)]
+    pub object_type: String,
+    #[serde(default)]
+    pub object_id: String,
+    #[serde(default)]
+    pub object_title: Option<String>,
+    /// Server-rendered one-liner ("revised 41% → 47%"). Built server-side
+    /// so the console, web UI and MCP tools tell the same story.
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub detail: JsonValue,
+}
+
+impl ActivityEvent {
+    /// Glyph + accent for the event kind. Kept next to the wire type so
+    /// every surface that renders a feed agrees on the vocabulary.
+    pub fn glyph(&self) -> &'static str {
+        match self.kind.as_str() {
+            "created" => "✎",
+            "published" => "◐",
+            "revised" => "→",
+            "resolved" => "✓",
+            "shared" => "↱",
+            "portfolio_add" => "◈",
+            "portfolio_created" => "◇",
+            "invited" => "✉",
+            "member_joined" => "🧑",
+            _ => "·",
+        }
+    }
+
+    pub fn actor_label(&self) -> String {
+        match self.actor_kind.as_str() {
+            "system" => "—".into(),
+            _ => self
+                .actor_display_name
+                .clone()
+                .or_else(|| self.actor_id.clone())
+                .unwrap_or_else(|| "—".into()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ActivityResponse {
+    #[serde(default)]
+    pub events: Vec<ActivityEvent>,
+    #[serde(default)]
+    pub count: usize,
+    /// Present on the team feed: how big the team's shared surface is.
+    #[serde(default)]
+    pub surface: Option<ActivitySurface>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ActivitySurface {
+    #[serde(default)]
+    pub forecast_count: usize,
+    #[serde(default)]
+    pub portfolio_count: usize,
+}
+
+/// One member's contribution roll-up over a team's shared surface.
+/// Turns the Roster tab from a list of names into a working document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemberContribution {
+    pub member_id: String,
+    #[serde(default)]
+    pub member_display_name: Option<String>,
+    #[serde(default)]
+    pub member_type: Option<String>,
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub joined_at: Option<String>,
+    #[serde(default)]
+    pub invited_by: Option<String>,
+    #[serde(default)]
+    pub revisions: i64,
+    #[serde(default)]
+    pub resolutions: i64,
+    #[serde(default)]
+    pub authored: i64,
+    #[serde(default)]
+    pub shares_granted: i64,
+    #[serde(default)]
+    pub curations: i64,
+    #[serde(default)]
+    pub total_actions: i64,
+    #[serde(default)]
+    pub last_active_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TeamContributionsResponse {
+    #[serde(default)]
+    pub members: Vec<MemberContribution>,
+    #[serde(default)]
+    pub surface: Option<ActivitySurface>,
+}
+
+/// A forecast on a team's shared surface, with the reason it's there.
+///
+/// `via` ∈ `team_owned` | `team_share` | `portfolio`. The `portfolio`
+/// case is inherited access — the forecast was never shared with the
+/// team directly, it came along with a book.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamSharedForecast {
+    pub id: String,
+    #[serde(default)]
+    pub question_text: String,
+    #[serde(default)]
+    pub owner_id: Option<String>,
+    #[serde(default)]
+    pub owner_display_name: Option<String>,
+    #[serde(default)]
+    pub predicted_probability: Option<f64>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub brier_score: Option<f64>,
+    #[serde(default)]
+    pub actual_outcome: Option<bool>,
+    #[serde(default)]
+    pub visibility: Option<String>,
+    #[serde(default)]
+    pub domain: Option<String>,
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    #[serde(default)]
+    pub target_date: Option<String>,
+    #[serde(default)]
+    pub team_id: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+    #[serde(default)]
+    pub resolved_at: Option<String>,
+    #[serde(default)]
+    pub n_recent_updates: i64,
+    #[serde(default)]
+    pub via: Option<String>,
+    #[serde(default)]
+    pub permission: Option<String>,
+    #[serde(default)]
+    pub shared_by: Option<String>,
+    #[serde(default)]
+    pub shared_by_display_name: Option<String>,
+    #[serde(default)]
+    pub shared_at: Option<String>,
+    #[serde(default)]
+    pub via_portfolio_id: Option<String>,
+    #[serde(default)]
+    pub via_portfolio_title: Option<String>,
+}
+
+impl TeamSharedForecast {
+    pub fn is_inherited(&self) -> bool {
+        self.via.as_deref() == Some("portfolio")
+    }
+
+    /// "Bo · team share · edit" — why this row is on the team surface.
+    pub fn provenance_line(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        match self.via.as_deref() {
+            Some("team_owned") => parts.push("owned by this team".into()),
+            Some("portfolio") => parts.push(format!(
+                "via portfolio ‹{}›",
+                self.via_portfolio_title
+                    .clone()
+                    .unwrap_or_else(|| "—".into())
+            )),
+            _ => parts.push("shared with this team".into()),
+        }
+        if let Some(by) = self
+            .shared_by_display_name
+            .clone()
+            .or_else(|| self.shared_by.clone())
+        {
+            parts.push(format!("by {}", by));
+        }
+        if let Some(p) = &self.permission {
+            parts.push(p.clone());
+        }
+        parts.join(" · ")
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamSharedPortfolio {
+    pub id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub owner_id: Option<String>,
+    #[serde(default)]
+    pub owner_display_name: Option<String>,
+    #[serde(default)]
+    pub visibility: Option<String>,
+    #[serde(default)]
+    pub domain: Option<String>,
+    #[serde(default)]
+    pub team_id: Option<String>,
+    #[serde(default)]
+    pub forecast_count: i64,
+    #[serde(default)]
+    pub resolved_count: i64,
+    #[serde(default)]
+    pub avg_brier: Option<f64>,
+    #[serde(default)]
+    pub via: Option<String>,
+    #[serde(default)]
+    pub permission: Option<String>,
+    #[serde(default)]
+    pub shared_by: Option<String>,
+    #[serde(default)]
+    pub shared_by_display_name: Option<String>,
+    #[serde(default)]
+    pub shared_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TeamSharedResponse {
+    #[serde(default)]
+    pub forecasts: Vec<TeamSharedForecast>,
+    #[serde(default)]
+    pub portfolios: Vec<TeamSharedPortfolio>,
+    #[serde(default)]
+    pub counts: TeamSharedCounts,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TeamSharedCounts {
+    #[serde(default)]
+    pub forecasts: usize,
+    #[serde(default)]
+    pub portfolios: usize,
+    /// How many of `forecasts` are there only by portfolio inheritance.
+    #[serde(default)]
+    pub inherited: usize,
+}
+
+/// A share row enriched with `created_at` and, for team shares, the
+/// team's inline roster. `ShareEntry` (Spec 24) lacks both, which is why
+/// the Access tab couldn't answer "does the whole team actually have
+/// this, and since when".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RichShare {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub share_type: String,
+    #[serde(default)]
+    pub share_target: String,
+    #[serde(default)]
+    pub share_target_display_name: Option<String>,
+    #[serde(default)]
+    pub permission: Option<String>,
+    #[serde(default)]
+    pub granted_by: Option<String>,
+    #[serde(default)]
+    pub granted_by_display_name: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    /// Roster for team shares; `None`/empty for user shares.
+    #[serde(default)]
+    pub members: Option<Vec<ShareMember>>,
+    /// Present only on `inherited_shares`: the portfolio the grant lives
+    /// on. Such a share is read-only here — you revoke it on the
+    /// portfolio, not on the forecast.
+    #[serde(default)]
+    pub portfolio_id: Option<String>,
+    #[serde(default)]
+    pub portfolio_title: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareMember {
+    #[serde(default)]
+    pub member_id: Option<String>,
+    #[serde(default)]
+    pub member_display_name: Option<String>,
+    #[serde(default)]
+    pub member_type: Option<String>,
+    #[serde(default)]
+    pub role: Option<String>,
+}
+
+/// One human who can actually see the object, and why. Teams are already
+/// expanded server-side, so this is the flat truth: "these people".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EffectiveViewer {
+    pub user_id: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub permission: String,
+    /// `owner` | `user_share` | `team_share` | `portfolio_team_share` |
+    /// `portfolio_user_share`
+    #[serde(default)]
+    pub via: String,
+    #[serde(default)]
+    pub via_label: Option<String>,
+}
+
+/// `GET /api/{forecasts,portfolios}/:id/access` — the complete access
+/// picture for one object.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AccessSummary {
+    #[serde(default)]
+    pub owner_id: Option<String>,
+    #[serde(default)]
+    pub owner_display_name: Option<String>,
+    #[serde(default)]
+    pub visibility: Option<String>,
+    #[serde(default)]
+    pub my_permission: String,
+    #[serde(default)]
+    pub my_access: AccessProvenance,
+    #[serde(default)]
+    pub direct_shares: Vec<RichShare>,
+    /// Forecast-only: grants that live on a containing portfolio.
+    #[serde(default)]
+    pub inherited_shares: Vec<RichShare>,
+    #[serde(default)]
+    pub viewers: Vec<EffectiveViewer>,
+    /// Portfolio-only: how many member forecasts inherit these grants.
+    /// Makes the consequence of sharing a book legible before you click.
+    #[serde(default)]
+    pub cascades_to: i64,
+    #[serde(default)]
+    pub forecast_count: i64,
+}
+
+/// Minimal percent-encoder for query-string *values*.
+///
+/// The crate has no `urlencoding` dependency and pulling one in for two
+/// call sites isn't worth it. Conservative by construction: anything
+/// outside the unreserved set plus `,` (which the `kind` filter uses as a
+/// separator and servers accept literally) gets escaped, so this can
+/// never under-encode even if a user_id shape changes to something
+/// exotic like an ENS name or an email.
+fn encode_query_value(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b',' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
 }
 
 /// Result of `GET /api/users/lookup?email=…`. `None` (404 → mapped to
@@ -2185,8 +2731,93 @@ impl ApiClient {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // Collaboration — invites (Spec 24 §3.4)
+    // Collaboration v2 — provenance, attribution, activity (Spec 26)
     // ═══════════════════════════════════════════════════════════════
+
+    /// Complete access picture for one forecast: my path in, every direct
+    /// share (with grantor, timestamp and team roster), every share
+    /// *inherited* from a containing portfolio, and the flattened list of
+    /// humans who can actually see it.
+    pub async fn forecast_access(&self, forecast_id: &str) -> Result<AccessSummary, ApiError> {
+        self.get(&format!("/api/forecasts/{}/access", forecast_id))
+            .await
+    }
+
+    /// Portfolio counterpart. Adds `cascades_to`: how many member
+    /// forecasts inherit the portfolio's grants.
+    pub async fn portfolio_access(&self, portfolio_id: &str) -> Result<AccessSummary, ApiError> {
+        self.get(&format!("/api/portfolios/{}/access", portfolio_id))
+            .await
+    }
+
+    /// Attributed history of one forecast.
+    pub async fn forecast_activity(
+        &self,
+        forecast_id: &str,
+        limit: u32,
+    ) -> Result<ActivityResponse, ApiError> {
+        self.get(&format!(
+            "/api/forecasts/{}/activity?limit={}",
+            forecast_id, limit
+        ))
+        .await
+    }
+
+    /// Portfolio feed: portfolio-level events plus every member forecast.
+    pub async fn portfolio_activity(
+        &self,
+        portfolio_id: &str,
+        limit: u32,
+    ) -> Result<ActivityResponse, ApiError> {
+        self.get(&format!(
+            "/api/portfolios/{}/activity?limit={}",
+            portfolio_id, limit
+        ))
+        .await
+    }
+
+    /// Team feed over the team's whole shared surface.
+    ///
+    /// `actor` narrows to one teammate — the "which team members did which
+    /// things" query. `kind` takes a comma-separated list of event kinds.
+    pub async fn team_activity(
+        &self,
+        team_id: &str,
+        limit: u32,
+        actor: Option<&str>,
+        kind: Option<&str>,
+    ) -> Result<ActivityResponse, ApiError> {
+        let mut path = format!("/api/teams/{}/activity?limit={}", team_id, limit);
+        if let Some(a) = actor {
+            path.push_str(&format!("&actor={}", encode_query_value(a)));
+        }
+        if let Some(k) = kind {
+            path.push_str(&format!("&kind={}", encode_query_value(k)));
+        }
+        self.get(&path).await
+    }
+
+    /// Per-member contribution roll-up for a team.
+    pub async fn team_contributions(
+        &self,
+        team_id: &str,
+    ) -> Result<TeamContributionsResponse, ApiError> {
+        self.get(&format!("/api/teams/{}/contributions", team_id))
+            .await
+    }
+
+    /// Canonical inventory of what is shared with a team, and by whom.
+    ///
+    /// Server-side truth, replacing the console's old client-side filter
+    /// over the caller's OWN forecasts — which structurally could not see
+    /// work a teammate had shared with the team.
+    pub async fn team_shared(&self, team_id: &str) -> Result<TeamSharedResponse, ApiError> {
+        self.get(&format!("/api/teams/{}/shared", team_id)).await
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // Collaboration — invites (Spec 24 §3.4)
+    // ════════════════════════════════════════════════════════════
 
     pub async fn invite_to_forecast(
         &self,

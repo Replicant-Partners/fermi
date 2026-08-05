@@ -40,8 +40,7 @@ use uuid::Uuid;
 
 use posterior::{fit_marginal, DistFamily, FitMetadata, FittedDistribution};
 use posterior_reg::{
-    fit_conditional, ConditionalPosterior, RegressionConfig, SamplerDiagnostics,
-    WeightedSample,
+    fit_conditional, ConditionalPosterior, RegressionConfig, SamplerDiagnostics, WeightedSample,
 };
 
 use crate::AppState;
@@ -407,9 +406,12 @@ pub async fn workspace_bayesops_state_handler(
     State(state): State<AppState>,
     axum::extract::Path(workspace_id): axum::extract::Path<String>,
 ) -> Result<Json<WorkspaceBayesopsState>, (StatusCode, Json<Value>)> {
-    let ws_uuid: Uuid = workspace_id
-        .parse()
-        .map_err(|_| (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid workspace_id" }))))?;
+    let ws_uuid: Uuid = workspace_id.parse().map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "invalid workspace_id" })),
+        )
+    })?;
 
     // Pull the latest snapshot per driver (one row per driver via DISTINCT ON).
     let snapshot_rows = sqlx::query(
@@ -543,9 +545,12 @@ pub async fn accept_pending_handler(
     principal: fermi_auth::AuthPrincipal,
     Json(req): Json<DecisionRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let pending_uuid: Uuid = pending_id
-        .parse()
-        .map_err(|_| (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid pending_id" }))))?;
+    let pending_uuid: Uuid = pending_id.parse().map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "invalid pending_id" })),
+        )
+    })?;
     let user_id = principal.user_id();
 
     // Pull the pending row + snapshot in one query for context
@@ -595,8 +600,16 @@ pub async fn accept_pending_handler(
     // Membership check on the workspace
     fermi_auth::teams::get_member_role(&state.db, workspace_id, &user_id)
         .await
-        .map_err(|_| (StatusCode::FORBIDDEN, Json(json!({ "error": "not a workspace member" }))))?
-        .ok_or((StatusCode::FORBIDDEN, Json(json!({ "error": "not a workspace member" }))))?;
+        .map_err(|_| {
+            (
+                StatusCode::FORBIDDEN,
+                Json(json!({ "error": "not a workspace member" })),
+            )
+        })?
+        .ok_or((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "not a workspace member" })),
+        ))?;
 
     // Read current params, merge in the fit, write back. Same pattern as
     // the refit hook's auto-accept path.
@@ -610,10 +623,7 @@ pub async fn accept_pending_handler(
     .map(|r| r.get::<Value, _>("value"))
     .unwrap_or(Value::Object(serde_json::Map::new()));
 
-    let mut merged = current_params
-        .as_object()
-        .cloned()
-        .unwrap_or_default();
+    let mut merged = current_params.as_object().cloned().unwrap_or_default();
     merged.insert(format!("{}_fitted", driver_name), fitted_json.clone());
     let merged_value = Value::Object(merged);
 
@@ -663,9 +673,7 @@ pub async fn accept_pending_handler(
     .await
     {
         let forecast_id: String = forecast_row.get("id");
-        let current_prob: f32 = forecast_row
-            .try_get("predicted_probability")
-            .unwrap_or(0.5);
+        let current_prob: f32 = forecast_row.try_get("predicted_probability").unwrap_or(0.5);
         let prev = current_prob as f64;
         let new_p = rate_after.unwrap_or(prev);
 
@@ -686,11 +694,16 @@ pub async fn accept_pending_handler(
                 "n_observations": n_observations,
                 "decided_by": user_id,
             });
+            // Spec 26 §4.1: a refit ACCEPT is an operator decision, not a
+            // systemic event — someone chose to take this fit. Attribute
+            // it so the team feed shows "Alice accepted a BayesOps refit"
+            // rather than an unowned jump in the number.
             let _ = sqlx::query(
                 "INSERT INTO fermi_forecast_updates
                     (id, forecast_id, previous_probability, new_probability,
-                     reason, agent_id, evidence_added, revision_trigger, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, 'bayesops_refit', NOW())",
+                     reason, agent_id, evidence_added, actor_user_id,
+                     revision_trigger, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'bayesops_refit', NOW())",
             )
             .bind(&update_id)
             .bind(&forecast_id)
@@ -699,6 +712,7 @@ pub async fn accept_pending_handler(
             .bind(&reason)
             .bind(Option::<String>::None)
             .bind(&evidence_added)
+            .bind(&user_id)
             .execute(&state.db)
             .await;
 
@@ -756,9 +770,12 @@ pub async fn reject_pending_handler(
     principal: fermi_auth::AuthPrincipal,
     Json(req): Json<DecisionRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let pending_uuid: Uuid = pending_id
-        .parse()
-        .map_err(|_| (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid pending_id" }))))?;
+    let pending_uuid: Uuid = pending_id.parse().map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "invalid pending_id" })),
+        )
+    })?;
     let user_id = principal.user_id();
 
     let row = sqlx::query(
@@ -798,8 +815,16 @@ pub async fn reject_pending_handler(
 
     fermi_auth::teams::get_member_role(&state.db, workspace_id, &user_id)
         .await
-        .map_err(|_| (StatusCode::FORBIDDEN, Json(json!({ "error": "not a workspace member" }))))?
-        .ok_or((StatusCode::FORBIDDEN, Json(json!({ "error": "not a workspace member" }))))?;
+        .map_err(|_| {
+            (
+                StatusCode::FORBIDDEN,
+                Json(json!({ "error": "not a workspace member" })),
+            )
+        })?
+        .ok_or((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "not a workspace member" })),
+        ))?;
 
     sqlx::query(
         "UPDATE bayesops_pending_fits
