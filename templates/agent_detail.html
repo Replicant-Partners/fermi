@@ -2595,6 +2595,15 @@
                 <div id="agent-wallet-content" style="color:var(--fg3);font-size:0.85em">Loading wallet data...</div>
               </div>
 
+              <!-- Orchestras (v0.11.2) -->
+              <div class="section" id="orchestras-section">
+                <div class="section-title">Orchestras</div>
+                <div style="color:var(--fg3);font-size:0.8em;margin-bottom:14px;line-height:1.5">
+                  Compositions this agent participates in. <span style="color:var(--gray)">xaman_ek is implicit (every published agent). fermi is opt-in and admin-gated — request membership, the Fermi maintainer reviews for calibration fit.</span>
+                </div>
+                <div id="orchestras-content" style="color:var(--fg3);font-size:0.85em">Loading orchestra memberships...</div>
+              </div>
+
               <!-- Edit Description / Prompt -->
               <div class="section">
                 <div class="section-title">Edit Agent</div>
@@ -2754,6 +2763,7 @@
           } else if (tabName === "manage") {
             loadVersions(agentId);
             loadAgentWallet(agentId);
+            loadOrchestras(agentId);
           }
         });
       }
@@ -4404,6 +4414,172 @@
         const div = document.createElement("div");
         div.textContent = str;
         return div.innerHTML;
+      }
+
+      // v0.11.2: orchestra membership panel on the Manage tab.
+      // Fetches the agent's memberships + pending requests, renders a
+      // one-line row per known orchestra with a Request button for
+      // explicit-opt-in ones (currently only `fermi`).
+      async function loadOrchestras(agentId) {
+        const el = document.getElementById("orchestras-content");
+        if (!el) return;
+        try {
+          const [meRes, listRes] = await Promise.all([
+            fetch(`/api/agents/${encodeURIComponent(agentId)}/orchestras`),
+            fetch(`/api/orchestras`),
+          ]);
+          if (!meRes.ok || !listRes.ok) {
+            el.textContent = "Could not load orchestra memberships.";
+            return;
+          }
+          const me = await meRes.json();
+          const list = await listRes.json();
+          const specs = (list.orchestras || []).reduce((acc, o) => {
+            acc[o.name] = o;
+            return acc;
+          }, {});
+          const pendingByName = (me.pending_requests || []).reduce(
+            (acc, p) => {
+              acc[p.orchestra] = p;
+              return acc;
+            },
+            {},
+          );
+
+          const rows = (me.memberships || [])
+            .map((m) => {
+              const spec = specs[m.orchestra] || {};
+              const pending = pendingByName[m.orchestra];
+              let statusPill;
+              let actionBtn = "";
+
+              if (m.is_member) {
+                statusPill = `<span style="color:var(--green);border:1px solid var(--green);padding:2px 8px;border-radius:4px;font-size:0.75em">MEMBER</span>`;
+              } else if (pending) {
+                statusPill = `<span style="color:var(--yellow);border:1px solid var(--yellow);padding:2px 8px;border-radius:4px;font-size:0.75em">PENDING REVIEW</span>`;
+                actionBtn = `<button class="owner-btn" style="border-color:var(--gray);color:var(--gray);font-size:0.8em;padding:3px 10px" onclick="withdrawOrchestraRequest('${m.orchestra}','${pending.request_id}','${agentId}')">Withdraw</button>`;
+              } else if (spec.accepts_requests === false) {
+                // xaman_ek: implicit — they're either in (published) or not, no request possible.
+                statusPill = `<span style="color:var(--fg3);border:1px solid var(--bg3);padding:2px 8px;border-radius:4px;font-size:0.75em">NOT PUBLISHED YET</span>`;
+              } else {
+                statusPill = `<span style="color:var(--fg3);border:1px solid var(--bg3);padding:2px 8px;border-radius:4px;font-size:0.75em">NOT A MEMBER</span>`;
+                actionBtn = `<button class="owner-btn" style="border-color:var(--aqua);color:var(--aqua);font-size:0.8em;padding:3px 10px" onclick="requestOrchestraMembership('${m.orchestra}','${agentId}')">Request Membership</button>`;
+              }
+
+              return `
+                <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--bg0);border:1px solid var(--bg3);border-radius:6px;margin-bottom:6px">
+                  <div style="flex:1">
+                    <div style="font-family:'JetBrains Mono',monospace;font-size:0.9em;color:var(--fg1)">${m.orchestra}</div>
+                    <div style="font-size:0.72em;color:var(--fg4);margin-top:2px">${escapeHtml(m.membership_rule || "")}</div>
+                    ${pending && pending.review_note ? `<div style="font-size:0.72em;color:var(--yellow);margin-top:2px">note: ${escapeHtml(pending.review_note)}</div>` : ""}
+                  </div>
+                  ${statusPill}
+                  ${actionBtn}
+                </div>
+              `;
+            })
+            .join("");
+
+          el.innerHTML = rows || "<em style=\"color:var(--fg4)\">No orchestras registered.</em>";
+        } catch (e) {
+          el.textContent = "Error loading orchestras: " + e.message;
+        }
+      }
+
+      async function requestOrchestraMembership(orchestraName, agentId) {
+        // For 'fermi' we prompt for finding_labels + multiplier_range +
+        // rationale. Other orchestras will need their own prompt shape
+        // when they land.
+        if (orchestraName !== "fermi") {
+          alert(
+            `Membership requests for '${orchestraName}' are not implemented yet.`,
+          );
+          return;
+        }
+
+        const labelsRaw = prompt(
+          "Fermi membership \u2014 finding_labels\n\n" +
+            "Which labels does your agent emit in key_findings? Comma-separated.\n" +
+            "Common examples for a Fermi orchestra member:\n" +
+            "  BASE RATE, TRIAL DATA, MULTIPLIER\n" +
+            "  [MULTIPLIER] is required \u2014 that's the final output the strategist consumes.",
+          "BASE RATE, MULTIPLIER",
+        );
+        if (labelsRaw === null) return;
+        const labels = labelsRaw
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s.length);
+        if (labels.length === 0) {
+          alert("At least one finding_label required. Aborted.");
+          return;
+        }
+
+        const rangeRaw = prompt(
+          "Fermi membership \u2014 multiplier_range\n\n" +
+            "Valid range for your MULTIPLIER outputs. Format: min, max\n" +
+            "E.g. \u201c0.1, 3.0\u201d for a research agent proposing forecast adjustments.",
+          "0.1, 3.0",
+        );
+        if (rangeRaw === null) return;
+        const parts = rangeRaw.split(",").map((s) => parseFloat(s.trim()));
+        if (parts.length !== 2 || !parts.every((n) => Number.isFinite(n)) || !(parts[0] < parts[1])) {
+          alert(
+            "multiplier_range must be two numbers with min < max (e.g. 0.1, 3.0). Aborted.",
+          );
+          return;
+        }
+
+        const rationale = prompt(
+          "Rationale (optional) \u2014 what does this agent contribute to Fermi that the current roster doesn't cover? The admin will read this during review.",
+          "",
+        );
+        if (rationale === null) return; // cancel
+
+        try {
+          const res = await fetch(
+            `/api/orchestras/${encodeURIComponent(orchestraName)}/requests`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                agent_id: agentId,
+                proposed_contract: {
+                  finding_labels: labels,
+                  multiplier_range: parts,
+                },
+                rationale: rationale || null,
+              }),
+            },
+          );
+          if (res.ok) {
+            alert(
+              `Request submitted. A ${orchestraName} orchestra admin will review it. You'll see the status here on the Manage tab.`,
+            );
+            loadOrchestras(agentId);
+          } else {
+            alert(`Request failed: ${res.status} ${await res.text()}`);
+          }
+        } catch (e) {
+          alert(`Network error: ${e.message}`);
+        }
+      }
+
+      async function withdrawOrchestraRequest(orchestraName, requestId, agentId) {
+        if (!confirm(`Withdraw the pending ${orchestraName} membership request?`)) return;
+        try {
+          const res = await fetch(
+            `/api/orchestras/${encodeURIComponent(orchestraName)}/requests/${encodeURIComponent(requestId)}/withdraw`,
+            { method: "POST" },
+          );
+          if (res.ok) {
+            loadOrchestras(agentId);
+          } else {
+            alert(`Withdraw failed: ${res.status} ${await res.text()}`);
+          }
+        } catch (e) {
+          alert(`Network error: ${e.message}`);
+        }
       }
 
       async function loadAgentWallet(agentId) {

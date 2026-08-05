@@ -835,6 +835,13 @@ async fn run_migrations(db: &PgPool) {
         // Agent credential store + abw-system principal (P0 of the
         // credential model, docs/specs/AGENT_CREDENTIAL_MODEL.md).
         "migrations/171_agent_credentials.sql",
+        // v0.11.2: orchestra registry — request/approve substrate for
+        // domain-constrained MoE membership. Adds
+        // `orchestra_membership_requests` table, views
+        // `orchestra_fermi_members` and `orchestra_xaman_ek_members`,
+        // and reserves `fermi_forecasts.counterfactual_brier` for the
+        // manager-effect metric. See RELEASE_NOTES_v0.11.2.md.
+        "migrations/172_orchestra_membership.sql",
     ];
 
     for file in &migration_files {
@@ -3247,6 +3254,39 @@ async fn main() {
             "/api/admin/agents/cleanup-test-cruft",
             get(handlers::admin::admin_cleanup_test_cruft_handler)
                 .post(handlers::admin::admin_cleanup_test_cruft_handler),
+        )
+        // v0.11.2: orchestra registry. Public reads (list orchestras,
+        // list members, per-agent memberships). Owner-only writes
+        // (submit request, withdraw). Orchestra-admin writes (approve,
+        // reject). See handlers/orchestras.rs.
+        .route(
+            "/api/orchestras",
+            get(handlers::orchestras::list_orchestras_handler),
+        )
+        .route(
+            "/api/orchestras/:name/members",
+            get(handlers::orchestras::list_orchestra_members_handler),
+        )
+        .route(
+            "/api/orchestras/:name/requests",
+            get(handlers::orchestras::list_orchestra_requests_handler)
+                .post(handlers::orchestras::submit_orchestra_request_handler),
+        )
+        .route(
+            "/api/orchestras/:name/requests/:request_id/approve",
+            post(handlers::orchestras::approve_orchestra_request_handler),
+        )
+        .route(
+            "/api/orchestras/:name/requests/:request_id/reject",
+            post(handlers::orchestras::reject_orchestra_request_handler),
+        )
+        .route(
+            "/api/orchestras/:name/requests/:request_id/withdraw",
+            post(handlers::orchestras::withdraw_orchestra_request_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/orchestras",
+            get(handlers::orchestras::agent_orchestras_handler),
         )
         // Admin view over third-party Apps — lists every app across every
         // visibility level (private/unlisted/public) with owner display

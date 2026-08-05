@@ -119,6 +119,8 @@ pub const SCHEMA_TABLES: &[&str] = &[
     "hitl_actions",
     // Harness / benchmark
     "harness_snapshots",
+    // v0.11.2 — orchestra registry
+    "orchestra_membership_requests",
 ];
 
 /// Columns the Rust code depends on. Rule of thumb: any column whose
@@ -166,6 +168,8 @@ pub const SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("fermi_forecasts", "tags"),
     ("fermi_forecasts", "created_at"),
     ("fermi_forecasts", "updated_at"),
+    // v0.11.2 — manager-effect placeholder (Team Brier − Counterfactual Brier)
+    ("fermi_forecasts", "counterfactual_brier"),
     // ── users ──────────────────────────────────────────────────────
     ("users", "id"),
     ("users", "user_id"), // TEXT, the substrate identity (v0.10.9 realign)
@@ -205,10 +209,20 @@ pub const SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("workspace_agents", "added_at"),
     ("workspace_agents", "relationship"),
     // ── composition_versions ──────────────────────────────────────
+    // ── composition_versions ───────────────────────
     ("composition_versions", "composition_version_id"),
     ("composition_versions", "workspace_id"),
     ("composition_versions", "rejected_by"),
     ("composition_versions", "rejection_note"),
+    // ── orchestra_membership_requests (mig-172) ─────────────
+    ("orchestra_membership_requests", "request_id"),
+    ("orchestra_membership_requests", "orchestra_name"),
+    ("orchestra_membership_requests", "agent_id"),
+    ("orchestra_membership_requests", "requested_by"),
+    ("orchestra_membership_requests", "proposed_contract"),
+    ("orchestra_membership_requests", "status"),
+    ("orchestra_membership_requests", "reviewed_by"),
+    ("orchestra_membership_requests", "review_note"),
 ];
 
 /// Functions the Rust code depends on. Now includes return type so we
