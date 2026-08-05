@@ -29,8 +29,9 @@ pub use rbac::{
     visible_sync_anon as rbac_visible_sync_anon, RbacResult,
 };
 pub use secrets::{
-    delete_secret, get_secret, get_secret_audit_log, get_secrets_for_agent, list_secrets,
-    log_secret_access, store_secret, SecretAccessEntry, SecretEncryptor, SecretInfo,
+    bootstrap_agent_credential_if_absent, delete_secret, get_secret, get_secret_audit_log,
+    get_secrets_for_agent, list_secrets, log_secret_access, resolve_agent_credential,
+    store_agent_credential, store_secret, SecretAccessEntry, SecretEncryptor, SecretInfo,
 };
 pub use siwe::{
     cleanup_expired_nonces, create_challenge, verify_signature, SiweChallenge,

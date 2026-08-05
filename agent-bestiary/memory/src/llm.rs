@@ -150,16 +150,35 @@ impl LLMProviderFactory {
             ProviderType::DeepSeek => Ok(Arc::new(OpenRouterProvider::new(
                 config.api_key.clone(),
                 config.model.clone(),
-                Some(config.base_url.clone().unwrap_or_else(|| {
-                    "https://api.deepseek.com/v1".to_string()
-                })),
+                Some(
+                    config
+                        .base_url
+                        .clone()
+                        .unwrap_or_else(|| "https://api.deepseek.com/v1".to_string()),
+                ),
             )?)),
             ProviderType::Kimi => Ok(Arc::new(OpenRouterProvider::new(
                 config.api_key.clone(),
                 config.model.clone(),
-                Some(config.base_url.clone().unwrap_or_else(|| {
-                    "https://api.moonshot.cn/v1".to_string()
-                })),
+                Some(
+                    config
+                        .base_url
+                        .clone()
+                        .unwrap_or_else(|| "https://api.moonshot.cn/v1".to_string()),
+                ),
+            )?)),
+            // OpenAI is OpenAI-compatible (obviously) — reuse OpenRouterProvider
+            // pointed at OpenAI's base URL. It POSTs {base}/chat/completions with
+            // `Authorization: Bearer <key>`, which is exactly OpenAI's chat API.
+            ProviderType::OpenAI => Ok(Arc::new(OpenRouterProvider::new(
+                config.api_key.clone(),
+                config.model.clone(),
+                Some(
+                    config
+                        .base_url
+                        .clone()
+                        .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
+                ),
             )?)),
         }
     }
@@ -183,6 +202,7 @@ pub enum ProviderType {
     OpenRouter,
     DeepSeek,
     Kimi,
+    OpenAI,
 }
 
 impl std::str::FromStr for ProviderType {
@@ -196,6 +216,7 @@ impl std::str::FromStr for ProviderType {
             "openrouter" => Ok(ProviderType::OpenRouter),
             "deepseek" => Ok(ProviderType::DeepSeek),
             "kimi" | "moonshot" => Ok(ProviderType::Kimi),
+            "openai" | "gpt" => Ok(ProviderType::OpenAI),
             _ => Err(format!("Unknown provider type: {}", s)),
         }
     }
@@ -213,7 +234,10 @@ pub struct AnthropicProvider {
 impl AnthropicProvider {
     pub fn new(api_key: String, model: String, base_url: Option<String>) -> Result<Self> {
         Ok(Self {
-            client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build().unwrap_or_default(),
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(90))
+                .build()
+                .unwrap_or_default(),
             api_key,
             model,
             base_url: base_url.unwrap_or_else(|| "https://api.anthropic.com".to_string()),
@@ -367,7 +391,10 @@ pub struct MistralProvider {
 impl MistralProvider {
     pub fn new(api_key: String, model: String, base_url: Option<String>) -> Result<Self> {
         Ok(Self {
-            client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build().unwrap_or_default(),
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(90))
+                .build()
+                .unwrap_or_default(),
             api_key,
             model,
             base_url: base_url.unwrap_or_else(|| "https://api.mistral.ai".to_string()),
@@ -509,7 +536,10 @@ pub struct QwenProvider {
 impl QwenProvider {
     pub fn new(api_key: String, model: String, base_url: Option<String>) -> Result<Self> {
         Ok(Self {
-            client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build().unwrap_or_default(),
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(90))
+                .build()
+                .unwrap_or_default(),
             api_key,
             model,
             base_url: base_url
@@ -653,7 +683,10 @@ pub struct OpenRouterProvider {
 impl OpenRouterProvider {
     pub fn new(api_key: String, model: String, base_url: Option<String>) -> Result<Self> {
         Ok(Self {
-            client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build().unwrap_or_default(),
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(90))
+                .build()
+                .unwrap_or_default(),
             api_key,
             model,
             base_url: base_url.unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string()),

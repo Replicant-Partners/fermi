@@ -267,6 +267,127 @@ pub async fn log_secret_access(
     Ok(())
 }
 
+// ─── Agent credential store (docs/specs/AGENT_CREDENTIAL_MODEL.md) ───────
+//
+// Distinct from user_secrets: this is the (principal, provider, scope)
+// store of LLM/embedding provider keys that FUND agent execution. It is
+// the single credential path — system-service agents (owner = abw-system)
+// resolve their keys here, not from env vars.
+
+/// Store (or update) an encrypted provider credential for a principal,
+/// scoped either globally (`"*"`) or to a specific agent (`agent_name`).
+///
+/// `UNIQUE(principal_id, provider, scope)` means a principal can hold, per
+/// provider, one `*` default plus one key per agent — the funding-isolation
+/// primitive.
+pub async fn store_agent_credential(
+    pool: &PgPool,
+    encryptor: &SecretEncryptor,
+    principal_id: &str,
+    provider: &str,
+    scope: &str,
+    plaintext_value: &str,
+    label: Option<&str>,
+) -> Result<Uuid, AuthError> {
+    let (ciphertext, nonce) = encryptor.encrypt(plaintext_value)?;
+    let row = sqlx::query(
+        r#"
+        INSERT INTO agent_credentials (principal_id, provider, scope, encrypted_value, nonce, label)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (principal_id, provider, scope)
+        DO UPDATE SET encrypted_value = $4, nonce = $5, label = $6, updated_at = NOW()
+        RETURNING credential_id
+        "#,
+    )
+    .bind(principal_id)
+    .bind(provider)
+    .bind(scope)
+    .bind(&ciphertext)
+    .bind(&nonce)
+    .bind(label)
+    .fetch_one(pool)
+    .await?;
+    row.try_get::<Uuid, _>("credential_id")
+        .map_err(|e| AuthError::DatabaseError(e.to_string()))
+}
+
+/// Resolve the effective provider credential for an agent: prefer a key
+/// scoped to the agent, else fall back to the principal's `*` default.
+/// Returns `None` when neither exists (the caller decides how to fail —
+/// e.g. a named "agent X is unfunded for provider Y" error).
+pub async fn resolve_agent_credential(
+    pool: &PgPool,
+    encryptor: &SecretEncryptor,
+    principal_id: &str,
+    provider: &str,
+    agent_name: &str,
+) -> Result<Option<String>, AuthError> {
+    // `ORDER BY (scope = '*')` sorts the agent-specific row (false) before
+    // the default row (true), so the agent-scoped key wins when both exist.
+    let row = sqlx::query(
+        r#"
+        SELECT encrypted_value, nonce
+        FROM agent_credentials
+        WHERE principal_id = $1 AND provider = $2 AND (scope = $3 OR scope = '*')
+        ORDER BY (scope = '*')
+        LIMIT 1
+        "#,
+    )
+    .bind(principal_id)
+    .bind(provider)
+    .bind(agent_name)
+    .fetch_optional(pool)
+    .await?;
+
+    match row {
+        Some(row) => {
+            let ciphertext: Vec<u8> = row
+                .try_get("encrypted_value")
+                .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
+            let nonce: Vec<u8> = row
+                .try_get("nonce")
+                .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
+            Ok(Some(encryptor.decrypt(&ciphertext, &nonce)?))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Bootstrap a principal's global (`*`) provider credential from a
+/// plaintext value, but only if no credential for `(principal, provider,
+/// '*')` already exists. This is the env-var -> store migration path used
+/// at startup: the store becomes authoritative, env is a one-time seed.
+/// Returns `true` iff a row was inserted.
+pub async fn bootstrap_agent_credential_if_absent(
+    pool: &PgPool,
+    encryptor: &SecretEncryptor,
+    principal_id: &str,
+    provider: &str,
+    plaintext_value: &str,
+) -> Result<bool, AuthError> {
+    let exists = sqlx::query(
+        "SELECT 1 FROM agent_credentials WHERE principal_id = $1 AND provider = $2 AND scope = '*'",
+    )
+    .bind(principal_id)
+    .bind(provider)
+    .fetch_optional(pool)
+    .await?;
+    if exists.is_some() {
+        return Ok(false);
+    }
+    store_agent_credential(
+        pool,
+        encryptor,
+        principal_id,
+        provider,
+        "*",
+        plaintext_value,
+        Some("bootstrapped from env"),
+    )
+    .await?;
+    Ok(true)
+}
+
 /// Get audit log entries for a user
 pub async fn get_secret_audit_log(
     pool: &PgPool,
