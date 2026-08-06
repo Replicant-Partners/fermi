@@ -342,6 +342,55 @@ pub fn inherited_access_ids_sql(n: u32) -> String {
     )
 }
 
+/// The complete "can this principal VIEW this forecast" test, as a SQL
+/// boolean fragment for embedding in a larger `WHERE`.
+///
+/// Mirrors [`can_access`]'s branch set exactly — owner, public/shared
+/// visibility, team-owned, direct user share, portfolio inheritance — so
+/// a list query and a single-row check can never disagree about what the
+/// caller may see.
+///
+/// ## Why this exists
+///
+/// This predicate had been hand-copied into `list_forecasts_handler` and
+/// was about to be copied a third and fourth time (the cascade queue and
+/// the ops detectors). Every copy is a place for the ACL to rot: the
+/// team-share branch in `list_forecasts_handler` was missing for a whole
+/// release because someone added it to the detail handler only.
+///
+/// ## Arguments
+///
+/// * `alias` — the `fermi_forecasts` alias in the enclosing query
+///   (`"f"`, `"ff"`, …). Not user input at any call site.
+/// * `n` — the bind position holding the caller's `user_id` (TEXT).
+///
+/// The generated fragment is parenthesised, so it can be `AND`-ed into an
+/// existing clause without precedence surprises. Its inner subqueries use
+/// their own aliases (`pf`/`p`/`f`/`os`/`tm`), which shadow rather than
+/// collide with the outer query's.
+///
+/// Note this is the VIEW test. Write paths must still go through
+/// [`can_edit`] on the specific row — a predicate can gate a list, but a
+/// list is not the place to decide who may change something.
+pub fn forecast_view_predicate(alias: &str, n: u32) -> String {
+    format!(
+        "({a}.owner_id = ${n} \
+          OR {a}.visibility IN ('shared', 'public') \
+          OR ({a}.team_id IS NOT NULL \
+              AND EXISTS (SELECT 1 FROM team_members vm \
+                          WHERE vm.team_id = {a}.team_id AND vm.member_id = ${n})) \
+          OR EXISTS (SELECT 1 FROM object_shares vs \
+                     WHERE vs.object_type = 'forecast' \
+                       AND vs.object_id = {a}.id::text \
+                       AND vs.share_type = 'user' \
+                       AND vs.share_target = ${n}) \
+          OR {a}.id IN ({inherited}))",
+        a = alias,
+        n = n,
+        inherited = inherited_access_ids_sql(n)
+    )
+}
+
 /// Convenience: can the principal view this object?
 pub async fn can_view(
     pool: &PgPool,

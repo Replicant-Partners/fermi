@@ -2435,6 +2435,14 @@ async fn main() {
             "/api/teams/:team_id/contributions",
             get(handlers::collab::team_contributions_handler),
         )
+        // Spec 27: the ops board. Detected coordination work — nothing is
+        // stored, every op is a condition currently true of the team's
+        // shared surface, so the definition of done is the detector going
+        // quiet. Safe and cheap to re-poll; re-polling is how ops clear.
+        .route(
+            "/api/teams/:team_id/ops",
+            get(handlers::ops::team_ops_handler),
+        )
         // ── Invite inbox + state-transition routes (Spec 24 §3.3) ──────
         //
         // The standalone /api/invites/:id verbs decouple the invite's

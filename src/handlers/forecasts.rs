@@ -746,25 +746,16 @@ pub async fn list_forecasts_handler(
     // is discoverable through the portfolio detail but absent from every
     // list that should contain it.
     //
-    // The inheritance branch is NOT written out here: it comes from
-    // `fermi_auth::visibility::inherited_access_ids_sql`, the same
-    // relation `can_access` enforces and `handlers::collab` explains.
-    // One rule, three consumers — see Spec 26 §2.2.
+    // The whole predicate comes from
+    // `fermi_auth::visibility::forecast_view_predicate` — the same branch
+    // set `can_access` enforces, `handlers::collab` explains, and the
+    // cascade queue + ops detectors gate on. One rule, four consumers
+    // (Spec 26 §2.2). It used to be spelled out inline here, which is how
+    // the team-share branch went missing from the list for a release while
+    // the detail handler had it.
     bind_idx += 1;
-    conditions.push(format!(
-        "(f.owner_id = ${idx} \
-          OR f.visibility IN ('shared', 'public') \
-          OR (f.team_id IS NOT NULL \
-              AND EXISTS (SELECT 1 FROM team_members m \
-                          WHERE m.team_id = f.team_id AND m.member_id = ${idx})) \
-          OR EXISTS (SELECT 1 FROM object_shares s \
-                     WHERE s.object_type = 'forecast' \
-                       AND s.object_id = f.id::text \
-                       AND s.share_type = 'user' \
-                       AND s.share_target = ${idx}) \
-          OR f.id IN ({inherited}))",
-        idx = bind_idx,
-        inherited = fermi_auth::visibility::inherited_access_ids_sql(bind_idx)
+    conditions.push(fermi_auth::visibility::forecast_view_predicate(
+        "f", bind_idx,
     ));
     binds.push(user_id.clone());
 

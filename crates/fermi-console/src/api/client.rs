@@ -1324,6 +1324,130 @@ pub struct AccessSummary {
     pub forecast_count: i64,
 }
 
+// ── Ops board: detected coordination work (Spec 27) ───────────────────
+
+/// One unit of coordinated work a team should pick up.
+///
+/// Ops are **detected, never authored**. Nothing stores them: each is
+/// derived from a condition that is currently true of the team's shared
+/// surface. The consequence — and the reason this needs no lifecycle, no
+/// assignment table and no "close" button — is that **the definition of
+/// done is the detector going quiet.** An op exists exactly as long as the
+/// situation does, so the board can never accumulate stale tickets.
+///
+/// `objective` and `done_when` are generated server-side, so the goal
+/// constraint is stated in one voice everywhere it appears.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Op {
+    /// Stable across refreshes: `"<kind>:<primary scope id>"`. Lets the
+    /// console hold a selection while the board re-polls; a random id per
+    /// poll would make the list unusable.
+    pub id: String,
+    /// `cascade_review` | `contested` | `unreviewed` | `resolution_due`
+    pub kind: String,
+    /// 0–100. Comparable ACROSS kinds so one board can rank them.
+    #[serde(default)]
+    pub urgency: i32,
+    /// `critical` | `high` | `normal` | `low` — bucketed `urgency`, so the
+    /// console doesn't hardcode thresholds the server may retune.
+    #[serde(default)]
+    pub urgency_label: String,
+    /// What the team is being asked to achieve.
+    #[serde(default)]
+    pub objective: String,
+    /// The clearing condition, in words. This is the contract: when it
+    /// becomes true the op disappears on its own.
+    #[serde(default)]
+    pub done_when: String,
+    /// When the underlying condition started (not when it was detected) —
+    /// an op that has been true for three weeks is a different problem
+    /// from one that appeared this morning.
+    #[serde(default)]
+    pub since: Option<String>,
+    #[serde(default)]
+    pub primary: Option<OpTarget>,
+    #[serde(default)]
+    pub scope: OpScope,
+    /// Who is already involved, and how. Not an assignment — ops aren't
+    /// assigned, they're claimed by acting.
+    #[serde(default)]
+    pub participants: Vec<OpParticipant>,
+    /// Flat, kind-specific numbers for the summary line.
+    #[serde(default)]
+    pub metrics: JsonValue,
+    #[serde(default)]
+    pub detail: JsonValue,
+}
+
+impl Op {
+    pub fn glyph(&self) -> &'static str {
+        match self.kind.as_str() {
+            "cascade_review" => "⚡",
+            "contested" => "⚔",
+            "unreviewed" => "👁",
+            "resolution_due" => "⏱",
+            _ => "◈",
+        }
+    }
+
+    /// Human label for the kind, for the filter chips and row badges.
+    pub fn kind_label(&self) -> &'static str {
+        match self.kind.as_str() {
+            "cascade_review" => "cascade",
+            "contested" => "contested",
+            "unreviewed" => "unreviewed",
+            "resolution_due" => "due",
+            _ => "op",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpTarget {
+    /// `forecast` | `portfolio`
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    pub id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct OpScope {
+    #[serde(default)]
+    pub forecast_ids: Vec<String>,
+    #[serde(default)]
+    pub portfolio_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpParticipant {
+    pub user_id: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    /// Why they're on this op: `owner` | `reviser` | `trigger_owner`
+    #[serde(default)]
+    pub role: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct OpsResponse {
+    #[serde(default)]
+    pub ops: Vec<Op>,
+    #[serde(default)]
+    pub counts: OpsCounts,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct OpsCounts {
+    #[serde(default)]
+    pub total: usize,
+    /// kind -> count. Drives the filter chips without a second pass over
+    /// the list, and stays correct when the list is truncated.
+    #[serde(default)]
+    pub by_kind: JsonValue,
+}
+
 /// Minimal percent-encoder for query-string *values*.
 ///
 /// The crate has no `urlencoding` dependency and pulling one in for two
@@ -2041,15 +2165,23 @@ impl ApiClient {
     // Agents
     // ═══════════════════════════════════════════════════════════════
 
-    /// List all Fermi-orchestra agents. ABW is shared substrate:
+    /// List the Fermi orchestra roster. ABW is shared substrate:
     /// `/api/agents` returns every vertical's agents (rabble swarms,
     /// kask sim ops, adaptogen research, AR, …), which drowns the
-    /// Fermi console's Agent Fleet in unrelated cards. The `?tag=`
-    /// filter narrows to agents tagged `fermi-orchestra` — the
-    /// convention every curated Fermi research agent uses in its
-    /// card's `metadata.tags`.
+    /// Fermi console's Agent Fleet in unrelated cards.
+    ///
+    /// Filters on `?orchestra=fermi`, which the server resolves against
+    /// the `orchestra_fermi_members` roster view (mig-172) — the same
+    /// predicate `/api/orchestras/fermi/members` and the agent Manage
+    /// page's MEMBER badge use.
+    ///
+    /// This replaced `?tag=fermi-orchestra`. That tag is a hand-authored
+    /// `metadata.tags` convention from v0.8.8 which the v0.11.2 approval
+    /// flow never writes, so admin-approved third-party members were
+    /// invisible in this console while their own Manage page showed them
+    /// as MEMBER.
     pub async fn list_agents(&self) -> Result<JsonValue, ApiError> {
-        self.get("/api/agents?tag=fermi-orchestra&limit=200").await
+        self.get("/api/agents?orchestra=fermi&limit=200").await
     }
 
     /// Get a specific agent's card.
@@ -2804,6 +2936,15 @@ impl ApiClient {
     ) -> Result<TeamContributionsResponse, ApiError> {
         self.get(&format!("/api/teams/{}/contributions", team_id))
             .await
+    }
+
+    /// The team's detected ops board (Spec 27).
+    ///
+    /// Nothing is stored server-side: every op is a condition currently
+    /// true of the team's shared surface. Safe and cheap to re-poll —
+    /// re-polling is how ops disappear when they're done.
+    pub async fn team_ops(&self, team_id: &str) -> Result<OpsResponse, ApiError> {
+        self.get(&format!("/api/teams/{}/ops", team_id)).await
     }
 
     /// Canonical inventory of what is shared with a team, and by whom.

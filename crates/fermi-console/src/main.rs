@@ -29,8 +29,8 @@ use fermi_console::updater;
 use api::client::{
     AccessSummary, ActivityEvent, ApiClient, ApiConfig, CalibrationData, CreatePortfolioRequest,
     CreateTeamRequest, Forecast, ForecastQuery, Invite, InviteRequest, LeaderboardEntry,
-    LeaderboardQuery, MemberContribution, MyStats, PatchPortfolioRequest, Portfolio,
-    PortfolioForecast, PortfolioStats, ShareEntry, ShareRequest, Team, TeamDetail,
+    LeaderboardQuery, MemberContribution, MyStats, Op, OpsResponse, PatchPortfolioRequest,
+    Portfolio, PortfolioForecast, PortfolioStats, ShareEntry, ShareRequest, Team, TeamDetail,
     TeamSharedResponse, Wallet,
 };
 use cockpit::CockpitState;
@@ -293,7 +293,8 @@ enum Panel {
 }
 
 /// Sub-tabs inside the Teams panel's right-pane team detail view.
-/// Splits the team surface into three concerns: the people (roster +
+/// Splits the team surface into four concerns: the work (ops the team's
+/// shared surface is currently asking for), the people (roster +
 /// invites + delete), the things (forecasts + portfolios owned by or
 /// shared with the team), and the motion (recent revisions,
 /// publications, resolutions across the team's forecasts). Each
@@ -302,6 +303,10 @@ enum Panel {
 /// the detail pane to an unmanageable length.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TeamTab {
+    /// The ops board. First and default because "what does this team need
+    /// from me right now" outranks "who is on it" — the other three tabs
+    /// answer questions you have to think to ask.
+    Ops,
     Roster,
     Shared,
     Activity,
@@ -908,6 +913,21 @@ struct FermiConsole {
     /// the Roster tab from a list of names into a working document.
     team_contributions: std::collections::HashMap<String, Vec<MemberContribution>>,
     team_contributions_in_flight: std::collections::HashSet<String>,
+    /// `GET /api/teams/:id/ops` — the detected ops board.
+    ///
+    /// The whole response is cached, not just `ops`: `counts` is what the
+    /// tab pill and the filter chips read, and it stays authoritative even
+    /// if the server ever truncates the list.
+    ///
+    /// Nothing here is authoritative for longer than a poll. Ops are
+    /// derived from conditions, so a refetch that returns fewer of them
+    /// means work got done — the cache is a snapshot, never a ledger.
+    team_ops: std::collections::HashMap<String, OpsResponse>,
+    team_ops_in_flight: std::collections::HashSet<String>,
+    /// Kind filter for the Ops tab. Filtering is client-side here (unlike
+    /// the Activity feed): the ops list is complete rather than a
+    /// truncated page, so narrowing it locally cannot hide anything.
+    team_ops_kind_filter: Option<&'static str>,
     /// Last error per team surface, keyed `"<team_id>:<surface>"`.
     ///
     /// Exists because the first version rendered a flat "Could not load
@@ -1254,7 +1274,7 @@ impl FermiConsole {
             forecast_shares_in_flight: std::collections::HashSet::new(),
             portfolio_team_shares: std::collections::HashMap::new(),
             portfolio_shares_in_flight: std::collections::HashSet::new(),
-            selected_team_tab: TeamTab::Roster,
+            selected_team_tab: TeamTab::Ops,
             dashboard_activity_filter: ActivityFilter::All,
             team_details: std::collections::HashMap::new(),
             team_details_in_flight: std::collections::HashSet::new(),
@@ -1283,6 +1303,9 @@ impl FermiConsole {
             team_activity_in_flight: std::collections::HashSet::new(),
             team_contributions: std::collections::HashMap::new(),
             team_contributions_in_flight: std::collections::HashSet::new(),
+            team_ops: std::collections::HashMap::new(),
+            team_ops_in_flight: std::collections::HashSet::new(),
+            team_ops_kind_filter: None,
             team_surface_errors: std::collections::HashMap::new(),
             team_activity_actor: None,
             team_activity_kind: None,
@@ -3797,9 +3820,14 @@ impl FermiConsole {
         let already = self.selected_team_id.as_deref() == Some(team_id.as_str());
         // Re-clicking the selected team is normally a no-op, but if its
         // surfaces failed or were never requested, treat the click as a
-        // retry rather than ignoring the operator.
-        let needs_data = !self.team_shared.contains_key(&team_id)
-            && !self.team_shared_in_flight.contains(&team_id);
+        // retry rather than ignoring the operator. Either surface being
+        // absent is enough to justify re-firing: ops is the default tab,
+        // so a team whose shared surface loaded but whose ops didn't would
+        // open on a permanently empty board with no way to ask again.
+        let needs_data = (!self.team_shared.contains_key(&team_id)
+            && !self.team_shared_in_flight.contains(&team_id))
+            || (!self.team_ops.contains_key(&team_id)
+                && !self.team_ops_in_flight.contains(&team_id));
         if already && !needs_data {
             return;
         }
@@ -3823,13 +3851,14 @@ impl FermiConsole {
             self.fetch_team_detail(&team_id, cx);
         }
 
-        // Spec 26: the three server-side surfaces. Fired together rather
+        // Spec 26: the four server-side surfaces. Fired together rather
         // than lazily per tab, because the tab bar shows live counts for
-        // all three — a lazy fetch would leave two pills reading (0) until
+        // all of them — a lazy fetch would leave pills reading (0) until
         // clicked, which reads as "nothing here" rather than "not loaded".
         self.fetch_team_shared(team_id.clone(), cx);
         self.fetch_team_activity(team_id.clone(), cx);
-        self.fetch_team_contributions(team_id, cx);
+        self.fetch_team_contributions(team_id.clone(), cx);
+        self.fetch_team_ops(team_id, cx);
         cx.notify();
     }
 
@@ -3935,6 +3964,41 @@ impl FermiConsole {
                         log::warn!("[team-contributions] fetch failed: {}", e);
                         this.team_surface_errors
                             .insert(format!("{}:contributions", team_id), e.to_string());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// `GET /api/teams/:id/ops` — the detected ops board.
+    ///
+    /// Cheap and safe to re-poll by construction: ops are derived, never
+    /// stored, so a second call is how one disappears once its condition
+    /// stops holding. On failure the previous board is kept, because a
+    /// transient 500 blanking the default tab would read as "this team
+    /// has nothing to do" — the exact opposite of the truth.
+    fn fetch_team_ops(&mut self, team_id: String, cx: &mut Context<Self>) {
+        if !self.connected || !self.team_ops_in_flight.insert(team_id.clone()) {
+            return;
+        }
+        cx.notify();
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.team_ops(&team_id).await;
+            this.update(cx, |this, cx| {
+                this.team_ops_in_flight.remove(&team_id);
+                match result {
+                    Ok(resp) => {
+                        this.team_surface_errors.remove(&format!("{}:ops", team_id));
+                        this.team_ops.insert(team_id, resp);
+                    }
+                    Err(e) => {
+                        log::warn!("[team-ops] fetch failed: {}", e);
+                        this.team_surface_errors
+                            .insert(format!("{}:ops", team_id), e.to_string());
                     }
                 }
                 cx.notify();
@@ -13132,17 +13196,45 @@ impl FermiConsole {
 
     fn render_agent_fleet_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let cards = self.registry.list_cards().unwrap_or_default();
-        // Show only hireable orchestra members. `tier=System` filters
-        // out meta/infrastructure agents like Fermi itself (the
-        // conductor) and xaman_ek: they're always-on by design, not
-        // discoverable hires. Same signal the conformance test uses,
-        // so a future system agent tagged fermi-orchestra by mistake
-        // won't accidentally appear here.
+        // LOCALLY-INSTALLED cards only — the `fermi-orchestra` metadata
+        // tag is the right filter here because this is the on-disk
+        // curated registry ($AGENTS_DIR / agents/curated), where the tag
+        // is authored by hand.
+        //
+        // Server-side orchestra members that aren't installed locally
+        // (third-party agents approved into Fermi, e.g. efra_forensic)
+        // arrive through `self.agent_cards`, which is populated from
+        // `GET /api/agents?orchestra=fermi` — the authoritative mig-172
+        // membership view — and unioned in by `build_agent_marketplace`
+        // via `render_agent_marketplace` below. Do NOT re-add a tag
+        // filter on that path: approval writes `agents.fermi_contract`,
+        // never `agents.tags`, so tag-filtering the server list is what
+        // made approved members invisible in this console.
+        //
+        // `tier=System` filters out meta/infrastructure agents like
+        // Fermi itself (the conductor) and xaman_ek: they're always-on
+        // by design, not discoverable hires. Same signal the conformance
+        // test uses, so a future system agent tagged fermi-orchestra by
+        // mistake won't accidentally appear here.
         let fermi_agents: Vec<_> = cards
             .iter()
             .filter(|c| c.metadata.tags.iter().any(|t| t == "fermi-orchestra"))
             .filter(|c| !matches!(c.tier, fermi::agent_backend::agent_card::AgentTier::System))
             .collect();
+
+        // Roster size across BOTH sources, so the header doesn't report
+        // "0 agents" on an install with no local curated cards while the
+        // marketplace below is happily listing server-side members.
+        let roster_count = {
+            let mut ids: std::collections::HashSet<&str> =
+                fermi_agents.iter().map(|c| c.agent_id.as_str()).collect();
+            for sc in &self.agent_cards {
+                if let Some(id) = sc.get("agent_id").and_then(|v| v.as_str()) {
+                    ids.insert(id);
+                }
+            }
+            ids.len()
+        };
 
         // Pull live cockpit data if we're in a forecast session.
         let (agent_runs, session_cost, assigned_map) =
@@ -13206,7 +13298,7 @@ impl FermiConsole {
                         div()
                             .text_size(px(12.0))
                             .text_color(theme::fg_dim())
-                            .child(format!("{} fermi-orchestra agents", fermi_agents.len())),
+                            .child(format!("{} fermi orchestra agents", roster_count)),
                     )
                     // Session credit cost
                     .when(session_cost > 0.0, |el| {
@@ -13300,7 +13392,7 @@ impl FermiConsole {
                     )
                 }
             })
-            .when(fermi_agents.is_empty(), |el| {
+            .when(roster_count == 0, |el| {
                 el.child(
                     div()
                         .flex()
@@ -13313,7 +13405,7 @@ impl FermiConsole {
                             div()
                                 .text_size(px(14.0))
                                 .text_color(theme::fg_dim())
-                                .child("No fermi-orchestra agents found"),
+                                .child("No fermi orchestra agents found"),
                         )
                         .child(
                             div()
@@ -14249,11 +14341,18 @@ impl FermiConsole {
                         )
                     }),
             )
-            // Sub-tab bar (Roster / Shared / Activity). Each pill's
+            // Sub-tab bar (Ops / Roster / Shared / Activity). Each pill's
             // count is computed above from the same helpers the tab
             // bodies read, so the number and content can't drift.
             .child(
                 self.render_team_tab_bar(
+                    // `counts.total` rather than `ops.len()`: the count is
+                    // the server's, so the pill stays honest even if the
+                    // list is ever capped.
+                    self.team_ops
+                        .get(&team_id)
+                        .map(|o| o.counts.total)
+                        .unwrap_or(0),
                     detail.members.len(),
                     shared_forecast_count + shared_portfolio_count,
                     self.team_activity
@@ -14265,6 +14364,9 @@ impl FermiConsole {
             )
             // Tab body dispatch. Each branch is self-contained so the
             // scroll position, focus, and lifecycle stay simple.
+            .when(tab == TeamTab::Ops, |el| {
+                el.child(self.render_team_ops_body(&team_id, cx))
+            })
             .when(tab == TeamTab::Roster, |el| {
                 el.child(self.render_team_roster_body(cx))
             })
@@ -14277,11 +14379,12 @@ impl FermiConsole {
             .into_any_element()
     }
 
-    /// Tab bar for the team detail pane. Three pills with count
+    /// Tab bar for the team detail pane. Four pills with count
     /// badges. Clicking a pill sets `selected_team_tab`; the current
     /// tab is highlighted with an accent border.
     fn render_team_tab_bar(
         &self,
+        ops_count: usize,
         member_count: usize,
         shared_count: usize,
         activity_count: usize,
@@ -14336,6 +14439,22 @@ impl FermiConsole {
             .flex()
             .flex_row()
             .gap(px(8.0))
+            // Ops leads, in the alarm colour, because it is the only tab
+            // that makes a claim on the reader's time. Red when there is
+            // something to do, orange when there isn't, so the accent
+            // itself carries the state — an all-clear board shouldn't
+            // look like an alarm.
+            .child(pill(
+                "team-tab-ops",
+                format!("⚡ Ops ({})", ops_count),
+                TeamTab::Ops,
+                if ops_count > 0 {
+                    theme::RED
+                } else {
+                    theme::ORANGE
+                },
+                cx,
+            ))
             .child(pill(
                 "team-tab-roster",
                 format!("🧑 Roster ({})", member_count),
@@ -14773,15 +14892,412 @@ impl FermiConsole {
                     .cursor_pointer()
                     .hover(|s| s.bg(theme::bg_hover()))
                     .on_click(cx.listener(move |this, _, _w, cx| {
-                        // Re-fire all three: if one surface failed the
+                        // Re-fire all four: if one surface failed the
                         // others very likely did too (same request cycle),
-                        // and three separate retry buttons is worse UX than
+                        // and four separate retry buttons is worse UX than
                         // one that fixes the pane.
                         this.fetch_team_shared(tid.clone(), cx);
                         this.fetch_team_activity(tid.clone(), cx);
                         this.fetch_team_contributions(tid.clone(), cx);
+                        this.fetch_team_ops(tid.clone(), cx);
                     }))
                     .child("↻ Retry"),
+            )
+            .into_any_element()
+    }
+
+    /// Ops tab body — the team's detected work queue.
+    ///
+    /// An op is a goal-constrained unit of coordinated work, derived from
+    /// a condition that is currently true of the team's shared surface.
+    /// Nothing stores them, which is why this board has no close button,
+    /// no assignment and no lifecycle: **the definition of done is the
+    /// detector going quiet.** An op is claimed by acting on it, and it
+    /// vanishes on the next poll once the situation resolves.
+    ///
+    /// Everything below follows from that. Rows are dense and ordered by
+    /// the server's cross-kind urgency (never re-sorted here — the whole
+    /// point of one comparable scale is that one list can rank four
+    /// detectors). The objective leads, because it is the goal
+    /// constraint; `done_when` sits directly under it, because it is the
+    /// only completion contract that exists.
+    fn render_team_ops_body(&self, team_id: &str, cx: &mut Context<Self>) -> AnyElement {
+        let container = div().flex().flex_col().gap(px(12.0));
+
+        let Some(board) = self.team_ops.get(team_id) else {
+            return container
+                .child(self.render_surface_placeholder(
+                    team_id,
+                    "ops",
+                    "the ops board",
+                    self.team_ops_in_flight.contains(team_id),
+                    cx,
+                ))
+                .into_any_element();
+        };
+
+        // Empty is the goal state, not a missing-data state — so it reads
+        // as an all-clear rather than an apology, and doubles as the only
+        // documentation of what the detectors watch for. Operators need to
+        // know what WOULD raise an op to trust that nothing has.
+        if board.ops.is_empty() {
+            return container
+                .child(
+                    div()
+                        .p(px(16.0))
+                        .rounded(px(6.0))
+                        .bg(theme::bg_elevated())
+                        .border_1()
+                        .border_color(theme::fg_faint())
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.0))
+                        .child(
+                            div()
+                                .text_size(px(12.0))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(theme::green())
+                                .child("✓ No open ops"),
+                        )
+                        .child(div().text_size(px(11.0)).text_color(theme::fg_dim()).child(
+                            "Nothing on this team's shared surface currently \
+                                     needs coordination.",
+                        ))
+                        .child(
+                            div()
+                                .text_size(px(10.5))
+                                .text_color(theme::fg_faint())
+                                .child(
+                                    "An op appears by itself when:\n\
+                             ⚡ a portfolio share cascades to forecasts nobody has reviewed;\n\
+                             ⚔ two people revise the same forecast in opposite directions;\n\
+                             👁 a published forecast has had no second pair of eyes;\n\
+                             ⏱ a resolution date is coming due.\n\
+                             Ops are detected, not filed — one disappears the moment its \
+                             condition stops holding.",
+                                ),
+                        ),
+                )
+                .into_any_element();
+        }
+
+        let filter = self.team_ops_kind_filter;
+        let visible: Vec<&Op> = board
+            .ops
+            .iter()
+            .filter(|o| filter.is_none_or(|k| o.kind == k))
+            .collect();
+
+        let mut result = container.child(self.render_team_ops_filters(board, cx));
+
+        // A filter that hides everything is the operator's own doing, and
+        // has to say so — otherwise it is indistinguishable from the
+        // all-clear above, which would be a lie about the team.
+        if visible.is_empty() {
+            return result
+                .child(
+                    div()
+                        .p(px(14.0))
+                        .rounded(px(6.0))
+                        .bg(theme::bg_elevated())
+                        .text_size(px(11.0))
+                        .text_color(theme::fg_dim())
+                        .child("No ops of that kind right now. Clear the filter to see the board."),
+                )
+                .into_any_element();
+        }
+
+        result = result.child(
+            div().flex().flex_col().gap(px(4.0)).children(
+                visible
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, op)| self.render_op_row(op, i, cx)),
+            ),
+        );
+        result.into_any_element()
+    }
+
+    /// Kind filter chips for the Ops board.
+    ///
+    /// Client-side, unlike the Activity feed's chips: the ops list is
+    /// complete rather than a truncated page, so narrowing it locally
+    /// cannot hide an older match, and a refetch per chip would spend a
+    /// round trip to compute a subset the console already holds.
+    ///
+    /// Counts come from `counts.by_kind` rather than from tallying the
+    /// list, so the chips agree with the tab pill by construction.
+    fn render_team_ops_filters(&self, board: &OpsResponse, cx: &Context<Self>) -> AnyElement {
+        let active = self.team_ops_kind_filter;
+
+        // Fixed detector order rather than the JSON map's, so the chip
+        // strip doesn't reshuffle between polls as kinds come and go.
+        // Kinds the console doesn't know about sort to the end.
+        let mut kinds: Vec<(String, i64)> = board
+            .counts
+            .by_kind
+            .as_object()
+            .map(|m| {
+                m.iter()
+                    .filter_map(|(k, v)| v.as_i64().filter(|n| *n > 0).map(|n| (k.clone(), n)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        kinds.sort_by_key(|(k, _)| {
+            OP_KIND_ORDER
+                .iter()
+                .position(|o| o == k)
+                .unwrap_or(usize::MAX)
+        });
+
+        div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(px(6.0))
+            // "All" is the clear affordance and the active-state anchor:
+            // one chip is always lit, so the board never looks filtered
+            // when it isn't.
+            .child(
+                div()
+                    .id("ops-kind-all")
+                    .px(px(9.0))
+                    .py(px(3.0))
+                    .rounded(px(10.0))
+                    .border_1()
+                    .border_color(if active.is_none() {
+                        rgb(theme::ORANGE).into()
+                    } else {
+                        theme::fg_faint()
+                    })
+                    .text_size(px(10.0))
+                    .text_color(if active.is_none() {
+                        theme::orange()
+                    } else {
+                        theme::fg_dim()
+                    })
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::bg_hover()))
+                    .on_click(cx.listener(|this, _, _w, cx| {
+                        this.team_ops_kind_filter = None;
+                        cx.notify();
+                    }))
+                    .child(format!("All ({})", board.counts.total)),
+            )
+            .children(kinds.into_iter().map(|(kind, count)| {
+                // Label and glyph come off an actual op of that kind so
+                // the console never keeps its own copy of the vocabulary.
+                // A counted kind with no op in the list can still be shown
+                // (raw key), it just can't be named.
+                let exemplar = board.ops.iter().find(|o| o.kind == kind);
+                let label = match exemplar {
+                    Some(op) => format!("{} {} ({})", op.glyph(), op.kind_label(), count),
+                    None => format!("{} ({})", kind.replace('_', " "), count),
+                };
+                // The filter is a `&'static str` (matching the Activity
+                // tab's), so only kinds this build knows can be selected.
+                // An unrecognised kind still gets a chip — its count is
+                // part of the total and hiding it would make the numbers
+                // not add up — but it renders inert rather than lying
+                // about being clickable.
+                let wire = OP_KIND_ORDER.iter().copied().find(|k| *k == kind);
+                let is_active = wire.is_some() && wire == active;
+
+                div()
+                    .id(SharedString::from(format!("ops-kind-{}", kind)))
+                    .px(px(9.0))
+                    .py(px(3.0))
+                    .rounded(px(10.0))
+                    .border_1()
+                    .border_color(if is_active {
+                        rgb(theme::ORANGE).into()
+                    } else {
+                        theme::fg_faint()
+                    })
+                    .text_size(px(10.0))
+                    .text_color(if is_active {
+                        theme::orange()
+                    } else {
+                        theme::fg_dim()
+                    })
+                    .when_some(wire, |el, w| {
+                        el.cursor_pointer()
+                            .hover(|s| s.bg(theme::bg_hover()))
+                            .on_click(cx.listener(move |this, _, _w, cx| {
+                                // Re-clicking the live chip clears it, so
+                                // the strip is a toggle and never traps
+                                // the operator in a narrowed board.
+                                this.team_ops_kind_filter = if this.team_ops_kind_filter == Some(w)
+                                {
+                                    None
+                                } else {
+                                    Some(w)
+                                };
+                                cx.notify();
+                            }))
+                    })
+                    .when(wire.is_none(), |el| el.opacity(0.6))
+                    .child(label)
+            }))
+            .into_any_element()
+    }
+
+    /// One row on the ops board.
+    ///
+    /// The objective is the loudest thing in the row because it is the
+    /// goal constraint — everything else is context for deciding whether
+    /// to take it now. There is deliberately no complete / assign /
+    /// dismiss control: an op is claimed by acting on the thing it points
+    /// at, so the row's only interaction is opening that thing.
+    fn render_op_row(&self, op: &Op, idx: usize, cx: &Context<Self>) -> AnyElement {
+        let accent = op_urgency_color(&op.urgency_label);
+        // The board is scanned by severity before it is read, so the
+        // urgency lives in the left rule as well as the chip.
+        let urgency_label = if op.urgency_label.is_empty() {
+            "normal".to_string()
+        } else {
+            op.urgency_label.clone()
+        };
+
+        // Where a click goes. Only the two navigable target types are
+        // honoured; an op with no primary (or a target kind this build
+        // can't open) stays inert rather than pretending to be a link.
+        let nav: Option<(bool, String)> = op.primary.as_ref().and_then(|t| match t.kind.as_str() {
+            "forecast" => Some((true, t.id.clone())),
+            "portfolio" => Some((false, t.id.clone())),
+            _ => None,
+        });
+
+        // Meta line, left to right: how long this has been true, what the
+        // click opens, how wide the blast radius is, the kind-specific
+        // numbers, and who is already in it.
+        let mut meta: Vec<String> = Vec::new();
+        if let Some(since) = op.since.as_deref() {
+            // Age is the difference between "appeared this morning" and
+            // "the team has been walking past this for three weeks".
+            meta.push(format!("⏱ {}", format_relative_time(since)));
+        }
+        if let Some(title) = op.primary.as_ref().and_then(|t| t.title.as_deref()) {
+            meta.push(format!("→ {}", truncate(title, 44)));
+        }
+        // For a cascade the blast radius IS the op: one unreviewed
+        // forecast is a nudge, six is a coordination problem.
+        if op.scope.forecast_ids.len() > 1 {
+            meta.push(format!(
+                "◈ {} forecasts in scope",
+                op.scope.forecast_ids.len()
+            ));
+        }
+        meta.extend(format_op_metrics(&op.metrics));
+        if !op.participants.is_empty() {
+            meta.push(format!("🧑 {}", format_op_participants(&op.participants)));
+        }
+        let meta_line = meta.join(" · ");
+
+        div()
+            // Index-prefixed because an op id is stable but the same id
+            // can appear under two filters within one frame.
+            .id(SharedString::from(format!("op-{}-{}", idx, op.id)))
+            .flex()
+            .items_start()
+            .gap(px(10.0))
+            .px(px(12.0))
+            .py(px(9.0))
+            .rounded(px(6.0))
+            .bg(theme::bg_elevated())
+            .border_l_2()
+            .border_color(rgb(accent))
+            .when_some(nav, |el, (is_forecast, target)| {
+                el.cursor_pointer()
+                    .hover(|s| s.bg(theme::bg_hover()))
+                    .on_click(cx.listener(move |this, _e, _w, cx| {
+                        if is_forecast {
+                            this.open_forecast(&target, cx);
+                        } else {
+                            this.select_named_portfolio(target.clone(), cx);
+                            this.navigate(Panel::Portfolio, cx);
+                        }
+                    }))
+            })
+            .child(
+                div()
+                    .w(px(20.0))
+                    .flex_shrink_0()
+                    .text_size(px(14.0))
+                    .text_color(rgb(accent))
+                    .child(op.glyph()),
+            )
+            .child(
+                div()
+                    .flex_grow()
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.0))
+                    // Objective + urgency: the two facts that decide
+                    // whether this row is your next action.
+                    .child(
+                        div()
+                            .flex()
+                            .items_baseline()
+                            .gap(px(8.0))
+                            .child(
+                                div()
+                                    .flex_grow()
+                                    .text_size(px(13.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(theme::fg())
+                                    .child(op.objective.clone()),
+                            )
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .px(px(7.0))
+                                    .py(px(1.0))
+                                    .rounded(px(4.0))
+                                    .bg(theme::bg_active())
+                                    .text_size(px(9.5))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(accent))
+                                    // The bucket, not the 0–100 score: the
+                                    // number is only meaningful as a sort
+                                    // key, and showing it would invite
+                                    // reading precision into a heuristic.
+                                    .child(urgency_label),
+                            ),
+                    )
+                    // The clearing condition. This is the contract — when
+                    // it becomes true the row deletes itself — so it is
+                    // never truncated or hidden behind a hover.
+                    .when(!op.done_when.is_empty(), |el| {
+                        el.child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(theme::fg_dim())
+                                .child(format!("done when: {}", op.done_when)),
+                        )
+                    })
+                    .when(!meta_line.is_empty(), |el| {
+                        el.child(
+                            div()
+                                .flex()
+                                .items_baseline()
+                                .gap(px(8.0))
+                                .child(
+                                    div()
+                                        .flex_grow()
+                                        .text_size(px(10.0))
+                                        .text_color(theme::fg_faint())
+                                        .child(meta_line.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_size(px(9.5))
+                                        .text_color(theme::fg_dim())
+                                        .child(op.kind_label()),
+                                ),
+                        )
+                    }),
             )
             .into_any_element()
     }
@@ -19443,6 +19959,94 @@ fn humanise_day(day: &str) -> String {
         Ok(d) => d.format("%-d %b %Y").to_string(),
         Err(_) => day.to_string(),
     }
+}
+
+/// The detectors, in board order.
+///
+/// Two jobs: it fixes the filter-chip order (so the strip doesn't
+/// reshuffle as kinds appear and vanish between polls), and it is the set
+/// of kinds the `&'static str` filter can hold. Deliberately NOT a
+/// vocabulary duplicate — glyphs and labels stay on `Op`, which the
+/// server's wire contract owns.
+const OP_KIND_ORDER: [&str; 4] = [
+    "cascade_review",
+    "contested",
+    "unreviewed",
+    "resolution_due",
+];
+
+/// Accent for an op's urgency bucket.
+///
+/// Keyed off `urgency_label` rather than the 0–100 score so the console
+/// never hardcodes thresholds the server may retune — a re-bucketing on
+/// the backend recolours the board with no client change.
+fn op_urgency_color(label: &str) -> u32 {
+    match label {
+        "critical" => theme::RED,
+        "high" => theme::ORANGE,
+        "normal" => theme::CYAN,
+        // Includes `low` and anything unrecognised: an urgency this build
+        // can't rank shouldn't shout.
+        _ => theme::FG_DIM,
+    }
+}
+
+/// Flatten an op's `metrics` object into `"<key> <value>"` display bits.
+///
+/// Generic on purpose. `metrics` is a flat, kind-specific bag the server
+/// is free to extend, so switching on known keys would silently drop
+/// whatever a new detector adds. Keys are humanised (`spread_pp` →
+/// `spread pp`); non-scalar values are skipped rather than debug-printed,
+/// because a nested object rendered inline would wreck the row.
+fn format_op_metrics(metrics: &JsonValue) -> Vec<String> {
+    let Some(obj) = metrics.as_object() else {
+        return Vec::new();
+    };
+    obj.iter()
+        .filter_map(|(k, v)| {
+            let rendered = match v {
+                // Integers stay integers; floats keep one decimal, which
+                // is all the precision a summary line can justify.
+                JsonValue::Number(n) => n
+                    .as_i64()
+                    .map(|i| i.to_string())
+                    .or_else(|| n.as_f64().map(|f| format!("{:.1}", f))),
+                JsonValue::String(s) => Some(s.clone()),
+                JsonValue::Bool(b) => Some(b.to_string()),
+                _ => None,
+            }?;
+            Some(format!("{} {}", k.replace('_', " "), rendered))
+        })
+        .collect()
+}
+
+/// Compact participant list for an op row: up to three names, then `+N`.
+///
+/// These are people already involved, not assignees — ops aren't assigned
+/// — so the list is informational and gets a hard cap rather than a
+/// scroll. Roles are only shown for one or two participants; past that
+/// they cost more width than they explain.
+fn format_op_participants(participants: &[api::client::OpParticipant]) -> String {
+    let show_role = participants.len() <= 2;
+    let mut names: Vec<String> = participants
+        .iter()
+        .take(3)
+        .map(|p| {
+            let name = p
+                .display_name
+                .clone()
+                .unwrap_or_else(|| short_user_label(&p.user_id));
+            if show_role && !p.role.is_empty() {
+                format!("{} ({})", truncate(&name, 14), p.role)
+            } else {
+                truncate(&name, 14)
+            }
+        })
+        .collect();
+    if participants.len() > 3 {
+        names.push(format!("+{}", participants.len() - 3));
+    }
+    names.join(", ")
 }
 
 /// Roll-up of where a "Shared with me" list actually came from

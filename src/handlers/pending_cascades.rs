@@ -63,7 +63,15 @@ pub async fn queue_pending_cascade(
     };
 
     if group_ids.is_empty() {
-        queue_pending_cascade_legacy(pool, trigger_forecast_id, trigger_kind, outcome, source, owner_id).await;
+        queue_pending_cascade_legacy(
+            pool,
+            trigger_forecast_id,
+            trigger_kind,
+            outcome,
+            source,
+            owner_id,
+        )
+        .await;
         return;
     }
 
@@ -103,36 +111,30 @@ pub async fn queue_pending_cascade(
             trigger_kind: trigger_kind.to_string(),
             outcome,
         };
-        let snapshot = match dispatch_propagation_group(
-            &kind,
-            group_id,
-            &parameters,
-            &dry_req,
-            pool,
-            true,
-        )
-        .await
-        {
-            Ok(result) => json!({
-                "n_projected": result.n_updated,
-                "deltas": result.deltas.iter().map(|d| json!({
-                    "forecast_id": d.forecast_id,
-                    "previous_probability": d.previous_probability,
-                    "new_probability": d.new_probability,
-                    "delta_pp": d.delta_pp,
-                })).collect::<Vec<_>>(),
-                "note": result.note,
-            }),
-            Err((_, e)) => {
-                tracing::warn!(
-                    group = %group_id,
-                    forecast = %trigger_forecast_id,
-                    error = %e,
-                    "[cascade-queue] dry-run failed"
-                );
-                continue;
-            }
-        };
+        let snapshot =
+            match dispatch_propagation_group(&kind, group_id, &parameters, &dry_req, pool, true)
+                .await
+            {
+                Ok(result) => json!({
+                    "n_projected": result.n_updated,
+                    "deltas": result.deltas.iter().map(|d| json!({
+                        "forecast_id": d.forecast_id,
+                        "previous_probability": d.previous_probability,
+                        "new_probability": d.new_probability,
+                        "delta_pp": d.delta_pp,
+                    })).collect::<Vec<_>>(),
+                    "note": result.note,
+                }),
+                Err((_, e)) => {
+                    tracing::warn!(
+                        group = %group_id,
+                        forecast = %trigger_forecast_id,
+                        error = %e,
+                        "[cascade-queue] dry-run failed"
+                    );
+                    continue;
+                }
+            };
 
         if let Err(e) = sqlx::query(
             "INSERT INTO public.pending_cascades (
@@ -231,36 +233,30 @@ async fn queue_pending_cascade_legacy(
             trigger_kind: trigger_kind.to_string(),
             outcome,
         };
-        let snapshot = match dispatch_propagation(
-            &kind,
-            &forecast_ids,
-            &parameters,
-            &dry_req,
-            pool,
-            true,
-        )
-        .await
-        {
-            Ok(result) => json!({
-                "n_projected": result.n_updated,
-                "deltas": result.deltas.iter().map(|d| json!({
-                    "forecast_id": d.forecast_id,
-                    "previous_probability": d.previous_probability,
-                    "new_probability": d.new_probability,
-                    "delta_pp": d.delta_pp,
-                })).collect::<Vec<_>>(),
-                "note": result.note,
-            }),
-            Err((_, e)) => {
-                tracing::warn!(
-                    rel = %rel_id,
-                    forecast = %trigger_forecast_id,
-                    error = %e,
-                    "[cascade-queue-legacy] dry-run failed"
-                );
-                continue;
-            }
-        };
+        let snapshot =
+            match dispatch_propagation(&kind, &forecast_ids, &parameters, &dry_req, pool, true)
+                .await
+            {
+                Ok(result) => json!({
+                    "n_projected": result.n_updated,
+                    "deltas": result.deltas.iter().map(|d| json!({
+                        "forecast_id": d.forecast_id,
+                        "previous_probability": d.previous_probability,
+                        "new_probability": d.new_probability,
+                        "delta_pp": d.delta_pp,
+                    })).collect::<Vec<_>>(),
+                    "note": result.note,
+                }),
+                Err((_, e)) => {
+                    tracing::warn!(
+                        rel = %rel_id,
+                        forecast = %trigger_forecast_id,
+                        error = %e,
+                        "[cascade-queue-legacy] dry-run failed"
+                    );
+                    continue;
+                }
+            };
 
         if let Err(e) = sqlx::query(
             "INSERT INTO public.pending_cascades (
@@ -303,10 +299,26 @@ pub async fn list_pending_cascades_handler(
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<JsonValue>, (StatusCode, String)> {
     let user_id = principal.user_id().to_string();
-    let status = params.get("status").cloned().unwrap_or_else(|| "pending".to_string());
+    let status = params
+        .get("status")
+        .cloned()
+        .unwrap_or_else(|| "pending".to_string());
 
+    // Spec 27: the queue follows FORECAST ACCESS, not sole ownership.
+    //
+    // `pending_cascades.owner_id` used to gate this list, which made the
+    // single most coordination-hungry object in the product private to one
+    // person: a team could share a portfolio, jointly manage the forecasts
+    // in it, and still have exactly one member able to see — or act on —
+    // the cascades their resolutions queued. Everyone else saw an empty
+    // queue while coherence silently rotted.
+    //
+    // `owner_id` is retained as attribution (who triggered it), which is
+    // what it should always have been. Visibility is now the same
+    // predicate `can_access` enforces, so if you can see the trigger
+    // forecast you can see that resolving it queued work.
     if status == "all" {
-        let rows = sqlx::query(
+        let rows = sqlx::query(&format!(
             "SELECT pc.id, pc.group_id, pc.relationship_id, pc.trigger_forecast_id,
                     pc.trigger_kind, pc.outcome, pc.source, pc.status,
                     pc.created_at, pc.decided_at, pc.decided_by, pc.notes,
@@ -319,19 +331,17 @@ pub async fn list_pending_cascades_handler(
               LEFT JOIN public.forecast_relationship_groups frg ON frg.group_id = pc.group_id
               LEFT JOIN public.forecast_relationships fr ON fr.id = pc.relationship_id
               JOIN public.fermi_forecasts ff ON ff.id = pc.trigger_forecast_id
-              WHERE pc.owner_id = $1
+              WHERE {access}
               ORDER BY pc.created_at DESC
               LIMIT 200",
-        )
+            access = fermi_auth::visibility::forecast_view_predicate("ff", 1)
+        ))
         .bind(&user_id)
         .fetch_all(&state.db)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-        let entries: Vec<JsonValue> = rows
-            .iter()
-            .map(|r| cascade_row_to_json(r))
-            .collect();
+        let entries: Vec<JsonValue> = rows.iter().map(|r| cascade_row_to_json(r)).collect();
 
         return Ok(Json(json!({
             "pending": entries,
@@ -340,7 +350,7 @@ pub async fn list_pending_cascades_handler(
         })));
     }
 
-    let rows = sqlx::query(
+    let rows = sqlx::query(&format!(
         "SELECT pc.id, pc.group_id, pc.relationship_id, pc.trigger_forecast_id,
                 pc.trigger_kind, pc.outcome, pc.source, pc.status,
                 pc.created_at, pc.decided_at, pc.decided_by, pc.notes,
@@ -353,20 +363,18 @@ pub async fn list_pending_cascades_handler(
           LEFT JOIN public.forecast_relationship_groups frg ON frg.group_id = pc.group_id
           LEFT JOIN public.forecast_relationships fr ON fr.id = pc.relationship_id
           JOIN public.fermi_forecasts ff ON ff.id = pc.trigger_forecast_id
-          WHERE pc.owner_id = $1 AND pc.status = $2
+          WHERE {access} AND pc.status = $2
           ORDER BY pc.created_at DESC
           LIMIT 100",
-    )
+        access = fermi_auth::visibility::forecast_view_predicate("ff", 1)
+    ))
     .bind(&user_id)
     .bind(&status)
     .fetch_all(&state.db)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let entries: Vec<JsonValue> = rows
-        .iter()
-        .map(|r| cascade_row_to_json(r))
-        .collect();
+    let entries: Vec<JsonValue> = rows.iter().map(|r| cascade_row_to_json(r)).collect();
 
     Ok(Json(json!({
         "pending": entries,
@@ -401,6 +409,55 @@ fn cascade_row_to_json(r: &sqlx::postgres::PgRow) -> JsonValue {
     })
 }
 
+/// Require EDIT access on a pending cascade's trigger forecast.
+///
+/// The authorisation anchor for every cascade decision. Cascade work is
+/// inherently shared — resolving one forecast queues adjustments to its
+/// siblings, which may belong to several people — so "who owns the queue
+/// row" was never the right question. "May you change this forecast" is,
+/// and it routes through the one canonical helper, which means team shares
+/// and portfolio inheritance are honoured automatically.
+pub(crate) async fn require_cascade_edit(
+    pool: &sqlx::PgPool,
+    cascade_id: Uuid,
+    principal: &AuthPrincipal,
+) -> Result<(), (StatusCode, String)> {
+    let row = sqlx::query(
+        "SELECT ff.id AS fid, ff.owner_id::text AS owner_id, ff.visibility
+           FROM public.pending_cascades pc
+           JOIN public.fermi_forecasts ff ON ff.id = pc.trigger_forecast_id
+          WHERE pc.id = $1",
+    )
+    .bind(cascade_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Cascade not found".to_string()))?;
+
+    let fid: String = row.try_get("fid").unwrap_or_default();
+    let owner_id: String = row.try_get("owner_id").unwrap_or_default();
+    let visibility: String = row.try_get("visibility").unwrap_or_default();
+
+    let granted = fermi_auth::visibility::can_edit(
+        pool,
+        principal,
+        fermi_auth::ObjectType::Forecast,
+        &fid,
+        &owner_id,
+        fermi_auth::Visibility::from_legacy(&visibility),
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if !granted {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "You need edit access to the trigger forecast to decide this cascade".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn dismiss_pending_cascade_handler(
     Path(cascade_id): Path<String>,
     State(state): State<AppState>,
@@ -411,6 +468,12 @@ pub async fn dismiss_pending_cascade_handler(
     let cid = Uuid::parse_str(&cascade_id)
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid cascade id".into()))?;
 
+    // Spec 27: EDIT on the trigger forecast, not ownership of the queue
+    // row. An ops board that shows a teammate work they cannot action is a
+    // nag list, and a cascade is precisely the thing a team needs anyone
+    // on shift to be able to clear. `owner_id` stays as attribution.
+    require_cascade_edit(&state.db, cid, &principal).await?;
+
     let result = sqlx::query(
         "UPDATE public.pending_cascades
           SET status = 'dismissed',
@@ -418,13 +481,11 @@ pub async fn dismiss_pending_cascade_handler(
               decided_by = $2,
               notes = $3
           WHERE id = $1
-            AND (owner_id = $2 OR $4)
             AND status = 'pending'",
     )
     .bind(cid)
     .bind(&user_id)
     .bind(&req.notes)
-    .bind(principal.can_admin())
     .execute(&state.db)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -432,7 +493,7 @@ pub async fn dismiss_pending_cascade_handler(
     if result.rows_affected() == 0 {
         return Err((
             StatusCode::NOT_FOUND,
-            "Cascade not found, not yours, or not pending".into(),
+            "Cascade not found or no longer pending".into(),
         ));
     }
 
@@ -476,8 +537,10 @@ pub async fn cascade_history_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let incoming_entries: Vec<JsonValue> = incoming.iter().map(|r| cascade_row_to_json(r)).collect();
-    let outgoing_entries: Vec<JsonValue> = outgoing.iter().map(|r| cascade_row_to_json(r)).collect();
+    let incoming_entries: Vec<JsonValue> =
+        incoming.iter().map(|r| cascade_row_to_json(r)).collect();
+    let outgoing_entries: Vec<JsonValue> =
+        outgoing.iter().map(|r| cascade_row_to_json(r)).collect();
 
     Ok(Json(json!({
         "incoming": incoming_entries,

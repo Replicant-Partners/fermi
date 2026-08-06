@@ -1154,7 +1154,7 @@ ORDER BY ts DESC
 ///      guard the ACL applies — a colleague's private forecast parked in
 ///      a team book does not become team-visible unless its owner is on
 ///      the team.
-async fn team_surface(
+pub(crate) async fn team_surface(
     pool: &PgPool,
     team_id: Uuid,
 ) -> Result<(Vec<String>, Vec<String>), (StatusCode, String)> {
@@ -2269,7 +2269,7 @@ async fn require_portfolio_view(
 
 /// Team feeds are members-only (plus platform admins). A team's activity
 /// is exactly the kind of thing that must not be readable by id alone.
-async fn require_team_member(
+pub(crate) async fn require_team_member(
     pool: &PgPool,
     team_id: Uuid,
     principal: &AuthPrincipal,

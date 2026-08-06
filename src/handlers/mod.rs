@@ -41,6 +41,9 @@ pub mod notebooks;
 pub mod observations;
 pub mod observatory;
 pub mod ontology;
+/// The ops board — detected coordination work for a team.
+/// See docs/specs/SPEC_27_TEAM_OPS.md.
+pub mod ops;
 pub mod orchestras;
 pub mod pages;
 pub mod pending_cascades;

@@ -11,8 +11,8 @@ use serde_json::{json, Value as JsonValue};
 use sqlx::Row;
 use uuid::Uuid;
 
-use crate::AppState;
 use super::propagation::{dispatch_propagation, dispatch_propagation_group, PropagateRequest};
+use crate::AppState;
 
 #[derive(Debug, Deserialize)]
 pub struct ApplyDismissRequest {
@@ -54,10 +54,13 @@ pub async fn apply_pending_cascade_handler(
         }
     };
 
-    let owner: String = row.try_get("owner_id").unwrap_or_default();
-    if owner != user_id && !principal.can_admin() {
-        return Err((StatusCode::FORBIDDEN, "Not your cascade".into()));
-    }
+    // Spec 27: EDIT on the trigger forecast, not ownership of the queue
+    // row. Applying a cascade is shared team work — see
+    // pending_cascades::require_cascade_edit for the full rationale. The
+    // check runs outside the transaction's row lock on purpose: it only
+    // reads, and holding the lock across an ACL round-trip would serialise
+    // the queue for every concurrent reviewer.
+    crate::handlers::pending_cascades::require_cascade_edit(&state.db, cid, &principal).await?;
     let status: String = row.try_get("status").unwrap_or_default();
     if status != "pending" {
         return Err((
@@ -100,8 +103,7 @@ pub async fn apply_pending_cascade_handler(
         let kind: String = group_row.try_get("kind").unwrap_or_default();
         let parameters: JsonValue = group_row.try_get("parameters").unwrap_or(JsonValue::Null);
 
-        dispatch_propagation_group(&kind, gid, &parameters, &prop_req, &state.db, false)
-            .await?
+        dispatch_propagation_group(&kind, gid, &parameters, &prop_req, &state.db, false).await?
     } else if let Some(rel_id) = relationship_id {
         let rel_row = sqlx::query(
             "SELECT kind, forecast_ids, parameters
@@ -115,15 +117,27 @@ pub async fn apply_pending_cascade_handler(
 
         let rel_row = match rel_row {
             Some(r) => r,
-            None => return Err((StatusCode::NOT_FOUND, "Legacy relationship not found".into())),
+            None => {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    "Legacy relationship not found".into(),
+                ))
+            }
         };
 
         let kind: String = rel_row.try_get("kind").unwrap_or_default();
         let forecast_ids: Vec<String> = rel_row.try_get("forecast_ids").unwrap_or_default();
         let parameters: JsonValue = rel_row.try_get("parameters").unwrap_or(JsonValue::Null);
 
-        dispatch_propagation(&kind, &forecast_ids, &parameters, &prop_req, &state.db, false)
-            .await?
+        dispatch_propagation(
+            &kind,
+            &forecast_ids,
+            &parameters,
+            &prop_req,
+            &state.db,
+            false,
+        )
+        .await?
     } else {
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,

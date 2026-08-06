@@ -51,6 +51,10 @@ pub async fn undo_pending_cascade_handler(
     };
 
     let owner: String = row.try_get("owner_id").unwrap_or_default();
+    // Undo stays owner-gated (see Spec 27 § note): reversing someone
+    // else's applied decision is a different act from clearing a queue,
+    // and the blast radius is already-propagated values. Widening this
+    // wants its own decision, not a side effect of the ops board.
     if owner != user_id && !principal.can_admin() {
         return Err((StatusCode::FORBIDDEN, "Not your cascade".into()));
     }
@@ -86,10 +90,7 @@ pub async fn undo_pending_cascade_handler(
             Some(id) => id.to_string(),
             None => continue,
         };
-        let prev_pp = delta
-            .get("prev_pp")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0) as f32;
+        let prev_pp = delta.get("prev_pp").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
 
         sqlx::query(
             "INSERT INTO public.fermi_forecast_updates
