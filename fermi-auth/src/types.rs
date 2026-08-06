@@ -297,9 +297,74 @@ pub enum TeamRole {
     Owner,
 }
 
+/// A discrete power over a team's *work*, orthogonal to [`TeamRole`]
+/// (which governs administration of the team itself).
+///
+/// The split exists because a single ladder cannot express "help me work
+/// on these forecasts, but don't close them". Spec 26 made a portfolio
+/// team-share grant `edit` on every forecast inside it, and
+/// `resolve_forecast_handler` gated on `edit` — so sharing a book for
+/// collaboration silently delegated the irreversible scoring decision.
+/// See Spec 30 and migration 179.
+///
+/// Modelled on EVE's separation of Director (administration) from role
+/// grants like Accountant (one specific power).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TeamCapability {
+    /// May resolve or void forecasts on this team's shared surface.
+    /// Resolution is terminal — mig-174 freezes the scoring tuple — so
+    /// this is the capability with real teeth.
+    Resolve,
+    /// May draw on the team's shared credit pool for agent runs.
+    ///
+    /// **Declared, not yet enforced.** The treasury slice needs the same
+    /// column, and a second migration on one column for one feature family
+    /// is churn; nothing reads this today.
+    Spend,
+}
+
+impl TeamCapability {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TeamCapability::Resolve => "resolve",
+            TeamCapability::Spend => "spend",
+        }
+    }
+
+    /// Parse a wire value. Returns `None` for anything unrecognised — the
+    /// caller decides whether that is a 400 or a silent drop. This is the
+    /// validation boundary for the column (migration 179 deliberately has
+    /// no CHECK constraint), so it must stay strict.
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "resolve" => Some(TeamCapability::Resolve),
+            "spend" => Some(TeamCapability::Spend),
+            _ => None,
+        }
+    }
+
+    pub fn all() -> &'static [TeamCapability] {
+        &[TeamCapability::Resolve, TeamCapability::Spend]
+    }
+}
+
 impl TeamRole {
     pub fn can_invite(&self) -> bool {
         matches!(self, TeamRole::Admin | TeamRole::Owner)
+    }
+
+    /// Capabilities a role carries by default when a member is added.
+    ///
+    /// Administering a team implies authority over its work; plain
+    /// membership does not. This mirrors migration 179's backfill so a
+    /// member added today lands in the same state as one backfilled
+    /// yesterday — otherwise "who can resolve" would silently depend on
+    /// when someone joined.
+    pub fn default_capabilities(&self) -> Vec<TeamCapability> {
+        match self {
+            TeamRole::Owner | TeamRole::Admin => vec![TeamCapability::Resolve],
+            TeamRole::Member | TeamRole::Viewer => Vec::new(),
+        }
     }
 
     pub fn can_share(&self) -> bool {
@@ -401,4 +466,83 @@ pub struct ObjectShare {
     pub share_target: String,
     pub permission: Permission,
     pub granted_by: String,
+}
+
+#[cfg(test)]
+mod team_capability_tests {
+    use super::*;
+
+    /// `from_str` IS the validation boundary for `team_members.capabilities`
+    /// — migration 179 deliberately ships no CHECK constraint, so nothing
+    /// else stops a typo becoming a stored value. It must stay strict.
+    #[test]
+    fn from_str_rejects_anything_unrecognised() {
+        assert_eq!(TeamCapability::from_str("resolve"), Some(TeamCapability::Resolve));
+        assert_eq!(TeamCapability::from_str("spend"), Some(TeamCapability::Spend));
+        for bad in ["Resolve", "RESOLVE", "resolve ", "", "admin", "delete", "resolv"] {
+            assert!(
+                TeamCapability::from_str(bad).is_none(),
+                "must reject {:?} — a near-miss stored silently would read as a grant",
+                bad
+            );
+        }
+    }
+
+    #[test]
+    fn as_str_round_trips_through_from_str() {
+        for c in TeamCapability::all() {
+            assert_eq!(TeamCapability::from_str(c.as_str()), Some(*c));
+        }
+    }
+
+    /// The security-relevant half of Spec 30: administering a team implies
+    /// authority over its work, plain membership does not. If this inverts,
+    /// every portfolio team-share silently hands out scoring authority
+    /// again — the exact bug the capability split exists to close.
+    #[test]
+    fn only_admin_roles_get_resolve_by_default() {
+        assert!(TeamRole::Owner
+            .default_capabilities()
+            .contains(&TeamCapability::Resolve));
+        assert!(TeamRole::Admin
+            .default_capabilities()
+            .contains(&TeamCapability::Resolve));
+        assert!(TeamRole::Member.default_capabilities().is_empty());
+        assert!(TeamRole::Viewer.default_capabilities().is_empty());
+    }
+
+    /// `spend` is declared but unenforced, so nothing may hand it out
+    /// implicitly. When the treasury slice lands it should be an explicit
+    /// grant, not something an admin acquires by accident of this mapping.
+    #[test]
+    fn spend_is_never_granted_by_default() {
+        for role in [
+            TeamRole::Owner,
+            TeamRole::Admin,
+            TeamRole::Member,
+            TeamRole::Viewer,
+        ] {
+            assert!(
+                !role.default_capabilities().contains(&TeamCapability::Spend),
+                "{:?} must not receive 'spend' implicitly",
+                role
+            );
+        }
+    }
+
+    /// Migration 179 backfills exactly `ARRAY['resolve']` for owner/admin.
+    /// If the code defaults ever diverge from that, "who can resolve"
+    /// silently depends on whether a member was backfilled or added later.
+    #[test]
+    fn defaults_match_the_migration_backfill() {
+        let expected: Vec<&str> = vec!["resolve"];
+        for role in [TeamRole::Owner, TeamRole::Admin] {
+            let got: Vec<&str> = role
+                .default_capabilities()
+                .iter()
+                .map(|c| c.as_str())
+                .collect();
+            assert_eq!(got, expected, "{:?} defaults drifted from mig-179", role);
+        }
+    }
 }

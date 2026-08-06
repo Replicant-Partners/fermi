@@ -879,6 +879,15 @@ async fn run_migrations(db: &PgPool) {
         // filesystem card published nothing and were reachable only via
         // the catch-all `execute` path.
         "migrations/178_agents_mcp_tools.sql",
+        // Spec 30 (v0.11.10): team_members.capabilities. Splits discrete
+        // powers over a team's work ('resolve') away from the role ladder
+        // that administers the team. Closes the hazard Spec 26 opened: a
+        // portfolio team-share grants 'edit' on every forecast inside it,
+        // and `resolve` was gated on 'edit' — so sharing a book for
+        // collaboration silently delegated the irreversible scoring
+        // decision to the whole team. Backfills 'resolve' to owners and
+        // admins only; the tightening on members is the point.
+        "migrations/179_team_capabilities.sql",
     ];
 
     for file in &migration_files {
@@ -2397,6 +2406,16 @@ async fn main() {
         .route(
             "/api/teams/:team_id/members/:member_id",
             put(handlers::teams::update_member_role_handler),
+        )
+        // Spec 30: discrete powers over the team's WORK, orthogonal to
+        // `role` (which administers the team). Currently just 'resolve' —
+        // may take terminal, irreversible actions on the team's forecasts.
+        // A single ladder couldn't express "help me work on these but don't
+        // close them", which is why a portfolio team-share was silently
+        // delegating scoring authority.
+        .route(
+            "/api/teams/:team_id/members/:member_id/capabilities",
+            put(handlers::teams::set_member_capabilities_handler),
         )
         // Spec 24 §3.3 / Sprint 2.3a: invite someone to a team.
         // Permission vocab here is the team role (owner|admin|member|

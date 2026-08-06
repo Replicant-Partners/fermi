@@ -2,7 +2,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::error::AuthError;
-use crate::types::{AuthPrincipal, ObjectType, Permission, Visibility};
+use crate::types::{AuthPrincipal, ObjectType, Permission, TeamCapability, Visibility};
 
 /// Result of an access check — either denied or a specific permission level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -535,4 +535,135 @@ pub async fn is_team_member(
     .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
 
     Ok(row.0 > 0)
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Team capabilities scoped to a forecast (Spec 30)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Does `user_id` hold `cap` on some team through which this forecast is
+/// reachable?
+///
+/// ## Why it is scoped to the forecast
+///
+/// A capability is not global. Holding `resolve` on the WC-analysts team
+/// must not let you resolve an unrelated forecast in a team you happen to
+/// share with someone else. So the check is "you hold this power on a team
+/// that this particular forecast belongs to", which means walking the same
+/// three team-reachability paths `can_access` uses:
+///
+///   (a) the forecast is owned by that team (`fermi_forecasts.team_id`),
+///   (b) it is shared with that team via `object_shares`,
+///   (c) it sits in a portfolio owned by or shared with that team
+///       (Spec 26 inheritance).
+///
+/// Note this deliberately does NOT re-apply Spec 26's leak guard. The
+/// guard exists to stop a portfolio share from *granting access* to a
+/// third party's private forecast. Here access has already been
+/// established by the caller; this answers the separate question of
+/// whether the caller's team standing lets them take a terminal action.
+/// Conflating the two would let an unrelated `edit` grant confer
+/// `resolve`, which is exactly the bug this whole mechanism closes.
+pub async fn has_forecast_team_capability(
+    pool: &PgPool,
+    user_id: &str,
+    forecast_id: &str,
+    cap: TeamCapability,
+) -> Result<bool, AuthError> {
+    let row = sqlx::query_as::<_, (i64,)>(
+        r#"
+SELECT COUNT(*)
+FROM team_members tm
+WHERE tm.member_id = $2
+  AND $3 = ANY(tm.capabilities)
+  AND (
+        -- (a) team-owned
+        EXISTS (SELECT 1 FROM fermi_forecasts f
+                WHERE f.id = $1 AND f.team_id = tm.team_id)
+        -- (b) shared with the team directly
+     OR EXISTS (SELECT 1 FROM object_shares os
+                WHERE os.object_type  = 'forecast'
+                  AND os.object_id    = $1
+                  AND os.share_type   = 'team'
+                  AND os.share_target = tm.team_id::text)
+        -- (c) in a portfolio the team owns or has been given
+     OR EXISTS (SELECT 1 FROM fermi_portfolio_forecasts pf
+                JOIN fermi_portfolios p ON p.id = pf.portfolio_id
+                WHERE pf.forecast_id = $1
+                  AND (p.team_id = tm.team_id
+                    OR EXISTS (SELECT 1 FROM object_shares os2
+                               WHERE os2.object_type  = 'portfolio'
+                                 AND os2.object_id    = p.id::text
+                                 AND os2.share_type   = 'team'
+                                 AND os2.share_target = tm.team_id::text)))
+      )
+"#,
+    )
+    .bind(forecast_id)
+    .bind(user_id)
+    .bind(cap.as_str())
+    .fetch_one(pool)
+    .await
+    .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
+
+    Ok(row.0 > 0)
+}
+
+/// May this principal take a TERMINAL action on a forecast — resolve or
+/// void?
+///
+/// Terminal means irreversible: mig-174's freeze trigger pins
+/// `scored_probability` at resolution and `resolve_forecast()` requires
+/// `status='active'`, so a mis-resolution cannot be redone.
+///
+/// Two ways in:
+///
+///   1. **Object-admin** — you own it, hold an explicit `admin` share, or
+///      are a platform admin. This is what `delete` and `void` already
+///      required; `resolve` was the lone terminal action gated at `edit`,
+///      which is the inconsistency Spec 30 fixes.
+///   2. **Team `resolve` capability** — for teams that want to delegate
+///      closing without handing out object-admin.
+///
+/// `edit` alone is deliberately NOT sufficient. After Spec 26 a portfolio
+/// team-share grants `edit` on every forecast inside it, so accepting
+/// `edit` here meant sharing a book for collaboration silently delegated
+/// scoring authority to the whole team.
+///
+/// Solo users are unaffected: they own their forecasts, and ownership is
+/// `Permission::Admin` in [`can_access`].
+pub async fn can_resolve_forecast(
+    pool: &PgPool,
+    principal: &AuthPrincipal,
+    forecast_id: &str,
+    owner_id: &str,
+    visibility: Visibility,
+) -> Result<bool, AuthError> {
+    let level = can_access(
+        pool,
+        principal,
+        ObjectType::Forecast,
+        forecast_id,
+        owner_id,
+        visibility,
+    )
+    .await?;
+
+    if level.has_admin() {
+        return Ok(true);
+    }
+    // Only consult team standing if the caller can already see the row at
+    // all — a capability is an escalation of existing access, never a
+    // substitute for it.
+    if !level.has_view() {
+        return Ok(false);
+    }
+
+    has_forecast_team_capability(
+        pool,
+        &principal.user_id(),
+        forecast_id,
+        TeamCapability::Resolve,
+    )
+    .await
 }

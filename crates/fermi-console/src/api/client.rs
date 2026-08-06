@@ -735,6 +735,22 @@ pub struct TeamMember {
     /// `member_id` when unset.
     #[serde(default)]
     pub member_display_name: Option<String>,
+    /// Discrete powers over the team's *work*, orthogonal to `role`
+    /// (Spec 30). `role` says who administers the team; this says who
+    /// may take terminal actions on what the team owns — today
+    /// `resolve` (enforced) and `spend` (declared, not yet enforced).
+    ///
+    /// Deliberately `Vec<String>` and not an enum: the vocabulary is
+    /// open and grows server-side. A console talking to a newer API
+    /// must render a capability it has never heard of as an unknown
+    /// chip, not fail the whole team-detail deserialization and blank
+    /// the roster.
+    ///
+    /// Effective, not stored: the server reports owners with the full
+    /// set regardless of their column, because it refuses to edit
+    /// owners. Treat this as truth; never recompute it client-side.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
 }
 
 /// Response for `GET /api/teams/:id` — the team plus its members.
@@ -2858,6 +2874,25 @@ impl ApiClient {
         self.put(
             &format!("/api/teams/{}/members/{}", team_id, member_id),
             &json!({ "role": role }),
+        )
+        .await
+    }
+
+    /// Replace a member's capability set (owner/admin only; the server
+    /// 403s on any attempt to edit the team owner).
+    ///
+    /// Whole-set replacement, not add/remove — `capabilities` must be
+    /// the complete desired set, so a caller that sends a stale set
+    /// silently revokes whatever it omitted.
+    pub async fn set_team_member_capabilities(
+        &self,
+        team_id: &str,
+        member_id: &str,
+        capabilities: &[String],
+    ) -> Result<JsonValue, ApiError> {
+        self.put(
+            &format!("/api/teams/{}/members/{}/capabilities", team_id, member_id),
+            &json!({ "capabilities": capabilities }),
         )
         .await
     }

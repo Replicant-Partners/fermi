@@ -168,6 +168,23 @@ pub async fn get_team_handler(
     // Enrich members with display_name so the console renders
     // "Alice (owner)" instead of a raw UUID. Best-effort — missing rows
     // fall back to member_id-as-name in the client.
+    // Capabilities aren't on the `TeamMember` struct (they'd have to thread
+    // through every caller of get_team_members). One extra query keyed by
+    // team is cheaper than that churn, and this is the only surface that
+    // needs them.
+    let mut caps: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    if let Ok(rows) = sqlx::query_as::<_, (String, Vec<String>)>(
+        "SELECT member_id, capabilities FROM team_members WHERE team_id = $1",
+    )
+    .bind(team_id)
+    .fetch_all(&state.db)
+    .await
+    {
+        for (mid, c) in rows {
+            caps.insert(mid, c);
+        }
+    }
+
     let user_member_ids: Vec<String> = members
         .iter()
         .filter(|m| matches!(m.member_type, fermi_auth::MemberType::User))
@@ -193,6 +210,7 @@ pub async fn get_team_handler(
         .into_iter()
         .map(|m| {
             let display = names.get(&m.member_id).cloned();
+            let member_caps = caps.get(&m.member_id).cloned().unwrap_or_default();
             json!({
                 "team_id":              m.team_id,
                 "member_type":          m.member_type.as_str(),
@@ -200,6 +218,19 @@ pub async fn get_team_handler(
                 "role":                 m.role.as_str(),
                 "joined_at":            m.joined_at,
                 "member_display_name":  display,
+                // Spec 30. Owners are reported as holding everything even
+                // though the column may be empty: `set_member_capabilities`
+                // refuses to edit owners precisely so a team can't lock
+                // every terminal action out of itself, and the UI must show
+                // the effective truth rather than the stored row.
+                "capabilities":         if m.role == fermi_auth::TeamRole::Owner {
+                    fermi_auth::TeamCapability::all()
+                        .iter()
+                        .map(|c| c.as_str())
+                        .collect::<Vec<_>>()
+                } else {
+                    member_caps.iter().map(|s| s.as_str()).collect::<Vec<_>>()
+                },
             })
         })
         .collect();
@@ -396,7 +427,84 @@ pub async fn update_member_role_handler(
     Ok(Json(json!({ "status": "updated" })))
 }
 
-// ─── Object sharing ────────────────────────────────────────────────
+// ─── Capabilities (Spec 30) ─────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct SetCapabilitiesRequest {
+    /// The complete new set. Whole-set replacement, not add/remove — the
+    /// caller is a UI rendering checkboxes, and a read-modify-write of
+    /// individual grants silently loses one of two concurrent admins' edits.
+    capabilities: Vec<String>,
+}
+
+/// PUT /api/teams/:team_id/members/:member_id/capabilities
+///
+/// Grant or revoke discrete powers over the team's work — currently just
+/// `resolve` (may take terminal actions on the team's forecasts). Distinct
+/// from `role`, which administers the team itself; see Spec 30 for why one
+/// ladder couldn't express both.
+///
+/// Team admins and owners only: deciding who may permanently score the
+/// team's forecasts is itself an administrative act.
+pub async fn set_member_capabilities_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path((team_id, member_id)): Path<(uuid::Uuid, String)>,
+    Json(body): Json<SetCapabilitiesRequest>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let requester_role = teams::get_member_role(&state.db, team_id, &principal.user_id())
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let is_team_admin = requester_role.map(|r| r.can_admin()).unwrap_or(false);
+    if !is_team_admin && !principal.can_admin() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Only team admins and owners can change capabilities".to_string(),
+        ));
+    }
+
+    // Strict parse: migration 179 deliberately has no CHECK constraint, so
+    // this handler IS the validation boundary for the column. Silently
+    // dropping an unknown value would let a typo read as a successful
+    // revocation.
+    let mut caps = Vec::new();
+    for raw in &body.capabilities {
+        match fermi_auth::TeamCapability::from_str(raw.trim()) {
+            Some(c) => caps.push(c),
+            None => {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    format!(
+                        "unknown capability '{}': expected one of {}",
+                        raw,
+                        fermi_auth::TeamCapability::all()
+                            .iter()
+                            .map(|c| c.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                ))
+            }
+        }
+    }
+    caps.dedup_by_key(|c| c.as_str());
+
+    teams::set_member_capabilities(&state.db, team_id, &member_id, &caps)
+        .await
+        .map_err(|e| match e {
+            fermi_auth::AuthError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
+            other => (StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+        })?;
+
+    Ok(Json(json!({
+        "status": "updated",
+        "member_id": member_id,
+        "capabilities": caps.iter().map(|c| c.as_str()).collect::<Vec<_>>(),
+    })))
+}
+
+// ─── Object sharing ───────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 pub struct ShareObjectRequest {

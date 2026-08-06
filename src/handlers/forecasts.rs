@@ -1156,9 +1156,24 @@ pub async fn resolve_forecast_handler(
     let user_id = principal.user_id();
     let pool = &state.db;
 
-    // Spec 24 §3.2 Wave 2 (Sprint 2.4b): can_edit check before resolving.
-    // Previously there was no app-level owner check — any authenticated
-    // user could resolve any active forecast.
+    // Spec 24 §3.2 Wave 2 added a can_edit check here (before it, any
+    // authenticated user could resolve any active forecast).
+    //
+    // Spec 30 tightens it to `can_resolve_forecast`, because `edit` turned
+    // out to be the wrong bar for a TERMINAL action:
+    //
+    //   * resolution is irreversible — mig-174 freezes the scoring tuple
+    //     and resolve_forecast() requires status='active';
+    //   * `delete` and `void` already required object-admin, making
+    //     `resolve` the lone terminal action gated at `edit`;
+    //   * and Spec 26 made a portfolio team-share grant `edit` on every
+    //     forecast inside it, so sharing a book so colleagues could HELP
+    //     silently delegated scoring authority to the entire team.
+    //
+    // Now: object-admin (owner / explicit admin share / platform admin), or
+    // the team `resolve` capability for teams that want to delegate closing
+    // without handing out admin. Solo users are unaffected — they own their
+    // forecasts, and ownership is Permission::Admin.
     let acl_row = sqlx::query(
         "SELECT owner_id::text AS owner_id, visibility FROM fermi_forecasts WHERE id = $1",
     )
@@ -1171,10 +1186,9 @@ pub async fn resolve_forecast_handler(
             let owner_id: String = r.try_get("owner_id").unwrap_or_default();
             let visibility: String = r.try_get("visibility").unwrap_or_default();
             let vis = Visibility::from_legacy(&visibility);
-            let granted = can_edit(
+            let granted = fermi_auth::visibility::can_resolve_forecast(
                 pool,
                 &principal,
-                ObjectType::Forecast,
                 &forecast_id,
                 &owner_id,
                 vis,
@@ -1182,7 +1196,16 @@ pub async fn resolve_forecast_handler(
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             if !granted {
-                return Err((StatusCode::FORBIDDEN, "Edit access denied".into()));
+                // Name the remedy: a bare 403 on a shared forecast reads as
+                // a bug, and the operator has no way to guess that a team
+                // capability is what's missing or who can grant it.
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    "Resolving is a terminal action and needs more than edit access. \
+                     Ask the forecast owner, or a team admin to grant you the \
+                     'resolve' capability on a team this forecast belongs to."
+                        .into(),
+                ));
             }
         }
         None => return Err((StatusCode::NOT_FOUND, "Forecast not found".into())),
@@ -1718,21 +1741,28 @@ pub async fn void_forecast_handler(
                     "Forecast already resolved/voided".into(),
                 ));
             }
+            // Spec 30: void is terminal too, so it shares `resolve`'s gate.
+            // It was already admin-only, which was stricter than resolve — the
+            // inconsistency ran in both directions. Routing both through one
+            // helper means a team granted `resolve` can also retire a bad
+            // question, which is the same authority expressed the other way.
             let vis = Visibility::from_legacy(&visibility);
-            let level = can_access(
+            let granted = fermi_auth::visibility::can_resolve_forecast(
                 pool,
                 &principal,
-                ObjectType::Forecast,
                 &forecast_id,
                 &owner_id,
                 vis,
             )
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-            if !level.has_admin() {
+            if !granted {
                 return Err((
                     StatusCode::FORBIDDEN,
-                    "Admin access required to void".into(),
+                    "Voiding is a terminal action and needs more than edit access. \
+                     Ask the forecast owner, or a team admin to grant you the \
+                     'resolve' capability on a team this forecast belongs to."
+                        .into(),
                 ));
             }
         }

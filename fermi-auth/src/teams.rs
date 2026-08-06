@@ -3,7 +3,8 @@ use uuid::Uuid;
 
 use crate::error::AuthError;
 use crate::types::{
-    MemberType, ObjectShare, ObjectType, Permission, ShareType, Team, TeamMember, TeamRole,
+    MemberType, ObjectShare, ObjectType, Permission, ShareType, Team, TeamCapability, TeamMember,
+    TeamRole,
 };
 
 // ─── Team CRUD ─────────────────────────────────────────────────────
@@ -148,11 +149,29 @@ pub async fn add_team_member(
     role: TeamRole,
     invited_by: &str,
 ) -> Result<(), AuthError> {
+    // Capabilities come from the role's defaults (Spec 30). Without this a
+    // member added today would land with an empty set while one backfilled
+    // by migration 179 has 'resolve' — making "who can resolve" depend on
+    // when someone joined, which is indefensible.
+    //
+    // On CONFLICT we also refresh them, so promoting a member to admin
+    // through this path grants the admin defaults rather than leaving them
+    // with a member's powers under an admin's title.
+    let caps: Vec<String> = role
+        .default_capabilities()
+        .iter()
+        .map(|c| c.as_str().to_string())
+        .collect();
+
     sqlx::query(
         r#"
-        INSERT INTO team_members (team_id, member_type, member_id, role, invited_by)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (team_id, member_id) DO UPDATE SET role = $4
+        INSERT INTO team_members (team_id, member_type, member_id, role, invited_by, capabilities)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (team_id, member_id) DO UPDATE
+            SET role = $4,
+                capabilities = (
+                    SELECT ARRAY(SELECT DISTINCT unnest(team_members.capabilities || $6::text[]))
+                )
         "#,
     )
     .bind(team_id)
@@ -160,6 +179,7 @@ pub async fn add_team_member(
     .bind(member_id)
     .bind(role.as_str())
     .bind(invited_by)
+    .bind(&caps)
     .execute(pool)
     .await
     .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
@@ -232,6 +252,79 @@ pub async fn update_member_role(
     .await
     .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
 
+    Ok(())
+}
+
+// ─── Capabilities (Spec 30) ──────────────────────────────────
+
+/// Read one member's capability grants.
+///
+/// Unrecognised strings are dropped rather than erroring: the column has
+/// no CHECK constraint (see migration 179 for why), so forward-compatible
+/// reads are the contract. A newer node writing a capability this binary
+/// doesn't know about must not break this one's access checks.
+pub async fn get_member_capabilities(
+    pool: &PgPool,
+    team_id: Uuid,
+    member_id: &str,
+) -> Result<Vec<TeamCapability>, AuthError> {
+    let row = sqlx::query_as::<_, (Vec<String>,)>(
+        "SELECT capabilities FROM team_members WHERE team_id = $1 AND member_id = $2",
+    )
+    .bind(team_id)
+    .bind(member_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
+
+    Ok(row
+        .map(|r| {
+            r.0.iter()
+                .filter_map(|s| TeamCapability::from_str(s))
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// Replace a member's capability set.
+///
+/// Whole-set replacement rather than add/remove verbs: the caller is a UI
+/// rendering checkboxes, and a read-modify-write of individual grants
+/// across two admins editing at once silently loses one of their changes.
+///
+/// Owners are exempt from downgrade — the same rule
+/// [`update_member_role`] applies. A team that can strip its owner's
+/// `resolve` can lock every terminal action out of the team.
+pub async fn set_member_capabilities(
+    pool: &PgPool,
+    team_id: Uuid,
+    member_id: &str,
+    capabilities: &[TeamCapability],
+) -> Result<(), AuthError> {
+    let as_text: Vec<String> = capabilities
+        .iter()
+        .map(|c| c.as_str().to_string())
+        .collect();
+
+    let result = sqlx::query(
+        "UPDATE team_members SET capabilities = $1
+          WHERE team_id = $2 AND member_id = $3 AND role != 'owner'",
+    )
+    .bind(&as_text)
+    .bind(team_id)
+    .bind(member_id)
+    .execute(pool)
+    .await
+    .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
+
+    if result.rows_affected() == 0 {
+        // Either no such member, or the owner — the caller can't tell them
+        // apart and shouldn't need to; both mean "that edit didn't apply".
+        return Err(AuthError::Forbidden(
+            "Member not found, or is the team owner (owners always hold every capability)"
+                .to_string(),
+        ));
+    }
     Ok(())
 }
 

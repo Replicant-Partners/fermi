@@ -96,6 +96,26 @@ INSERT INTO agents (agent_name, mcp_servers) VALUES
     ('legacy_bug', '[{"name":"fpl_execute","description":"d","input_schema":{}}]'::jsonb),
     ('correct',    '[{"name":"ctx7","url":"https://example.test/mcp"}]'::jsonb),
     ('untouched',  NULL);
+
+-- team_members: mig-179 adds `capabilities` and backfills owner/admin.
+-- Seeded with one row per role so the backfill's discrimination is visible
+-- in the state dump — a backfill that grants everyone, or nobody, is the
+-- failure mode that matters and both look like "UPDATE n" otherwise.
+CREATE TABLE team_members (
+    team_id     UUID NOT NULL,
+    member_type TEXT NOT NULL DEFAULT 'user',
+    member_id   TEXT NOT NULL,
+    role        TEXT NOT NULL DEFAULT 'member',
+    invited_by  TEXT,
+    joined_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (team_id, member_id)
+);
+
+INSERT INTO team_members (team_id, member_id, role) VALUES
+    ('11111111-1111-1111-1111-111111111111', 'an_owner',  'owner'),
+    ('11111111-1111-1111-1111-111111111111', 'an_admin',  'admin'),
+    ('11111111-1111-1111-1111-111111111111', 'a_member',  'member'),
+    ('11111111-1111-1111-1111-111111111111', 'a_viewer',  'viewer');
 SQL
 
 echo "▸ fixture ready (3 agents rows: legacy_bug / correct / untouched)"
@@ -116,13 +136,45 @@ for pass in 1 2; do
     done
 done
 
+# Fixture-specific diagnostic, NOT a check. Best-effort on purpose: it only
+# makes sense for migrations that touch `agents`, and a hard failure here
+# once made a migration that had applied perfectly look broken. Diagnostics
+# must never be able to fail a validation run.
 echo
-echo "▸ resulting state"
+if psql -h "$SOCK_DIR" -p "$PORT" -U validator -d migcheck -tAc \
+    "SELECT 1 FROM information_schema.columns
+      WHERE table_name='agents' AND column_name='mcp_tools'" 2>/dev/null | grep -q 1; then
+    echo "▸ resulting state (agents fixture)"
+    psql -h "$SOCK_DIR" -p "$PORT" -U validator -d migcheck -c \
+        "SELECT agent_name,
+                mcp_servers::text AS mcp_servers,
+                mcp_tools::text   AS mcp_tools
+           FROM agents ORDER BY agent_name"
+fi
+
+# Whatever the migration touched, show the columns it left behind on the
+# fixture tables. Generic, so this stays useful as the fixture grows.
+# mig-179's backfill is a deliberate TIGHTENING (owner/admin get 'resolve',
+# member/viewer do not), so show per-role results rather than a row count.
+if psql -h "$SOCK_DIR" -p "$PORT" -U validator -d migcheck -tAc \
+    "SELECT 1 FROM information_schema.columns
+      WHERE table_name='team_members' AND column_name='capabilities'" 2>/dev/null | grep -q 1; then
+    echo "▸ resulting state (team_members fixture)"
+    psql -h "$SOCK_DIR" -p "$PORT" -U validator -d migcheck -c \
+        "SELECT member_id, role, capabilities::text
+           FROM team_members ORDER BY role, member_id"
+fi
+
+echo "▸ fixture columns after migration"
 psql -h "$SOCK_DIR" -p "$PORT" -U validator -d migcheck -c \
-    "SELECT agent_name,
-            mcp_servers::text AS mcp_servers,
-            mcp_tools::text   AS mcp_tools
-       FROM agents ORDER BY agent_name"
+    "SELECT table_name, column_name, data_type
+       FROM information_schema.columns
+      WHERE table_schema='public'
+        AND table_name IN ('agents','team_members','fermi_forecast_updates',
+                           'fermi_portfolio_forecasts','object_shares')
+        AND column_name IN ('mcp_tools','mcp_servers','capabilities',
+                           'actor_user_id','added_by')
+      ORDER BY table_name, column_name"
 
 if [ "$FAILED" -ne 0 ]; then
     echo "✗ at least one migration failed — the runner would swallow this"

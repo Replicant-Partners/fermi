@@ -541,6 +541,13 @@ struct FermiConsole {
     // Connection state
     connected: bool,
     user_display_name: Option<String>,
+    /// Authenticated user's id, from `/api/auth/me`. Kept alongside the
+    /// display name because a label can't be matched against wire data:
+    /// deciding whether the operator may administer a team means finding
+    /// *their* row in `team_members`, which is keyed by id. `None` until
+    /// the first successful auth, and treated as "unknown" rather than
+    /// "nobody" — see `viewer_administers_selected_team`.
+    current_user_id: Option<String>,
     api_key_input: String,
 
     // Sign-in UI
@@ -865,6 +872,11 @@ struct FermiConsole {
     team_invites_loading: bool,
     /// Invite IDs with a revoke in flight; disables the button.
     team_invite_revoke_in_flight: std::collections::HashSet<String>,
+    /// Member IDs with a capability write in flight. Capability writes
+    /// are whole-set replacements, so two clicks racing on one member
+    /// would each send a set computed from the same pre-click state and
+    /// the loser would quietly undo the winner.
+    team_capability_in_flight: std::collections::HashSet<String>,
     /// Team ID pending a delete-confirmation click. Two-step confirm
     /// to protect against fat-fingering — first click sets this to
     /// Some(team_id) and the button flips to a red "Really delete?"
@@ -1165,6 +1177,7 @@ impl FermiConsole {
             registry: registry.clone(),
             connected: false,
             user_display_name: None,
+            current_user_id: None,
             api_key_input: String::new(),
             sign_in_token_input,
             sign_in_error: None,
@@ -1285,6 +1298,7 @@ impl FermiConsole {
             team_invites: Vec::new(),
             team_invites_loading: false,
             team_invite_revoke_in_flight: std::collections::HashSet::new(),
+            team_capability_in_flight: std::collections::HashSet::new(),
             team_delete_confirm_id: None,
             team_delete_loading: false,
             team_create_showing: false,
@@ -1436,6 +1450,7 @@ impl FermiConsole {
                                 this.sign_in_error = None;
                                 this.oauth_port = None;
                                 this.user_display_name = Some(me.friendly_label());
+                                this.current_user_id = Some(me.user_id.clone());
                                 log::info!("[oauth] Connected as: {:?}", me.friendly_label());
                                 this.fetch_all_data(cx);
                                 this.start_background_refresh(cx);
@@ -3187,6 +3202,7 @@ impl FermiConsole {
                         this.sign_in_loading = false;
                         this.sign_in_error = None;
                         this.user_display_name = Some(me.friendly_label());
+                        this.current_user_id = Some(me.user_id.clone());
                         log::info!("Connected as: {:?}", me.friendly_label());
                         this.fetch_all_data(cx);
                         this.start_background_refresh(cx);
@@ -3201,6 +3217,7 @@ impl FermiConsole {
                         this.sign_in_loading = false;
                         this.sign_in_error = Some(format!("Sign in failed: {}", e));
                         this.user_display_name = None;
+                        this.current_user_id = None;
                         cx.notify();
                     })
                     .ok();
@@ -4299,6 +4316,126 @@ impl FermiConsole {
             .ok();
         })
         .detach();
+    }
+
+    /// The only capability the backend enforces today. `spend` also
+    /// exists in the vocabulary but nothing reads it yet, so the console
+    /// must not offer it as a control that appears to do something.
+    const CAP_RESOLVE: &'static str = "resolve";
+
+    /// Grant or withdraw one capability on a team member (Spec 30).
+    ///
+    /// `capabilities` is a whole-set replacement on the wire, so the new
+    /// set is derived from the roster the server last sent and posted in
+    /// full — there is no add/remove verb to fall back on.
+    ///
+    /// Every authorisation question is left to the server: it owns the
+    /// admin check and the refusal to edit owners. The UI's clickability
+    /// rules are an affordance, not a security boundary.
+    fn toggle_member_capability(
+        &mut self,
+        member_id: String,
+        capability: &'static str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(team_id) = self.selected_team_id.clone() else {
+            return;
+        };
+        // Read the member's current set out of the loaded detail and let
+        // the borrow end here — a missing member means the roster moved
+        // under the click, and guessing an empty set would silently strip
+        // capabilities the server still holds.
+        let Some((current, label)) = self
+            .selected_team_detail
+            .as_ref()
+            .and_then(|d| d.members.iter().find(|m| m.member_id == member_id))
+            .map(|m| {
+                (
+                    m.capabilities.clone(),
+                    m.member_display_name
+                        .clone()
+                        .unwrap_or_else(|| short_user_label(&m.member_id)),
+                )
+            })
+        else {
+            return;
+        };
+
+        let granting = !current.iter().any(|c| c == capability);
+        let mut next = current;
+        if granting {
+            next.push(capability.to_string());
+        } else {
+            next.retain(|c| c != capability);
+        }
+
+        // Two clicks racing on one member would both compute their set
+        // from the same pre-click roster, so the second write would undo
+        // the first rather than compose with it.
+        if !self.team_capability_in_flight.insert(member_id.clone()) {
+            return;
+        }
+        cx.notify();
+
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api
+                .set_team_member_capabilities(&team_id, &member_id, &next)
+                .await;
+            this.update(cx, |this, cx| {
+                this.team_capability_in_flight.remove(&member_id);
+                match result {
+                    Ok(_) => {
+                        this.show_toast(
+                            format!(
+                                "{} {} {} {}",
+                                if granting { "Granted" } else { "Withdrew" },
+                                capability,
+                                if granting { "to" } else { "from" },
+                                label
+                            ),
+                            "✓",
+                            theme::GREEN,
+                            cx,
+                        );
+                        // Refetch rather than patch locally: the response
+                        // set is effective, not stored (owners report the
+                        // full set whatever their column says), so the
+                        // server is the only thing that knows what the
+                        // roster now means.
+                        this.fetch_team_detail(&team_id, cx);
+                    }
+                    // 403 (not an admin / target is the owner) and 400
+                    // (unknown capability) are written to be read by the
+                    // operator, so they're shown as sent.
+                    Err(e) => this.show_toast(e.to_string(), "✕", theme::RED, cx),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Whether the operator may edit capabilities on the selected team.
+    ///
+    /// Answered from the roster the server sent, by locating the
+    /// operator's own membership row. When the current user id is
+    /// unknown (no successful `/api/auth/me` this session) the controls
+    /// stay live and the server's 403 becomes the authority — a hidden
+    /// control an admin should have is a worse failure than a click that
+    /// comes back refused.
+    fn viewer_administers_selected_team(&self) -> bool {
+        let Some(detail) = self.selected_team_detail.as_ref() else {
+            return false;
+        };
+        let Some(me) = self.current_user_id.as_deref() else {
+            return true;
+        };
+        detail
+            .members
+            .iter()
+            .any(|m| m.member_id == me && matches!(m.role.as_str(), "admin" | "owner"))
     }
 
     /// Two-step team deletion. First call arms the confirmation
@@ -14537,6 +14674,20 @@ impl FermiConsole {
                             }),
                     ),
             )
+            // The two axes are orthogonal and nothing about the words
+            // "admin" and "resolve" says so, so the roster states it
+            // rather than leaving the operator to infer it from which
+            // chips happen to co-occur.
+            .child(
+                div()
+                    .text_size(px(9.5))
+                    .text_color(theme::fg_faint())
+                    .child(
+                        "Role administers the team. ⚖ resolve grants terminal actions — \
+                         resolving or voiding this team's forecasts, which cannot be undone. \
+                         Admins and owners may grant it; the owner's own set can't be edited.",
+                    ),
+            )
             // Invite row
             .when(self.team_invite_showing, |el| {
                 el.child(
@@ -14638,6 +14789,9 @@ impl FermiConsole {
         let team_id = detail.team.id.clone();
         let contributions = self.team_contributions.get(&team_id);
         let filtered_actor = self.team_activity_actor.clone();
+        // Computed once for the whole roster: it is a property of the
+        // viewer, not of the row being drawn.
+        let viewer_administers = self.viewer_administers_selected_team();
 
         div()
             .flex()
@@ -14773,6 +14927,102 @@ impl FermiConsole {
                                 .text_color(theme::cyan())
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child(c.total_actions.to_string()),
+                        )
+                    })
+                    // ── Capability chips (Spec 30) ─────────────────
+                    //
+                    // The role chip beside this one answers "who runs
+                    // the team"; these answer "who may end a forecast".
+                    // Agents carry none by construction: a capability is
+                    // a grant of human authority, and an agent's work is
+                    // attributed to the human who ran it.
+                    .when(!is_agent, |el| {
+                        let has_resolve = m.capabilities.iter().any(|c| c == Self::CAP_RESOLVE);
+                        let busy = self.team_capability_in_flight.contains(&mid);
+                        // The owner's set is fixed server-side: a team
+                        // able to strip its own owner could lock every
+                        // terminal action out of itself.
+                        let editable = viewer_administers && !is_owner_role && !busy;
+                        let mid_cap = mid.clone();
+                        // Owners get a dim suffix where the affordance
+                        // would be, so the row explains the missing
+                        // control instead of looking like a render gap.
+                        let resolve_label = if busy {
+                            "⚖ …".to_string()
+                        } else if has_resolve {
+                            format!("⚖ resolve{}", if is_owner_role { " ·" } else { "" })
+                        } else {
+                            "⚖ no resolve".to_string()
+                        };
+
+                        el.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(4.0))
+                                // `resolve` is drawn whether held or not.
+                                // "Who can close forecasts?" is asked of
+                                // the roster as a whole, and a chip that
+                                // renders as empty space when absent
+                                // reads as missing data rather than as a
+                                // withheld power. The label states the
+                                // state so the answer never depends on
+                                // reading a colour.
+                                .child(
+                                    div()
+                                        .id(SharedString::from(format!("cap-resolve-{}", mid)))
+                                        .px(px(7.0))
+                                        .py(px(2.0))
+                                        .rounded(px(4.0))
+                                        .border_1()
+                                        .border_color(if has_resolve {
+                                            rgb(theme::GOLD).into()
+                                        } else {
+                                            theme::fg_faint()
+                                        })
+                                        .when(has_resolve, |c| c.bg(theme::bg_active()))
+                                        .text_size(px(10.0))
+                                        .text_color(if has_resolve {
+                                            theme::gold()
+                                        } else {
+                                            theme::fg_faint()
+                                        })
+                                        .when(editable, |c| {
+                                            c.cursor_pointer()
+                                                .hover(|s| s.bg(theme::bg_hover()))
+                                                .on_click(cx.listener(move |this, _, _w, cx| {
+                                                    this.toggle_member_capability(
+                                                        mid_cap.clone(),
+                                                        Self::CAP_RESOLVE,
+                                                        cx,
+                                                    );
+                                                }))
+                                        })
+                                        .child(resolve_label),
+                                )
+                                // Everything else the server sent is
+                                // shown dim and by raw name. `spend` is
+                                // in the vocabulary but nothing enforces
+                                // it yet, and an unrecognised string just
+                                // means this build is older than the
+                                // server's — dropping either would hide a
+                                // grant that exists.
+                                .children(
+                                    m.capabilities
+                                        .iter()
+                                        .filter(|c| c.as_str() != Self::CAP_RESOLVE)
+                                        .map(|c| {
+                                            div()
+                                                .px(px(7.0))
+                                                .py(px(2.0))
+                                                .rounded(px(4.0))
+                                                .border_1()
+                                                .border_color(theme::fg_faint())
+                                                .text_size(px(10.0))
+                                                .text_color(theme::fg_dim())
+                                                .child(c.clone())
+                                        }),
+                                ),
                         )
                     })
                     // Role chip
