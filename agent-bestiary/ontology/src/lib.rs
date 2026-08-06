@@ -13,4 +13,4 @@ pub use types::{
     Cardinality, DiagramMetadata, GitCommit, GitConfig, MermaidConfig, MermaidDiagram,
     OntologyStats,
 };
-pub use workspace_git::{FileEntry, WorkspaceCommit, WorkspaceGitManager};
+pub use workspace_git::{CommitAuthor, FileEntry, WorkspaceCommit, WorkspaceGitManager};

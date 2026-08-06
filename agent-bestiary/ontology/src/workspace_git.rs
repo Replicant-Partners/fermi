@@ -25,6 +25,17 @@ pub struct WorkspaceCommit {
     pub author: String,
 }
 
+/// The human a commit is attributed to.
+///
+/// Exists because `commit_file` hardcodes the configured system signature,
+/// which makes "which teammate changed this" unanswerable. Git already has
+/// a first-class slot for this — we just weren't filling it.
+#[derive(Debug, Clone)]
+pub struct CommitAuthor {
+    pub name: String,
+    pub email: String,
+}
+
 /// Manages git repositories for workspaces.
 /// Each workspace gets its own repo at `{base_path}/workspaces/{slug}/`.
 #[derive(Clone)]
@@ -247,11 +258,9 @@ impl WorkspaceGitManager {
         message: String,
     ) -> Result<WorkspaceCommit> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || {
-            this.commit_file(&slug, &file_path, &content, &message)
-        })
-        .await
-        .map_err(|e| OntologyError::ConfigError(format!("spawn_blocking failed: {}", e)))?
+        tokio::task::spawn_blocking(move || this.commit_file(&slug, &file_path, &content, &message))
+            .await
+            .map_err(|e| OntologyError::ConfigError(format!("spawn_blocking failed: {}", e)))?
     }
 
     /// Commit binary data to the workspace repository.
@@ -444,6 +453,39 @@ impl WorkspaceGitManager {
             .map_err(|e| OntologyError::RepoNotFound(format!("UTF-8 error: {}", e)))
     }
 
+    /// Read a file as it stood at a specific commit.
+    ///
+    /// The counterpart of [`Self::read_file`] (which reads HEAD) and the
+    /// missing half of revert: `diff_commits` could already show what
+    /// changed, but nothing could recover the earlier content, so "undo"
+    /// was unimplementable.
+    ///
+    /// Returns `Ok(None)` when the path did not exist at that commit — a
+    /// legitimate answer (the file was added later), distinct from a
+    /// missing repo or a bad SHA, which are errors.
+    pub fn read_file_at(&self, slug: &str, file_path: &str, sha: &str) -> Result<Option<String>> {
+        let repo = self.init_or_open(slug)?;
+        let oid = git2::Oid::from_str(sha)
+            .map_err(|e| OntologyError::RepoNotFound(format!("Invalid SHA {}: {}", sha, e)))?;
+        let commit = repo.find_commit(oid)?;
+        let tree = commit.tree()?;
+
+        let entry = match tree.get_path(std::path::Path::new(file_path)) {
+            Ok(e) => e,
+            // Absent at this revision, not an error.
+            Err(_) => return Ok(None),
+        };
+
+        let blob = entry
+            .to_object(&repo)?
+            .into_blob()
+            .map_err(|_| OntologyError::RepoNotFound("Not a blob".to_string()))?;
+
+        String::from_utf8(blob.content().to_vec())
+            .map(Some)
+            .map_err(|e| OntologyError::RepoNotFound(format!("UTF-8 error: {}", e)))
+    }
+
     /// Get the commit log for a workspace.
     pub fn get_log(&self, slug: &str, limit: usize) -> Result<Vec<WorkspaceCommit>> {
         let repo = self.init_or_open(slug)?;
@@ -558,6 +600,162 @@ impl WorkspaceGitManager {
     }
 
     /// Check if a workspace repo exists.
+    /// Commit a SET of files as ONE commit, attributed to a specific human.
+    ///
+    /// Two gaps in [`Self::commit_file`] that this closes, both of which
+    /// make it unusable as a collaboration record:
+    ///
+    /// **1. Authorship.** `commit_file` hardcodes the configured system
+    /// signature, so every commit is by the platform. "Which teammate made
+    /// which change" is then unanswerable no matter how much we commit.
+    ///
+    /// **2. Atomicity.** One logical action — revising a driver — changes
+    /// the generated program, the driver state, and the probability
+    /// snapshot. Looping `commit_file` yields three commits for one act,
+    /// which makes the log unreadable and the diffs meaningless. Here the
+    /// whole set lands as one commit, so a commit == an action.
+    ///
+    /// Returns `Ok(None)` when the tree is unchanged. `commit_file`
+    /// synthesises a fake `WorkspaceCommit` in that case, reporting the
+    /// parent's SHA with a fresh `Utc::now()` timestamp — a commit that
+    /// never happened, at a time it didn't happen. `None` lets callers skip
+    /// the DB bookkeeping instead of recording a phantom revision.
+    ///
+    /// `author` falls back to the configured system identity when `None`,
+    /// which is correct for genuinely systemic writes (cron, refits with no
+    /// operator behind them).
+    pub fn commit_files_as(
+        &self,
+        slug: &str,
+        files: &[(String, String)],
+        message: &str,
+        author: Option<&CommitAuthor>,
+    ) -> Result<Option<WorkspaceCommit>> {
+        let repo = self.init_or_open(slug)?;
+        let root = self.repo_path(slug);
+
+        for (rel_path, content) in files {
+            let full_path = root.join(rel_path);
+            if let Some(parent) = full_path.parent() {
+                if !parent.exists() {
+                    fs::create_dir_all(parent)?;
+                }
+            }
+            fs::write(&full_path, content)?;
+        }
+
+        let mut index = repo.index()?;
+        index.add_all(["."].iter(), IndexAddOption::DEFAULT, None)?;
+        index.write()?;
+
+        let tree_oid = index.write_tree()?;
+        let tree = repo.find_tree(tree_oid)?;
+
+        let parent = repo
+            .head()
+            .ok()
+            .and_then(|h| h.target())
+            .and_then(|oid| repo.find_commit(oid).ok());
+
+        // Idempotence: re-committing identical state is a no-op, not an
+        // empty commit. Matters because the commit hook fires on every
+        // mutating request, including ones that change nothing.
+        if let Some(ref p) = parent {
+            if p.tree()?.id() == tree_oid {
+                return Ok(None);
+            }
+        }
+
+        let (name, email) = match author {
+            Some(a) => (a.name.as_str(), a.email.as_str()),
+            None => (
+                self.config.author_name.as_str(),
+                self.config.author_email.as_str(),
+            ),
+        };
+        let sig = Signature::now(name, email)?;
+
+        let oid = if let Some(p) = parent {
+            repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&p])?
+        } else {
+            repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[])?
+        };
+
+        let sha = oid.to_string();
+        info!(
+            "Workspace {}: committed {} file(s) as {} ({})",
+            slug,
+            files.len(),
+            name,
+            &sha[..8.min(sha.len())]
+        );
+
+        if self.config.auto_push {
+            if let Err(e) = self.push(&repo, slug) {
+                error!("Failed to push workspace {}: {}", slug, e);
+            }
+        }
+
+        Ok(Some(WorkspaceCommit {
+            sha,
+            message: message.to_string(),
+            timestamp: Utc::now(),
+            author: name.to_string(),
+        }))
+    }
+
+    /// Async wrapper for [`Self::commit_files_as`]. Use this from async HTTP
+    /// handlers — git2 and the filesystem are blocking, and a forecast save
+    /// is on the request path.
+    pub async fn commit_files_as_async(
+        &self,
+        slug: String,
+        files: Vec<(String, String)>,
+        message: String,
+        author: Option<CommitAuthor>,
+    ) -> Result<Option<WorkspaceCommit>> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || {
+            this.commit_files_as(&slug, &files, &message, author.as_ref())
+        })
+        .await
+        .map_err(|e| OntologyError::ConfigError(format!("spawn_blocking failed: {}", e)))?
+    }
+
+    /// Async wrapper for [`Self::read_file_at`].
+    pub async fn read_file_at_async(
+        &self,
+        slug: String,
+        file_path: String,
+        sha: String,
+    ) -> Result<Option<String>> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.read_file_at(&slug, &file_path, &sha))
+            .await
+            .map_err(|e| OntologyError::ConfigError(format!("spawn_blocking failed: {}", e)))?
+    }
+
+    /// Async wrapper for [`Self::get_log`].
+    pub async fn get_log_async(&self, slug: String, limit: usize) -> Result<Vec<WorkspaceCommit>> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.get_log(&slug, limit))
+            .await
+            .map_err(|e| OntologyError::ConfigError(format!("spawn_blocking failed: {}", e)))?
+    }
+
+    /// Async wrapper for [`Self::diff_commits`].
+    pub async fn diff_commits_async(
+        &self,
+        slug: String,
+        from_sha: String,
+        to_sha: String,
+    ) -> Result<String> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.diff_commits(&slug, &from_sha, &to_sha))
+            .await
+            .map_err(|e| OntologyError::ConfigError(format!("spawn_blocking failed: {}", e)))?
+    }
+
     pub fn repo_exists(&self, slug: &str) -> bool {
         self.repo_path(slug).join(".git").exists()
     }

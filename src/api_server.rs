@@ -3250,6 +3250,34 @@ async fn main() {
             "/api/forecasts/:forecast_id/activity",
             get(handlers::collab::forecast_activity_handler),
         )
+        // ── Spec 31: forecast version history on the git substrate ──────
+        //
+        // ABW gives every workspace a real git repo and every forecast is
+        // its own workspace — the substrate was built and completely idle
+        // (zero git_repo_path values, one commit in total). These three
+        // routes make it the forecast's version history.
+        //
+        // /history and /diff are VIEW-gated: if you can read a forecast you
+        // can read how it got that way. Provenance isn't a privilege.
+        //
+        // /revert is EDIT-gated and is the load-bearing piece — shared
+        // `edit` is only safe to hand out because any change can be undone
+        // (Ward Cunningham: reversibility beats prevention). It writes a
+        // forward commit rather than rewriting history, and restores the
+        // analysis only — never the lifecycle, since mig-174 freezes the
+        // scoring tuple and revert must not be a hole in that.
+        .route(
+            "/api/forecasts/:forecast_id/history",
+            get(handlers::forecast_git::forecast_history_handler),
+        )
+        .route(
+            "/api/forecasts/:forecast_id/history/:sha",
+            get(handlers::forecast_git::forecast_diff_handler),
+        )
+        .route(
+            "/api/forecasts/:forecast_id/revert",
+            post(handlers::forecast_git::forecast_revert_handler),
+        )
         // Spec 24 §3.3 / Sprint 2.3a: invite someone to a forecast.
         // The invitee discovers the invite via /api/me/invites and
         // accepts in Sprint 2.3b. Permission vocab: view|edit|admin.

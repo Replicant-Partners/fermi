@@ -28,6 +28,9 @@ pub mod eval_projection;
 pub mod execution;
 pub mod execution_stream;
 pub mod forecast_benchmark;
+/// Forecast version history on the workspace git substrate — history,
+/// diff, revert. See docs/specs/SPEC_31_FORECAST_HISTORY.md.
+pub mod forecast_git;
 pub mod forecasts;
 pub mod governance;
 pub mod invites;

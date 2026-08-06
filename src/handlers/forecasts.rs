@@ -526,6 +526,21 @@ pub async fn create_forecast_handler(
         let _ = crate::handlers::forecast_benchmark::ensure_split(pool, &forecast_id, &salt).await;
     }
 
+    // Spec 31: seed the forecast's git history with its initial state, so
+    // every later diff has a baseline. Without this the first real edit
+    // shows up as "everything changed".
+    {
+        let author = crate::handlers::forecast_git::author_for(pool, &principal).await;
+        crate::handlers::forecast_git::commit_forecast_state(
+            pool,
+            &state.workspace_git,
+            &forecast_id,
+            Some(&author),
+            "created forecast",
+        )
+        .await;
+    }
+
     // Auto-add to portfolio if specified. Attributed (Spec 26 §4.1) —
     // same curation event as an explicit add, just bundled into create.
     if let Some(ref portfolio_id) = req.portfolio_id {
@@ -1083,6 +1098,58 @@ pub async fn update_forecast_handler(
     .execute(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Spec 31: commit the new state, attributed.
+    //
+    // This is the hole that made "which teammate changed what" unanswerable.
+    // The revision row above is written ONLY when the probability moves more
+    // than 0.001, and `forecast_spacetime` is populated by a trigger on that
+    // insert — so an FPL or driver edit that left the mean where it was
+    // recorded absolutely nothing, and `fpl_source` was silently overwritten
+    // last-write-wins.
+    //
+    // The commit fires on every update regardless of what moved, and
+    // `commit_files_as` no-ops on an unchanged tree, so the history contains
+    // exactly the edits that changed something.
+    //
+    // The message names what actually changed rather than saying "updated",
+    // because a log of forty identical messages is no better than no log.
+    {
+        let mut changed: Vec<&str> = Vec::new();
+        if req.fpl_source.is_some() {
+            changed.push("program");
+        }
+        if req.drivers.is_some() {
+            changed.push("drivers");
+        }
+        if req.evidence.is_some() {
+            changed.push("evidence");
+        }
+        if req.predicted_probability.is_some() {
+            changed.push("probability");
+        }
+        if req.question_text.is_some() || req.resolution_criteria.is_some() {
+            changed.push("question");
+        }
+        if req.status.is_some() {
+            changed.push("status");
+        }
+        let action = if changed.is_empty() {
+            "updated forecast".to_string()
+        } else {
+            format!("updated {}", changed.join(", "))
+        };
+
+        let author = crate::handlers::forecast_git::author_for(pool, &principal).await;
+        crate::handlers::forecast_git::commit_forecast_state(
+            pool,
+            &state.workspace_git,
+            &forecast_id,
+            Some(&author),
+            &action,
+        )
+        .await;
+    }
 
     // Return updated forecast
     get_forecast_handler(State(state), principal, Path(forecast_id)).await
@@ -1965,6 +2032,39 @@ pub async fn update_probability_handler(
         .await
         .ok()
     };
+
+    // Spec 31: commit the revision. `reason` becomes the commit message, so
+    // `git log` reads as the analytical narrative the forecaster wrote
+    // rather than a list of numbers.
+    {
+        let action = match req
+            .reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            Some(r) => format!(
+                "revised {:.0}% → {:.0}% — {}",
+                previous_probability * 100.0,
+                displayed * 100.0,
+                r
+            ),
+            None => format!(
+                "revised {:.0}% → {:.0}%",
+                previous_probability * 100.0,
+                displayed * 100.0
+            ),
+        };
+        let author = crate::handlers::forecast_git::author_for(pool, &principal).await;
+        crate::handlers::forecast_git::commit_forecast_state(
+            pool,
+            &state.workspace_git,
+            &forecast_id,
+            Some(&author),
+            &action,
+        )
+        .await;
+    }
 
     Ok(Json(json!({
         "forecast_id": forecast_id,
