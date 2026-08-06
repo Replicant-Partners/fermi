@@ -41,8 +41,9 @@ use crate::activity_log::{LogEvent, LogSource, Remedy, Severity};
 // tests can't build (see src/lib.rs).
 use crate::api::client::{
     AccessSummary, AgentExecutionResult, ApiClient, ApiError, CreateForecastRequest,
-    ForecastSchedule, Invite, InviteRequest, RichShare, ShareEntry, ShareMember, ShareRequest,
-    Team, UpsertScheduleRequest,
+    ForecastCommit, ForecastDiffResponse, ForecastHistoryResponse, ForecastSchedule, Invite,
+    InviteRequest, RevertRequest, RichShare, ShareEntry, ShareMember, ShareRequest, Team,
+    UpsertScheduleRequest,
 };
 use crate::text_input::TextInput;
 use crate::theme;
@@ -157,6 +158,10 @@ pub enum RightTab {
     /// Spec 24 §3.5.2: who can see/edit this forecast. Lists object_shares
     /// rows and lets the owner add (by user/email) or revoke collaborators.
     Access,
+    /// Spec 31: who changed what, and how to put it back. Sits beside
+    /// Access because they answer the two halves of the same question —
+    /// who can touch this, and who already did.
+    History,
 }
 
 /// A live event from an SSE agent execution stream.
@@ -496,6 +501,32 @@ pub struct CockpitState {
     /// team) doesn't collapse a roster the operator is mid-way through
     /// reading.
     pub expanded_team_shares: HashSet<String>,
+
+    // ── Version history (Spec 31) ─────────────────────────────────
+    /// Commit log for this forecast (`GET /api/forecasts/:id/history`).
+    /// `None` until the History tab is first opened — the log is a
+    /// git walk server-side, so it isn't worth paying for on cockpits
+    /// where nobody asks the question.
+    pub forecast_history: Option<ForecastHistoryResponse>,
+    pub history_loading: bool,
+    /// Which forecast `forecast_history` describes. Doubles as the
+    /// lazy-load latch and the staleness check, exactly as
+    /// `shares_loaded_for` does for the Access tab.
+    pub history_loaded_for: Option<String>,
+    /// The server's failure text, kept verbatim. The history and revert
+    /// endpoints return 403/409 bodies written for the operator ("cannot
+    /// revert a resolved forecast"), and paraphrasing them into "something
+    /// went wrong" would throw away the only explanation there is.
+    pub history_error: Option<String>,
+    /// Full sha of the commit whose diff is on screen.
+    pub selected_commit: Option<String>,
+    pub commit_diff: Option<ForecastDiffResponse>,
+    pub diff_loading: bool,
+    /// Sha of the commit whose Revert button is armed. Two-step confirm
+    /// rather than a modal, same as `team_delete_confirm_id`: revert is
+    /// reversible, so it warrants a speed bump, not an interrogation.
+    pub revert_confirm_sha: Option<String>,
+    pub revert_in_flight: bool,
     /// Share targets collected in the commit sheet (target, permission),
     /// applied right after the forecast row is created/updated on publish.
     pub pending_publish_shares: Vec<(String, String)>,
@@ -1071,6 +1102,15 @@ impl CockpitState {
             access_summary: None,
             access_summary_loading: false,
             expanded_team_shares: HashSet::new(),
+            forecast_history: None,
+            history_loading: false,
+            history_loaded_for: None,
+            history_error: None,
+            selected_commit: None,
+            commit_diff: None,
+            diff_loading: false,
+            revert_confirm_sha: None,
+            revert_in_flight: false,
             pending_publish_shares: Vec::new(),
             pending_publish_team_shares: Vec::new(),
             pending_publish_portfolios: HashSet::new(),
@@ -8391,6 +8431,15 @@ impl CockpitState {
                         if state.is_locked() {
                             return true;
                         }
+                        // Same for a forecast the operator can only read.
+                        // Without this the loop retries a guaranteed 403
+                        // every five seconds and buries the composer in
+                        // "save failed" warnings, which reads as a broken
+                        // client rather than a permission the banner has
+                        // already explained.
+                        if !state.can_edit_forecast() {
+                            return true;
+                        }
                         // No question yet — nothing to persist.
                         let has_question = state
                             .program
@@ -9395,6 +9444,231 @@ impl CockpitState {
         .detach();
     }
 
+    /// May the operator write to this forecast?
+    ///
+    /// Defaults to **yes** on missing data. `access_summary` is `None`
+    /// before the first fetch lands, when the fetch failed, and against
+    /// any server too old to serve `/access` — and locking the composer
+    /// in those cases would block legitimate work on the strength of an
+    /// absent fact. The server enforces the real ACL on every write, so
+    /// a false positive here costs a 403 the operator would have got
+    /// anyway; a false negative costs them the ability to work at all.
+    pub fn can_edit_forecast(&self) -> bool {
+        match self.access_summary.as_ref() {
+            Some(s) => matches!(s.my_permission.as_str(), "edit" | "admin"),
+            None => true,
+        }
+    }
+
+    // ── Version history (Spec 31) ──────────────────────────────────
+
+    /// Fetch the commit log into `forecast_history`.
+    ///
+    /// Unlike `load_access_summary`, a failure here is surfaced rather
+    /// than logged: history *is* the tab's content, so an outage leaves
+    /// nothing behind to degrade to, and the server's 403 text is the
+    /// only thing that can explain an empty pane.
+    pub fn load_forecast_history(&mut self, cx: &mut Context<Self>) {
+        let Some(fid) = self.forecast_id.clone() else {
+            return;
+        };
+        if self.history_loading {
+            return;
+        }
+        // Switching forecasts invalidates the log, the selection and the
+        // diff together — a commit row from the previous forecast left on
+        // screen is an invitation to revert the wrong thing.
+        if self.history_loaded_for.as_deref() != Some(fid.as_str()) {
+            self.forecast_history = None;
+            self.selected_commit = None;
+            self.commit_diff = None;
+            self.revert_confirm_sha = None;
+        }
+        self.history_loading = true;
+        self.history_error = None;
+        self.history_loaded_for = Some(fid.clone());
+        cx.notify();
+
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            // 100 commits is far more than anyone scrolls, and the whole
+            // log is one git walk — paging would cost a second round trip
+            // to save nothing.
+            let result = api.forecast_history(&fid, 100).await;
+            this.update(cx, |state, cx| {
+                state.history_loading = false;
+                // The operator may have switched forecasts mid-flight;
+                // adopting the response then would attribute one
+                // forecast's commits to another.
+                if state.forecast_id.as_deref() != Some(fid.as_str()) {
+                    return;
+                }
+                match result {
+                    Ok(resp) => {
+                        // Open on the newest commit. The overwhelmingly
+                        // common question is "what just changed", and
+                        // making the operator click to find out wastes
+                        // the one interaction they were always going to
+                        // make.
+                        if state.selected_commit.is_none() {
+                            if let Some(head) = resp.commits.first() {
+                                let sha = head.sha.clone();
+                                state.forecast_history = Some(resp);
+                                state.select_commit(sha, cx);
+                                cx.notify();
+                                return;
+                            }
+                        }
+                        state.forecast_history = Some(resp);
+                    }
+                    Err(e) => {
+                        state.history_error = Some(e.to_string());
+                        // Drop the latch so Retry actually refetches
+                        // instead of being swallowed by the lazy-load
+                        // guard in the tab bar.
+                        state.history_loaded_for = None;
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Select a commit and pull its diff. Selection and diff move
+    /// together — a selected row with the previous row's diff under it
+    /// is worse than a spinner.
+    pub fn select_commit(&mut self, sha: String, cx: &mut Context<Self>) {
+        self.selected_commit = Some(sha.clone());
+        self.commit_diff = None;
+        // Arming is per-commit: moving the selection has to disarm, or
+        // the second click of a confirm could land on a different sha
+        // than the first.
+        self.revert_confirm_sha = None;
+        // A diff failure or a refused revert belonged to the commit the
+        // operator just navigated away from; leaving it up would attach
+        // it to the new one.
+        self.history_error = None;
+        self.load_commit_diff(sha, cx);
+    }
+
+    /// Fetch one commit's diff against its parent.
+    pub fn load_commit_diff(&mut self, sha: String, cx: &mut Context<Self>) {
+        let Some(fid) = self.forecast_id.clone() else {
+            return;
+        };
+        self.diff_loading = true;
+        cx.notify();
+
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.forecast_diff(&fid, &sha, None).await;
+            this.update(cx, |state, cx| {
+                // A slow diff for a row the operator has already clicked
+                // past must neither overwrite the one they're looking at
+                // now nor clear the flag the newer fetch is still using.
+                if state.selected_commit.as_deref() == Some(sha.as_str()) {
+                    state.diff_loading = false;
+                    match result {
+                        Ok(diff) => state.commit_diff = Some(diff),
+                        Err(e) => state.history_error = Some(e.to_string()),
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Restore the forecast's analysis to `sha`. Two-step: the first
+    /// call arms, the second fires.
+    ///
+    /// The server refuses this on resolved and voided forecasts, and its
+    /// refusal names the reason — so the error path forwards the message
+    /// untouched rather than rewriting it as a generic failure.
+    pub fn revert_to_commit(&mut self, sha: String, cx: &mut Context<Self>) {
+        let Some(fid) = self.forecast_id.clone() else {
+            return;
+        };
+        if self.revert_in_flight {
+            return;
+        }
+        if self.revert_confirm_sha.as_deref() != Some(sha.as_str()) {
+            self.revert_confirm_sha = Some(sha);
+            self.history_error = None;
+            cx.notify();
+            // Auto-disarm so a red button can't sit primed until an
+            // absent-minded click later in the session.
+            cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(5))
+                    .await;
+                this.update(cx, |state, cx| {
+                    if !state.revert_in_flight {
+                        state.revert_confirm_sha = None;
+                        cx.notify();
+                    }
+                })
+                .ok();
+            })
+            .detach();
+            return;
+        }
+
+        self.revert_in_flight = true;
+        self.history_error = None;
+        cx.notify();
+
+        let api = self.api.clone();
+        let short = short_sha_label(&sha);
+        cx.spawn(async move |this, cx| {
+            let body = RevertRequest {
+                sha: sha.clone(),
+                reason: None,
+            };
+            let result = api.revert_forecast(&fid, &body).await;
+            this.update(cx, |state, cx| {
+                state.revert_in_flight = false;
+                state.revert_confirm_sha = None;
+                match result {
+                    Ok(_) => {
+                        state.pending_toasts.push(format!("Reverted to {}", short));
+                        // The in-memory program is now the revision the
+                        // server just undid. Leaving `dirty` set would let
+                        // the autosave loop PUT it straight back and quietly
+                        // cancel the revert within ~15s.
+                        state.dirty = false;
+                        state.last_edit_at = None;
+                        // Re-pull the authoritative state so the composer
+                        // stops showing the values that were just rolled
+                        // back…
+                        state.reconcile_forecast(cx);
+                        // …and refetch the log, which now has the forward
+                        // commit the revert wrote at its head.
+                        state.history_loaded_for = None;
+                        state.selected_commit = None;
+                        state.commit_diff = None;
+                        state.load_forecast_history(cx);
+                    }
+                    Err(e) => {
+                        // Both channels on purpose: the toast is seen
+                        // even if the operator has scrolled the log, and
+                        // the inline copy survives the toast timing out
+                        // while they read it.
+                        let msg = e.to_string();
+                        state.pending_toasts.push(msg.clone());
+                        state.history_error = Some(msg);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Fetch pending/terminal invites for this forecast into
     /// `forecast_invites`. Called by `load_shares` and after every
     /// send/revoke so the Access tab stays in sync.
@@ -10124,6 +10398,11 @@ impl Render for CockpitState {
             }))
             // ── Locked banner: server resolved/voided this forecast ──
             .when(self.is_locked(), |el| el.child(render_locked_banner(self, cx)))
+            // ── Read-only banner: the ACL, not the lifecycle ─────────
+            // Independent of the lock above and can legitimately show
+            // alongside it: "settled" and "not yours to edit" are two
+            // different reasons you can't change this forecast.
+            .when(!self.can_edit_forecast(), |el| el.child(render_readonly_banner(self)))
             // ── Main content (left + right panels) ────────────────
             .child(
                 div()
@@ -10539,6 +10818,9 @@ impl Render for CockpitState {
                                 RightTab::Access => {
                                     render_access_tab(self, cx).into_any_element()
                                 }
+                                RightTab::History => {
+                                    render_history_tab(self, cx).into_any_element()
+                                }
                             }),
                     )
             )
@@ -10890,9 +11172,16 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
     };
     let sim_disabled = state.sim_running || locked || !has_drivers;
 
-    // ── Save chip ─────────────────────────────────────────────────────
+    // ── Save chip ─────────────────────────────────────────────
     let save_ago = state.last_autosave_at.map(|t| short_ago(t.elapsed()));
-    let (save_icon, save_label, save_accent) = if locked {
+    // Spec 31 §B: a `view` share used to open a fully editable composer
+    // and only fail at PUT. Gating Save is the point where an hour of
+    // work stops being lost, so the eye-glyph case is checked before the
+    // lock — the two are independent and read-only is the newer surprise.
+    let can_edit = state.can_edit_forecast();
+    let (save_icon, save_label, save_accent) = if !can_edit {
+        ("👁".to_string(), "Save".to_string(), theme::FG_DIM)
+    } else if locked {
         ("🔒".to_string(), "Save".to_string(), theme::FG_DIM)
     } else if state.dirty {
         // Gold dot signals "unsaved edits" — same convention as most
@@ -10905,7 +11194,16 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
     } else {
         (String::new(), "Save".to_string(), theme::FG_FAINT)
     };
-    let save_disabled = locked || !has_question;
+    let save_disabled = locked || !has_question || !can_edit;
+    // Only the read-only case gets a spelled-out reason. The other two
+    // are self-evident from the chip (🔒) or from there being no question
+    // typed yet; "you don't have edit access" is the one an operator
+    // cannot deduce from anything else on screen.
+    let save_disabled_reason: Option<&'static str> = if can_edit {
+        None
+    } else {
+        Some("read-only — you don't have edit access")
+    };
 
     // ── Publish chip ────────────────────────────────────────────────
     // ── Publish chip ───────────────────────────────────────────────────────────────────
@@ -18084,6 +18382,9 @@ fn render_tab_bar(active: RightTab, cx: &mut Context<CockpitState>) -> impl Into
         (RightTab::Wiki, "Wiki"),
         (RightTab::Schedules, "Schedules"),
         (RightTab::Access, "Access"),
+        // Spec 31: History follows Access for the same reason Provenance
+        // follows Trajectory — "who may change this" then "who did".
+        (RightTab::History, "History"),
         (RightTab::Fpl, "FPL"),
         (RightTab::Edit, "Edit"),
     ];
@@ -18144,6 +18445,22 @@ fn render_tab_bar(active: RightTab, cx: &mut Context<CockpitState>) -> impl Into
                         // Lazy-load shares once per forecast_id.
                         if this.shares_loaded_for != this.forecast_id {
                             this.load_shares(cx);
+                        }
+                    }
+                    if t == RightTab::History {
+                        // Same lazy-load latch as Access: the log is a git
+                        // walk server-side, so re-entering the tab within
+                        // one forecast shouldn't re-pay for it.
+                        if this.history_loaded_for != this.forecast_id {
+                            this.load_forecast_history(cx);
+                        }
+                        // Revert is edit-gated, and the Access summary is
+                        // what tells us whether this operator has it. On a
+                        // cockpit where Access was never opened it's still
+                        // unfetched; without this the Revert button would
+                        // render enabled and fail at the server.
+                        if this.access_summary.is_none() {
+                            this.load_access_summary(cx);
                         }
                     }
                     cx.notify();
@@ -19008,6 +19325,623 @@ fn render_effective_viewers_section(state: &CockpitState) -> impl IntoElement {
                         .child(via),
                 )
         }))
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Spec 31 — History tab: who changed what, and how to put it back
+//
+// The collaboration model is Ward Cunningham's wiki bet — shared write,
+// complete history, trivial revert — and it only holds up if revert is
+// genuinely one click from the change you regret. So the diff and the
+// Revert button live *inside* the selected commit row rather than in a
+// separate pane the operator has to scroll to and correlate by eye.
+// ═══════════════════════════════════════════════════════════════════
+
+/// Width of the actor column in the commit list.
+///
+/// Fixed rather than content-sized so every author name starts at the
+/// same x: the list's main job is letting the eye run down one column
+/// and see who has been working on this.
+const HISTORY_ACTOR_COL: f32 = 130.0;
+
+/// How many diff lines are rendered before truncating.
+///
+/// Each line is its own element, and a driver-set rewrite can produce
+/// thousands. Past a few hundred nobody is reading anyway — they're
+/// reverting.
+const DIFF_MAX_LINES: usize = 400;
+
+/// Abbreviate a full sha for display when only the sha is in hand.
+///
+/// The list uses the server's `short_sha`; this covers the paths (revert
+/// toasts) that only carry the full one.
+fn short_sha_label(sha: &str) -> String {
+    sha.chars().take(7).collect()
+}
+
+/// Colour and emphasis for one line of a unified diff, or `None` for a
+/// line that should be dropped entirely.
+fn diff_line_style(line: &str) -> Option<(u32, bool)> {
+    // `index 3f8a91c..b21d004 100644` — a pair of blob shas nobody can
+    // do anything with, emitted once per changed file. Dropping them is
+    // the single biggest readability win available here.
+    if line.starts_with("index ") {
+        return None;
+    }
+    // File headers first: `+++`/`---` would otherwise be swallowed by
+    // the added/removed cases below and painted as content.
+    if line.starts_with("diff --git") || line.starts_with("+++") || line.starts_with("---") {
+        return Some((theme::FG_DIM, true));
+    }
+    if line.starts_with("@@") {
+        return Some((theme::CYAN, false));
+    }
+    if line.starts_with('+') {
+        return Some((theme::GREEN, false));
+    }
+    if line.starts_with('-') {
+        return Some((theme::RED, false));
+    }
+    Some((theme::FG_DIM, false))
+}
+
+/// Spec 31 — the cockpit "History" tab.
+fn render_history_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl IntoElement {
+    let container = div()
+        .id("history-tab")
+        .flex()
+        .flex_col()
+        .gap(px(10.0))
+        .p(px(16.0));
+
+    // History is a property of the server-side forecast row; a draft
+    // that has never been saved has nothing to have a history of.
+    if state.forecast_id.is_none() {
+        return container.child(
+            div()
+                .p(px(8.0))
+                .text_size(px(11.0))
+                .text_color(rgb(theme::FG_DIM))
+                .child(
+                    "Publish this forecast first (Ctrl+P). Its history starts at the first save.",
+                ),
+        );
+    }
+
+    // A load failure with nothing cached takes over the pane — there is
+    // no partial content to sit alongside. A failure *with* a cached log
+    // (a diff or revert that was refused) becomes a strip above it, so
+    // the list the operator is working in doesn't vanish under an error.
+    let fatal = state.forecast_history.is_none();
+    let body = if state.history_error.is_some() && fatal {
+        render_history_error(state, cx).into_any_element()
+    } else if state.forecast_history.is_none() {
+        div()
+            .p(px(8.0))
+            .text_size(px(11.0))
+            .text_color(rgb(theme::FG_FAINT))
+            .child(if state.history_loading {
+                "Reading the log…"
+            } else {
+                "Open this tab again to load the history."
+            })
+            .into_any_element()
+    } else {
+        render_history_body(state, cx).into_any_element()
+    };
+
+    container
+        .child(
+            div()
+                .text_size(px(13.0))
+                .font_weight(FontWeight::BOLD)
+                .text_color(rgb(theme::CYAN))
+                .child("🕒 History"),
+        )
+        .child(
+            div()
+                .text_size(px(10.0))
+                .text_color(rgb(theme::FG_DIM))
+                .child(
+                    "Every save commits the whole forecast — program, drivers, evidence, \
+                     probability — attributed to whoever made it.",
+                ),
+        )
+        .when(state.history_error.is_some() && !fatal, |el| {
+            el.child(render_history_error_strip(state))
+        })
+        .child(body)
+}
+
+/// Full-pane failure: the server's own words, plus a way to try again.
+fn render_history_error(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl IntoElement {
+    let message = state
+        .history_error
+        .clone()
+        .unwrap_or_else(|| "History unavailable.".to_string());
+
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(8.0))
+        .px(px(12.0))
+        .py(px(10.0))
+        .rounded(px(6.0))
+        .bg(rgb(theme::BG_ELEVATED))
+        .border_1()
+        .border_color(rgb(theme::RED))
+        .child(
+            div()
+                .text_size(px(11.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(theme::RED))
+                .child("Couldn't load the history"),
+        )
+        // Verbatim: the backend writes 403/409 bodies for the operator to
+        // read, and they carry the only diagnosis available client-side.
+        .child(
+            div()
+                .text_size(px(10.0))
+                .text_color(rgb(theme::FG))
+                .child(message),
+        )
+        // Wrapped in a flex row so the button hugs its label instead of
+        // stretching to the panel width like a banner.
+        .child(
+            div().flex().child(
+                div()
+                    .id("history-retry")
+                    .px(px(10.0))
+                    .py(px(4.0))
+                    .rounded(px(4.0))
+                    .bg(rgb(theme::BG_ACTIVE))
+                    .text_size(px(10.0))
+                    .text_color(rgb(theme::CYAN))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(theme::BG_HOVER)))
+                    .on_click(cx.listener(|this, _e, _w, cx| {
+                        this.history_error = None;
+                        this.load_forecast_history(cx);
+                    }))
+                    .child(if state.history_loading {
+                        "↻ Retrying…"
+                    } else {
+                        "↻ Retry"
+                    }),
+            ),
+        )
+}
+
+/// Non-fatal failure (a diff or a refused revert) shown above a log that
+/// is still perfectly usable.
+fn render_history_error_strip(state: &CockpitState) -> impl IntoElement {
+    let message = state.history_error.clone().unwrap_or_default();
+    div()
+        .px(px(10.0))
+        .py(px(6.0))
+        .rounded(px(4.0))
+        .bg(rgb(theme::BG_ELEVATED))
+        .border_l_2()
+        .border_color(rgb(theme::RED))
+        .text_size(px(10.0))
+        .text_color(rgb(theme::FG))
+        .child(message)
+}
+
+/// The log itself, or an honest account of why there isn't one.
+fn render_history_body(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl IntoElement {
+    let container = div().flex().flex_col().gap(px(2.0));
+    let Some(history) = state.forecast_history.as_ref() else {
+        return container;
+    };
+
+    // Not an error. Lazy provisioning (Spec 31 §7) means a forecast that
+    // predates versioning simply has no repo yet; the next save makes one.
+    if !history.versioned {
+        let note = history.note.clone().unwrap_or_else(|| {
+            "This forecast isn't versioned yet. History starts at its next save.".to_string()
+        });
+        return container.child(
+            div()
+                .px(px(12.0))
+                .py(px(10.0))
+                .rounded(px(6.0))
+                .bg(rgb(theme::BG_ELEVATED))
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(theme::FG))
+                        .child(note),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG_FAINT))
+                        .child("Nothing is missing — there is simply nothing recorded yet."),
+                ),
+        );
+    }
+
+    // Versioned but empty: the repo exists and the walk returned nothing.
+    // That combination shouldn't occur (provisioning writes an initial
+    // commit), so say so rather than rendering a blank pane the operator
+    // has to interpret.
+    if history.commits.is_empty() {
+        return container.child(
+            div()
+                .px(px(12.0))
+                .py(px(10.0))
+                .rounded(px(6.0))
+                .bg(rgb(theme::BG_ELEVATED))
+                .border_l_2()
+                .border_color(rgb(theme::GOLD))
+                .text_size(px(11.0))
+                .text_color(rgb(theme::FG_DIM))
+                .child(
+                    "This forecast has a repository but the log came back empty. \
+                     That shouldn't happen — nothing has been lost, but the commit \
+                     walk found no revisions to show.",
+                ),
+        );
+    }
+
+    container
+        .child(
+            div()
+                .text_size(px(10.0))
+                .text_color(rgb(theme::FG_DIM))
+                .mb(px(2.0))
+                .child(format!("{} revisions · newest first", history.count)),
+        )
+        // Server order is reverse-chronological already. Re-sorting
+        // client-side would risk disagreeing with the parent chain the
+        // diffs are computed against.
+        .children(
+            history
+                .commits
+                .iter()
+                .map(|commit| render_commit_row(state, commit, cx)),
+        )
+}
+
+/// One commit. Expands in place to its diff and Revert control when
+/// selected.
+fn render_commit_row(
+    state: &CockpitState,
+    commit: &ForecastCommit,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let (actor, action) = commit.actor_and_action();
+    let selected = state.selected_commit.as_deref() == Some(commit.sha.as_str());
+    let system = commit.is_system();
+
+    // System commits are cron runs and auto-resolutions. Rendering them
+    // at full weight would read as a person having done the work, which
+    // is exactly the attribution this feature exists to get right.
+    let actor_color = if system { theme::FG_FAINT } else { theme::FG };
+    let bullet_color = if system {
+        theme::FG_FAINT
+    } else if selected {
+        theme::CYAN
+    } else {
+        theme::FG_DIM
+    };
+
+    let when = commit
+        .timestamp
+        .as_deref()
+        .map(crate::format_relative_time)
+        .unwrap_or_else(|| "—".to_string());
+
+    let short = if commit.short_sha.is_empty() {
+        short_sha_label(&commit.sha)
+    } else {
+        commit.short_sha.clone()
+    };
+
+    let sha_for_click = commit.sha.clone();
+
+    div()
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .id(SharedString::from(format!("history-commit-{}", commit.sha)))
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .px(px(8.0))
+                .py(px(5.0))
+                .rounded(px(4.0))
+                .cursor_pointer()
+                .when(selected, |el| el.bg(rgb(theme::BG_ACTIVE)))
+                .hover(|s| s.bg(theme::bg_hover()))
+                .on_click(cx.listener(move |this, _e, _w, cx| {
+                    this.select_commit(sha_for_click.clone(), cx);
+                }))
+                .child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(rgb(bullet_color))
+                        .child("●"),
+                )
+                .child(
+                    div()
+                        .w(px(HISTORY_ACTOR_COL))
+                        .flex_shrink_0()
+                        .overflow_hidden()
+                        .text_size(px(11.0))
+                        .font_weight(if system {
+                            FontWeight::NORMAL
+                        } else {
+                            FontWeight::SEMIBOLD
+                        })
+                        .text_color(rgb(actor_color))
+                        .child(actor),
+                )
+                .child(
+                    div()
+                        .flex_grow()
+                        .overflow_hidden()
+                        .text_size(px(11.0))
+                        .text_color(rgb(if system {
+                            theme::FG_FAINT
+                        } else {
+                            theme::FG_DIM
+                        }))
+                        .child(action),
+                )
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG_FAINT))
+                        .child(when),
+                ),
+        )
+        .when(selected, |el| {
+            el.child(render_commit_detail(state, commit, &short, cx))
+        })
+}
+
+/// The expanded body of a selected commit: sha, revert control, diff.
+///
+/// Indented behind a left rule so it reads as belonging to the row above
+/// rather than as a sibling entry in the log.
+fn render_commit_detail(
+    state: &CockpitState,
+    commit: &ForecastCommit,
+    short: &str,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .ml(px(8.0))
+        .pl(px(10.0))
+        .py(px(6.0))
+        .border_l_1()
+        .border_color(rgb(theme::FG_FAINT))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(10.0))
+                .child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG_FAINT))
+                        .font_family("Ubuntu Mono, DejaVu Sans Mono, monospace")
+                        .child(short.to_string()),
+                )
+                .child(render_revert_control(state, commit, cx)),
+        )
+        // Stated next to the button, not behind a confirmation dialog:
+        // it's the fact that makes the button safe to press, so it has to
+        // be readable *before* the operator decides.
+        .child(
+            div()
+                .text_size(px(9.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .child(
+                    "Reverting writes a new commit — it never rewrites history, \
+                     and can itself be reverted.",
+                ),
+        )
+        .child(render_diff_pane(state))
+}
+
+/// The Revert button, in one of four states: unavailable (view access),
+/// idle, armed, or in flight.
+fn render_revert_control(
+    state: &CockpitState,
+    commit: &ForecastCommit,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let can_edit = state.can_edit_forecast();
+    let armed = state.revert_confirm_sha.as_deref() == Some(commit.sha.as_str());
+    let in_flight = state.revert_in_flight && armed;
+
+    let (label, color) = if in_flight {
+        ("↩ Reverting…".to_string(), theme::GOLD)
+    } else if armed {
+        ("Really revert?".to_string(), theme::RED)
+    } else {
+        ("↩ Revert to this".to_string(), theme::FG_DIM)
+    };
+
+    let sha = commit.sha.clone();
+
+    div()
+        .flex()
+        .items_center()
+        .gap(px(8.0))
+        .child(
+            div()
+                .id(SharedString::from(format!("history-revert-{}", commit.sha)))
+                .px(px(8.0))
+                .py(px(3.0))
+                .rounded(px(4.0))
+                .border_1()
+                .border_color(rgb(color))
+                .text_size(px(10.0))
+                .text_color(rgb(color))
+                .font_weight(FontWeight::SEMIBOLD)
+                // Disabled rather than absent: a missing button reads as
+                // a bug, a greyed one explains itself alongside the
+                // reason text below.
+                .when(!can_edit || in_flight, |el| el.opacity(0.5))
+                .when(can_edit && !in_flight, |el| {
+                    el.cursor_pointer()
+                        .hover(|s| s.bg(theme::bg_hover()))
+                        .on_click(cx.listener(move |this, _e, _w, cx| {
+                            this.revert_to_commit(sha.clone(), cx);
+                        }))
+                })
+                .child(label),
+        )
+        .when(!can_edit, |el| {
+            el.child(
+                div()
+                    .text_size(px(9.0))
+                    .text_color(rgb(theme::FG_FAINT))
+                    .child("— needs edit access"),
+            )
+        })
+}
+
+/// The unified diff, coloured by line prefix.
+fn render_diff_pane(state: &CockpitState) -> impl IntoElement {
+    let pane = div()
+        .flex()
+        .flex_col()
+        .px(px(10.0))
+        .py(px(8.0))
+        .rounded(px(4.0))
+        .bg(rgb(theme::BG))
+        .border_1()
+        .border_color(rgb(theme::FG_FAINT));
+
+    let Some(diff) = state.commit_diff.as_ref() else {
+        return pane.child(
+            div()
+                .text_size(px(10.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .child(if state.diff_loading {
+                    "Computing diff…"
+                } else {
+                    "No diff available for this revision."
+                }),
+        );
+    };
+
+    if diff.diff.trim().is_empty() {
+        return pane.child(
+            div()
+                .text_size(px(10.0))
+                .text_color(rgb(theme::FG_FAINT))
+                // Real and worth distinguishing from a failed fetch: the
+                // initial commit has no parent to diff against.
+                .child("No textual change against the previous revision."),
+        );
+    }
+
+    let lines: Vec<&str> = diff
+        .diff
+        .lines()
+        .filter(|l| diff_line_style(l).is_some())
+        .collect();
+    let truncated = lines.len().saturating_sub(DIFF_MAX_LINES);
+
+    pane.children(lines.iter().take(DIFF_MAX_LINES).map(|line| {
+        let (color, emphasised) = diff_line_style(line).unwrap_or((theme::FG_DIM, false));
+        div()
+            .text_size(px(10.0))
+            .font_family("Ubuntu Mono, DejaVu Sans Mono, monospace")
+            .text_color(rgb(color))
+            .when(emphasised, |el| el.font_weight(FontWeight::SEMIBOLD))
+            // A blank context line still occupies a row in the diff;
+            // an empty string would collapse it and shift the reader's
+            // sense of where the hunk boundaries are.
+            .child(if line.is_empty() {
+                " ".to_string()
+            } else {
+                line.to_string()
+            })
+    }))
+    .when(truncated > 0, |el| {
+        el.child(
+            div()
+                .mt(px(4.0))
+                .text_size(px(9.0))
+                .text_color(rgb(theme::FG_FAINT))
+                .child(format!("… {} more lines not shown", truncated)),
+        )
+    })
+}
+
+/// Spec 31 §B — the banner for a forecast the operator may read but not
+/// write.
+///
+/// The bug this closes: a `view` share opened a fully editable composer,
+/// let the operator do an hour of work, and surfaced the permission only
+/// as a 403 at save. The permission was known from the moment the Access
+/// summary landed — stating it up front is the whole fix.
+fn render_readonly_banner(state: &CockpitState) -> impl IntoElement {
+    let (permission, owner) = match state.access_summary.as_ref() {
+        Some(s) => (
+            s.my_permission.clone(),
+            s.owner_display_name.clone().unwrap_or_default(),
+        ),
+        None => (String::new(), String::new()),
+    };
+
+    // "shared with you at view" is the useful sentence; "none" is not a
+    // sharing level anyone would recognise, so that case gets plain words.
+    let standing = match permission.as_str() {
+        "none" | "" => "you don't have write access to this forecast.".to_string(),
+        p => format!("this forecast is shared with you at {}.", p),
+    };
+    let ask = if owner.is_empty() {
+        "Ask its owner for edit access.".to_string()
+    } else {
+        format!("Ask {} for edit access.", owner)
+    };
+
+    div()
+        .flex()
+        .items_center()
+        .gap(px(10.0))
+        .px(px(16.0))
+        .py(px(8.0))
+        .bg(rgb(theme::BG_ELEVATED))
+        .border_b_1()
+        .border_color(rgb(theme::GOLD))
+        .child(
+            div()
+                .text_size(px(14.0))
+                .text_color(rgb(theme::GOLD))
+                .child("👁"),
+        )
+        .child(
+            div()
+                .text_size(px(12.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(theme::GOLD))
+                .child("Read-only"),
+        )
+        .child(
+            div()
+                .flex_grow()
+                .overflow_hidden()
+                .text_size(px(11.0))
+                .text_color(rgb(theme::FG_DIM))
+                .child(format!("{} {}", standing, ask)),
+        )
 }
 
 fn render_forecast_invites_section(

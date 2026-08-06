@@ -1,6 +1,6 @@
 # Spec 31 — Forecast history: use the git you already have
 
-**Status:** backend implemented (v0.11.11); console History tab pending
+**Status:** complete (v0.11.11 backend, v0.11.12 full coverage + console)
 **Answers:** *"see which teammate made which change to a shared artifact"*
 
 ## 1. What we found before designing anything
@@ -138,6 +138,27 @@ helper on purpose, the same discipline as the ACL predicate: nine writers
 already touch `predicted_probability`, and if each had to remember to commit
 the history would have holes exactly where the interesting edits are.
 
+### Coverage
+
+v0.11.11 hooked create/update/probability, which left precisely those holes.
+v0.11.12 closes them:
+
+| path | why it matters |
+|---|---|
+| `resolve` / `void` | terminal events belong in the record most of all — the commit captures the exact state the Brier was computed against |
+| cascade `apply` / `undo` | the one act that silently rewrites **other people's** numbers: a teammate opens a forecast they own and finds it changed by a propagation they never saw |
+| bayesops accept | an operator decision, so attributed to whoever accepted rather than reading as "the system" |
+| recompose siblings | the subtle one, on the **hot path**: every probability update rewrites the displayed value of every sibling in a mutex group |
+
+Cascades commit at the **handler boundary**, not inside the propagation
+recursion — those helpers take a bare `PgPool`, and threading git through
+them would spread the hook across the code most likely to be refactored.
+
+Still uncommitted: the Polymarket auto-resolution sweeper and
+`workspace/refit`. Both are background tasks holding only a `PgPool`, so
+they need the git manager threaded into their spawn. Documented rather than
+half-done.
+
 Best-effort by contract — a git failure must never fail a save. The DB is
 truth; the repo is a derived record. Losing a commit costs a line of
 history; failing the save costs the operator their work.
@@ -182,5 +203,32 @@ could tell whether a repo existed without touching the disk.
   signal.
 * **Driver-level annotation** — "your base rate is wrong" attached to a
   specific driver. The most likely next thing people actually want.
-* **Console History tab** — `get_log` as a list, `diff_commits` on
-  selection, Revert button. Mostly plumbing now the backend exists.
+
+## 9. Console
+
+**History tab**, next to Access — "who can see this" and "who changed it"
+are the same family of question. Commit list with the actor in its own
+column so the eye can scan who has been working; unattributed commits render
+dim rather than being blamed on a person; selecting one shows its diff
+inline, colour-coded by line prefix.
+
+**Revert** is deliberately easy to reach, because the whole model rests on
+it: `edit` is only safe to hand out freely if undo is real. Two-step
+confirm, and a line stating that reverting writes a new commit rather than
+rewriting history — which is what makes people willing to use it.
+
+One non-obvious bug found while building it: reverting has to clear the
+composer's `dirty` flag. The in-memory program is the revision the server
+just undid, so leaving it dirty lets the autosave loop `PUT` it straight
+back and silently cancel the revert within ~15 seconds.
+
+**Read-only composer.** The bug that started this whole thread: a forecast
+shared at `view` opened in a fully editable composer, let the operator work,
+and failed only at save with a 403 — while the permission had been known and
+displayed the entire time. The cockpit now gates Save on
+`access_summary.my_permission`, shows a read-only banner naming the owner to
+ask, and short-circuits autosave (which would otherwise retry a guaranteed
+403 every 5 seconds).
+
+It fails **open**: a missing `access_summary` permits editing. A false
+negative would block legitimate work, and the server is the real authority.

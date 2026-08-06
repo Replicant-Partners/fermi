@@ -7305,14 +7305,20 @@ impl FermiConsole {
             let cockpit = cockpit.clone();
             cockpit.update(cx, |cockpit, cx| {
                 // Cycle order matches the tab bar's left→right reading
-                // flow: Trajectory → Wiki → Schedules → Access → Fpl →
-                // Edit → (back to Trajectory).
+                // flow: Trajectory → Wiki → Schedules → Access → History →
+                // Fpl → Edit → (back to Trajectory).
+                //
+                // History sits next to Access deliberately: "who can see
+                // this" and "who changed it" are the same family of
+                // question, and Spec 31 makes them the same answer's two
+                // halves.
                 cockpit.right_tab = match cockpit.right_tab {
                     crate::cockpit::RightTab::Trajectory => crate::cockpit::RightTab::Provenance,
                     crate::cockpit::RightTab::Provenance => crate::cockpit::RightTab::Wiki,
                     crate::cockpit::RightTab::Wiki => crate::cockpit::RightTab::Schedules,
                     crate::cockpit::RightTab::Schedules => crate::cockpit::RightTab::Access,
-                    crate::cockpit::RightTab::Access => crate::cockpit::RightTab::Fpl,
+                    crate::cockpit::RightTab::Access => crate::cockpit::RightTab::History,
+                    crate::cockpit::RightTab::History => crate::cockpit::RightTab::Fpl,
                     crate::cockpit::RightTab::Fpl => crate::cockpit::RightTab::Edit,
                     crate::cockpit::RightTab::Edit => crate::cockpit::RightTab::Trajectory,
                 };
@@ -7326,6 +7332,14 @@ impl FermiConsole {
                     && cockpit.shares_loaded_for != cockpit.forecast_id
                 {
                     cockpit.load_shares(cx);
+                }
+                // Same lazy-load discipline as Access: cycling into History
+                // must hydrate it, or Ctrl+E lands on a blank tab that looks
+                // like "no history" rather than "not fetched".
+                if cockpit.right_tab == crate::cockpit::RightTab::History
+                    && cockpit.history_loaded_for != cockpit.forecast_id
+                {
+                    cockpit.load_forecast_history(cx);
                 }
             });
             cx.notify();

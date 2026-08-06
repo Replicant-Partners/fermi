@@ -252,7 +252,12 @@ pub async fn commit_forecast_state(
 // history — it looks complete while omitting the interesting edits.
 
 /// Commit on behalf of a human principal. The common case.
-pub async fn commit_for(state: &AppState, forecast_id: &str, principal: &AuthPrincipal, action: &str) {
+pub async fn commit_for(
+    state: &AppState,
+    forecast_id: &str,
+    principal: &AuthPrincipal,
+    action: &str,
+) {
     let author = author_for(&state.db, principal).await;
     commit_forecast_state(
         &state.db,
@@ -290,14 +295,7 @@ pub async fn commit_cascade(
         None => None,
     };
     for id in forecast_ids {
-        commit_forecast_state(
-            &state.db,
-            &state.workspace_git,
-            id,
-            author.as_ref(),
-            action,
-        )
-        .await;
+        commit_forecast_state(&state.db, &state.workspace_git, id, author.as_ref(), action).await;
     }
 }
 
