@@ -543,10 +543,22 @@ pub struct CockpitState {
     pub pending_invite_share: Option<(JsonValue, String, String)>,
 
     /// Signal to the parent FermiConsole that it should open the
-    /// Fermi panel on its Activity tab. Set by the banner's event
-    /// chip; the cockpit can't reach the parent's drawer state
-    /// directly, so it queues the intent the same way
-    /// `pending_invite_share` does. Cleared by the observe handler.
+    /// Fermi panel on its Activity tab. The cockpit can't reach the
+    /// parent's drawer state directly, so it queues the intent the
+    /// same way `pending_invite_share` does. Cleared by the observe
+    /// handler.
+    ///
+    /// Currently has no producer: the composer's top status strip
+    /// (`render_fermi_banner`) was the only one, and it was removed
+    /// once the Fermi panel's Activity tab took over the job — the
+    /// strip mirrored the last message verbatim, so every warning
+    /// rendered twice, and its full-width hitbox sat *behind* the
+    /// drawer and swallowed the drawer's own close button (a click on
+    /// ✕ re-queued this flag, which reopened the panel on the next
+    /// observe tick). The channel is kept because the Activity tab is
+    /// still the right destination for any future composer-side
+    /// "show me what happened" affordance; the operator reaches it
+    /// today via Ctrl+' or the sidebar chip.
     pub pending_open_activity: bool,
 
     /// Signal to the parent FermiConsole that it should refetch
@@ -10110,8 +10122,6 @@ impl Render for CockpitState {
                 let name = drivers[next_idx].clone();
                 this.focus_driver(&name, cx);
             }))
-            // ── Fermi Banner (top, always visible) ────────────────
-            .child(render_fermi_banner(self, cx))
             // ── Locked banner: server resolved/voided this forecast ──
             .when(self.is_locked(), |el| el.child(render_locked_banner(self, cx)))
             // ── Main content (left + right panels) ────────────────
@@ -15419,120 +15429,6 @@ fn render_locked_banner(state: &CockpitState, cx: &mut Context<CockpitState>) ->
                 } else {
                     "↻ Reconcile"
                 }),
-        )
-}
-
-/// Single-line ambient status strip.
-///
-/// This used to render up to three lines — a status line plus the two
-/// most recent non-`Info` messages, each truncated at 120–150 chars —
-/// which made it simultaneously the console's only error surface and
-/// a bad one: repeated autosave failures filled all three slots with
-/// the same chopped sentence and pushed everything else out.
-///
-/// The full, untruncated, expandable history now lives in the Fermi
-/// panel's Activity tab. What's left here is what a status strip
-/// should be: current state, plus a counter that gets you to the
-/// detail. Clicking anywhere on the strip opens the Activity tab.
-fn render_fermi_banner(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl IntoElement {
-    let messages = &state.messages;
-    let agent_runs = &state.agent_runs;
-
-    let running_names: Vec<String> = agent_runs
-        .iter()
-        .filter(|r| r.status == AgentRunStatus::Running)
-        .map(|r| base_agent_name(&r.agent_name).to_string())
-        .collect();
-
-    // Problems still outstanding in this composer session. The
-    // app-level ActivityLog holds the authoritative count, but the
-    // cockpit can't see it, and this local tally is the one that
-    // matters for "did something just go wrong on *this* forecast".
-    let problem_count = messages
-        .iter()
-        .filter(|m| matches!(m.kind, MessageKind::Warning | MessageKind::Error))
-        .count();
-
-    let (status_icon, status_text, status_color) = if !running_names.is_empty() {
-        (
-            "⟳",
-            format!("Researching: {}", running_names.join(", ")),
-            theme::GOLD,
-        )
-    } else if let Some(last) = messages.last() {
-        let (icon, color) = match last.kind {
-            MessageKind::Suggestion => ("💡", theme::CYAN),
-            MessageKind::Warning => ("⚠", theme::GOLD),
-            MessageKind::Info => ("✓", theme::FG_DIM),
-            MessageKind::Error => ("✗", theme::RED),
-            MessageKind::Tip => ("🦊", theme::GREEN),
-        };
-        // Still truncated — but this is now a glance-target, not the
-        // only place the text exists.
-        (icon, last.text.chars().take(140).collect(), color)
-    } else {
-        (
-            "🦊",
-            "Ready — type a question and press Ctrl+Enter".to_string(),
-            theme::FG_DIM,
-        )
-    };
-
-    let chip_color = if problem_count > 0 {
-        theme::GOLD
-    } else {
-        theme::FG_DIM
-    };
-    let chip_label = if problem_count > 0 {
-        format!("⚠ {} · Activity ↗", problem_count)
-    } else {
-        "Activity ↗".to_string()
-    };
-
-    div()
-        .id("fermi-banner")
-        .w_full()
-        .px(px(16.0))
-        .py(px(5.0))
-        .bg(rgb(0x171D2A))
-        .border_b_1()
-        .border_color(rgb(theme::FG_FAINT))
-        .flex()
-        .items_center()
-        .gap(px(8.0))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme::BG_ELEVATED)))
-        .on_click(cx.listener(|this, _, _w, cx| {
-            this.pending_open_activity = true;
-            cx.notify();
-        }))
-        .child(
-            div()
-                .flex_shrink_0()
-                .text_size(px(11.0))
-                .text_color(rgb(theme::CYAN))
-                .font_weight(FontWeight::BOLD)
-                .child("🦊 Fermi"),
-        )
-        .child(
-            div()
-                .flex_grow()
-                .min_w(px(0.0))
-                .text_size(px(10.0))
-                .text_color(rgb(status_color))
-                .child(format!("{} {}", status_icon, status_text)),
-        )
-        .child(
-            div()
-                .flex_shrink_0()
-                .px(px(6.0))
-                .py(px(1.0))
-                .rounded(px(3.0))
-                .border_1()
-                .border_color(rgb(chip_color))
-                .text_size(px(9.0))
-                .text_color(rgb(chip_color))
-                .child(chip_label),
         )
 }
 

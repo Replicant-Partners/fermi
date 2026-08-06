@@ -2541,6 +2541,16 @@ impl FermiConsole {
             // chip, and untruncated summaries, which 380px squeezes
             // into unreadable ribbons.
             .w(px(if on_activity { 460.0 } else { 380.0 }))
+            // The drawer floats over a live panel, so every hitbox it
+            // covers is still hoverable unless we block them: GPUI's
+            // `Hitbox::is_hovered` is true for anything under the
+            // cursor that isn't occluded, not just the topmost thing.
+            // Without this, clicks landed on the drawer AND on
+            // whatever sat beneath it — which is how ✕ ended up
+            // unable to close the panel (it also hit the composer's
+            // full-width status strip behind the header, whose
+            // click-through reopened the drawer on the same tick).
+            .occlude()
             .flex()
             .flex_col()
             .bg(theme::bg())

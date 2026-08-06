@@ -23,11 +23,14 @@
 //! half always landed past the banner's truncation point.
 //!
 //! [`ActivityLog`] is the durable, structured, inspectable sink both
-//! surfaces now feed. A [`LogEvent`] keeps the one-line `summary`
-//! separate from the `detail` prose, the `context` key/values, the raw
-//! `payload`, and the machine-readable [`Remedy`] — so the panel can
-//! render a scannable row that expands into a full debugging view
-//! instead of a truncated sentence.
+//! surfaces now feed. (Surface (1)'s strip has since been removed
+//! outright — once the Activity tab carried the full history, the
+//! strip only restated its newest row in a lossier form.) A
+//! [`LogEvent`] keeps the one-line `summary` separate from the
+//! `detail` prose, the `context` key/values, the raw `payload`, and
+//! the machine-readable [`Remedy`] — so the panel can render a
+//! scannable row that expands into a full debugging view instead of a
+//! truncated sentence.
 //!
 //! ## Design notes
 //!
