@@ -908,6 +908,15 @@ struct FermiConsole {
     /// the Roster tab from a list of names into a working document.
     team_contributions: std::collections::HashMap<String, Vec<MemberContribution>>,
     team_contributions_in_flight: std::collections::HashSet<String>,
+    /// Last error per team surface, keyed `"<team_id>:<surface>"`.
+    ///
+    /// Exists because the first version rendered a flat "Could not load
+    /// the team's shared items" for three different conditions — request
+    /// failed, request never fired, and genuinely empty — which cost a
+    /// database forensics session to tell apart. An operator-visible
+    /// error is not a nicety here; it is the difference between a
+    /// five-second diagnosis and an hour.
+    team_surface_errors: std::collections::HashMap<String, String>,
     /// Actor filter for the Activity tab. `Some(user_id)` narrows the
     /// feed to one teammate — the "which team members did which things"
     /// query, driven by clicking a roster row. Cleared on team switch so
@@ -1274,6 +1283,7 @@ impl FermiConsole {
             team_activity_in_flight: std::collections::HashSet::new(),
             team_contributions: std::collections::HashMap::new(),
             team_contributions_in_flight: std::collections::HashSet::new(),
+            team_surface_errors: std::collections::HashMap::new(),
             team_activity_actor: None,
             team_activity_kind: None,
             team_share_portfolio_showing: false,
@@ -3589,11 +3599,20 @@ impl FermiConsole {
                         .map(|id| this.teams.iter().any(|t| &t.id == id))
                         .unwrap_or(false);
                     if !still_valid {
-                        this.selected_team_id = this.teams.first().map(|t| t.id.clone());
+                        this.selected_team_id = None;
                         this.selected_team_detail = None;
                     }
-                    if let Some(id) = this.selected_team_id.clone() {
-                        this.fetch_team_detail(&id, cx);
+                    // Route the auto-selection through `select_team` so it
+                    // warms the Spec 26 surfaces too. Setting the id here
+                    // and calling only `fetch_team_detail` is what stranded
+                    // the Shared/Activity tabs for anyone who never
+                    // manually clicked a team — i.e. anyone with one team.
+                    let target = this
+                        .selected_team_id
+                        .clone()
+                        .or_else(|| this.teams.first().map(|t| t.id.clone()));
+                    if let Some(id) = target {
+                        this.select_team(id, cx);
                     }
                     // Warm the shared team_details cache in the
                     // background so the Dashboard's team cards can
@@ -3760,31 +3779,54 @@ impl FermiConsole {
         .detach();
     }
 
+    /// Select a team and load everything its detail pane needs.
+    ///
+    /// Every path that changes the selected team MUST come through here.
+    /// There are four of them — the left-pane click, the Dashboard team
+    /// card, post-create, and `fetch_teams`' auto-select of the first team
+    /// — and three of them originally set `selected_team_id` directly and
+    /// called only `fetch_team_detail`. The Spec 26 surfaces were wired to
+    /// the click path alone, so an operator with ONE team (auto-selected,
+    /// never clicked) got a permanently empty Shared tab reading "Could
+    /// not load", with no way to recover: the click handler early-returns
+    /// when the team is already selected.
+    ///
+    /// Hence one funnel, and `force` for the case where the id hasn't
+    /// changed but the data still needs loading.
     fn select_team(&mut self, team_id: String, cx: &mut Context<Self>) {
-        if self.selected_team_id.as_deref() == Some(team_id.as_str()) {
+        let already = self.selected_team_id.as_deref() == Some(team_id.as_str());
+        // Re-clicking the selected team is normally a no-op, but if its
+        // surfaces failed or were never requested, treat the click as a
+        // retry rather than ignoring the operator.
+        let needs_data = !self.team_shared.contains_key(&team_id)
+            && !self.team_shared_in_flight.contains(&team_id);
+        if already && !needs_data {
             return;
         }
-        self.selected_team_id = Some(team_id.clone());
-        self.selected_team_detail = None;
-        self.team_invites.clear();
-        self.team_invite_showing = false;
-        self.team_action_error = None;
-        // Drop any pending delete-confirmation from the previous team
-        // so a stale confirm can't accidentally delete the newly
-        // selected team on the next click.
-        self.team_delete_confirm_id = None;
-        // An actor filter is scoped to the team it was set from — keeping
-        // it across a switch would silently filter the new team's feed by
-        // someone who isn't on it, producing an empty feed that looks
-        // like "this team does nothing".
-        self.team_activity_actor = None;
-        self.team_share_portfolio_showing = false;
-        self.fetch_team_detail(&team_id, cx);
-        // Spec 26: the three server-side surfaces. Fired together on
-        // select rather than lazily per tab, because the tab bar shows
-        // live counts for all three and a lazy fetch would leave two of
-        // the three pills reading (0) until clicked — which reads as
-        // "nothing here" rather than "not loaded yet".
+
+        if !already {
+            self.selected_team_id = Some(team_id.clone());
+            self.selected_team_detail = None;
+            self.team_invites.clear();
+            self.team_invite_showing = false;
+            self.team_action_error = None;
+            // Drop any pending delete-confirmation from the previous team
+            // so a stale confirm can't accidentally delete the newly
+            // selected team on the next click.
+            self.team_delete_confirm_id = None;
+            // An actor filter is scoped to the team it was set from —
+            // keeping it across a switch would silently filter the new
+            // team's feed by someone who isn't on it, producing an empty
+            // feed that reads as "this team does nothing".
+            self.team_activity_actor = None;
+            self.team_share_portfolio_showing = false;
+            self.fetch_team_detail(&team_id, cx);
+        }
+
+        // Spec 26: the three server-side surfaces. Fired together rather
+        // than lazily per tab, because the tab bar shows live counts for
+        // all three — a lazy fetch would leave two pills reading (0) until
+        // clicked, which reads as "nothing here" rather than "not loaded".
         self.fetch_team_shared(team_id.clone(), cx);
         self.fetch_team_activity(team_id.clone(), cx);
         self.fetch_team_contributions(team_id, cx);
@@ -3812,9 +3854,15 @@ impl FermiConsole {
                 this.team_shared_in_flight.remove(&team_id);
                 match result {
                     Ok(resp) => {
+                        this.team_surface_errors
+                            .remove(&format!("{}:shared", team_id));
                         this.team_shared.insert(team_id, resp);
                     }
-                    Err(e) => log::warn!("[team-shared] fetch failed: {}", e),
+                    Err(e) => {
+                        log::warn!("[team-shared] fetch failed: {}", e);
+                        this.team_surface_errors
+                            .insert(format!("{}:shared", team_id), e.to_string());
+                    }
                 }
                 cx.notify();
             })
@@ -3849,9 +3897,15 @@ impl FermiConsole {
                 this.team_activity_in_flight.remove(&team_id);
                 match result {
                     Ok(resp) => {
+                        this.team_surface_errors
+                            .remove(&format!("{}:activity", team_id));
                         this.team_activity.insert(team_id, resp.events);
                     }
-                    Err(e) => log::warn!("[team-activity] fetch failed: {}", e),
+                    Err(e) => {
+                        log::warn!("[team-activity] fetch failed: {}", e);
+                        this.team_surface_errors
+                            .insert(format!("{}:activity", team_id), e.to_string());
+                    }
                 }
                 cx.notify();
             })
@@ -3873,9 +3927,15 @@ impl FermiConsole {
                 this.team_contributions_in_flight.remove(&team_id);
                 match result {
                     Ok(resp) => {
+                        this.team_surface_errors
+                            .remove(&format!("{}:contributions", team_id));
                         this.team_contributions.insert(team_id, resp.members);
                     }
-                    Err(e) => log::warn!("[team-contributions] fetch failed: {}", e),
+                    Err(e) => {
+                        log::warn!("[team-contributions] fetch failed: {}", e);
+                        this.team_surface_errors
+                            .insert(format!("{}:contributions", team_id), e.to_string());
+                    }
                 }
                 cx.notify();
             })
@@ -4070,8 +4130,11 @@ impl FermiConsole {
                         this.team_create_showing = false;
                         this.team_create_error = None;
                         if let Some(id) = new_id {
-                            this.selected_team_id = Some(id);
-                            this.selected_team_detail = None;
+                            // Through the funnel, so a freshly created team
+                            // opens with its surfaces loaded (all empty,
+                            // but loaded — an empty state and a failed
+                            // fetch must not look identical).
+                            this.select_team(id, cx);
                         }
                         this.fetch_teams(cx);
                         cx.notify();
@@ -8591,8 +8654,9 @@ impl FermiConsole {
                 cx.notify();
             }))
             .on_click(cx.listener(move |this, _e, _w, cx| {
-                this.selected_team_id = Some(tid_click.clone());
-                this.selected_team_detail = None;
+                // Through the funnel — arriving from the Dashboard must
+                // load the same surfaces as clicking in the Teams panel.
+                this.select_team(tid_click.clone(), cx);
                 this.navigate(Panel::Teams, cx);
             }))
             // Row 1: initial glyph + name + member count.
@@ -14628,6 +14692,100 @@ impl FermiConsole {
             .into_any_element()
     }
 
+    /// Placeholder for a team surface that has no data yet.
+    ///
+    /// Three states, deliberately distinguishable — conflating them is
+    /// what made the original bug invisible:
+    ///
+    ///   * **in flight** — a spinner. Nothing is wrong.
+    ///   * **failed** — the actual server error, plus a Retry button. The
+    ///     operator can report something actionable instead of "it says it
+    ///     couldn't load".
+    ///   * **never requested** — says so, and offers the same Retry. This
+    ///     is a wiring bug by definition, so it names itself rather than
+    ///     masquerading as a server failure.
+    fn render_surface_placeholder(
+        &self,
+        team_id: &str,
+        surface: &'static str,
+        label: &'static str,
+        in_flight: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if in_flight {
+            return div()
+                .text_size(px(11.0))
+                .text_color(theme::fg_dim())
+                .child(format!("⟳ Loading {}…", label))
+                .into_any_element();
+        }
+
+        let err = self
+            .team_surface_errors
+            .get(&format!("{}:{}", team_id, surface))
+            .cloned();
+        let tid = team_id.to_string();
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .p(px(14.0))
+            .rounded(px(6.0))
+            .bg(theme::bg_elevated())
+            .border_1()
+            .border_color(if err.is_some() {
+                rgb(theme::RED).into()
+            } else {
+                theme::fg_faint()
+            })
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(if err.is_some() {
+                        theme::red()
+                    } else {
+                        theme::fg_dim()
+                    })
+                    .child(match &err {
+                        Some(_) => format!("Could not load {}.", label),
+                        None => format!("{} hasn't been requested yet.", label),
+                    }),
+            )
+            .when_some(err, |el, e| {
+                el.child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(theme::fg_faint())
+                        .child(e),
+                )
+            })
+            .child(
+                div()
+                    .id(SharedString::from(format!("retry-{}-{}", surface, tid)))
+                    .px(px(10.0))
+                    .py(px(4.0))
+                    .rounded(px(4.0))
+                    .border_1()
+                    .border_color(rgb(theme::CYAN))
+                    .text_size(px(10.0))
+                    .text_color(rgb(theme::CYAN))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::bg_hover()))
+                    .on_click(cx.listener(move |this, _, _w, cx| {
+                        // Re-fire all three: if one surface failed the
+                        // others very likely did too (same request cycle),
+                        // and three separate retry buttons is worse UX than
+                        // one that fixes the pane.
+                        this.fetch_team_shared(tid.clone(), cx);
+                        this.fetch_team_activity(tid.clone(), cx);
+                        this.fetch_team_contributions(tid.clone(), cx);
+                    }))
+                    .child("↻ Retry"),
+            )
+            .into_any_element()
+    }
+
     /// Shared tab body — the team's inventory, from the server (Spec 26
     /// §3).
     ///
@@ -14649,18 +14807,14 @@ impl FermiConsole {
         let container = div().flex().flex_col().gap(px(16.0));
 
         let Some(shared) = self.team_shared.get(team_id) else {
-            let loading = self.team_shared_in_flight.contains(team_id);
             return container
-                .child(
-                    div()
-                        .text_size(px(11.0))
-                        .text_color(theme::fg_dim())
-                        .child(if loading {
-                            "⟳ Loading the team's shared surface…"
-                        } else {
-                            "Could not load the team's shared items."
-                        }),
-                )
+                .child(self.render_surface_placeholder(
+                    team_id,
+                    "shared",
+                    "the team's shared surface",
+                    self.team_shared_in_flight.contains(team_id),
+                    cx,
+                ))
                 .into_any_element();
         };
 
@@ -15152,20 +15306,16 @@ impl FermiConsole {
     /// click sets, making "what has Bo been doing" a one-click question.
     fn render_team_activity_body(&self, team_id: &str, cx: &mut Context<Self>) -> AnyElement {
         let container = div().flex().flex_col().gap(px(10.0));
-        let loading = self.team_activity_in_flight.contains(team_id);
 
         let Some(events) = self.team_activity.get(team_id) else {
             return container
-                .child(
-                    div()
-                        .text_size(px(11.0))
-                        .text_color(theme::fg_dim())
-                        .child(if loading {
-                            "⟳ Loading team activity…"
-                        } else {
-                            "Could not load team activity."
-                        }),
-                )
+                .child(self.render_surface_placeholder(
+                    team_id,
+                    "activity",
+                    "team activity",
+                    self.team_activity_in_flight.contains(team_id),
+                    cx,
+                ))
                 .into_any_element();
         };
 
