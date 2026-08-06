@@ -1340,6 +1340,86 @@ pub struct AccessSummary {
     pub forecast_count: i64,
 }
 
+// ── Forecast version history (Spec 31) ────────────────────────────
+
+/// One commit in a forecast's history — a single attributed change.
+///
+/// Backed by the workspace git repo, not a table. `author` is the acting
+/// human, which is the whole point: before Spec 31 an FPL or driver edit
+/// that didn't move the probability left no record at all.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForecastCommit {
+    pub sha: String,
+    #[serde(default)]
+    pub short_sha: String,
+    /// Server-composed, e.g. `"Alice Labra: revised 41% → 47% — new elo data"`.
+    #[serde(default)]
+    pub message: String,
+    /// Git author name. `"Fermi System"` for genuinely systemic writes.
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub timestamp: Option<String>,
+}
+
+impl ForecastCommit {
+    /// Split `"Alice Labra: revised 41% → 47%"` into actor and action.
+    ///
+    /// The server composes the message so every client tells the same story;
+    /// splitting it lets the UI put the actor in its own column without a
+    /// second field that could disagree with the message.
+    pub fn actor_and_action(&self) -> (String, String) {
+        match self.message.split_once(':') {
+            Some((who, what)) if !who.contains(' ') || who.len() < 40 => {
+                (who.trim().to_string(), what.trim().to_string())
+            }
+            // No recognisable prefix (a commit made outside the hook, e.g.
+            // the repo's `initial structure`): fall back to the git author
+            // rather than mangling the message.
+            _ => (self.author.clone(), self.message.clone()),
+        }
+    }
+
+    pub fn is_system(&self) -> bool {
+        self.author == "Fermi System" || self.author.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ForecastHistoryResponse {
+    /// False when the forecast has never been committed — an honest state,
+    /// not an error. History begins at its next save.
+    #[serde(default)]
+    pub versioned: bool,
+    #[serde(default)]
+    pub commits: Vec<ForecastCommit>,
+    #[serde(default)]
+    pub count: usize,
+    /// Present when `versioned` is false, explaining why.
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// A unified diff between two revisions.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ForecastDiffResponse {
+    #[serde(default)]
+    pub from: String,
+    #[serde(default)]
+    pub to: String,
+    /// Raw unified diff across `forecast.fpl`, `drivers.json`,
+    /// `evidence.json`, `state.json` — render with per-line +/- colouring.
+    #[serde(default)]
+    pub diff: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RevertRequest {
+    pub sha: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 // ── Ops board: detected coordination work (Spec 27) ───────────────────
 
 /// One unit of coordinated work a team should pick up.
@@ -2970,6 +3050,53 @@ impl ApiClient {
         team_id: &str,
     ) -> Result<TeamContributionsResponse, ApiError> {
         self.get(&format!("/api/teams/{}/contributions", team_id))
+            .await
+    }
+
+    /// A forecast's commit history — who changed what, when, and why.
+    ///
+    /// View-gated server-side: if you can read a forecast you can read how
+    /// it got that way.
+    pub async fn forecast_history(
+        &self,
+        forecast_id: &str,
+        limit: u32,
+    ) -> Result<ForecastHistoryResponse, ApiError> {
+        self.get(&format!(
+            "/api/forecasts/{}/history?limit={}",
+            forecast_id, limit
+        ))
+        .await
+    }
+
+    /// What one commit changed. Diffs against its parent by default;
+    /// `against` compares two arbitrary revisions.
+    pub async fn forecast_diff(
+        &self,
+        forecast_id: &str,
+        sha: &str,
+        against: Option<&str>,
+    ) -> Result<ForecastDiffResponse, ApiError> {
+        let mut path = format!("/api/forecasts/{}/history/{}", forecast_id, sha);
+        if let Some(a) = against {
+            path.push_str(&format!("?against={}", encode_query_value(a)));
+        }
+        self.get(&path).await
+    }
+
+    /// Restore a forecast's analysis to an earlier revision.
+    ///
+    /// Edit-gated, and writes a forward commit rather than rewriting
+    /// history — so a revert is itself revertible. Restores probability,
+    /// drivers, evidence and FPL only: the server refuses on resolved or
+    /// voided forecasts, because their score is frozen and reverting the
+    /// analysis behind it would make that score unreproducible.
+    pub async fn revert_forecast(
+        &self,
+        forecast_id: &str,
+        body: &RevertRequest,
+    ) -> Result<JsonValue, ApiError> {
+        self.post(&format!("/api/forecasts/{}/revert", forecast_id), body)
             .await
     }
 

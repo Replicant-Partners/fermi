@@ -725,6 +725,23 @@ pub async fn accept_pending_handler(
             .bind(new_p as f32)
             .execute(&state.db)
             .await;
+
+            // Spec 31: accepting a refit is an operator decision that moves
+            // the number, so it belongs in the forecast's history
+            // attributed to whoever accepted it — not to "the system", which
+            // is how an unattributed refit would otherwise read.
+            crate::handlers::forecast_git::commit_for(
+                &state,
+                &forecast_id,
+                &principal,
+                &format!(
+                    "accepted BayesOps refit of {} · {:.0}% → {:.0}%",
+                    driver_name,
+                    prev * 100.0,
+                    new_p * 100.0
+                ),
+            )
+            .await;
         }
     }
 

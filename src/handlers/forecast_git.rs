@@ -245,6 +245,62 @@ pub async fn commit_forecast_state(
     }
 }
 
+// ─── Call-site conveniences ───────────────────────────────────
+//
+// The hook has to be trivial to call or writers will skip it, and a history
+// with holes exactly where cascades and refits happened is worse than no
+// history — it looks complete while omitting the interesting edits.
+
+/// Commit on behalf of a human principal. The common case.
+pub async fn commit_for(state: &AppState, forecast_id: &str, principal: &AuthPrincipal, action: &str) {
+    let author = author_for(&state.db, principal).await;
+    commit_forecast_state(
+        &state.db,
+        &state.workspace_git,
+        forecast_id,
+        Some(&author),
+        action,
+    )
+    .await;
+}
+
+/// Commit an genuinely systemic change — a cron sweep, an auto-resolution
+/// from a settled market. Attributed to the platform identity, which is
+/// honest: no human decided it.
+pub async fn commit_system(state: &AppState, forecast_id: &str, action: &str) {
+    commit_forecast_state(&state.db, &state.workspace_git, forecast_id, None, action).await;
+}
+
+/// Commit a set of forecasts touched by one act — a cascade.
+///
+/// Called at the handler boundary rather than inside the propagation
+/// recursion: the recursive helpers take a bare `PgPool`, and threading the
+/// git manager through them would spread the hook across the very code
+/// paths most likely to be refactored. One call per affected forecast,
+/// each landing in its own repo, all carrying the same action string so the
+/// cascade is recognisable across the histories it touched.
+pub async fn commit_cascade(
+    state: &AppState,
+    forecast_ids: &[String],
+    principal: Option<&AuthPrincipal>,
+    action: &str,
+) {
+    let author = match principal {
+        Some(p) => Some(author_for(&state.db, p).await),
+        None => None,
+    };
+    for id in forecast_ids {
+        commit_forecast_state(
+            &state.db,
+            &state.workspace_git,
+            id,
+            author.as_ref(),
+            action,
+        )
+        .await;
+    }
+}
+
 /// Resolve the acting principal into a git author.
 ///
 /// Falls back to the user id when a display name is missing, and always

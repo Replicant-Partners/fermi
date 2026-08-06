@@ -175,6 +175,39 @@ pub async fn apply_pending_cascade_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Spec 31: commit every forecast the cascade moved.
+    //
+    // This is the most important hook of the set. A cascade is the one act
+    // that silently rewrites OTHER people's numbers — a teammate can open a
+    // forecast they own and find its probability changed by a propagation
+    // they never saw. Without a commit on each affected row, that change is
+    // invisible in the forecast's own history and looks like it came from
+    // nowhere.
+    //
+    // Done here rather than inside `propagate` because the propagation
+    // helpers take a bare PgPool; hooking the boundary keeps the git
+    // dependency out of the recursion. All affected forecasts share one
+    // action string so the cascade is recognisable across every history it
+    // touched.
+    {
+        let affected: Vec<String> = result
+            .deltas
+            .iter()
+            .map(|d| d.forecast_id.clone())
+            .collect();
+        let short: String = trigger_forecast_id.chars().take(8).collect();
+        crate::handlers::forecast_git::commit_cascade(
+            &state,
+            &affected,
+            Some(&principal),
+            &format!(
+                "cascade from {} · {} forecast(s) adjusted",
+                short, result.n_updated
+            ),
+        )
+        .await;
+    }
+
     Ok(Json(json!({
         "id": cascade_id,
         "status": "applied",

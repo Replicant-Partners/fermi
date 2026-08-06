@@ -135,6 +135,25 @@ pub async fn undo_pending_cascade_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Spec 31: an undo is itself an event. Committing it keeps the affected
+    // forecasts' histories a true sequence — applied, then reverted — rather
+    // than leaving the apply commit as the last word on a change that no
+    // longer holds.
+    {
+        let affected: Vec<String> = deltas_arr
+            .iter()
+            .filter_map(|d| d.get("forecast_id").and_then(|v| v.as_str()))
+            .map(String::from)
+            .collect();
+        crate::handlers::forecast_git::commit_cascade(
+            &state,
+            &affected,
+            Some(&principal),
+            &format!("undid cascade · {} forecast(s) restored", n_reverted),
+        )
+        .await;
+    }
+
     Ok(Json(json!({
         "id": cascade_id,
         "status": "undone",

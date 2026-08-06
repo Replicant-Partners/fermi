@@ -1511,6 +1511,22 @@ pub async fn resolve_forecast_handler(
 
     let manager_effect = counterfactual_brier.map(|cb| brier_score - cb);
 
+    // Spec 31: the terminal event belongs in the history like any other —
+    // more so, since it's the one nobody can undo. The commit records the
+    // exact state the score was computed against, which is what an audit of
+    // a Brier actually needs.
+    crate::handlers::forecast_git::commit_for(
+        &state,
+        &forecast_id,
+        &principal,
+        &format!(
+            "resolved {} · Brier {:.3}",
+            if req.actual_outcome { "YES" } else { "NO" },
+            brier_score
+        ),
+    )
+    .await;
+
     Ok(Json(json!({
         "forecast_id": forecast_id,
         "actual_outcome": req.actual_outcome,
@@ -1853,6 +1869,9 @@ pub async fn void_forecast_handler(
         ));
     }
 
+    crate::handlers::forecast_git::commit_for(&state, &forecast_id, &principal, "voided forecast")
+        .await;
+
     Ok(Json(json!({
         "forecast_id": forecast_id,
         "status": "voided",
@@ -2064,6 +2083,40 @@ pub async fn update_probability_handler(
             &action,
         )
         .await;
+
+        // Spec 31: recompose rewrote the DISPLAYED probability of every
+        // sibling in this forecast's mutex groups, not just this one. Those
+        // siblings belong to other people and their numbers just moved
+        // without them touching anything — the same silent-change problem as
+        // a cascade, on the hot path rather than an occasional one.
+        //
+        // Committing them keeps each sibling's own history honest about why
+        // its number changed. Scoped to actual group members, so a forecast
+        // in no group costs one cheap query and no commits.
+        let siblings: Vec<String> = sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT s.id
+               FROM fermi_forecasts f
+               JOIN fermi_forecasts s
+                 ON s.relationship_groups && f.relationship_groups
+              WHERE f.id = $1
+                AND s.id <> $1
+                AND array_length(f.relationship_groups, 1) > 0",
+        )
+        .bind(&forecast_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+        if !siblings.is_empty() {
+            let short: String = forecast_id.chars().take(8).collect();
+            crate::handlers::forecast_git::commit_cascade(
+                &state,
+                &siblings,
+                Some(&principal),
+                &format!("recomposed after {} moved", short),
+            )
+            .await;
+        }
     }
 
     Ok(Json(json!({
