@@ -40,6 +40,22 @@
 //! detector documents its own scale. The bucketing into
 //! `critical/high/normal/low` happens here so clients don't hardcode
 //! thresholds we may retune.
+//!
+//! The bands are disjoint by design, and their ORDER is the product
+//! judgement — damage outranks disagreement outranks maintenance:
+//!
+//! | band   | detector                                  |
+//! |--------|-------------------------------------------|
+//! | 80–100 | `cascade_review` — coherence is broken now |
+//! | 45–90  | `resolution_due` — overdue climbs, upcoming sits low |
+//! | 50–79  | `contested`, `contested_assumption` — disagreement |
+//! | 20–44  | `unreviewed` — background maintenance      |
+//!
+//! `contested` and `contested_assumption` deliberately share a band: one
+//! infers disagreement from opposing revisions, the other reads it stated
+//! outright, and neither is more urgent than the other in the abstract.
+//! `tests::urgency_bands_are_contiguous_and_ordered` and its neighbours
+//! pin this, because a well-meaning tweak could silently invert it.
 
 use std::collections::{HashMap, HashSet};
 
@@ -166,6 +182,7 @@ pub async fn team_ops_handler(
         ops.extend(detect_contested(pool, &forecast_ids).await);
         ops.extend(detect_resolution_due(pool, &forecast_ids).await);
         ops.extend(detect_unreviewed(pool, &forecast_ids).await);
+        ops.extend(detect_contested_assumption(pool, &forecast_ids).await);
     }
 
     // Rank across kinds. Ties break on the older condition first: work
@@ -702,6 +719,126 @@ async fn detect_unreviewed(pool: &PgPool, forecast_ids: &[String]) -> Vec<Op> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// Detector 5 — contested_assumption
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Someone has written down an objection to a specific driver and nobody
+/// has answered it.
+///
+/// This is the Spec 32 payoff, and it is the detector the other four were
+/// working towards. `contested` (detector 2) *infers* disagreement from
+/// probabilities moving in opposite directions — real, but it can only ever
+/// tell you two people disagree, never about what. A challenge is the same
+/// disagreement made explicit and anchored to the input it is about, which
+/// is the difference between "reconcile this forecast" and "settle whether
+/// the base rate for `elo_current` is right".
+///
+/// Only `kind = 'challenge'` counts. A `note` explicitly implies no action,
+/// and a `question` is answered by talking rather than by deciding — neither
+/// is work the team needs ranked against a broken cascade.
+///
+/// Orphaned annotations fall out for free: the sweep moves them off `open`,
+/// so a challenge against a driver that no longer exists stops generating
+/// an op. That is exactly why the sweep exists — a board item you cannot
+/// act on because its subject is gone would be worse than no board item.
+///
+/// **Urgency 50–79**, the same band as `contested`, for the same reason:
+/// disagreement is information, and information ranks below the damage a
+/// broken cascade represents (floor 80). Within the band it climbs with
+/// age, because the failure mode here is not disagreement — it's an
+/// objection that nobody ever answered.
+async fn detect_contested_assumption(pool: &PgPool, forecast_ids: &[String]) -> Vec<Op> {
+    let rows = match sqlx::query(
+        "SELECT a.forecast_id,
+                ff.question_text,
+                COUNT(*)                                  AS n_open,
+                MIN(a.created_at)                         AS since,
+                ARRAY_AGG(DISTINCT a.driver_name)
+                    FILTER (WHERE a.driver_name IS NOT NULL) AS drivers,
+                ARRAY_AGG(DISTINCT a.author_id)           AS authors
+           FROM public.driver_annotations a
+           JOIN public.fermi_forecasts ff ON ff.id = a.forecast_id
+          WHERE a.forecast_id = ANY($1)
+            AND a.status = 'open'
+            AND a.kind = 'challenge'
+            AND ff.status = 'active'
+          GROUP BY a.forecast_id, ff.question_text",
+    )
+    .bind(forecast_ids)
+    .fetch_all(pool)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("ops: contested_assumption detector failed: {}", e);
+            return Vec::new();
+        }
+    };
+
+    rows.into_iter()
+        .map(|r| {
+            let fid: String = r.get("forecast_id");
+            let question: String = r.try_get("question_text").unwrap_or_default();
+            let n_open: i64 = r.try_get("n_open").unwrap_or(0);
+            let since: Option<chrono::DateTime<chrono::Utc>> = r.try_get("since").ok().flatten();
+            let drivers: Vec<String> = r
+                .try_get::<Option<Vec<String>>, _>("drivers")
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            let authors: Vec<String> = r
+                .try_get::<Option<Vec<String>>, _>("authors")
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+
+            let age = days_since(since);
+
+            // Name the disputed inputs, not just the count — "the base rate
+            // for elo_current is disputed" is actionable in a way that
+            // "1 open challenge" is not.
+            let subject = match drivers.len() {
+                0 => String::new(),
+                1 => format!(" — {}", drivers[0]),
+                2 => format!(" — {}, {}", drivers[0], drivers[1]),
+                n => format!(" — {}, {} +{} more", drivers[0], drivers[1], n - 2),
+            };
+
+            Op {
+                id: format!("contested_assumption:{}", fid),
+                kind: "contested_assumption",
+                // 2 per day unanswered, 5 per extra challenge. A single
+                // objection left for a fortnight reaches the top of the
+                // band on age alone, which is the point.
+                urgency: banded(50, (age * 2) as i32 + (n_open as i32 - 1) * 5, 79),
+                objective: format!(
+                    "Answer {} open challenge{} on ‹{}›{}",
+                    n_open,
+                    if n_open == 1 { "" } else { "s" },
+                    truncate_q(&question, 44),
+                    subject
+                ),
+                // Named for the mechanism, and note that BOTH outcomes
+                // close it. "Declined" is a real answer; the board must not
+                // read as pressure to agree.
+                done_when: "each open challenge is accepted or declined",
+                since,
+                primary: Some(("forecast", fid.clone(), Some(question))),
+                forecast_ids: vec![fid],
+                portfolio_ids: Vec::new(),
+                participants: authors.into_iter().map(|a| (a, "challenger")).collect(),
+                metrics: json!({
+                    "open_challenges": n_open,
+                    "drivers":         drivers.len(),
+                    "age_days":        age,
+                }),
+                detail: json!({ "driver_names": drivers }),
+            }
+        })
+        .collect()
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Tests — the pure parts
 // ═══════════════════════════════════════════════════════════════════════
 //
@@ -787,6 +924,40 @@ mod tests {
         assert!(overdue_ceiling >= banded(80, 0, 100));
         assert_eq!(urgency_label(banded(45, 14, 64)), "normal");
         assert_eq!(urgency_label(banded(45, 0, 64)), "normal");
+    }
+
+    /// A stated objection and an inferred one share a band on purpose, so
+    /// neither systematically buries the other. Nothing in the design says
+    /// "someone wrote it down" is more urgent than "the numbers diverged",
+    /// or the reverse — they are the same class of work and should
+    /// interleave by age and size, which only holds if the bands match.
+    #[test]
+    fn stated_and_inferred_disagreement_share_a_band() {
+        let inferred = (banded(50, 0, 79), banded(50, i32::MAX / 2, 79));
+        let stated = (banded(50, 0, 79), banded(50, i32::MAX / 2, 79));
+        assert_eq!(inferred, stated);
+        // And the shared band still respects the two rules either side of
+        // it: below broken coherence, above background maintenance.
+        assert!(stated.1 < banded(80, 0, 100), "must stay below cascades");
+        assert!(
+            stated.0 > banded(20, i32::MAX / 2, 44),
+            "must outrank maintenance"
+        );
+    }
+
+    /// The failure mode `contested_assumption` exists to catch is not
+    /// disagreement — it is an objection nobody ever answered. So age alone
+    /// must be able to carry it to the top of its band, without needing a
+    /// pile-on of extra challenges to get attention.
+    #[test]
+    fn a_single_unanswered_challenge_escalates_on_age_alone() {
+        let one_challenge = |age: i64| banded(50, (age * 2) as i32, 79);
+        assert_eq!(one_challenge(0), 50, "fresh: bottom of the band");
+        assert_eq!(urgency_label(one_challenge(0)), "normal");
+        assert_eq!(one_challenge(7), 64, "a week: still normal");
+        assert_eq!(urgency_label(one_challenge(8)), "high", "over a week: high");
+        assert_eq!(one_challenge(15), 79, "a fortnight: band ceiling");
+        assert_eq!(one_challenge(400), 79, "and it stops there");
     }
 
     #[test]

@@ -9,6 +9,9 @@ pub mod admin_rbac;
 pub mod agent_funding;
 pub mod agent_wallet;
 pub mod agents;
+/// Driver annotations — objections anchored to a specific assumption.
+/// See docs/specs/SPEC_32_DRIVER_ANNOTATIONS.md.
+pub mod annotations;
 pub mod apps;
 pub mod auth;
 pub mod bayesops;

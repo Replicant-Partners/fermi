@@ -413,7 +413,123 @@ async fn materialise(pool: &PgPool, forecast_id: &str) -> Result<Vec<(String, St
     ])
 }
 
-// ═══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
+// Reconciliation sweep
+// ══════════════════════════════════════════════════════════════════
+
+/// Catch state changes that bypassed the commit hook.
+///
+/// ## Why a sweep instead of more hooks
+///
+/// Two writers still mutate forecasts without committing — the Polymarket
+/// auto-resolution sweeper and `refit_workspace` — and both are background
+/// tasks holding only a `PgPool`. Threading the git manager into them means
+/// changing `spawn_resolution_sweeper`, `sweep_resolutions_once`,
+/// `apply_settlement`, and `refit_workspace`'s whole recursive chain plus
+/// its three call sites.
+///
+/// That work would fix today's two gaps and do nothing about tomorrow's.
+/// The failure mode here is structural: history depends on every writer
+/// remembering, and writers don't. This codebase already learned that once
+/// — nine writers touch `predicted_probability` and none of them filtered
+/// on status, which is how every resolved forecast got its scoring tuple
+/// corrupted (mig-174).
+///
+/// So: detect the drift and fix it, rather than requiring universal
+/// discipline. Same reasoning as deriving activity feeds instead of
+/// dual-writing an event log.
+///
+/// ## Why it is cheap
+///
+/// `commit_files_as` no-ops on an unchanged tree. A forecast whose hook
+/// already fired costs one materialise and one tree hash, no commit. So the
+/// sweep is idempotent with the hooks rather than competing with them, and
+/// the steady-state cost is proportional to *recent activity*, not corpus
+/// size.
+///
+/// ## Honest attribution
+///
+/// Reconciled commits are authored by the system, because that is the
+/// truth: a market settled, or a refit propagated. Nobody decided it. The
+/// message says so explicitly rather than letting a reader infer a human
+/// was involved.
+///
+/// Scoped to forecasts that already have a workspace — the sweep must not
+/// bulk-provision repos for the whole corpus. Interactive paths provision
+/// lazily; this only keeps existing histories honest.
+pub fn spawn_history_reconciler(db: PgPool, git: std::sync::Arc<WorkspaceGitManager>) {
+    let interval_secs: u64 = std::env::var("FERMI_HISTORY_RECONCILE_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300);
+
+    if interval_secs == 0 {
+        println!("[history-reconcile] disabled (FERMI_HISTORY_RECONCILE_SECS=0)");
+        return;
+    }
+    println!("[history-reconcile] sweep every {interval_secs}s");
+
+    tokio::spawn(async move {
+        // Let the server finish coming up before adding disk work.
+        tokio::time::sleep(std::time::Duration::from_secs(90)).await;
+        loop {
+            let n = reconcile_once(&db, &git, interval_secs * 3).await;
+            if n > 0 {
+                println!("[history-reconcile] committed {n} forecast(s) changed outside the hook");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
+        }
+    });
+}
+
+/// One reconciliation pass. Returns the number of forecasts that actually
+/// needed a commit.
+///
+/// The window is deliberately wider than the sweep interval (3×) so a slow
+/// pass or a restart can't step over a change: overlapping windows are free
+/// because unchanged trees no-op.
+async fn reconcile_once(pool: &PgPool, git: &WorkspaceGitManager, window_secs: u64) -> usize {
+    let rows = match sqlx::query(
+        "SELECT f.id
+           FROM fermi_forecasts f
+           JOIN teams t ON t.id = f.workspace_id
+          WHERE f.updated_at > NOW() - ($1 || ' seconds')::interval
+          ORDER BY f.updated_at DESC
+          LIMIT 200",
+    )
+    .bind(window_secs.to_string())
+    .fetch_all(pool)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "[history-reconcile] query failed");
+            return 0;
+        }
+    };
+
+    let mut committed = 0usize;
+    for r in &rows {
+        let Ok(id) = r.try_get::<String, _>("id") else {
+            continue;
+        };
+        if commit_forecast_state(
+            pool,
+            git,
+            &id,
+            None,
+            "state reconciled — changed outside the history hook",
+        )
+        .await
+        .is_some()
+        {
+            committed += 1;
+        }
+    }
+    committed
+}
+
+// ══════════════════════════════════════════════════════════════════
 // GET /api/forecasts/:id/history
 // ═══════════════════════════════════════════════════════════════════════
 

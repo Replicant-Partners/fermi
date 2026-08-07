@@ -1420,6 +1420,150 @@ pub struct RevertRequest {
     pub reason: Option<String>,
 }
 
+// ── Driver annotations (Spec 32) ──────────────────────────────────────
+
+/// An objection, question or note anchored to one driver of a forecast.
+///
+/// Anchored at `(forecast, driver)` rather than the forecast because
+/// disagreement here is almost never about the question — it's about one
+/// input. That's what lets the composer render a challenge next to the
+/// number it disputes, and lets it survive a revision of some other driver.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Annotation {
+    pub id: String,
+    /// `None` = about the forecast as a whole, not any single input.
+    #[serde(default)]
+    pub driver_name: Option<String>,
+    #[serde(default)]
+    pub author_id: String,
+    #[serde(default)]
+    pub author_display_name: Option<String>,
+    #[serde(default)]
+    pub body: String,
+    /// `challenge` (this input is wrong) | `question` | `note`.
+    #[serde(default)]
+    pub kind: String,
+    /// `open` | `accepted` | `declined` | `orphaned`.
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub resolved_by: Option<String>,
+    #[serde(default)]
+    pub resolved_by_display_name: Option<String>,
+    #[serde(default)]
+    pub resolved_at: Option<String>,
+    #[serde(default)]
+    pub resolution_note: Option<String>,
+    /// The Spec 31 revision this was written against, so the UI can say
+    /// "raised when this read 1780" after the value has moved.
+    #[serde(default)]
+    pub at_commit: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+}
+
+impl Annotation {
+    pub fn is_open(&self) -> bool {
+        self.status == "open"
+    }
+
+    /// The driver it disputes, or the sentinel the server uses in
+    /// `open_by_driver` for forecast-level annotations. Keeping the sentinel
+    /// in one place stops the badge lookup and the grouping disagreeing.
+    pub fn driver_key(&self) -> &str {
+        self.driver_name.as_deref().unwrap_or(FORECAST_LEVEL_KEY)
+    }
+
+    pub fn author_label(&self) -> &str {
+        self.author_display_name
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&self.author_id)
+    }
+
+    /// Glyph + label for the kind. `challenge` is the load-bearing one and
+    /// is the only one that becomes coordination work on the ops board.
+    pub fn kind_glyph(&self) -> &'static str {
+        match self.kind.as_str() {
+            "question" => "?",
+            "note" => "·",
+            _ => "!",
+        }
+    }
+}
+
+/// Key the server uses in `open_by_driver` for annotations with no driver.
+pub const FORECAST_LEVEL_KEY: &str = "__forecast__";
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AnnotationsResponse {
+    #[serde(default)]
+    pub forecast_id: String,
+    #[serde(default)]
+    pub annotations: Vec<Annotation>,
+    #[serde(default)]
+    pub count: usize,
+    /// Open count per driver name, computed server-side so the composer's
+    /// "contested" badge can't drift from the ops-board detector.
+    /// Forecast-level annotations are keyed by [`FORECAST_LEVEL_KEY`].
+    #[serde(default)]
+    pub open_by_driver: std::collections::HashMap<String, usize>,
+    /// The asking user's id, echoed by the server. Delete is author-only,
+    /// and this is how the client knows which rows are its own instead of
+    /// offering Delete everywhere and letting the server refuse.
+    #[serde(default)]
+    pub me: Option<String>,
+}
+
+impl AnnotationsResponse {
+    pub fn open_on(&self, driver: &str) -> usize {
+        self.open_by_driver.get(driver).copied().unwrap_or(0)
+    }
+
+    /// Every annotation for one driver, open first (server order preserved).
+    pub fn for_driver(&self, driver: &str) -> Vec<&Annotation> {
+        self.annotations
+            .iter()
+            .filter(|a| a.driver_key() == driver)
+            .collect()
+    }
+
+    /// Did the asking user write this? False when the server didn't say —
+    /// failing closed, since the alternative is showing a Delete button
+    /// that 403s.
+    pub fn is_mine(&self, a: &Annotation) -> bool {
+        self.me
+            .as_deref()
+            .is_some_and(|me| !me.is_empty() && me == a.author_id)
+    }
+
+    /// Annotations not attached to any driver — "the whole framing is
+    /// wrong", which is a real thing to say and would be misfiled if
+    /// forced onto an arbitrary driver.
+    pub fn forecast_level(&self) -> Vec<&Annotation> {
+        self.for_driver(FORECAST_LEVEL_KEY)
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateAnnotationRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub driver_name: Option<String>,
+    pub body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ResolveAnnotationRequest {
+    /// `accepted` — acted on, the driver changed.
+    /// `declined` — considered and rejected. Both are answers; the record
+    /// keeps the difference.
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
 // ── Ops board: detected coordination work (Spec 27) ───────────────────
 
 /// One unit of coordinated work a team should pick up.
@@ -3098,6 +3242,66 @@ impl ApiClient {
     ) -> Result<JsonValue, ApiError> {
         self.post(&format!("/api/forecasts/{}/revert", forecast_id), body)
             .await
+    }
+
+    /// Every annotation on a forecast, plus per-driver open counts.
+    ///
+    /// View-gated, matching history: if you can read the forecast you can
+    /// read what people have said about it. An objection visible only to
+    /// editors would leave readers trusting a number the team is disputing.
+    pub async fn forecast_annotations(
+        &self,
+        forecast_id: &str,
+    ) -> Result<AnnotationsResponse, ApiError> {
+        self.get(&format!("/api/forecasts/{}/annotations", forecast_id))
+            .await
+    }
+
+    /// Raise an objection against a driver.
+    ///
+    /// Only **view** access is required, deliberately: a view grant exists
+    /// so people can read and react, and annotating mutates no forecast
+    /// state. It is the cheapest reversible act in the product.
+    pub async fn create_annotation(
+        &self,
+        forecast_id: &str,
+        body: &CreateAnnotationRequest,
+    ) -> Result<JsonValue, ApiError> {
+        self.post(&format!("/api/forecasts/{}/annotations", forecast_id), body)
+            .await
+    }
+
+    /// Answer an annotation — `accepted` or `declined`. Requires **edit**,
+    /// because closing someone else's objection is a claim about what the
+    /// forecast now says.
+    pub async fn resolve_annotation(
+        &self,
+        forecast_id: &str,
+        annotation_id: &str,
+        body: &ResolveAnnotationRequest,
+    ) -> Result<JsonValue, ApiError> {
+        self.post(
+            &format!(
+                "/api/forecasts/{}/annotations/{}/resolve",
+                forecast_id, annotation_id
+            ),
+            body,
+        )
+        .await
+    }
+
+    /// Hard-delete an annotation. **Author only** — for genuine mistakes.
+    /// Anyone else's route out is `declined`, which stays on the record.
+    pub async fn delete_annotation(
+        &self,
+        forecast_id: &str,
+        annotation_id: &str,
+    ) -> Result<(), ApiError> {
+        self.delete(&format!(
+            "/api/forecasts/{}/annotations/{}",
+            forecast_id, annotation_id
+        ))
+        .await
     }
 
     /// The team's detected ops board (Spec 27).

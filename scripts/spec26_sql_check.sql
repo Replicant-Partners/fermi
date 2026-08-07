@@ -149,3 +149,9 @@ COMMIT;
 -- boot, so non-idempotent migrations break restarts).
 \echo '=== migration 176 (idempotency re-run) ==='
 \i migrations/176_collab_attribution.sql
+
+-- ─── mig 183: driver annotations (Spec 32) ───────────────────────────
+\echo '=== migration 183 ==='
+\i migrations/183_driver_annotations.sql
+\echo '=== migration 183 (idempotency re-run) ==='
+\i migrations/183_driver_annotations.sql

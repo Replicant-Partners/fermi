@@ -7305,20 +7305,24 @@ impl FermiConsole {
             let cockpit = cockpit.clone();
             cockpit.update(cx, |cockpit, cx| {
                 // Cycle order matches the tab bar's left→right reading
-                // flow: Trajectory → Wiki → Schedules → Access → History →
-                // Fpl → Edit → (back to Trajectory).
+                // flow: Trajectory → Provenance → Wiki → Schedules →
+                // Access → History → Assumptions → Fpl → Edit → (back to
+                // Trajectory).
                 //
                 // History sits next to Access deliberately: "who can see
                 // this" and "who changed it" are the same family of
                 // question, and Spec 31 makes them the same answer's two
-                // halves.
+                // halves. Spec 32's Assumptions follows History because a
+                // challenge is usually written about a change just read
+                // there.
                 cockpit.right_tab = match cockpit.right_tab {
                     crate::cockpit::RightTab::Trajectory => crate::cockpit::RightTab::Provenance,
                     crate::cockpit::RightTab::Provenance => crate::cockpit::RightTab::Wiki,
                     crate::cockpit::RightTab::Wiki => crate::cockpit::RightTab::Schedules,
                     crate::cockpit::RightTab::Schedules => crate::cockpit::RightTab::Access,
                     crate::cockpit::RightTab::Access => crate::cockpit::RightTab::History,
-                    crate::cockpit::RightTab::History => crate::cockpit::RightTab::Fpl,
+                    crate::cockpit::RightTab::History => crate::cockpit::RightTab::Assumptions,
+                    crate::cockpit::RightTab::Assumptions => crate::cockpit::RightTab::Fpl,
                     crate::cockpit::RightTab::Fpl => crate::cockpit::RightTab::Edit,
                     crate::cockpit::RightTab::Edit => crate::cockpit::RightTab::Trajectory,
                 };
@@ -7340,6 +7344,14 @@ impl FermiConsole {
                     && cockpit.history_loaded_for != cockpit.forecast_id
                 {
                     cockpit.load_forecast_history(cx);
+                }
+                // Ditto — and here the blank-tab confusion is worse: an
+                // unhydrated Assumptions pane reads as "nobody disputes
+                // anything", which is the opposite of not having asked.
+                if cockpit.right_tab == crate::cockpit::RightTab::Assumptions
+                    && cockpit.annotations_loaded_for != cockpit.forecast_id
+                {
+                    cockpit.load_annotations(cx);
                 }
             });
             cx.notify();

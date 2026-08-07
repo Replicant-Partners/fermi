@@ -888,6 +888,12 @@ async fn run_migrations(db: &PgPool) {
         // decision to the whole team. Backfills 'resolve' to owners and
         // admins only; the tightening on members is the point.
         "migrations/179_team_capabilities.sql",
+        // Spec 32 (v0.11.13): driver_annotations. Objections anchored to a
+        // specific driver — "your base rate is wrong" — rather than to the
+        // forecast, because that is what teams actually argue about. The
+        // CHECK enforces that any resolution records who and when, so
+        // "accepted" can never be unattributable.
+        "migrations/183_driver_annotations.sql",
     ];
 
     for file in &migration_files {
@@ -1877,6 +1883,17 @@ async fn main() {
     // handlers::polymarket::spawn_resolution_sweeper. Disable with
     // PM_RESOLUTION_SWEEP_SECS=0.
     handlers::polymarket::spawn_resolution_sweeper(state.db.clone());
+
+    // Spec 31: catch forecast state changes that bypassed the commit hook.
+    //
+    // Two writers still mutate forecasts without committing — the resolution
+    // sweeper above and refit_workspace — and both are background tasks
+    // holding only a pool. Rather than thread git through their call chains
+    // (which fixes today's two gaps and nothing about tomorrow's), detect
+    // the drift and fix it. commit_files_as no-ops on an unchanged tree, so
+    // this is idempotent with the hooks rather than competing with them.
+    // Disable with FERMI_HISTORY_RECONCILE_SECS=0.
+    handlers::forecast_git::spawn_history_reconciler(state.db.clone(), state.workspace_git.clone());
 
     // Spawn rate limiter cleanup task (every 5 min)
     let rl_clone = state.rate_limits.clone();
@@ -3277,6 +3294,35 @@ async fn main() {
         .route(
             "/api/forecasts/:forecast_id/revert",
             post(handlers::forecast_git::forecast_revert_handler),
+        )
+        // ── Spec 32: driver annotations ─────────────────────────────
+        //
+        // "Your base rate for elo_current is wrong, here's why" — anchored
+        // to the driver, because disagreement here is almost never about
+        // the question, it's about one input.
+        //
+        // Creating is VIEW-gated on purpose: a view grant exists so people
+        // can read and react, and "you may see this but not say it's wrong"
+        // would defeat the point of publishing. Annotating mutates no
+        // forecast state.
+        //
+        // Resolving is EDIT-gated — accepting a challenge is a claim about
+        // what the forecast now says. Delete is author-only, because
+        // letting an editor erase an objection raised against their own
+        // work is the one way this could hide disagreement instead of
+        // surfacing it; they get 'declined', which stays on the record.
+        .route(
+            "/api/forecasts/:forecast_id/annotations",
+            get(handlers::annotations::list_annotations_handler)
+                .post(handlers::annotations::create_annotation_handler),
+        )
+        .route(
+            "/api/forecasts/:forecast_id/annotations/:annotation_id/resolve",
+            post(handlers::annotations::resolve_annotation_handler),
+        )
+        .route(
+            "/api/forecasts/:forecast_id/annotations/:annotation_id",
+            delete(handlers::annotations::delete_annotation_handler),
         )
         // Spec 24 §3.3 / Sprint 2.3a: invite someone to a forecast.
         // The invitee discovers the invite via /api/me/invites and

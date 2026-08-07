@@ -40,10 +40,11 @@ use crate::activity_log::{LogEvent, LogSource, Remedy, Severity};
 // Lives in the lib target so it can be unit-tested — the bin target's
 // tests can't build (see src/lib.rs).
 use crate::api::client::{
-    AccessSummary, AgentExecutionResult, ApiClient, ApiError, CreateForecastRequest,
-    ForecastCommit, ForecastDiffResponse, ForecastHistoryResponse, ForecastSchedule, Invite,
-    InviteRequest, RevertRequest, RichShare, ShareEntry, ShareMember, ShareRequest, Team,
-    UpsertScheduleRequest,
+    AccessSummary, AgentExecutionResult, Annotation, AnnotationsResponse, ApiClient, ApiError,
+    CreateAnnotationRequest, CreateForecastRequest, ForecastCommit, ForecastDiffResponse,
+    ForecastHistoryResponse, ForecastSchedule, Invite, InviteRequest, ResolveAnnotationRequest,
+    RevertRequest, RichShare, ShareEntry, ShareMember, ShareRequest, Team, UpsertScheduleRequest,
+    FORECAST_LEVEL_KEY,
 };
 use crate::text_input::TextInput;
 use crate::theme;
@@ -162,6 +163,10 @@ pub enum RightTab {
     /// Access because they answer the two halves of the same question —
     /// who can touch this, and who already did.
     History,
+    /// Spec 32: what the team disputes, driver by driver. The third thing
+    /// teams coordinate on — trajectories (Trajectory), research
+    /// (Provenance), and assumptions (here).
+    Assumptions,
 }
 
 /// A live event from an SSE agent execution stream.
@@ -482,6 +487,9 @@ pub struct CockpitState {
     /// Team IDs currently being shared with (button disabled until
     /// the API call returns) so double-clicks don't create dupes.
     pub share_team_in_flight: HashSet<String>,
+    /// Share row ids with a permission change in flight, so the chip can
+    /// go quiet and a double-click can't post the grant twice.
+    pub share_permission_in_flight: HashSet<String>,
     /// Spec 26 §4.3 — the server's complete access picture for this
     /// forecast (`GET /api/forecasts/:id/access`). Kept separate from
     /// `shares` because it answers questions `object_shares` rows
@@ -527,6 +535,43 @@ pub struct CockpitState {
     /// reversible, so it warrants a speed bump, not an interrogation.
     pub revert_confirm_sha: Option<String>,
     pub revert_in_flight: bool,
+
+    // ── Driver annotations (Spec 32) ──────────────────────────────
+    /// Every annotation on this forecast plus the server's per-driver open
+    /// counts (`GET /api/forecasts/:id/annotations`). `None` until the
+    /// Assumptions tab is first opened.
+    ///
+    /// The open counts are taken from the server rather than derived here
+    /// on purpose: the ops board's `contested_assumption` detector counts
+    /// the same thing, and two implementations of "is this driver
+    /// contested" would eventually disagree — at which point the badge and
+    /// the board would be telling the team different stories.
+    pub annotations: Option<AnnotationsResponse>,
+    pub annotations_loading: bool,
+    /// Lazy-load latch and staleness check, as `history_loaded_for` is for
+    /// History.
+    pub annotations_loaded_for: Option<String>,
+    /// The server's failure text, verbatim — same reasoning as
+    /// `history_error`.
+    pub annotations_error: Option<String>,
+    /// Which driver's "raise a challenge" composer is open, keyed as the
+    /// server keys `open_by_driver` (so `FORECAST_LEVEL_KEY` for one about
+    /// the forecast as a whole). At most one at a time: an open box on
+    /// every driver would bury the drivers themselves.
+    pub annotation_draft_for: Option<String>,
+    pub annotation_input: Entity<TextInput>,
+    /// `challenge` | `question` | `note` — cycled by a chip, defaulting to
+    /// `challenge` because that is the one people come here to write.
+    pub annotation_kind: String,
+    /// Any annotation mutation in flight. One flag rather than a set: the
+    /// pane is small enough that a global "busy" is honest, and it stops
+    /// a double-click posting the same challenge twice.
+    pub annotation_busy: bool,
+    /// Id of the annotation whose resolve controls are expanded. Answering
+    /// is a two-step (choose accepted/declined) because the two outcomes
+    /// mean genuinely different things and a single button would have to
+    /// pick one silently.
+    pub annotation_resolving: Option<String>,
     /// Share targets collected in the commit sheet (target, permission),
     /// applied right after the forecast row is created/updated on publish.
     pub pending_publish_shares: Vec<(String, String)>,
@@ -1090,6 +1135,7 @@ impl CockpitState {
             shares_loading: false,
             share_input,
             share_permission: "view".into(),
+            share_permission_in_flight: HashSet::new(),
             share_add_loading: false,
             share_error: None,
             shares_loaded_for: None,
@@ -1106,6 +1152,17 @@ impl CockpitState {
             history_loading: false,
             history_loaded_for: None,
             history_error: None,
+            annotations: None,
+            annotations_loading: false,
+            annotations_loaded_for: None,
+            annotations_error: None,
+            annotation_draft_for: None,
+            annotation_input: cx.new(|cx| {
+                TextInput::new(cx).with_placeholder("Why is this wrong? What should it be?")
+            }),
+            annotation_kind: "challenge".to_string(),
+            annotation_busy: false,
+            annotation_resolving: None,
             selected_commit: None,
             commit_diff: None,
             diff_loading: false,
@@ -9460,6 +9517,184 @@ impl CockpitState {
         }
     }
 
+    // ── Driver annotations (Spec 32) ───────────────────────────────
+
+    /// Fetch every annotation on this forecast, plus per-driver open counts.
+    ///
+    /// Surfaces failures rather than logging them, for the same reason
+    /// `load_forecast_history` does: the annotations *are* the tab, so an
+    /// outage leaves nothing to degrade to, and an empty pane that means
+    /// "we couldn't ask" looks exactly like one that means "nobody
+    /// disputes this" — the most misleading possible confusion here.
+    pub fn load_annotations(&mut self, cx: &mut Context<Self>) {
+        let Some(fid) = self.forecast_id.clone() else {
+            return;
+        };
+        if self.annotations_loading {
+            return;
+        }
+        if self.annotations_loaded_for.as_deref() != Some(fid.as_str()) {
+            // A draft challenge belongs to the forecast it was written
+            // against; carrying it across would post it on the wrong one.
+            self.annotations = None;
+            self.annotation_draft_for = None;
+            self.annotation_resolving = None;
+        }
+        self.annotations_loading = true;
+        self.annotations_error = None;
+        self.annotations_loaded_for = Some(fid.clone());
+        cx.notify();
+
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.forecast_annotations(&fid).await;
+            this.update(cx, |state, cx| {
+                state.annotations_loading = false;
+                // The operator may have switched forecasts mid-flight.
+                if state.forecast_id.as_deref() != Some(fid.as_str()) {
+                    return;
+                }
+                match result {
+                    Ok(resp) => state.annotations = Some(resp),
+                    Err(e) => {
+                        state.annotations_error = Some(e.to_string());
+                        // Drop the latch so Retry refetches instead of
+                        // being swallowed by the tab bar's lazy-load guard.
+                        state.annotations_loaded_for = None;
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Post the open draft as an annotation against `driver`.
+    ///
+    /// `driver` is `None` for one about the forecast as a whole. Only view
+    /// access is needed — see `ApiClient::create_annotation`.
+    pub fn submit_annotation(&mut self, driver: Option<String>, cx: &mut Context<Self>) {
+        let Some(fid) = self.forecast_id.clone() else {
+            return;
+        };
+        let body = self.annotation_input.read(cx).text().trim().to_string();
+        if body.is_empty() || self.annotation_busy {
+            return;
+        }
+        let req = CreateAnnotationRequest {
+            driver_name: driver,
+            body,
+            kind: Some(self.annotation_kind.clone()),
+        };
+        self.annotation_busy = true;
+        self.annotations_error = None;
+        cx.notify();
+
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.create_annotation(&fid, &req).await;
+            this.update(cx, |state, cx| {
+                state.annotation_busy = false;
+                match result {
+                    Ok(_) => {
+                        state
+                            .annotation_input
+                            .update(cx, |i, cx| i.set_text("", cx));
+                        state.annotation_draft_for = None;
+                        // Refetch rather than splice the new row in: the
+                        // server owns `open_by_driver`, and a locally
+                        // incremented badge would be the first step towards
+                        // the client and the ops board disagreeing.
+                        state.annotations_loaded_for = None;
+                        state.load_annotations(cx);
+                    }
+                    Err(e) => state.annotations_error = Some(e.to_string()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Answer an annotation — `accepted` (acted on) or `declined`
+    /// (considered, rejected). Edit-gated server-side.
+    pub fn resolve_annotation(&mut self, id: String, status: &str, cx: &mut Context<Self>) {
+        let Some(fid) = self.forecast_id.clone() else {
+            return;
+        };
+        if self.annotation_busy {
+            return;
+        }
+        let req = ResolveAnnotationRequest {
+            status: status.to_string(),
+            note: None,
+        };
+        self.annotation_busy = true;
+        self.annotations_error = None;
+        cx.notify();
+
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.resolve_annotation(&fid, &id, &req).await;
+            this.update(cx, |state, cx| {
+                state.annotation_busy = false;
+                match result {
+                    Ok(_) => {
+                        state.annotation_resolving = None;
+                        state.annotations_loaded_for = None;
+                        state.load_annotations(cx);
+                    }
+                    Err(e) => state.annotations_error = Some(e.to_string()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Hard-delete your own annotation. Author-only server-side; the UI
+    /// only offers it on rows the operator wrote.
+    pub fn delete_annotation(&mut self, id: String, cx: &mut Context<Self>) {
+        let Some(fid) = self.forecast_id.clone() else {
+            return;
+        };
+        if self.annotation_busy {
+            return;
+        }
+        self.annotation_busy = true;
+        self.annotations_error = None;
+        cx.notify();
+
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            let result = api.delete_annotation(&fid, &id).await;
+            this.update(cx, |state, cx| {
+                state.annotation_busy = false;
+                match result {
+                    Ok(()) => {
+                        state.annotations_loaded_for = None;
+                        state.load_annotations(cx);
+                    }
+                    Err(e) => state.annotations_error = Some(e.to_string()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Open challenges on `driver`, straight from the server's count.
+    pub fn open_challenges_on(&self, driver: &str) -> usize {
+        self.annotations
+            .as_ref()
+            .map(|a| a.open_on(driver))
+            .unwrap_or(0)
+    }
+
     // ── Version history (Spec 31) ──────────────────────────────────
 
     /// Fetch the commit log into `forecast_history`.
@@ -9724,6 +9959,60 @@ impl CockpitState {
                     Err(e) => {
                         log::warn!("[access] load_share_teams failed: {}", e);
                     }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Change an existing share's permission in place.
+    ///
+    /// There is no PATCH endpoint and none is needed: `POST .../shares` is
+    /// an idempotent upsert (`ON CONFLICT DO UPDATE`), so re-granting the
+    /// same target at a different level *is* the edit. Before this, the
+    /// only way to promote a viewer was revoke-then-re-add — two
+    /// destructive steps to perform one non-destructive change, with a
+    /// window in between where the colleague had lost access entirely.
+    ///
+    /// `share_id` is only used as the in-flight key; the grant itself is
+    /// addressed by (type, target), which is what the upsert keys on.
+    pub fn set_share_permission(
+        &mut self,
+        share_id: String,
+        share_type: String,
+        share_target: String,
+        permission: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(fid) = self.forecast_id.clone() else {
+            return;
+        };
+        if !self.share_permission_in_flight.insert(share_id.clone()) {
+            return;
+        }
+        self.share_error = None;
+        cx.notify();
+
+        let api = self.api.clone();
+        let body = ShareRequest {
+            share_type,
+            share_target,
+            permission: Some(permission.to_string()),
+        };
+        cx.spawn(async move |this, cx| {
+            let result = api.add_forecast_share(&fid, &body).await;
+            this.update(cx, |state, cx| {
+                state.share_permission_in_flight.remove(&share_id);
+                match result {
+                    // Refetch rather than mutate the row locally: the
+                    // access summary's inherited grants and effective
+                    // viewer list both move with it, and a chip that says
+                    // "edit" above a viewer list that disagrees is worse
+                    // than a moment's latency.
+                    Ok(_) => state.load_shares(cx),
+                    Err(e) => state.share_error = Some(e.to_string()),
                 }
                 cx.notify();
             })
@@ -10820,6 +11109,9 @@ impl Render for CockpitState {
                                 }
                                 RightTab::History => {
                                     render_history_tab(self, cx).into_any_element()
+                                }
+                                RightTab::Assumptions => {
+                                    render_assumptions_tab(self, cx).into_any_element()
                                 }
                             }),
                     )
@@ -18385,6 +18677,11 @@ fn render_tab_bar(active: RightTab, cx: &mut Context<CockpitState>) -> impl Into
         // Spec 31: History follows Access for the same reason Provenance
         // follows Trajectory — "who may change this" then "who did".
         (RightTab::History, "History"),
+        // Spec 32: Assumptions completes the trio the operator named —
+        // trajectories, research, assumptions — and sits after History
+        // because a challenge is usually written about a change you just
+        // read there.
+        (RightTab::Assumptions, "Assumptions"),
         (RightTab::Fpl, "FPL"),
         (RightTab::Edit, "Edit"),
     ];
@@ -18445,6 +18742,19 @@ fn render_tab_bar(active: RightTab, cx: &mut Context<CockpitState>) -> impl Into
                         // Lazy-load shares once per forecast_id.
                         if this.shares_loaded_for != this.forecast_id {
                             this.load_shares(cx);
+                        }
+                    }
+                    if t == RightTab::Assumptions {
+                        if this.annotations_loaded_for != this.forecast_id {
+                            this.load_annotations(cx);
+                        }
+                        // Resolving is edit-gated. Same reasoning as the
+                        // Revert button: without the access summary the
+                        // controls would render enabled and 403 at the
+                        // server. Raising one is only view-gated, so the
+                        // composer stays available regardless.
+                        if this.access_summary.is_none() {
+                            this.load_access_summary(cx);
                         }
                     }
                     if t == RightTab::History {
@@ -18609,6 +18919,16 @@ fn render_access_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> im
                     .child("Private — not shared with anyone yet."),
             )
         })
+        // A clickable chip with no label is an invisible affordance. One
+        // line of caption is cheaper than the operator never finding it.
+        .when(state.shares.iter().any(|s| s.permission == "view"), |el| {
+            el.child(
+                div()
+                    .text_size(px(9.0))
+                    .text_color(rgb(theme::FG_FAINT))
+                    .child("Click a 'view' chip to grant edit access."),
+            )
+        })
         // Share rows
         .children(state.shares.iter().map(|s| {
             let sid = s.id.clone();
@@ -18654,16 +18974,54 @@ fn render_access_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> im
                             )
                         }),
                 )
-                .child(
-                    div()
+                // One click promotes a viewer to an editor.
+                //
+                // Publishing to view-only readers is a first-class case —
+                // which is why `view` exists at all — but the common
+                // sequence is "share to show someone, then bring them in".
+                // Before this the only route was revoke-then-re-add: two
+                // destructive steps to make one additive change. Demotion
+                // is deliberately NOT offered here; taking access away is
+                // not a thing to do by mis-click, and revoke is right
+                // there.
+                .child({
+                    let can_promote = s.permission == "view";
+                    let busy = state.share_permission_in_flight.contains(&sid);
+                    let chip = div()
                         .px(px(8.0))
                         .py(px(2.0))
                         .rounded(px(4.0))
                         .bg(rgb(theme::BG_ACTIVE))
                         .text_size(px(10.0))
-                        .text_color(rgb(theme::GOLD))
-                        .child(s.permission.clone()),
-                )
+                        .text_color(rgb(if busy { theme::FG_DIM } else { theme::GOLD }))
+                        .child(if busy {
+                            "granting…".to_string()
+                        } else {
+                            s.permission.clone()
+                        });
+                    if can_promote && !busy {
+                        chip.id(ElementId::Name(format!("promote-{}", sid).into()))
+                            .cursor_pointer()
+                            .hover(|st| st.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::CYAN)))
+                            .on_click(cx.listener({
+                                let sid = sid.clone();
+                                let stype = s.share_type.clone();
+                                let target = s.share_target.clone();
+                                move |this, _, _w, cx| {
+                                    this.set_share_permission(
+                                        sid.clone(),
+                                        stype.clone(),
+                                        target.clone(),
+                                        "edit",
+                                        cx,
+                                    );
+                                }
+                            }))
+                            .into_any_element()
+                    } else {
+                        chip.into_any_element()
+                    }
+                })
                 .child(
                     div()
                         .id(ElementId::Name(format!("revoke-{}", sid).into()))
@@ -19325,6 +19683,609 @@ fn render_effective_viewers_section(state: &CockpitState) -> impl IntoElement {
                         .child(via),
                 )
         }))
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Spec 32 — Assumptions tab: what the team disputes, driver by driver
+//
+// The operator's model is that teams coordinate on trajectories, research
+// and *assumptions*. The first two have had tabs since Spec 26. This is
+// the third, and the reason it is a list of DRIVERS rather than a comment
+// thread is that disagreement in this product is almost never about the
+// question — it is about one input. Rendering every declared driver, even
+// the uncontested ones, is deliberate: the pane doubles as the answer to
+// "what is this forecast actually assuming", and a challenge is written
+// against a specific line the operator can see.
+//
+// Note the composer is view-gated, not edit-gated. A view grant exists so
+// people can read and *react*; "you may see this but not say it's wrong"
+// would defeat the point of publishing a forecast at all.
+// ═══════════════════════════════════════════════════════════════════
+
+/// Colour for an annotation's status chip.
+fn annotation_status_color(status: &str) -> u32 {
+    match status {
+        "open" => theme::GOLD,
+        "accepted" => theme::GREEN,
+        // Declined is not a failure — it means someone considered the
+        // objection and rejected it, which is a real answer. Dimmed, not
+        // red.
+        "declined" => theme::FG_DIM,
+        _ => theme::FG_FAINT,
+    }
+}
+
+/// Spec 32 — the cockpit "Assumptions" tab.
+fn render_assumptions_tab(
+    state: &CockpitState,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let container = div()
+        .id("assumptions-tab")
+        .flex()
+        .flex_col()
+        .gap(px(10.0))
+        .p(px(16.0));
+
+    // Annotations hang off the server-side forecast row, so a draft has
+    // nothing to hang them on.
+    if state.forecast_id.is_none() {
+        return container.child(
+            div()
+                .p(px(8.0))
+                .text_size(px(11.0))
+                .text_color(rgb(theme::FG_DIM))
+                .child(
+                    "Publish this forecast first (Ctrl+P). Assumptions can be challenged \
+                     once there's something for the challenge to point at.",
+                ),
+        );
+    }
+
+    let fatal = state.annotations.is_none();
+    let body = if state.annotations_error.is_some() && fatal {
+        render_assumptions_error(state, cx).into_any_element()
+    } else if state.annotations.is_none() {
+        div()
+            .p(px(8.0))
+            .text_size(px(11.0))
+            .text_color(rgb(theme::FG_FAINT))
+            .child(if state.annotations_loading {
+                "Loading…"
+            } else {
+                "Open this tab again to load."
+            })
+            .into_any_element()
+    } else {
+        render_assumptions_body(state, cx).into_any_element()
+    };
+
+    let open_total: usize = state
+        .annotations
+        .as_ref()
+        .map(|a| a.open_by_driver.values().sum())
+        .unwrap_or(0);
+
+    container
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .text_size(px(13.0))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(rgb(theme::CYAN))
+                        .child("⚖ Assumptions"),
+                )
+                .when(open_total > 0, |el| {
+                    el.child(
+                        div()
+                            .px(px(6.0))
+                            .py(px(1.0))
+                            .rounded(px(3.0))
+                            .bg(rgb(theme::BG_ELEVATED))
+                            .text_size(px(9.0))
+                            .text_color(rgb(theme::GOLD))
+                            .child(format!(
+                                "{} open challenge{}",
+                                open_total,
+                                if open_total == 1 { "" } else { "s" }
+                            )),
+                    )
+                }),
+        )
+        .child(
+            div()
+                .text_size(px(10.0))
+                .text_color(rgb(theme::FG_DIM))
+                .child(
+                    "Challenge a specific input rather than the question. Anyone who can \
+                     read this forecast can raise one; answering it takes edit access.",
+                ),
+        )
+        .when(state.annotations_error.is_some() && !fatal, |el| {
+            el.child(
+                div()
+                    .px(px(10.0))
+                    .py(px(6.0))
+                    .rounded(px(4.0))
+                    .bg(rgb(theme::BG_ELEVATED))
+                    .border_1()
+                    .border_color(rgb(theme::RED))
+                    .text_size(px(10.0))
+                    .text_color(rgb(theme::RED))
+                    .child(
+                        state
+                            .annotations_error
+                            .clone()
+                            .unwrap_or_else(|| "Failed.".to_string()),
+                    ),
+            )
+        })
+        .child(body)
+}
+
+/// Full-pane failure. Keeps the server's own words: the endpoint's 403 is
+/// written for the operator, and "something went wrong" would discard the
+/// only explanation available.
+fn render_assumptions_error(
+    state: &CockpitState,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let message = state
+        .annotations_error
+        .clone()
+        .unwrap_or_else(|| "Annotations unavailable.".to_string());
+
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(8.0))
+        .px(px(12.0))
+        .py(px(10.0))
+        .rounded(px(6.0))
+        .bg(rgb(theme::BG_ELEVATED))
+        .border_1()
+        .border_color(rgb(theme::RED))
+        .child(
+            div()
+                .text_size(px(11.0))
+                .text_color(rgb(theme::RED))
+                .child(message),
+        )
+        .child(
+            div()
+                .id("assumptions-retry")
+                .px(px(10.0))
+                .py(px(4.0))
+                .rounded(px(4.0))
+                .bg(rgb(theme::BG))
+                .text_size(px(10.0))
+                .text_color(rgb(theme::FG_DIM))
+                .cursor_pointer()
+                .hover(|s| s.text_color(rgb(theme::FG)))
+                .on_click(cx.listener(|this, _e, _w, cx| {
+                    this.annotations_loaded_for = None;
+                    this.load_annotations(cx);
+                }))
+                .child("Retry"),
+        )
+}
+
+fn render_assumptions_body(
+    state: &CockpitState,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    // Every DECLARED driver, in program order — not just the annotated
+    // ones. The uncontested drivers are the context that makes a
+    // contested one meaningful, and this is also the only place in the
+    // console that answers "what does this forecast assume?" as a list.
+    let drivers: Vec<String> = state
+        .program
+        .drivers()
+        .iter()
+        .map(|d| d.name.clone())
+        .collect();
+
+    let forecast_level = state
+        .annotations
+        .as_ref()
+        .map(|a| a.forecast_level().len())
+        .unwrap_or(0);
+
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .when(drivers.is_empty(), |el| {
+            el.child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(rgb(theme::FG_FAINT))
+                    .p(px(8.0))
+                    .child(
+                        "This program declares no drivers yet. You can still raise a \
+                         challenge against the forecast as a whole, below.",
+                    ),
+            )
+        })
+        .children(
+            drivers
+                .into_iter()
+                .map(|name| render_driver_annotations(state, name, cx).into_any_element()),
+        )
+        // The forecast-level row is always rendered, even at zero, because
+        // it is the only affordance for "the whole framing is wrong" —
+        // hiding it until it has content would make it undiscoverable.
+        .child(
+            div()
+                .mt(px(6.0))
+                .pt(px(6.0))
+                .border_t_1()
+                .border_color(rgb(theme::FG_FAINT))
+                .child(
+                    render_annotation_group(
+                        state,
+                        FORECAST_LEVEL_KEY.to_string(),
+                        "The forecast as a whole".to_string(),
+                        forecast_level,
+                        cx,
+                    )
+                    .into_any_element(),
+                ),
+        )
+}
+
+/// One declared driver and its thread.
+fn render_driver_annotations(
+    state: &CockpitState,
+    name: String,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let total = state
+        .annotations
+        .as_ref()
+        .map(|a| a.for_driver(&name).len())
+        .unwrap_or(0);
+    render_annotation_group(state, name.clone(), name, total, cx)
+}
+
+/// A labelled group: header row with the contested badge, its annotations,
+/// and the composer when it's open on this group.
+fn render_annotation_group(
+    state: &CockpitState,
+    key: String,
+    label: String,
+    total: usize,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let open = state.open_challenges_on(&key);
+    let is_drafting = state.annotation_draft_for.as_deref() == Some(key.as_str());
+    let rows: Vec<Annotation> = state
+        .annotations
+        .as_ref()
+        .map(|a| a.for_driver(&key).into_iter().cloned().collect())
+        .unwrap_or_default();
+    let key_for_toggle = key.clone();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(4.0))
+        .px(px(8.0))
+        .py(px(6.0))
+        .rounded(px(4.0))
+        // Contested drivers are tinted so the eye finds them while
+        // scanning the list, which is the whole reason the uncontested
+        // ones are rendered too.
+        .bg(rgb(if open > 0 {
+            theme::BG_ELEVATED
+        } else {
+            theme::BG
+        }))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .flex_1()
+                        .text_size(px(11.0))
+                        .font_weight(if open > 0 {
+                            FontWeight::BOLD
+                        } else {
+                            FontWeight::NORMAL
+                        })
+                        .text_color(rgb(if open > 0 { theme::GOLD } else { theme::FG }))
+                        .child(label),
+                )
+                .when(open > 0, |el| {
+                    el.child(
+                        div()
+                            .px(px(5.0))
+                            .py(px(1.0))
+                            .rounded(px(3.0))
+                            .bg(rgb(theme::BG))
+                            .text_size(px(9.0))
+                            .text_color(rgb(theme::GOLD))
+                            .child(format!("contested ×{}", open)),
+                    )
+                })
+                .when(total > open, |el| {
+                    el.child(
+                        div()
+                            .text_size(px(9.0))
+                            .text_color(rgb(theme::FG_FAINT))
+                            .child(format!("{} answered", total - open)),
+                    )
+                })
+                .child(
+                    div()
+                        .id(ElementId::Name(format!("ann-add-{}", key).into()))
+                        .px(px(6.0))
+                        .py(px(2.0))
+                        .rounded(px(3.0))
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(rgb(theme::CYAN)))
+                        .on_click(cx.listener(move |this, _e, _w, cx| {
+                            this.annotation_draft_for = if this.annotation_draft_for.as_deref()
+                                == Some(key_for_toggle.as_str())
+                            {
+                                None
+                            } else {
+                                Some(key_for_toggle.clone())
+                            };
+                            cx.notify();
+                        }))
+                        .child(if is_drafting { "Cancel" } else { "Challenge" }),
+                ),
+        )
+        .children(
+            rows.into_iter()
+                .map(|a| render_annotation_row(state, a, cx).into_any_element()),
+        )
+        .when(is_drafting, |el| {
+            el.child(render_annotation_composer(state, key.clone(), cx))
+        })
+}
+
+/// One annotation: who said it, what they said, and how it was answered.
+fn render_annotation_row(
+    state: &CockpitState,
+    a: Annotation,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let is_open = a.is_open();
+    let mine = state
+        .annotations
+        .as_ref()
+        .map(|r| r.is_mine(&a))
+        .unwrap_or(false);
+    let can_resolve = state.can_edit_forecast();
+    let resolving = state.annotation_resolving.as_deref() == Some(a.id.as_str());
+    let busy = state.annotation_busy;
+    let (id_resolve, id_accept, id_decline, id_delete) =
+        (a.id.clone(), a.id.clone(), a.id.clone(), a.id.clone());
+
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(2.0))
+        .ml(px(10.0))
+        .pl(px(8.0))
+        .py(px(3.0))
+        .border_l_2()
+        .border_color(rgb(annotation_status_color(&a.status)))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(rgb(annotation_status_color(&a.status)))
+                        .child(a.kind_glyph()),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .child(a.author_label().to_string()),
+                )
+                .when(!is_open, |el| {
+                    el.child(
+                        div()
+                            .text_size(px(9.0))
+                            .text_color(rgb(annotation_status_color(&a.status)))
+                            .child(match a.status.as_str() {
+                                "accepted" => "accepted".to_string(),
+                                "declined" => "declined".to_string(),
+                                // An orphaned challenge is not resolved —
+                                // its subject vanished. Saying so beats
+                                // silently dropping it, which would look
+                                // like the objection was answered.
+                                _ => "driver no longer exists".to_string(),
+                            }),
+                    )
+                })
+                .child(div().flex_1())
+                .when(is_open && can_resolve && !resolving, |el| {
+                    el.child(
+                        div()
+                            .id(ElementId::Name(format!("ann-answer-{}", id_resolve).into()))
+                            .text_size(px(9.0))
+                            .text_color(rgb(theme::FG_FAINT))
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(rgb(theme::CYAN)))
+                            .on_click(cx.listener(move |this, _e, _w, cx| {
+                                this.annotation_resolving = Some(id_resolve.clone());
+                                cx.notify();
+                            }))
+                            .child("Answer"),
+                    )
+                })
+                .when(mine && is_open, |el| {
+                    el.child(
+                        div()
+                            .id(ElementId::Name(format!("ann-del-{}", id_delete).into()))
+                            .text_size(px(9.0))
+                            .text_color(rgb(theme::FG_FAINT))
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(rgb(theme::RED)))
+                            .on_click(cx.listener(move |this, _e, _w, cx| {
+                                this.delete_annotation(id_delete.clone(), cx);
+                            }))
+                            .child("Delete"),
+                    )
+                }),
+        )
+        .child(
+            div()
+                .text_size(px(11.0))
+                .text_color(rgb(if is_open { theme::FG } else { theme::FG_DIM }))
+                .child(a.body.clone()),
+        )
+        .when_some(a.resolution_note.clone(), |el, note| {
+            el.child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(rgb(theme::FG_DIM))
+                    .child(format!("↳ {}", note)),
+            )
+        })
+        // Both outcomes are offered side by side and neither is styled as
+        // the primary. "Declined" is a legitimate answer, and making it the
+        // quiet secondary would put a thumb on the scale toward agreeing.
+        .when(resolving, |el| {
+            el.child(
+                div()
+                    .flex()
+                    .gap(px(6.0))
+                    .mt(px(2.0))
+                    .child(
+                        div()
+                            .id(ElementId::Name(format!("ann-acc-{}", id_accept).into()))
+                            .px(px(6.0))
+                            .py(px(2.0))
+                            .rounded(px(3.0))
+                            .bg(rgb(theme::BG))
+                            .text_size(px(9.0))
+                            .text_color(rgb(if busy { theme::FG_FAINT } else { theme::GREEN }))
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _e, _w, cx| {
+                                this.resolve_annotation(id_accept.clone(), "accepted", cx);
+                            }))
+                            .child("Accept — I changed it"),
+                    )
+                    .child(
+                        div()
+                            .id(ElementId::Name(format!("ann-dec-{}", id_decline).into()))
+                            .px(px(6.0))
+                            .py(px(2.0))
+                            .rounded(px(3.0))
+                            .bg(rgb(theme::BG))
+                            .text_size(px(9.0))
+                            .text_color(rgb(if busy { theme::FG_FAINT } else { theme::FG_DIM }))
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _e, _w, cx| {
+                                this.resolve_annotation(id_decline.clone(), "declined", cx);
+                            }))
+                            .child("Decline — considered, keeping it"),
+                    ),
+            )
+        })
+}
+
+/// The "raise a challenge" box for one group.
+fn render_annotation_composer(
+    state: &CockpitState,
+    key: String,
+    cx: &mut Context<CockpitState>,
+) -> impl IntoElement {
+    let kind = state.annotation_kind.clone();
+    let busy = state.annotation_busy;
+    // The sentinel never travels to the server as a driver name — a
+    // forecast-level annotation has a NULL driver, and posting the literal
+    // "__forecast__" would invent a driver that doesn't exist.
+    let driver = if key == FORECAST_LEVEL_KEY {
+        None
+    } else {
+        Some(key.clone())
+    };
+
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(4.0))
+        .ml(px(10.0))
+        .mt(px(4.0))
+        .child(state.annotation_input.clone())
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .child(
+                    div()
+                        .id("ann-kind-chip")
+                        .px(px(6.0))
+                        .py(px(2.0))
+                        .rounded(px(3.0))
+                        .bg(rgb(theme::BG))
+                        .text_size(px(9.0))
+                        .text_color(rgb(theme::FG_DIM))
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(rgb(theme::CYAN)))
+                        .on_click(cx.listener(|this, _e, _w, cx| {
+                            // challenge → question → note → challenge.
+                            // Only `challenge` reaches the ops board; the
+                            // other two are for saying something without
+                            // making it the team's work.
+                            this.annotation_kind = match this.annotation_kind.as_str() {
+                                "challenge" => "question".to_string(),
+                                "question" => "note".to_string(),
+                                _ => "challenge".to_string(),
+                            };
+                            cx.notify();
+                        }))
+                        .child(match kind.as_str() {
+                            "question" => "? question",
+                            "note" => "· note",
+                            _ => "! challenge",
+                        }),
+                )
+                .child(
+                    div()
+                        .id("ann-submit")
+                        .px(px(8.0))
+                        .py(px(2.0))
+                        .rounded(px(3.0))
+                        .bg(rgb(theme::BG_ELEVATED))
+                        .text_size(px(10.0))
+                        .text_color(rgb(if busy { theme::FG_FAINT } else { theme::CYAN }))
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _e, _w, cx| {
+                            this.submit_annotation(driver.clone(), cx);
+                        }))
+                        .child(if busy { "Posting…" } else { "Post" }),
+                )
+                .child(
+                    div()
+                        .text_size(px(9.0))
+                        .text_color(rgb(theme::FG_FAINT))
+                        .child(match kind.as_str() {
+                            "challenge" => "Becomes team coordination work until answered.",
+                            "question" => "Visible to everyone; doesn't become team work.",
+                            _ => "Context for the record; implies no action.",
+                        }),
+                ),
+        )
 }
 
 // ═══════════════════════════════════════════════════════════════════

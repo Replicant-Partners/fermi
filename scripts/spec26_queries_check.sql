@@ -18,6 +18,13 @@
 --            portfolio, share the portfolio" from being a
 --            privilege-escalation primitive.
 --
+--   PART C — Spec 32's orphan reconcile. The driver name set is computed
+--            in Rust (drivers are FPL declarations, not rows), so what SQL
+--            can prove is that the pair of statements it drives is
+--            REVERSIBLE: orphaning is undone when the driver comes back.
+--            Without that, a Spec 31 revert would restore a driver but
+--            leave its objections dead — undo that loses something.
+--
 -- Run with: scripts/spec26_sql_check.sh
 
 \set ON_ERROR_STOP on
@@ -644,3 +651,216 @@ EXECUTE a10('11111111-1111-1111-1111-111111111111',
 
 \echo ''
 \echo '=== PART B complete ==='
+
+-- ═════════════════════════════════════════════════════════════════════
+-- PART C — Spec 32 driver annotations
+-- ═════════════════════════════════════════════════════════════════════
+
+\echo ''
+\echo '=== PART C: driver annotations ==='
+
+-- ─── Spec 32: the orphan reconcile ───────────────────────────────────
+--
+-- The driver name set is computed in Rust (drivers are FPL declarations,
+-- not rows, so establishing them means parsing `fpl_source`). What SQL can
+-- still prove is that the two statements it drives behave as a pair: one
+-- orphans names the program no longer declares, the other revives names it
+-- declares again. The second is the load-bearing one — without it a Spec 31
+-- revert restores a driver but leaves its objections dead, which would make
+-- undo lossy in exactly the way the whole collaboration model says it
+-- isn't.
+
+\echo '=== Spec 32: orphan reconcile is reversible ==='
+
+INSERT INTO public.fermi_forecasts (id, owner_id, question_text, predicted_probability, status)
+VALUES ('fc-ann', 'u-owner', 'annotated?', 0.5, 'active');
+
+INSERT INTO public.driver_annotations
+    (forecast_id, driver_name, author_id, body, status, resolved_by, resolved_at)
+VALUES ('fc-ann', 'elo_current', 'u-critic', 'base rate is wrong', 'open',     NULL,      NULL),
+       ('fc-ann', 'home_adv',    'u-critic', 'stale',              'open',     NULL,      NULL),
+       ('fc-ann', 'elo_current', 'u-owner',  'considered',         'declined', 'u-owner', NOW());
+
+-- The program now declares only `home_adv`: `elo_current` was renamed away.
+PREPARE ann_orphan (TEXT, TEXT[]) AS
+  UPDATE driver_annotations
+     SET status = 'orphaned', updated_at = NOW()
+   WHERE forecast_id = $1
+     AND status = 'open'
+     AND driver_name IS NOT NULL
+     AND NOT (driver_name = ANY($2));
+
+PREPARE ann_revive (TEXT, TEXT[]) AS
+  UPDATE driver_annotations
+     SET status = 'open', updated_at = NOW()
+   WHERE forecast_id = $1
+     AND status = 'orphaned'
+     AND driver_name = ANY($2);
+
+EXECUTE ann_orphan('fc-ann', ARRAY['home_adv']);
+
+DO $$
+DECLARE n INT;
+BEGIN
+  SELECT count(*) INTO n FROM driver_annotations
+   WHERE forecast_id = 'fc-ann' AND driver_name = 'elo_current' AND status = 'orphaned';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'orphan sweep should have orphaned the 1 OPEN elo_current annotation, got %', n;
+  END IF;
+
+  -- A human's judgement is not a derived observation. 'declined' means
+  -- someone considered the objection and rejected it; the driver going
+  -- away later does not un-make that, and overwriting it would destroy
+  -- the record the status column exists to keep.
+  SELECT count(*) INTO n FROM driver_annotations
+   WHERE forecast_id = 'fc-ann' AND status = 'declined';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'orphan sweep must not touch resolved annotations, declined count = %', n;
+  END IF;
+
+  SELECT count(*) INTO n FROM driver_annotations
+   WHERE forecast_id = 'fc-ann' AND driver_name = 'home_adv' AND status = 'open';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'orphan sweep hit a driver that still exists, open home_adv = %', n;
+  END IF;
+END $$;
+
+-- Now the revert: the program declares `elo_current` again.
+EXECUTE ann_revive('fc-ann', ARRAY['home_adv', 'elo_current']);
+
+DO $$
+DECLARE n INT;
+BEGIN
+  SELECT count(*) INTO n FROM driver_annotations
+   WHERE forecast_id = 'fc-ann' AND status = 'orphaned';
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'revert restored the driver but left % annotation(s) orphaned', n;
+  END IF;
+
+  SELECT count(*) INTO n FROM driver_annotations
+   WHERE forecast_id = 'fc-ann' AND status = 'declined';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'revive resurrected a resolved annotation, declined count = %', n;
+  END IF;
+END $$;
+
+-- A resolution must be attributable. This is the same gap Spec 26 closed
+-- for revisions; the CHECK exists so it cannot reopen in a new table.
+\echo '=== Spec 32: unattributable resolution is refused ==='
+DO $$
+BEGIN
+  BEGIN
+    INSERT INTO public.driver_annotations (forecast_id, driver_name, author_id, body, status)
+    VALUES ('fc-ann', 'home_adv', 'u-critic', 'sneaky', 'accepted');
+    RAISE EXCEPTION 'accepted annotation with no resolved_by/resolved_at was allowed';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+END $$;
+
+DEALLOCATE ann_orphan;
+DEALLOCATE ann_revive;
+DELETE FROM public.driver_annotations WHERE forecast_id = 'fc-ann';
+DELETE FROM public.fermi_forecasts WHERE id = 'fc-ann';
+
+-- ─── Detector 5: contested_assumption (ops.rs) ───────────────────────
+--
+-- The other four detectors are PREPAREd in PART A; this one lives here
+-- because it is the only one that needs migration 183's table.
+
+\echo '=== Spec 32: contested_assumption detector ==='
+PREPARE c1 (text[]) AS
+  SELECT a.forecast_id,
+         ff.question_text,
+         COUNT(*)                                  AS n_open,
+         MIN(a.created_at)                         AS since,
+         ARRAY_AGG(DISTINCT a.driver_name)
+             FILTER (WHERE a.driver_name IS NOT NULL) AS drivers,
+         ARRAY_AGG(DISTINCT a.author_id)           AS authors
+    FROM public.driver_annotations a
+    JOIN public.fermi_forecasts ff ON ff.id = a.forecast_id
+   WHERE a.forecast_id = ANY($1)
+     AND a.status = 'open'
+     AND a.kind = 'challenge'
+     AND ff.status = 'active'
+   GROUP BY a.forecast_id, ff.question_text;
+
+-- Behaviour: the detector must go quiet for the three reasons the design
+-- says it should, because "the definition of done is the detector going
+-- quiet" is the entire Spec 27 contract. If any of these still returned a
+-- row, the board would show work nobody can clear.
+INSERT INTO public.fermi_forecasts (id, owner_id, question_text, predicted_probability, status)
+VALUES ('fc-det', 'u-owner', 'detected?', 0.5, 'active');
+
+INSERT INTO public.driver_annotations
+    (forecast_id, driver_name, author_id, body, kind, status, resolved_by, resolved_at)
+VALUES
+    -- resolved: answered, so no longer work
+    ('fc-det', 'd_a', 'u1', 'accepted one',  'challenge', 'accepted', 'u-owner', NOW()),
+    ('fc-det', 'd_b', 'u1', 'declined one',  'challenge', 'declined', 'u-owner', NOW()),
+    -- orphaned: the driver is gone, so there is nothing to settle. This is
+    -- what the orphan sweep buys the board.
+    ('fc-det', 'd_c', 'u1', 'stranded',      'challenge', 'orphaned', NULL,      NULL),
+    -- not a challenge: a note implies no action, a question is answered by
+    -- talking, and neither should be ranked against a broken cascade.
+    ('fc-det', 'd_d', 'u1', 'just context',  'note',      'open',     NULL,      NULL),
+    ('fc-det', 'd_e', 'u1', 'what is this?', 'question',  'open',     NULL,      NULL);
+
+DO $$
+DECLARE n INT;
+BEGIN
+  SELECT count(*) INTO n FROM (
+    SELECT a.forecast_id
+      FROM public.driver_annotations a
+      JOIN public.fermi_forecasts ff ON ff.id = a.forecast_id
+     WHERE a.forecast_id = ANY(ARRAY['fc-det'])
+       AND a.status = 'open' AND a.kind = 'challenge' AND ff.status = 'active'
+     GROUP BY a.forecast_id, ff.question_text) q;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'detector fired with no open challenges (resolved/orphaned/non-challenge leaked)';
+  END IF;
+END $$;
+
+-- One genuine open challenge, and it must fire — with the driver named,
+-- since "which assumption" is the whole reason this beats `contested`.
+INSERT INTO public.driver_annotations (forecast_id, driver_name, author_id, body, kind, status)
+VALUES ('fc-det', 'elo_current', 'u2', 'base rate is wrong', 'challenge', 'open');
+
+DO $$
+DECLARE d TEXT[]; c BIGINT;
+BEGIN
+  SELECT ARRAY_AGG(DISTINCT a.driver_name) FILTER (WHERE a.driver_name IS NOT NULL), COUNT(*)
+    INTO d, c
+    FROM public.driver_annotations a
+    JOIN public.fermi_forecasts ff ON ff.id = a.forecast_id
+   WHERE a.forecast_id = ANY(ARRAY['fc-det'])
+     AND a.status = 'open' AND a.kind = 'challenge' AND ff.status = 'active'
+   GROUP BY a.forecast_id, ff.question_text;
+  IF c IS DISTINCT FROM 1 OR d IS DISTINCT FROM ARRAY['elo_current'] THEN
+    RAISE EXCEPTION 'detector should report exactly 1 challenge on elo_current, got % on %', c, d;
+  END IF;
+END $$;
+
+-- A resolved forecast is not coordination work, whatever is open on it.
+UPDATE public.fermi_forecasts SET status = 'resolved' WHERE id = 'fc-det';
+DO $$
+DECLARE n INT;
+BEGIN
+  SELECT count(*) INTO n FROM (
+    SELECT a.forecast_id
+      FROM public.driver_annotations a
+      JOIN public.fermi_forecasts ff ON ff.id = a.forecast_id
+     WHERE a.forecast_id = ANY(ARRAY['fc-det'])
+       AND a.status = 'open' AND a.kind = 'challenge' AND ff.status = 'active'
+     GROUP BY a.forecast_id) q;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'detector still fires on a resolved forecast';
+  END IF;
+END $$;
+
+DEALLOCATE c1;
+DELETE FROM public.driver_annotations WHERE forecast_id = 'fc-det';
+DELETE FROM public.fermi_forecasts WHERE id = 'fc-det';
+
+\echo ''
+\echo '=== PART C complete ==='

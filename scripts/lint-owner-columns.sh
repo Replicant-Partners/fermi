@@ -29,7 +29,7 @@ OWNER_COL_PATTERN = re.compile(
     r"(owner_id|user_id|creator_id|created_by|added_by|granted_by|"
     r"invited_by|invitee_user_id|blocker_user_id|blocked_user_id|"
     r"reporter_user_id|actor_user_id|owner_user_id|friend_owner_id|"
-    r"from_owner_id|ejected_user_id|observer_id)"
+    r"from_owner_id|ejected_user_id|observer_id|author_id|resolved_by)"
     r"\s+(TEXT|UUID|VARCHAR)",
     re.IGNORECASE,
 )
@@ -53,6 +53,12 @@ ALLOWED = {
     ("forecast_invites", "invitee_user_id"): "back-fill on sign-in; nullable",
     # secrets access log — history that survives user deletion
     ("secret_access_log", "user_id"): "audit — access log",
+    # Spec 32: an annotation is a claim someone MADE. Deleting the person
+    # must not delete the objection or the answer to it — the whole reason
+    # resolutions are recorded rather than erased is that the reasoning
+    # outlives the moment, and it outlives the account too.
+    ("driver_annotations", "author_id"): "audit — the claim outlives the account",
+    ("driver_annotations", "resolved_by"): "audit — who answered it, historical fact",
     # agents.author — legacy free-form label, not an ownership ref
     ("agents", "author"): "legacy free-form label, not an owner ref",
     # api_keys uses users(id) FK not users(user_id) — already FK'd

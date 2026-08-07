@@ -1151,6 +1151,20 @@ pub async fn update_forecast_handler(
         .await;
     }
 
+    // Spec 32: a driver rename or removal strands any annotation pointing
+    // at it. An open challenge against a driver that no longer exists is
+    // worse than noise — it reads as live disagreement about something that
+    // isn't there.
+    //
+    // Keyed on `fpl_source`, not `drivers`: drivers are `driver <name>`
+    // declarations in the program, and the `drivers` JSONB column is
+    // vestigial (empty on every row in production). Editing the program is
+    // the only thing that can strand an annotation — or un-strand one, which
+    // a Spec 31 revert does.
+    if req.fpl_source.is_some() {
+        crate::handlers::annotations::mark_orphaned_annotations(pool, &forecast_id).await;
+    }
+
     // Return updated forecast
     get_forecast_handler(State(state), principal, Path(forecast_id)).await
 }
