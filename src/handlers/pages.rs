@@ -505,6 +505,22 @@ pub async fn observatory_view() -> Html<String> {
     Html(html)
 }
 
+/// Ecology — the "what lives here" lens.
+///
+/// Sibling to the Observatory. The Observatory asks a clinical question of
+/// one agent at a time; this asks a structural question of the whole
+/// population: what exists, how is it organised, and how did it get here.
+pub async fn ecology_view() -> Html<String> {
+    let html = match std::fs::read_to_string("templates/ecology.html") {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Error loading templates/ecology.html: {}", e);
+            format!("<h1>Ecology</h1><p>Error loading template: {}</p>", e)
+        }
+    };
+    Html(html)
+}
+
 pub async fn observatory_hitl_view() -> Html<String> {
     let html = match std::fs::read_to_string("templates/observatory_hitl.html") {
         Ok(content) => content,

@@ -2495,6 +2495,13 @@ async fn main() {
         .route("/admin", get(handlers::pages::admin_view))
         // Phase 4 — Observatory pages
         .route("/observatory", get(handlers::pages::observatory_view))
+        // Ecology — population / habitats / provenance. The structural
+        // counterpart to the Observatory's clinical view.
+        .route("/ecology", get(handlers::pages::ecology_view))
+        .route(
+            "/api/ecology/overview",
+            get(handlers::ecology::ecology_overview_handler),
+        )
         .route(
             "/observatory/hitl",
             get(handlers::pages::observatory_hitl_view),

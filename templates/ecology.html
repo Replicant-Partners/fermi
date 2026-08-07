@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en" class="theme-hasui">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Ecology — Agent Bestiary</title>
+  <link rel="stylesheet" href="/static/css/variables.css"/>
+  <link rel="stylesheet" href="/static/css/common.css"/>
+  <link rel="stylesheet" href="/static/css/components.css"/>
+  <style>
+  body{font-family:"Berkeley Mono","JetBrains Mono",monospace;line-height:1.5;background:var(--bg0-hard);font-size:13px;margin:0;}
+  a{color:var(--fg3);text-decoration:none;}
+  a:hover{color:var(--yellow);}
+
+  .eco-shell{max-width:1400px;margin:0 auto;padding:0 0 60px;}
+
+  /* ── Header ── */
+  .eco-header{padding:14px 18px 10px;border-bottom:1px solid var(--bg2);background:var(--bg0);}
+  .eco-header h1{font-size:1rem;color:var(--aqua);margin:0 0 4px;}
+  .eco-header .sub{font-size:0.72rem;color:var(--fg4);}
+  .eco-header .nav{font-size:0.75rem;margin-top:6px;display:flex;gap:12px;}
+
+  /* ── Census strip ── */
+  .census{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:1px;background:var(--bg2);border-bottom:1px solid var(--bg2);}
+  .census-cell{background:var(--bg0);padding:12px 14px;}
+  .cc-label{font-size:0.62rem;color:var(--fg4);text-transform:uppercase;letter-spacing:0.9px;margin-bottom:3px;}
+  .cc-value{font-size:1.5rem;font-weight:600;color:var(--fg1);line-height:1.1;}
+  .cc-sub{font-size:0.64rem;color:var(--fg4);margin-top:3px;}
+
+  /* ── Governance banner ── */
+  .gov-alert{margin:14px 18px 0;padding:10px 14px;border-left:3px solid var(--yellow);
+             background:rgba(215,153,33,0.09);font-size:0.78rem;color:var(--yellow);}
+  .gov-alert.clean{border-color:var(--green);background:rgba(152,151,26,0.08);color:var(--green);}
+  .gov-alert .ga-title{font-weight:600;margin-bottom:4px;}
+  .gov-alert .ga-body{color:var(--fg3);font-size:0.74rem;}
+  .gov-alert ul{margin:6px 0 0;padding-left:18px;}
+  .gov-alert li{color:var(--fg2);font-size:0.74rem;}
+
+  .section{padding:16px 18px 0;}
+  .section-title{font-size:0.72rem;color:var(--aqua);text-transform:uppercase;letter-spacing:1px;
+                 margin-bottom:10px;display:flex;align-items:baseline;gap:10px;}
+  .section-title .st-note{color:var(--fg4);text-transform:none;letter-spacing:0;font-size:0.7rem;}
+
+  /* ── Habitats ── */
+  .habitats{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px;}
+  .habitat{background:var(--bg0);border:1px solid var(--bg2);padding:12px 14px;}
+  .hab-head{display:flex;align-items:baseline;gap:8px;margin-bottom:2px;}
+  .hab-name{font-size:0.9rem;color:var(--fg1);font-weight:600;}
+  .hab-kind{font-size:0.6rem;padding:1px 6px;border:1px solid var(--bg3);color:var(--fg4);text-transform:uppercase;letter-spacing:0.8px;}
+  .hab-pop{margin-left:auto;font-size:1.1rem;color:var(--fg2);font-weight:600;}
+  .hab-rule{font-size:0.68rem;color:var(--fg4);margin-bottom:10px;}
+
+  /* provenance bar — the organising signal */
+  .prov-bar{display:flex;height:6px;margin-bottom:8px;background:var(--bg2);overflow:hidden;}
+  .prov-seg{height:100%;}
+  .p-approved{background:var(--green);}
+  .p-curated_seed{background:#d4af37;}
+  .p-admin_grant{background:var(--purple,#b16286);}
+  .p-implicit{background:var(--bg3);}
+  .p-unknown{background:var(--red,#cc241d);}
+  .prov-key{display:flex;flex-wrap:wrap;gap:10px;font-size:0.65rem;color:var(--fg4);margin-bottom:10px;}
+  .prov-key span{display:inline-flex;align-items:center;gap:4px;}
+  .prov-swatch{width:8px;height:8px;display:inline-block;}
+
+  /* ── Member cells ── */
+  .cells{display:flex;flex-wrap:wrap;gap:4px;}
+  .cell{position:relative;padding:3px 7px;font-size:0.68rem;border:1px solid;cursor:default;
+        background:var(--bg1);white-space:nowrap;}
+  .cell.approved{border-color:var(--green);color:var(--green);}
+  .cell.curated_seed{border-color:#d4af37;color:#d4af37;}
+  .cell.admin_grant{border-color:var(--purple,#b16286);color:var(--purple,#b16286);}
+  .cell.unknown{border-color:var(--red,#cc241d);color:var(--red,#cc241d);}
+  /* An unreviewed third-party member is the anomaly this view exists to surface. */
+  .cell.flag{background:rgba(204,36,29,0.12);border-style:dashed;animation:pulse 2s infinite;}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.55}}
+  .cell .runs{color:var(--fg4);margin-left:4px;}
+
+  /* ── Distribution bars ── */
+  .dist{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;}
+  .dist-card{background:var(--bg0);border:1px solid var(--bg2);padding:12px 14px;}
+  .dist-row{display:flex;align-items:center;gap:8px;margin-bottom:5px;font-size:0.72rem;}
+  .dr-label{width:96px;color:var(--fg3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0;}
+  .dr-track{flex:1;height:9px;background:var(--bg1);}
+  .dr-fill{height:100%;background:var(--aqua);}
+  .dr-n{width:30px;text-align:right;color:var(--fg4);flex-shrink:0;}
+
+  /* ── Co-habitation ── */
+  .cohab-row{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:0.72rem;border-bottom:1px solid var(--bg2);}
+  .cohab-pair{flex:1;color:var(--fg2);}
+  .cohab-n{color:var(--fg4);}
+  .cohab-note{font-size:0.68rem;color:var(--fg4);margin-bottom:10px;line-height:1.45;}
+  .empty{color:var(--fg4);font-size:0.76rem;padding:10px 0;}
+  </style>
+</head>
+<body>
+<div class="eco-shell">
+
+  <div class="eco-header">
+    <h1>◇ Ecology</h1>
+    <div class="sub">What lives here — population, habitats, and how things got in</div>
+    <div class="nav">
+      <a href="/observatory">Observatory (clinical) →</a>
+      <a href="/agents">Catalogue →</a>
+      <a href="/">Home</a>
+    </div>
+  </div>
+
+  <div class="census" id="census"></div>
+  <div id="gov"></div>
+
+  <div class="section">
+    <div class="section-title">Habitats
+      <span class="st-note">orchestras — colour is how each member was admitted</span>
+    </div>
+    <div class="habitats" id="habitats"></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Niches &amp; strata
+      <span class="st-note">the shape of the published population</span>
+    </div>
+    <div class="dist" id="dist"></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Co-habitation
+      <span class="st-note">pairs recurring across <em>distinct</em> team compositions</span>
+    </div>
+    <div class="dist-card" id="cohab"></div>
+  </div>
+
+</div>
+
+<script>
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+
+const PROV_ORDER = ["approved","curated_seed","admin_grant","implicit","unknown"];
+const PROV_LABEL = {
+  approved:     "approved — reviewed, has a receipt",
+  curated_seed: "platform-seeded — never reviewed",
+  admin_grant:  "admin grant — override",
+  implicit:     "implicit — publishing is joining",
+  unknown:      "unknown",
+};
+
+function census(p) {
+  const tiers = Object.entries(p.by_tier || {}).map(([k,v]) => `${k} ${v}`).join(" · ");
+  const cells = [
+    ["Published agents", p.published, tiers],
+    ["Niches", Object.keys(p.by_niche || {}).length, "distinct agent types"],
+    ["Providers", Object.keys(p.by_provider || {}).length, "distinct LLM providers"],
+    ["Lifetime runs", (p.total_runs ?? 0).toLocaleString(), "across the population"],
+  ];
+  document.getElementById("census").innerHTML = cells.map(([l,v,s]) => `
+    <div class="census-cell">
+      <div class="cc-label">${esc(l)}</div>
+      <div class="cc-value">${esc(v)}</div>
+      <div class="cc-sub">${esc(s)}</div>
+    </div>`).join("");
+}
+
+function governance(g) {
+  const un = g.unreviewed_members || [];
+  const el = document.getElementById("gov");
+
+  // The headline is deliberately blunt. An orchestra that has never once
+  // exercised its review process is not "clean" — it is unexercised, and
+  // that reads very differently.
+  if (un.length === 0 && g.approvals_ever > 0) {
+    el.innerHTML = `<div class="gov-alert clean">
+      <div class="ga-title">Every explicit member was reviewed</div>
+      <div class="ga-body">${g.approvals_ever} approval(s) on record · ${g.pending_requests} pending.</div>
+    </div>`;
+    return;
+  }
+
+  const never = g.approvals_ever === 0;
+  el.innerHTML = `<div class="gov-alert">
+    <div class="ga-title">${never
+      ? "The review process has never been used"
+      : `${un.length} member(s) hold a place without review`}</div>
+    <div class="ga-body">
+      ${never
+        ? `No membership request has ever been approved on this platform. Every current
+           member was seeded or granted directly, so admission has never actually been
+           gated by a decision.`
+        : `These are third-party agents in an explicit habitat with no approval behind them.`}
+      ${g.pending_requests > 0 ? ` ${g.pending_requests} request(s) awaiting review.` : ""}
+    </div>
+    ${un.length ? `<ul>${un.map(m =>
+      `<li>${esc(m.agent_name)} <span style="color:var(--fg4)">(${esc(m.tier)} · ${esc(m.membership_source)}${
+        m.owner ? " · owner " + esc(String(m.owner).slice(0,8)) : ""})</span></li>`).join("")}</ul>` : ""}
+  </div>`;
+}
+
+function habitats(hs, unreviewedNames) {
+  document.getElementById("habitats").innerHTML = hs.map(h => {
+    const prov = h.provenance || {};
+    const total = Object.values(prov).reduce((a,b) => a+b, 0) || 1;
+    const segs = PROV_ORDER.filter(k => prov[k]).map(k =>
+      `<div class="prov-seg p-${k}" style="width:${(prov[k]/total*100).toFixed(1)}%"
+            title="${esc(PROV_LABEL[k])}: ${prov[k]}"></div>`).join("");
+    const key = PROV_ORDER.filter(k => prov[k]).map(k =>
+      `<span><i class="prov-swatch p-${k}"></i>${esc(k)} ${prov[k]}</span>`).join("");
+
+    const cells = (h.members || []).length
+      ? `<div class="cells">${h.members.map(m => {
+          const src = m.membership_source || "unknown";
+          const flag = unreviewedNames.has(m.agent_name) ? " flag" : "";
+          const title = `${m.agent_type || ""} · ${m.tier || ""} · ${PROV_LABEL[src] || src}`;
+          return `<span class="cell ${src}${flag}" title="${esc(title)}">${esc(m.agent_name)}<span class="runs">${m.runs || 0}</span></span>`;
+        }).join("")}</div>`
+      : `<div class="empty">Membership is implicit — see the population figures above.</div>`;
+
+    return `<div class="habitat">
+      <div class="hab-head">
+        <span class="hab-name">${esc(h.name)}</span>
+        <span class="hab-kind">${esc(h.kind)}</span>
+        <span class="hab-pop">${h.population}</span>
+      </div>
+      <div class="hab-rule">${esc(h.rule)}</div>
+      <div class="prov-bar">${segs}</div>
+      <div class="prov-key">${key}</div>
+      ${cells}
+    </div>`;
+  }).join("");
+}
+
+function distribution(title, obj) {
+  const entries = Object.entries(obj || {}).sort((a,b) => b[1]-a[1]);
+  const max = entries.length ? entries[0][1] : 1;
+  return `<div class="dist-card">
+    <div class="section-title" style="margin-bottom:8px">${esc(title)}</div>
+    ${entries.map(([k,v]) => `
+      <div class="dist-row">
+        <span class="dr-label" title="${esc(k)}">${esc(k)}</span>
+        <span class="dr-track"><span class="dr-fill" style="width:${(v/max*100).toFixed(1)}%"></span></span>
+        <span class="dr-n">${v}</span>
+      </div>`).join("")}
+  </div>`;
+}
+
+function cohabitation(c) {
+  const el = document.getElementById("cohab");
+  const rows = (c && c.pairs) || [];
+  const distinct = c?.distinct_rosters ?? 0, totalWs = c?.total_workspaces ?? 0;
+
+  // Say why the panel is thin. Almost every workspace is a template clone,
+  // so counting workspace instances would report the default roster's pairs
+  // as co-occurring hundreds of times — a strong-looking number that
+  // measures template spawns, not affinity. Deduplicated by roster, the
+  // honest signal is currently small, and that is worth stating.
+  const clones = totalWs - distinct;
+  const caveat = `<div class="cohab-note">Counted over ${distinct} distinct roster(s) from
+    ${totalWs} workspace(s) — ${clones} are exact template clones and are collapsed.
+    Counting workspace instances instead would report every pair in the default
+    template as co-occurring ${clones > 0 ? "hundreds of" : "many"} times, which measures
+    how often the template was spawned, not affinity between two agents.</div>`;
+
+  if (!rows.length) {
+    el.innerHTML = caveat + `<div class="empty">No pair yet recurs across more than one
+      distinct team. The ecology hasn't diversified — teams are still being assembled
+      from the template rather than composed.</div>`;
+    return;
+  }
+  const max = rows[0].distinct_teams || 1;
+  el.innerHTML = caveat + rows.map(r => `
+    <div class="cohab-row">
+      <span class="cohab-pair">${esc(r.a)} <span style="color:var(--fg4)">+</span> ${esc(r.b)}</span>
+      <span class="dr-track" style="max-width:160px"><span class="dr-fill"
+            style="width:${(r.distinct_teams/max*100).toFixed(1)}%"></span></span>
+      <span class="cohab-n">${r.distinct_teams} team(s)</span>
+    </div>`).join("");
+}
+
+(async function load() {
+  try {
+    const res = await fetch("/api/ecology/overview");
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    const d = await res.json();
+
+    const unreviewedNames = new Set((d.governance?.unreviewed_members || []).map(m => m.agent_name));
+
+    census(d.population || {});
+    governance(d.governance || {});
+    habitats(d.habitats || [], unreviewedNames);
+    document.getElementById("dist").innerHTML =
+        distribution("By niche (agent type)", d.population?.by_niche)
+      + distribution("By stratum (tier)",     d.population?.by_tier)
+      + distribution("By provider",           d.population?.by_provider);
+    cohabitation(d.cohabitation);
+  } catch (e) {
+    document.getElementById("census").innerHTML =
+      `<div class="census-cell"><div class="cc-label">Error</div>
+       <div class="cc-sub">${esc(e.message)}</div></div>`;
+  }
+})();
+</script>
+</body>
+</html>

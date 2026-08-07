@@ -42,6 +42,9 @@ pub mod composition;
 pub mod consolidation;
 pub mod creatures;
 pub mod dashboard;
+/// Ecology — population, habitats, niches and governance provenance.
+/// The "what lives here" lens, sibling to the Observatory's clinical one.
+pub mod ecology;
 pub mod eval;
 pub mod eval_brier;
 pub mod eval_judge;
