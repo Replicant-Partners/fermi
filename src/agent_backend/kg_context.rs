@@ -62,87 +62,90 @@ pub async fn enrich_with_kg_context(
 
     // Phase 2: try ANN path first; fall back to load-all if unavailable
     let t_db = tokio::time::Instant::now();
-    let (top_rules, all_entities) = match try_ann_retrieval(
-        memory_store,
-        agent_uuid,
-        &query_embedding,
-    ).await {
-        Some((rules, entities)) => {
-            tracing::info!(
-                elapsed_ms = t_db.elapsed().as_millis() as u64,
-                rules = rules.len(),
-                entities = entities.len(),
-                path = "ann",
-                "kg_context_db"
-            );
-            (rules, entities)
-        }
-        None => {
-            // ANN not available (HNSW index not built yet) — fall back to
-            // load-all + in-memory scoring (pre-Spec-21 behaviour)
-            let (rules_res, entities_res) = tokio::join!(
-                memory_store.get_agent_semantic_rules(agent_uuid),
-                memory_store.get_agent_entities(agent_uuid),
-            );
-            let rules = rules_res.unwrap_or_default();
-            let entities = entities_res.unwrap_or_default();
-            tracing::info!(
-                elapsed_ms = t_db.elapsed().as_millis() as u64,
-                rules = rules.len(),
-                entities = entities.len(),
-                path = "load_all_fallback",
-                "kg_context_db"
-            );
+    let (top_rules, all_entities) =
+        match try_ann_retrieval(memory_store, agent_uuid, &query_embedding).await {
+            Some((rules, entities)) => {
+                tracing::info!(
+                    elapsed_ms = t_db.elapsed().as_millis() as u64,
+                    rules = rules.len(),
+                    entities = entities.len(),
+                    path = "ann",
+                    "kg_context_db"
+                );
+                (rules, entities)
+            }
+            None => {
+                // ANN not available (HNSW index not built yet) — fall back to
+                // load-all + in-memory scoring (pre-Spec-21 behaviour)
+                let (rules_res, entities_res) = tokio::join!(
+                    memory_store.get_agent_semantic_rules(agent_uuid),
+                    memory_store.get_agent_entities(agent_uuid),
+                );
+                let rules = rules_res.unwrap_or_default();
+                let entities = entities_res.unwrap_or_default();
+                tracing::info!(
+                    elapsed_ms = t_db.elapsed().as_millis() as u64,
+                    rules = rules.len(),
+                    entities = entities.len(),
+                    path = "load_all_fallback",
+                    "kg_context_db"
+                );
 
-            if rules.is_empty() && entities.is_empty() {
+                if rules.is_empty() && entities.is_empty() {
+                    return (card, Some(query_embedding));
+                }
+
+                // In-memory scoring (legacy path)
+                let mut scored_rules: Vec<(f32, _)> = rules
+                    .iter()
+                    .filter_map(|r| {
+                        r.embedding
+                            .as_ref()
+                            .map(|emb| (cosine_similarity(&query_embedding, emb), r))
+                    })
+                    .filter(|(s, _)| *s >= MIN_SIMILARITY)
+                    .collect();
+                scored_rules
+                    .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+                scored_rules.truncate(5);
+
+                let (cep_entities, episodic_entities): (Vec<_>, Vec<_>) = entities
+                    .iter()
+                    .partition(|e| e.entity_type.starts_with("cep_"));
+
+                let mut scored_episodic: Vec<(f32, _)> = episodic_entities
+                    .iter()
+                    .filter_map(|e| {
+                        e.embedding
+                            .as_ref()
+                            .map(|emb| (cosine_similarity(&query_embedding, emb), *e))
+                    })
+                    .filter(|(s, _)| *s >= MIN_SIMILARITY)
+                    .collect();
+                scored_episodic
+                    .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+                scored_episodic.truncate(8);
+
+                if scored_rules.is_empty() && scored_episodic.is_empty() && cep_entities.is_empty()
+                {
+                    return (card, Some(query_embedding));
+                }
+
+                // Build prompt block using legacy scored format
+                let kg_block =
+                    build_kg_block_scored(&scored_rules, &scored_episodic, &cep_entities);
+                if !kg_block.is_empty() {
+                    let base = card.system_prompt.unwrap_or_default();
+                    card.system_prompt = Some(format!("{}{}", base, kg_block));
+                }
+                tracing::info!(
+                    elapsed_ms = t_total.elapsed().as_millis() as u64,
+                    agent_id = %agent_uuid,
+                    "kg_context_enrich"
+                );
                 return (card, Some(query_embedding));
             }
-
-            // In-memory scoring (legacy path)
-            let mut scored_rules: Vec<(f32, _)> = rules
-                .iter()
-                .filter_map(|r| {
-                    r.embedding.as_ref()
-                        .map(|emb| (cosine_similarity(&query_embedding, emb), r))
-                })
-                .filter(|(s, _)| *s >= MIN_SIMILARITY)
-                .collect();
-            scored_rules.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-            scored_rules.truncate(5);
-
-            let (cep_entities, episodic_entities): (Vec<_>, Vec<_>) = entities
-                .iter()
-                .partition(|e| e.entity_type.starts_with("cep_"));
-
-            let mut scored_episodic: Vec<(f32, _)> = episodic_entities
-                .iter()
-                .filter_map(|e| {
-                    e.embedding.as_ref()
-                        .map(|emb| (cosine_similarity(&query_embedding, emb), *e))
-                })
-                .filter(|(s, _)| *s >= MIN_SIMILARITY)
-                .collect();
-            scored_episodic.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-            scored_episodic.truncate(8);
-
-            if scored_rules.is_empty() && scored_episodic.is_empty() && cep_entities.is_empty() {
-                return (card, Some(query_embedding));
-            }
-
-            // Build prompt block using legacy scored format
-            let kg_block = build_kg_block_scored(&scored_rules, &scored_episodic, &cep_entities);
-            if !kg_block.is_empty() {
-                let base = card.system_prompt.unwrap_or_default();
-                card.system_prompt = Some(format!("{}{}", base, kg_block));
-            }
-            tracing::info!(
-                elapsed_ms = t_total.elapsed().as_millis() as u64,
-                agent_id = %agent_uuid,
-                "kg_context_enrich"
-            );
-            return (card, Some(query_embedding));
-        }
-    };
+        };
 
     // ANN path: top_rules and all_entities already similarity-filtered and limited
     let (cep_entities, episodic_entities): (Vec<_>, Vec<_>) = all_entities
@@ -180,7 +183,10 @@ async fn try_ann_retrieval(
     store: &Arc<MemoryStore>,
     agent_id: Uuid,
     query_embedding: &[f32],
-) -> Option<(Vec<agent_bestiary_memory::SemanticRule>, Vec<agent_bestiary_memory::Entity>)> {
+) -> Option<(
+    Vec<agent_bestiary_memory::SemanticRule>,
+    Vec<agent_bestiary_memory::Entity>,
+)> {
     let (rules_res, entities_res) = tokio::join!(
         store.get_top_k_semantic_rules(agent_id, query_embedding, 5, MIN_SIMILARITY),
         store.get_top_k_entities_with_cep(agent_id, query_embedding, 8, MIN_SIMILARITY),
@@ -195,7 +201,11 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
     let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
     let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if norm_a == 0.0 || norm_b == 0.0 { 0.0 } else { dot / (norm_a * norm_b) }
+    if norm_a == 0.0 || norm_b == 0.0 {
+        0.0
+    } else {
+        dot / (norm_a * norm_b)
+    }
 }
 
 fn build_kg_block_scored(
@@ -204,8 +214,14 @@ fn build_kg_block_scored(
     cep_entities: &[&agent_bestiary_memory::Entity],
 ) -> String {
     build_kg_block_inner(
-        &scored_rules.iter().map(|(s, r)| (Some(*s), *r)).collect::<Vec<_>>(),
-        &scored_entities.iter().map(|(s, e)| (Some(*s), *e)).collect::<Vec<_>>(),
+        &scored_rules
+            .iter()
+            .map(|(s, r)| (Some(*s), *r))
+            .collect::<Vec<_>>(),
+        &scored_entities
+            .iter()
+            .map(|(s, e)| (Some(*s), *e))
+            .collect::<Vec<_>>(),
         cep_entities,
     )
 }
@@ -217,7 +233,10 @@ fn build_kg_block_ann(
 ) -> String {
     build_kg_block_inner(
         &rules.iter().map(|r| (None::<f32>, r)).collect::<Vec<_>>(),
-        &episodic.iter().map(|e| (None::<f32>, e)).collect::<Vec<_>>(),
+        &episodic
+            .iter()
+            .map(|e| (None::<f32>, e))
+            .collect::<Vec<_>>(),
         cep_entities,
     )
 }
@@ -235,7 +254,8 @@ fn build_kg_block_inner(
              These are validated reference values seeded into your knowledge graph. \
              Treat them as authoritative priors unless you have stronger current evidence.\n",
         );
-        let mut by_type: std::collections::BTreeMap<&str, Vec<_>> = std::collections::BTreeMap::new();
+        let mut by_type: std::collections::BTreeMap<&str, Vec<_>> =
+            std::collections::BTreeMap::new();
         for e in cep_entities {
             by_type.entry(e.entity_type.as_str()).or_default().push(*e);
         }
@@ -252,7 +272,10 @@ fn build_kg_block_inner(
             for e in items {
                 let summary = e.summary.as_deref().unwrap_or("");
                 if let Some(props) = &e.properties {
-                    block.push_str(&format!("- **{}**: {} | data: {}\n", e.entity_name, summary, props));
+                    block.push_str(&format!(
+                        "- **{}**: {} | data: {}\n",
+                        e.entity_name, summary, props
+                    ));
                 } else {
                     block.push_str(&format!("- **{}**: {}\n", e.entity_name, summary));
                 }
@@ -269,7 +292,9 @@ fn build_kg_block_inner(
         if !rules.is_empty() {
             block.push_str("\n### Learned Rules\n");
             for (score, rule) in rules {
-                let score_str = score.map(|s| format!("({:.0}% match, ", s * 100.0)).unwrap_or_default();
+                let score_str = score
+                    .map(|s| format!("({:.0}% match, ", s * 100.0))
+                    .unwrap_or_default();
                 block.push_str(&format!(
                     "- {}{:.0}% confidence) {}\n",
                     score_str,
@@ -281,7 +306,9 @@ fn build_kg_block_inner(
         if !episodic.is_empty() {
             block.push_str("\n### Known Entities\n");
             for (score, entity) in episodic {
-                let score_str = score.map(|s| format!("({:.0}% match) ", s * 100.0)).unwrap_or_default();
+                let score_str = score
+                    .map(|s| format!("({:.0}% match) ", s * 100.0))
+                    .unwrap_or_default();
                 let summary = entity.summary.as_deref().unwrap_or("no summary");
                 block.push_str(&format!(
                     "- {}**{}** ({}): {}\n",

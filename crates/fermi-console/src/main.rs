@@ -3352,33 +3352,88 @@ impl FermiConsole {
         .detach();
     }
 
+    /// Load the Fermi orchestra roster into `agent_cards`.
+    ///
+    /// Two calls, deliberately:
+    ///
+    ///   1. `/api/agents?orchestra=fermi` — full cards with execution
+    ///      stats, which the marketplace ranking needs.
+    ///   2. `/api/orchestras/fermi/members` — the authoritative roster.
+    ///
+    /// Then intersect. Call 1 alone is not trustworthy: `?orchestra=` is a
+    /// query parameter, and a server that predates it ignores the
+    /// parameter and returns the entire catalogue. The console rendered
+    /// that as "104 fermi orchestra agents" — every vertical's agents
+    /// (AR, adaptogen, observability) presented as Fermi members.
+    ///
+    /// A filter that silently fails open is worse than no filter, because
+    /// the result looks authoritative. So we verify against an endpoint
+    /// whose *path* encodes the constraint: it cannot return a non-member,
+    /// and if it doesn't exist we get a 404 we can see rather than a
+    /// wrong answer we can't.
     fn fetch_agents(&mut self, cx: &mut Context<Self>) {
         self.agents_loading = true;
         let api = self.api.clone();
 
-        cx.spawn(async move |this, cx| match api.list_agents().await {
-            Ok(data) => {
-                let cards = data
+        cx.spawn(async move |this, cx| {
+            let (agents_res, roster_res) =
+                futures::join!(api.list_agents(), api.list_orchestra_members("fermi"));
+
+            let mut cards = match agents_res {
+                Ok(data) => data
                     .as_array()
                     .cloned()
                     .or_else(|| data.get("agents").and_then(|a| a.as_array()).cloned())
-                    .unwrap_or_default();
+                    .unwrap_or_default(),
+                Err(e) => {
+                    log::error!("Failed to fetch agents: {}", e);
+                    this.update(cx, |this, cx| {
+                        this.agents_loading = false;
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+            };
 
-                this.update(cx, |this, cx| {
-                    this.agent_cards = cards;
-                    this.agents_loading = false;
-                    cx.notify();
-                })
-                .ok();
+            match roster_res {
+                Ok(roster) => {
+                    let filtered = fermi_console::roster::retain_members(cards, &roster);
+                    if filtered.server_ignored_filter {
+                        // Loud on purpose: the server ignored
+                        // `?orchestra=fermi` and the client had to enforce
+                        // it. Expected against a server older than the
+                        // SPEC_29 deploy; a standing warning after it.
+                        log::warn!(
+                            "[roster] server returned {} agents for ?orchestra=fermi; \
+                             filtered client-side to {} actual members. \
+                             Server likely predates the ?orchestra= filter.",
+                            filtered.received,
+                            filtered.cards.len()
+                        );
+                    }
+                    cards = filtered.cards;
+                }
+                Err(e) => {
+                    // Can't confirm membership. Show nothing rather than
+                    // presenting the whole catalogue as the Fermi roster:
+                    // an empty fleet is a visible, diagnosable problem,
+                    // whereas 104 wrong agents looks like success.
+                    log::error!(
+                        "[roster] could not fetch the Fermi roster ({e}); \
+                         refusing to render {} unverified agents as members",
+                        cards.len()
+                    );
+                    cards.clear();
+                }
             }
-            Err(e) => {
-                log::error!("Failed to fetch agents: {}", e);
-                this.update(cx, |this, cx| {
-                    this.agents_loading = false;
-                    cx.notify();
-                })
-                .ok();
-            }
+
+            this.update(cx, |this, cx| {
+                this.agent_cards = cards;
+                this.agents_loading = false;
+                cx.notify();
+            })
+            .ok();
         })
         .detach();
     }

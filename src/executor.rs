@@ -205,15 +205,19 @@ impl Executor {
                 mean: Expression::Number(*mean),
                 stddev: Expression::Number(*std_dev),
             },
-            posterior::FittedDistribution::Lognormal { median, sigma, .. } => Distribution::Lognormal {
-                median: Expression::Number(*median),
-                sigma: Expression::Number(*sigma),
-            },
-            posterior::FittedDistribution::Triangular { p5, p50, p95, .. } => Distribution::Triangular {
-                p5: Expression::Number(*p5),
-                p50: Expression::Number(*p50),
-                p95: Expression::Number(*p95),
-            },
+            posterior::FittedDistribution::Lognormal { median, sigma, .. } => {
+                Distribution::Lognormal {
+                    median: Expression::Number(*median),
+                    sigma: Expression::Number(*sigma),
+                }
+            }
+            posterior::FittedDistribution::Triangular { p5, p50, p95, .. } => {
+                Distribution::Triangular {
+                    p5: Expression::Number(*p5),
+                    p50: Expression::Number(*p50),
+                    p95: Expression::Number(*p95),
+                }
+            }
         }
     }
 
@@ -257,8 +261,14 @@ impl Executor {
     /// statements), runs `execute_factor_model`. Otherwise runs the classic
     /// driver+model Monte Carlo path.
     pub fn execute(&mut self, program: &Program) -> ExecutionResult2<ExecutionResults> {
-        let has_factor = program.statements.iter().any(|s| matches!(s, Statement::Factor(_)));
-        let has_estimate = program.statements.iter().any(|s| matches!(s, Statement::Estimate(_)));
+        let has_factor = program
+            .statements
+            .iter()
+            .any(|s| matches!(s, Statement::Factor(_)));
+        let has_estimate = program
+            .statements
+            .iter()
+            .any(|s| matches!(s, Statement::Estimate(_)));
         if has_factor && has_estimate {
             return self.execute_factor_model(program);
         }
@@ -301,15 +311,15 @@ impl Executor {
                         //   3. Nothing → driver is skipped (silent today).
                         let (resolved_dist, source) = if driver.learnable {
                             if let Some(fd) = self.fitted_distribution_for(&driver.name) {
-                                (Some(Self::fitted_to_fpl_distribution(&fd)),
-                                 LearnableSource::Fitted { fitted: fd })
+                                (
+                                    Some(Self::fitted_to_fpl_distribution(&fd)),
+                                    LearnableSource::Fitted { fitted: fd },
+                                )
                             } else {
-                                (driver.distribution.clone(),
-                                 LearnableSource::PriorFallback)
+                                (driver.distribution.clone(), LearnableSource::PriorFallback)
                             }
                         } else {
-                            (driver.distribution.clone(),
-                             LearnableSource::Static)
+                            (driver.distribution.clone(), LearnableSource::Static)
                         };
 
                         if driver.learnable {
@@ -335,11 +345,10 @@ impl Executor {
                         // the prior so the sim never breaks on a malformed fit.
                         let (config, source) = if driver.learnable {
                             match self.fitted_distribution_for(&driver.name) {
-                                Some(posterior::FittedDistribution::Beta { alpha, beta, .. }) => (
-                                    Some(BinaryDriverConfig::BetaPosterior {
-                                        alpha,
-                                        beta,
-                                    }),
+                                Some(posterior::FittedDistribution::Beta {
+                                    alpha, beta, ..
+                                }) => (
+                                    Some(BinaryDriverConfig::BetaPosterior { alpha, beta }),
                                     LearnableSource::Fitted {
                                         fitted: self
                                             .fitted_distribution_for(&driver.name)
@@ -457,7 +466,11 @@ impl Executor {
                             sample_beta(&mut self.rng, *alpha, *beta, 0.0, 1.0)
                         }
                     };
-                    if self.rng.gen::<f64>() < p { 1.0 } else { 0.0 }
+                    if self.rng.gen::<f64>() < p {
+                        1.0
+                    } else {
+                        0.0
+                    }
                 };
                 ctx.set(name.clone(), sample);
             }
@@ -584,13 +597,22 @@ impl Executor {
         Self::collect_learnable_info(&program, &mut learnable_names);
 
         // Collect factor declarations, the estimate, and the base rate.
-        let factors: Vec<&crate::ast::FactorStmt> = program.statements.iter()
-            .filter_map(|s| match s { Statement::Factor(f) => Some(f), _ => None })
+        let factors: Vec<&crate::ast::FactorStmt> = program
+            .statements
+            .iter()
+            .filter_map(|s| match s {
+                Statement::Factor(f) => Some(f),
+                _ => None,
+            })
             .collect();
-        let estimate = program.statements.iter().find_map(|s| match s {
-            Statement::Estimate(e) => Some(e),
-            _ => None,
-        }).ok_or(ExecutionError::NoModelFound)?;
+        let estimate = program
+            .statements
+            .iter()
+            .find_map(|s| match s {
+                Statement::Estimate(e) => Some(e),
+                _ => None,
+            })
+            .ok_or(ExecutionError::NoModelFound)?;
         let base_rate: Option<f64> = program.statements.iter().find_map(|s| match s {
             Statement::Question(q) => q.base_rate.as_ref().map(|b| b.historical_frequency),
             _ => None,
@@ -601,7 +623,10 @@ impl Executor {
         }
 
         // Per-factor sample buffers (kept in declaration order).
-        let mut factor_samples: Vec<Vec<f64>> = factors.iter().map(|_| Vec::with_capacity(self.iterations)).collect();
+        let mut factor_samples: Vec<Vec<f64>> = factors
+            .iter()
+            .map(|_| Vec::with_capacity(self.iterations))
+            .collect();
         let mut response_samples: Vec<f64> = Vec::with_capacity(self.iterations);
 
         // Pre-bind all factor-formulation identifiers that aren't in params to
@@ -647,7 +672,9 @@ impl Executor {
                     if factor.inputs.is_empty() {
                         0.0
                     } else {
-                        let sum: f64 = factor.inputs.iter()
+                        let sum: f64 = factor
+                            .inputs
+                            .iter()
                             .map(|inp| ctx.get(&inp.name).unwrap_or(0.0))
                             .sum();
                         sum / factor.inputs.len() as f64
@@ -692,7 +719,8 @@ impl Executor {
 
         if response_samples.is_empty() {
             return Err(ExecutionError::EvaluationError(
-                "Factor model produced no finite response samples (check Cobb-Douglas bases)".into(),
+                "Factor model produced no finite response samples (check Cobb-Douglas bases)"
+                    .into(),
             ));
         }
 
@@ -735,8 +763,12 @@ impl Executor {
             mean,
             median,
             std_dev,
-            p5, p25, p75, p95,
-            min, max,
+            p5,
+            p25,
+            p75,
+            p95,
+            min,
+            max,
             iterations: self.iterations,
             base_rate,
             divergence_relative,
@@ -886,7 +918,9 @@ pub enum LearnableSource {
     /// caller wants to. Today we only log learnable ones.
     Static,
     /// Driver was learnable AND a valid `params.<name>_fitted` was found.
-    Fitted { fitted: posterior::FittedDistribution },
+    Fitted {
+        fitted: posterior::FittedDistribution,
+    },
     /// Driver was learnable but no fit was available — fell back to the
     /// static `distribution: ...` block. Surface this in the UI as
     /// "cold-start / no observations yet".
@@ -949,18 +983,28 @@ impl Executor {
                 Self::walk_assign(b, owner, idx);
             }
             Expression::Not(a) | Expression::Exp(a) => Self::walk_assign(a, owner, idx),
-            Expression::If { condition, then_expr, else_expr } => {
+            Expression::If {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
                 Self::walk_assign(condition, owner, idx);
                 Self::walk_assign(then_expr, owner, idx);
                 Self::walk_assign(else_expr, owner, idx);
             }
             Expression::FunctionCall { args, .. } => {
-                for a in args { Self::walk_assign(a, owner, idx); }
+                for a in args {
+                    Self::walk_assign(a, owner, idx);
+                }
             }
             Expression::Residual { raw, .. } => Self::walk_assign(raw, owner, idx),
             // Terminal nodes — nothing to descend into.
-            Expression::Number(_) | Expression::Probability(_) | Expression::String(_)
-            | Expression::Boolean(_) | Expression::Identifier(_) | Expression::ParamRef(_)
+            Expression::Number(_)
+            | Expression::Probability(_)
+            | Expression::String(_)
+            | Expression::Boolean(_)
+            | Expression::Identifier(_)
+            | Expression::ParamRef(_)
             | Expression::FactorRef(_) => {}
         }
     }
@@ -983,7 +1027,11 @@ impl Executor {
 
     fn walk_collect(expr: &Expression, owner: &str, out: &mut Vec<LearnableInfo>) {
         match expr {
-            Expression::LearnablePrior { initial, sigma, name } => {
+            Expression::LearnablePrior {
+                initial,
+                sigma,
+                name,
+            } => {
                 if let Some(n) = name {
                     out.push(LearnableInfo {
                         name: n.clone(),
@@ -1011,13 +1059,19 @@ impl Executor {
                 Self::walk_collect(b, owner, out);
             }
             Expression::Not(a) | Expression::Exp(a) => Self::walk_collect(a, owner, out),
-            Expression::If { condition, then_expr, else_expr } => {
+            Expression::If {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
                 Self::walk_collect(condition, owner, out);
                 Self::walk_collect(then_expr, owner, out);
                 Self::walk_collect(else_expr, owner, out);
             }
             Expression::FunctionCall { args, .. } => {
-                for a in args { Self::walk_collect(a, owner, out); }
+                for a in args {
+                    Self::walk_collect(a, owner, out);
+                }
             }
             Expression::Residual { raw, .. } => Self::walk_collect(raw, owner, out),
             _ => {}
@@ -1045,7 +1099,11 @@ fn pearson_corr(a: &[f64], b: &[f64]) -> f64 {
         var_b += db * db;
     }
     let denom = (var_a * var_b).sqrt();
-    if denom == 0.0 { 0.0 } else { cov / denom }
+    if denom == 0.0 {
+        0.0
+    } else {
+        cov / denom
+    }
 }
 
 /// Max absolute pairwise Pearson correlation across all factor sample columns.

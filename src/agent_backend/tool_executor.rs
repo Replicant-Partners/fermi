@@ -98,50 +98,22 @@ impl ToolAwareExecutor {
             self.tool_context.remote_mcp.as_deref(),
         );
 
-        // v0.9.2 — agent-owner API key routing (tightened).
+        // SPEC_28 — one credential path for every executor branch.
         //
-        // Resolution now branches on `tool_context.user_secrets`:
+        // The key comes from `ExecutionContext.credentials`, resolved once
+        // per execution from the agent's owning principal's store entry
+        // (`abw-system` for platform-service agents, the owner otherwise).
+        // Never from env, and never a fallback to the platform key — that
+        // fallback is the shared-pool leak the credential model exists to
+        // close.
         //
-        //   - **None** — the agent is system-tier (platform-funded, e.g.
-        //     Fermi, xaman_ek) or the secrets subsystem isn't configured.
-        //     Use the platform env `ANTHROPIC_API_KEY`.
-        //   - **Some(map)** — the agent is owner-owned. Key MUST come
-        //     from `map["ANTHROPIC_API_KEY"]`. No env fallback. If the
-        //     owner hasn't uploaded a key via ABW's profile page, we
-        //     hard-fail with a message that names the fix location.
-        //
-        // This is the behavioural change from v0.9.0 (soft-fallback) to
-        // v0.9.2 (hard-fail). Owner-owned agents whose owners haven't
-        // funded them used to silently run on the platform's shared
-        // Anthropic account; that was the outage class Mario hit.
-        // Now they refuse to run and tell the operator where to go.
-        let agent_id_for_error = context.agent_card.agent_id.as_str();
-        let api_key = match self.tool_context.user_secrets.as_ref() {
-            // System / unmanaged: platform env fallback.
-            None => std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
-                ExecutionError::ExecutionFailed(
-                    "Platform ANTHROPIC_API_KEY not set. Contact the \
-                     platform administrator to configure it in the server \
-                     environment."
-                        .to_string(),
-                )
-            })?,
-            // Owner-owned agent: read from owner's stored secrets. No
-            // env fallback — falling through to the platform key would
-            // recreate the shared-pool bottleneck the marketplace
-            // architecture is designed to avoid.
-            Some(secrets) => match secrets.get("ANTHROPIC_API_KEY").cloned() {
-                Some(key) => key,
-                None => {
-                    return Err(ExecutionError::ExecutionFailed(format!(
-                        "Agent '{}' is not funded. Its owner has not set \
-                         an ANTHROPIC_API_KEY on their ABW profile. Ask them \
-                         to configure it at https://agent-bestiary.world/profile.",
-                        agent_id_for_error
-                    )));
-                }
-            },
-        };
+        // Identical resolution to `execute_openai_loop` and to the
+        // bypass path through `self.inner`, so an agent's funding does not
+        // depend on whether its prompt happens to demand structured output.
+        let api_key = context.key_for("anthropic")?;
+        // Funding provenance stamped on the output so the economics are
+        // auditable per run, identically on every executor branch.
+        let funding = context.funding_provenance("anthropic");
 
         let sp = context
             .agent_card
@@ -445,6 +417,8 @@ impl ToolAwareExecutor {
                 provider: Some("anthropic".to_string()),
                 stop_reason,
                 failure_reason,
+                funding_principal: funding.0,
+                credential_source: funding.1,
                 ..Default::default()
             },
             tool_invocations,
@@ -461,7 +435,10 @@ impl ToolAwareExecutor {
         let start = Instant::now();
         let provider = &context.agent_card.capabilities.provider;
 
-        let (api_key, base_url) = resolve_openai_provider(provider)?;
+        // SPEC_28 — same credential path as the Anthropic loop above.
+        // Endpoint is operator config; key is per-agent from the store.
+        let (api_key, base_url) = resolve_openai_provider(provider, context)?;
+        let funding = context.funding_provenance(provider);
 
         let system_prompt = context
             .agent_card
@@ -703,6 +680,8 @@ impl ToolAwareExecutor {
                 provider: Some(provider.clone()),
                 stop_reason: last_finish_reason,
                 failure_reason,
+                funding_principal: funding.0,
+                credential_source: funding.1,
                 ..Default::default()
             },
             tool_invocations,
@@ -835,39 +814,29 @@ impl AgentExecutor for ToolAwareExecutor {
 
 // ─── Helpers ───────────────────────────────────────────────────────
 
-fn resolve_openai_provider(provider: &str) -> Result<(String, String), ExecutionError> {
-    // Ollama needs no API key — just a base URL.
-    if provider == "ollama" {
-        let base_url = std::env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| {
-            // Fall back to localhost default if OLLAMA_ENABLE is set
-            "http://localhost:11434/v1".to_string()
-        });
-        return Ok((String::new(), base_url));
-    }
-
-    let env_key = format!("{}_API_KEY", provider.to_uppercase());
-    let api_key = std::env::var(&env_key)
-        .map_err(|_| ExecutionError::ExecutionFailed(format!("{} not set", env_key)))?;
-
-    let base_url = match provider {
-        "mistral" => "https://api.mistral.ai/v1".to_string(),
-        "qwen" => std::env::var("QWEN_BASE_URL")
-            .unwrap_or_else(|_| "https://dashscope.aliyuncs.com/compatible-mode/v1".to_string()),
-        "openrouter" => "https://openrouter.ai/api/v1".to_string(),
-        "glm" => std::env::var("GLM_BASE_URL")
-            .unwrap_or_else(|_| "https://open.bigmodel.cn/api/paas/v4".to_string()),
-        "deepseek" => std::env::var("DEEPSEEK_BASE_URL")
-            .unwrap_or_else(|_| "https://api.deepseek.com/v1".to_string()),
-        "kimi" => std::env::var("KIMI_BASE_URL")
-            .unwrap_or_else(|_| "https://api.moonshot.cn/v1".to_string()),
-        other => {
-            return Err(ExecutionError::ExecutionFailed(format!(
-                "Unknown provider: {}",
-                other
-            )))
-        }
-    };
-
+/// Resolve the credential + endpoint for an OpenAI-compatible provider.
+///
+/// Two different kinds of configuration, deliberately separated (SPEC_28):
+///
+///   - **endpoint** — operator config. Which host this deployment talks
+///     to. Comes from env via `provider_base_url`.
+///   - **credential** — per-agent. Comes from
+///     `ExecutionContext.credentials`, resolved from the owning
+///     principal's `agent_credentials` entry. Never env.
+///
+/// Identical key resolution to `execute_anthropic_loop`, because which
+/// account pays for a call must not depend on which provider the card
+/// names, nor on the shape of the agent's output.
+fn resolve_openai_provider(
+    provider: &str,
+    context: &ExecutionContext,
+) -> Result<(String, String), ExecutionError> {
+    let base_url = crate::agent_backend::multi_model_executor::provider_base_url(provider)
+        .ok_or_else(|| {
+            ExecutionError::ExecutionFailed(format!("Unknown provider: {}", provider))
+        })?;
+    // Returns Ok("") for providers needing no key (Ollama).
+    let api_key = context.key_for(provider)?.to_string();
     Ok((api_key, base_url))
 }
 

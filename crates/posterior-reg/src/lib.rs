@@ -109,9 +109,7 @@ impl WeightedSample {
                 }
             })?;
             if !v.is_finite() {
-                return Err(RegressionError::NonFiniteFeature {
-                    name: name.clone(),
-                });
+                return Err(RegressionError::NonFiniteFeature { name: name.clone() });
             }
             out.push(v);
         }
@@ -479,10 +477,7 @@ mod tests {
 
     fn sample(features: &[(&str, f64)], outcome: f64) -> WeightedSample {
         WeightedSample::real(
-            features
-                .iter()
-                .map(|(k, v)| (k.to_string(), *v))
-                .collect(),
+            features.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
             outcome,
         )
     }

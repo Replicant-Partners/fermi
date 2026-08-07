@@ -147,8 +147,11 @@ impl SemanticAnalyzer {
                 self.analyze_question(question);
             }
             // Factor model statements — validated at a higher level
-            Statement::Factor(_) | Statement::Param(_) | Statement::Import(_)
-            | Statement::Estimate(_) | Statement::Output(_) => {}
+            Statement::Factor(_)
+            | Statement::Param(_)
+            | Statement::Import(_)
+            | Statement::Estimate(_)
+            | Statement::Output(_) => {}
         }
     }
 
@@ -725,8 +728,14 @@ impl SemanticAnalyzer {
 
         // Factor-model programs (TEAM_PRIOR, TOURNAMENT_PATH, H2H_MATCH) replace
         // driver+model with factor+estimate. Skip driver/model rules in that case.
-        let has_factors = program.statements.iter().any(|s| matches!(s, Statement::Factor(_)));
-        let has_estimate = program.statements.iter().any(|s| matches!(s, Statement::Estimate(_)));
+        let has_factors = program
+            .statements
+            .iter()
+            .any(|s| matches!(s, Statement::Factor(_)));
+        let has_estimate = program
+            .statements
+            .iter()
+            .any(|s| matches!(s, Statement::Estimate(_)));
         let is_factor_model = has_factors && has_estimate;
 
         // Rule: Should have at least one driver — UNLESS this is a factor model.
@@ -753,10 +762,14 @@ impl SemanticAnalyzer {
 
         // Factor-model integrity: variance shares should sum to ~1.0
         if is_factor_model {
-            let total: f64 = program.statements.iter().filter_map(|s| match s {
-                Statement::Factor(f) => Some(f.variance_share),
-                _ => None,
-            }).sum();
+            let total: f64 = program
+                .statements
+                .iter()
+                .filter_map(|s| match s {
+                    Statement::Factor(f) => Some(f.variance_share),
+                    _ => None,
+                })
+                .sum();
             if (total - 1.0).abs() > 0.05 {
                 self.warnings.push(format!(
                     "Factor variance shares sum to {:.3} (expected ~1.0). Check variance budget.",

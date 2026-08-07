@@ -26,14 +26,14 @@
 //! - `margin_per_run_eur` — revenue − OPEX
 //! - `carbon_kg_co2_per_run` — net carbon
 
-use std::collections::HashMap;
+use crate::error::ProjectionError;
+use crate::executor::ModelExecutor;
 use serde_json::Value;
 use simops::{
     cascade_v2::cascade_v2,
     process_v2::{CascadeRequestV2, ProcessConfigV2, ScaleRequest},
 };
-use crate::executor::ModelExecutor;
-use crate::error::ProjectionError;
+use std::collections::HashMap;
 
 pub struct SimOpsCascadeExecutor;
 
@@ -75,12 +75,13 @@ impl ModelExecutor for SimOpsCascadeExecutor {
         }
 
         // Deserialise as v2 ProcessConfig
-        let process: ProcessConfigV2 = serde_json::from_value(config.clone())
-            .map_err(|e| ProjectionError::ExecutorFailed {
+        let process: ProcessConfigV2 = serde_json::from_value(config.clone()).map_err(|e| {
+            ProjectionError::ExecutorFailed {
                 kind: self.kind().to_string(),
                 run_index,
                 message: format!("Failed to deserialise ProcessConfigV2: {e}"),
-            })?;
+            }
+        })?;
 
         let req = CascadeRequestV2 {
             process,
@@ -103,10 +104,22 @@ impl ModelExecutor for SimOpsCascadeExecutor {
 
         let mut outputs = HashMap::new();
         outputs.insert("total_output_kg".into(), total_output_kg);
-        outputs.insert("total_opex_per_run_eur".into(), result.process_totals.total_opex_per_run_eur);
-        outputs.insert("total_revenue_per_run_eur".into(), result.process_totals.total_revenue_per_run_eur);
-        outputs.insert("margin_per_run_eur".into(), result.process_totals.margin_per_run_eur);
-        outputs.insert("carbon_kg_co2_per_run".into(), result.process_totals.carbon_kg_co2_per_run);
+        outputs.insert(
+            "total_opex_per_run_eur".into(),
+            result.process_totals.total_opex_per_run_eur,
+        );
+        outputs.insert(
+            "total_revenue_per_run_eur".into(),
+            result.process_totals.total_revenue_per_run_eur,
+        );
+        outputs.insert(
+            "margin_per_run_eur".into(),
+            result.process_totals.margin_per_run_eur,
+        );
+        outputs.insert(
+            "carbon_kg_co2_per_run".into(),
+            result.process_totals.carbon_kg_co2_per_run,
+        );
 
         Ok(outputs)
     }
@@ -115,8 +128,8 @@ impl ModelExecutor for SimOpsCascadeExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use simops::process_v2::*;
     use serde_json::json;
+    use simops::process_v2::*;
 
     fn simple_v2_process() -> ProcessConfigV2 {
         ProcessConfigV2 {
@@ -139,12 +152,15 @@ mod tests {
                     role: InputRole::Principal,
                     qty: Some(1.0),
                     qty_unit: Some("L".into()),
-                    per: None, per_unit: None,
+                    per: None,
+                    per_unit: None,
                     per_basis: Some(PerBasis::Principal),
-                    from_stage: None, from_output: None,
+                    from_stage: None,
+                    from_output: None,
                     unit_cost: Some(0.001),
                     cost_unit: Some("eur_per_L".into()),
-                    cost_source: None, risk_flags: None,
+                    cost_source: None,
+                    risk_flags: None,
                     density_kg_per_unit: Some(1.0),
                     mass_balance: None,
                 }],
@@ -177,8 +193,11 @@ mod tests {
         let outputs = executor.run(&config, 0).unwrap();
         assert!(outputs.contains_key("total_output_kg"));
         // 10 kg in × 0.80 efficiency = 8 kg out
-        assert!((outputs["total_output_kg"] - 8.0).abs() < 1e-6,
-            "expected 8.0, got {}", outputs["total_output_kg"]);
+        assert!(
+            (outputs["total_output_kg"] - 8.0).abs() < 1e-6,
+            "expected 8.0, got {}",
+            outputs["total_output_kg"]
+        );
         assert!(outputs.contains_key("total_opex_per_run_eur"));
         assert!(outputs.contains_key("margin_per_run_eur"));
     }

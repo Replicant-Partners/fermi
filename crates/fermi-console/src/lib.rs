@@ -45,5 +45,6 @@
 //! in `cockpit.rs`, both of which currently have tests that can't run.
 
 pub mod plot;
+pub mod roster;
 pub mod updater;
 pub mod wire;

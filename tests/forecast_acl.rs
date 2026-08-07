@@ -113,7 +113,9 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use fermi_auth::visibility::{can_access, can_edit, can_view, is_team_member};
-use fermi_auth::{teams, AuthPrincipal, MemberType, ObjectType, Permission, ShareType, TeamRole, Visibility};
+use fermi_auth::{
+    teams, AuthPrincipal, MemberType, ObjectType, Permission, ShareType, TeamRole, Visibility,
+};
 
 /// Acquire a Neon pool. Returns `None` if `DATABASE_URL` isn't set so the
 /// test can early-return silently — matches the pattern in
@@ -125,10 +127,7 @@ async fn try_pool() -> Option<PgPool> {
             if let Some((key, val)) = line.split_once('=') {
                 let key = key.trim();
                 let val = val.trim().trim_matches('"');
-                if !key.is_empty()
-                    && !key.starts_with('#')
-                    && std::env::var(key).is_err()
-                {
+                if !key.is_empty() && !key.starts_with('#') && std::env::var(key).is_err() {
                     std::env::set_var(key, val);
                 }
             }
@@ -136,7 +135,9 @@ async fn try_pool() -> Option<PgPool> {
     });
     let url = std::env::var("DATABASE_URL").ok()?;
     // Neon + PgBouncer transaction-mode hates prepared-statement caches.
-    let opts = PgConnectOptions::from_str(&url).ok()?.statement_cache_capacity(0);
+    let opts = PgConnectOptions::from_str(&url)
+        .ok()?
+        .statement_cache_capacity(0);
     sqlx::pool::PoolOptions::new()
         .max_connections(2)
         .acquire_timeout(Duration::from_secs(30))
@@ -388,10 +389,7 @@ struct PortfolioSnapshot {
 }
 
 async fn snapshot_portfolio(pool: &PgPool, portfolio_id: &str) -> PortfolioSnapshot {
-    let row = sqlx::query_as::<
-        _,
-        (String, Option<String>, Option<String>, String, Option<Uuid>),
-    >(
+    let row = sqlx::query_as::<_, (String, Option<String>, Option<String>, String, Option<Uuid>)>(
         "SELECT title, description, domain, visibility, team_id
          FROM fermi_portfolios WHERE id = $1",
     )
@@ -504,12 +502,10 @@ async fn patch_portfolio_with_all_null_is_noop() {
 /// need real ids. The pair is also the substrate for "owner vs team
 /// member" tests below.
 async fn pick_two_existing_user_ids(pool: &PgPool) -> (Uuid, Uuid) {
-    let rows = sqlx::query_scalar::<_, Uuid>(
-        "SELECT id FROM users ORDER BY created_at LIMIT 2",
-    )
-    .fetch_all(pool)
-    .await
-    .expect("fetch two users.id");
+    let rows = sqlx::query_scalar::<_, Uuid>("SELECT id FROM users ORDER BY created_at LIMIT 2")
+        .fetch_all(pool)
+        .await
+        .expect("fetch two users.id");
     assert!(
         rows.len() >= 2,
         "tests need at least two users in the DB to model owner + team member"
@@ -557,11 +553,7 @@ async fn delete_test_forecast(pool: &PgPool, forecast_id: &str) {
 ///
 /// The clause is lifted verbatim from src/handlers/forecasts.rs — if the
 /// handler drifts, this test must drift with it.
-async fn forecast_visible_to(
-    pool: &PgPool,
-    forecast_id: &str,
-    caller_user_id: &str,
-) -> bool {
+async fn forecast_visible_to(pool: &PgPool, forecast_id: &str, caller_user_id: &str) -> bool {
     let n: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM fermi_forecasts f
          WHERE f.id = $2
@@ -586,11 +578,7 @@ async fn forecast_visible_to(
 }
 
 /// Same shape against the portfolio list WHERE clause.
-async fn portfolio_visible_to(
-    pool: &PgPool,
-    portfolio_id: &str,
-    caller_user_id: &str,
-) -> bool {
+async fn portfolio_visible_to(pool: &PgPool, portfolio_id: &str, caller_user_id: &str) -> bool {
     let n: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM fermi_portfolios p
          WHERE p.id = $2
@@ -633,14 +621,7 @@ async fn list_forecasts_includes_team_private() {
     let (owner, member) = pick_two_existing_user_ids(&pool).await;
     let team_id = insert_test_team(&pool, &suffix).await;
     add_member(&pool, team_id, &member.to_string(), "member").await;
-    let fid = insert_test_forecast(
-        &pool,
-        owner,
-        Some(team_id),
-        "private",
-        &suffix,
-    )
-    .await;
+    let fid = insert_test_forecast(&pool, owner, Some(team_id), "private", &suffix).await;
 
     let stranger = Uuid::new_v4().to_string();
 
@@ -1149,7 +1130,13 @@ async fn lookup_user_by_email_finds_existing_and_404s_others() {
 fn mixed_case(s: &str) -> String {
     s.chars()
         .enumerate()
-        .map(|(i, c)| if i % 2 == 0 { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() })
+        .map(|(i, c)| {
+            if i % 2 == 0 {
+                c.to_ascii_uppercase()
+            } else {
+                c.to_ascii_lowercase()
+            }
+        })
         .collect()
 }
 
@@ -1189,13 +1176,11 @@ async fn insert_test_invite(
 }
 
 async fn fetch_invite_status(pool: &PgPool, invite_id: Uuid) -> Option<String> {
-    sqlx::query_scalar::<_, String>(
-        "SELECT status FROM forecast_invites WHERE id = $1",
-    )
-    .bind(invite_id)
-    .fetch_optional(pool)
-    .await
-    .expect("fetch invite status")
+    sqlx::query_scalar::<_, String>("SELECT status FROM forecast_invites WHERE id = $1")
+        .bind(invite_id)
+        .fetch_optional(pool)
+        .await
+        .expect("fetch invite status")
 }
 
 /// Lifted from `list_my_invites_handler` — count invites visible to a
@@ -1505,11 +1490,7 @@ async fn invite_revoke_transitions_to_revoked() {
 /// invitee_email when the row had been email-only. The exactly-one-of
 /// CHECK on the table forces this two-column dance — both populated
 /// would violate the invariant.
-async fn run_accept_status_flip(
-    pool: &PgPool,
-    invite_id: Uuid,
-    accepter_user_id: &str,
-) -> u64 {
+async fn run_accept_status_flip(pool: &PgPool, invite_id: Uuid, accepter_user_id: &str) -> u64 {
     sqlx::query(
         "UPDATE forecast_invites
             SET status = 'accepted',
@@ -1594,7 +1575,9 @@ async fn accept_forecast_invite_materialises_share() {
     );
 
     // Cleanup: revoke the share, delete the invite + forecast.
-    teams::revoke_share(&pool, post[0].id).await.expect("revoke");
+    teams::revoke_share(&pool, post[0].id)
+        .await
+        .expect("revoke");
     delete_invite(&pool, invite_id).await;
     delete_test_forecast(&pool, &fid).await;
 }
@@ -1646,7 +1629,9 @@ async fn accept_portfolio_invite_materialises_share() {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].permission, Permission::View);
 
-    teams::revoke_share(&pool, listed[0].id).await.expect("revoke");
+    teams::revoke_share(&pool, listed[0].id)
+        .await
+        .expect("revoke");
     delete_invite(&pool, invite_id).await;
     delete_test_portfolio(&pool, &pid).await;
 }
@@ -1739,9 +1724,16 @@ async fn accept_invite_is_idempotent_at_status_flip() {
     .await;
 
     teams::share_object(
-        &pool, ObjectType::Forecast, &fid, ShareType::User, &invitee,
-        Permission::View, &owner.to_string(),
-    ).await.expect("share");
+        &pool,
+        ObjectType::Forecast,
+        &fid,
+        ShareType::User,
+        &invitee,
+        Permission::View,
+        &owner.to_string(),
+    )
+    .await
+    .expect("share");
 
     let n1 = run_accept_status_flip(&pool, invite_id, &invitee).await;
     assert_eq!(n1, 1, "first accept transitions the row");
@@ -1749,17 +1741,28 @@ async fn accept_invite_is_idempotent_at_status_flip() {
     assert_eq!(n2, 0, "second accept is a no-op at the status flip");
 
     let shares_before = teams::list_object_shares(&pool, ObjectType::Forecast, &fid)
-        .await.expect("list 1");
+        .await
+        .expect("list 1");
     teams::share_object(
-        &pool, ObjectType::Forecast, &fid, ShareType::User, &invitee,
-        Permission::View, &owner.to_string(),
-    ).await.expect("re-share");
+        &pool,
+        ObjectType::Forecast,
+        &fid,
+        ShareType::User,
+        &invitee,
+        Permission::View,
+        &owner.to_string(),
+    )
+    .await
+    .expect("re-share");
     let shares_after = teams::list_object_shares(&pool, ObjectType::Forecast, &fid)
-        .await.expect("list 2");
+        .await
+        .expect("list 2");
     assert_eq!(shares_before.len(), shares_after.len());
     assert_eq!(shares_before[0].id, shares_after[0].id);
 
-    teams::revoke_share(&pool, shares_after[0].id).await.expect("revoke");
+    teams::revoke_share(&pool, shares_after[0].id)
+        .await
+        .expect("revoke");
     delete_invite(&pool, invite_id).await;
     delete_test_forecast(&pool, &fid).await;
 }
@@ -1777,9 +1780,16 @@ async fn accept_after_decline_is_blocked_at_status_flip() {
     let fid = insert_test_forecast(&pool, owner, None, "private", &suffix).await;
     let invitee = format!("accept-after-decline-{}", suffix);
     let (invite_id, _) = insert_test_invite(
-        &pool, "forecast", &fid, "view", Some(&invitee), None, None,
+        &pool,
+        "forecast",
+        &fid,
+        "view",
+        Some(&invitee),
+        None,
+        None,
         &owner.to_string(),
-    ).await;
+    )
+    .await;
 
     assert_eq!(run_decline(&pool, invite_id, &invitee).await, 1);
 
@@ -1821,29 +1831,34 @@ async fn accept_email_only_invite_backfills_user_id() {
     )
     .await;
 
-    let before: Option<String> = sqlx::query_scalar(
-        "SELECT invitee_user_id FROM forecast_invites WHERE id = $1",
-    )
-    .bind(invite_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let before: Option<String> =
+        sqlx::query_scalar("SELECT invitee_user_id FROM forecast_invites WHERE id = $1")
+            .bind(invite_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(before.is_none());
 
     let accepter = format!("email-claim-accepter-{}", suffix);
     teams::share_object(
-        &pool, ObjectType::Forecast, &fid, ShareType::User, &accepter,
-        Permission::View, &owner.to_string(),
-    ).await.expect("share");
+        &pool,
+        ObjectType::Forecast,
+        &fid,
+        ShareType::User,
+        &accepter,
+        Permission::View,
+        &owner.to_string(),
+    )
+    .await
+    .expect("share");
     assert_eq!(run_accept_status_flip(&pool, invite_id, &accepter).await, 1);
 
-    let after: (Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT invitee_user_id, invitee_email FROM forecast_invites WHERE id = $1",
-    )
-    .bind(invite_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let after: (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT invitee_user_id, invitee_email FROM forecast_invites WHERE id = $1")
+            .bind(invite_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(
         after.0.as_deref(),
         Some(accepter.as_str()),
@@ -1858,7 +1873,9 @@ async fn accept_email_only_invite_backfills_user_id() {
     let listed = teams::list_object_shares(&pool, ObjectType::Forecast, &fid)
         .await
         .expect("list");
-    teams::revoke_share(&pool, listed[0].id).await.expect("revoke");
+    teams::revoke_share(&pool, listed[0].id)
+        .await
+        .expect("revoke");
     delete_invite(&pool, invite_id).await;
     delete_test_forecast(&pool, &fid).await;
 }
@@ -2737,7 +2754,10 @@ async fn can_admin_collaborator_can_share() {
     )
     .await
     .expect("can_access call for viewer");
-    assert!(!view_level.has_admin(), "view-share holder must NOT have can_admin");
+    assert!(
+        !view_level.has_admin(),
+        "view-share holder must NOT have can_admin"
+    );
 
     // Cleanup
     sqlx::query("DELETE FROM object_shares WHERE object_id = $1 AND share_target IN ($2, $3)")
@@ -2799,7 +2819,10 @@ async fn admin_share_holder_can_delete() {
     )
     .await
     .expect("can_access call");
-    assert!(level.has_admin(), "admin-share holder must have can_admin for delete");
+    assert!(
+        level.has_admin(),
+        "admin-share holder must have can_admin for delete"
+    );
 
     // Cleanup
     sqlx::query("DELETE FROM object_shares WHERE object_id = $1 AND share_target = $2")

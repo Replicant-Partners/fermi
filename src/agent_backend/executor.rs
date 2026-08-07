@@ -3,9 +3,11 @@
 /// Pluggable execution engines for agents.
 /// Currently implements Mock executor for testing.
 use crate::agent_backend::agent_card::{AgentCard, CognitionTier};
+use crate::agent_backend::credentials::ResolvedCredentials;
 use crate::ast::{AgentStmt, EvidenceStmt, Program};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Execution context passed to executors
@@ -17,6 +19,59 @@ pub struct ExecutionContext {
     pub creature_id: Option<Uuid>,
     /// Creature's cognition tier — drives model ladder resolution (None = use card defaults)
     pub cognition_tier: Option<CognitionTier>,
+    /// Provider credentials for THIS execution, resolved from the
+    /// `agent_credentials` store (SPEC_28). Carried here — rather than
+    /// captured in an executor at construction — so funding is per-agent
+    /// and identical on every execution path, including the tool-loop
+    /// bypasses that structured-output agents take.
+    ///
+    /// Defaults to `unfunded`, which fails loudly. A new execution path
+    /// that forgets to resolve credentials must not quietly spend the
+    /// platform's money.
+    pub credentials: Arc<ResolvedCredentials>,
+}
+
+impl ExecutionContext {
+    /// Single-agent context with no credentials. For tests, mock
+    /// executions, and any path that must not be able to spend.
+    /// Attach real credentials with `with_credentials`.
+    pub fn for_agent(program: Program, agent_card: AgentCard) -> Self {
+        Self {
+            program,
+            agent_card,
+            creature_id: None,
+            cognition_tier: None,
+            credentials: ResolvedCredentials::unfunded_arc(),
+        }
+    }
+
+    pub fn with_credentials(mut self, credentials: Arc<ResolvedCredentials>) -> Self {
+        self.credentials = credentials;
+        self
+    }
+
+    pub fn with_creature(mut self, id: Uuid, tier: Option<CognitionTier>) -> Self {
+        self.creature_id = Some(id);
+        self.cognition_tier = tier;
+        self
+    }
+
+    /// Resolve the API key for `provider` for this execution.
+    /// Convenience so executors don't repeat the agent-id plumbing.
+    pub fn key_for(&self, provider: &str) -> Result<&str, ExecutionError> {
+        self.credentials
+            .key_for(provider, self.agent_card.agent_id.as_str())
+    }
+
+    /// Funding provenance for `provider`, for stamping onto `AgentMetadata`
+    /// so every run records which account paid. Returns
+    /// `(funding_principal, credential_source)`.
+    pub fn funding_provenance(&self, provider: &str) -> (Option<String>, Option<String>) {
+        (
+            self.credentials.funding_principal().map(str::to_string),
+            Some(self.credentials.source_for(provider).as_str().to_string()),
+        )
+    }
 }
 
 /// A record of a single tool invocation during agentic execution
@@ -66,6 +121,17 @@ pub struct AgentMetadata {
     /// Provider that handled the request (anthropic, openai, openrouter, …) —
     /// resolved at execution time, not just whatever the card declared.
     pub provider: Option<String>,
+    /// SPEC_28 — funding provenance: whose budget bore the raw LLM cost.
+    /// `abw-system` for platform-service agents, else the owner's user_id.
+    ///
+    /// Recorded per run so the economics are auditable after the fact
+    /// rather than inferred. Without this, "which key paid for this?" was
+    /// unanswerable — which is how a cross-tenant billing leak survived a
+    /// release unnoticed.
+    pub funding_principal: Option<String>,
+    /// How that credential was resolved: `agent_scoped`,
+    /// `principal_default`, `legacy_user_secrets`, or `unfunded`.
+    pub credential_source: Option<String>,
     /// Final stop / finish reason reported by the LLM
     /// (anthropic: stop / tool_use / max_tokens / end_turn / pause_turn / refusal;
     ///  openai-compatible: stop / tool_calls / length / content_filter / function_call).
@@ -92,6 +158,15 @@ pub enum ExecutionError {
     ExecutionFailed(String),
     InvalidContext(String),
     Timeout,
+    /// No credential is available to pay for `provider` on behalf of
+    /// `agent_id` (SPEC_28). Structured rather than a formatted string so
+    /// callers can distinguish "unfunded" from "provider returned 5xx" —
+    /// the workspace UI could previously only echo
+    /// `"Execution failed: Execution failed: DEEPSEEK_API_KEY not set"`.
+    Unfunded {
+        agent_id: String,
+        provider: String,
+    },
 }
 
 impl std::fmt::Display for ExecutionError {
@@ -101,6 +176,18 @@ impl std::fmt::Display for ExecutionError {
             ExecutionError::ExecutionFailed(s) => write!(f, "Execution failed: {}", s),
             ExecutionError::InvalidContext(s) => write!(f, "Invalid context: {}", s),
             ExecutionError::Timeout => write!(f, "Execution timeout"),
+            // Owner-facing remediation. Deliberately never mentions env
+            // vars: the person who can fix this is the agent's owner, on
+            // their profile page, not an operator with shell access.
+            ExecutionError::Unfunded { agent_id, provider } => write!(
+                f,
+                "Agent '{}' is not funded for provider '{}'. Its owner needs to set \
+                 {}_API_KEY on their profile (Profile → LLM Provider Keys) at {}/profile.",
+                agent_id,
+                provider,
+                provider.to_uppercase(),
+                crate::agent_backend::credentials::abw_base_url(),
+            ),
         }
     }
 }
@@ -215,12 +302,7 @@ mod tests {
         let card =
             crate::agent_backend::AgentCard::new("test_agent".to_string(), "research".to_string());
 
-        let context = ExecutionContext {
-            program,
-            agent_card: card,
-            creature_id: None,
-            cognition_tier: None,
-        };
+        let context = ExecutionContext::for_agent(program, card);
 
         let executor = MockExecutor::new();
         let result = executor.execute(&agent, &context).await;

@@ -30,8 +30,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use agent_bestiary_evaluators::{
-    Dimension, EvalError, EvalModel, EvalResult, EvalTier, EpisodeBundle,
-    TranscriptRole,
+    Dimension, EpisodeBundle, EvalError, EvalModel, EvalResult, EvalTier, TranscriptRole,
 };
 
 /// Optional LLM provider configuration.
@@ -133,10 +132,12 @@ fn heuristic_score(
     let response_text = agent_turns.join(" ").to_lowercase();
 
     // Goal completion: keyword overlap between goal and response.
-    let goal_keywords: Vec<&str> = goal_text.split_whitespace()
+    let goal_keywords: Vec<&str> = goal_text
+        .split_whitespace()
         .filter(|w| w.len() > 4)
         .collect();
-    let hits = goal_keywords.iter()
+    let hits = goal_keywords
+        .iter()
         .filter(|&&w| response_text.contains(w))
         .count();
     let goal_completion = if goal_keywords.is_empty() {
@@ -149,14 +150,20 @@ fn heuristic_score(
     let avg_response_len = if agent_turns.is_empty() {
         0.0
     } else {
-        agent_turns.iter().map(|t| t.split_whitespace().count()).sum::<usize>() as f64
+        agent_turns
+            .iter()
+            .map(|t| t.split_whitespace().count())
+            .sum::<usize>() as f64
             / agent_turns.len() as f64
     };
     let social_capital = (avg_response_len / 80.0).clamp(0.0, 1.0);
 
     // Rapport: turn-taking balance.
-    let user_turns = bundle.transcript.iter()
-        .filter(|t| matches!(t.role, TranscriptRole::User)).count();
+    let user_turns = bundle
+        .transcript
+        .iter()
+        .filter(|t| matches!(t.role, TranscriptRole::User))
+        .count();
     let agent_turn_count = agent_turns.len();
     let rapport = if user_turns + agent_turn_count == 0 {
         0.5
@@ -175,7 +182,10 @@ fn heuristic_score(
         .with_latency_ms(latency)
         .with_rationale(format!(
             "Heuristic: goal_kw={}/{}, avg_words={:.0}, rapport_ratio={:.2}",
-            hits, goal_keywords.len(), avg_response_len, rapport
+            hits,
+            goal_keywords.len(),
+            avg_response_len,
+            rapport
         )))
 }
 
@@ -197,9 +207,12 @@ async fn llm_score(
     t0: Instant,
 ) -> Result<EvalResult, EvalError> {
     let goal = bundle.goal_spec.as_ref().unwrap();
-    let transcript_text: String = bundle.transcript.iter().map(|t| {
-        format!("{}: {}", format!("{:?}", t.role).to_lowercase(), t.content)
-    }).collect::<Vec<_>>().join("\n");
+    let transcript_text: String = bundle
+        .transcript
+        .iter()
+        .map(|t| format!("{}: {}", format!("{:?}", t.role).to_lowercase(), t.content))
+        .collect::<Vec<_>>()
+        .join("\n");
 
     let prompt = format!(
         r#"You are a social intelligence evaluator using the Sotopia framework.
@@ -243,7 +256,10 @@ Return ONLY valid JSON:
         .await
         .map_err(|e| EvalError::Provider(e.to_string()))?;
 
-    let raw: serde_json::Value = resp.json().await.map_err(|e| EvalError::Malformed(e.to_string()))?;
+    let raw: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| EvalError::Malformed(e.to_string()))?;
     let content = raw["content"][0]["text"]
         .as_str()
         .ok_or_else(|| EvalError::Malformed("no text in response".into()))?;
@@ -280,7 +296,10 @@ mod tests {
     use chrono::Utc;
     use uuid::Uuid;
 
-    fn bundle(goal: Option<serde_json::Value>, turns: Vec<(&str, TranscriptRole)>) -> EpisodeBundle {
+    fn bundle(
+        goal: Option<serde_json::Value>,
+        turns: Vec<(&str, TranscriptRole)>,
+    ) -> EpisodeBundle {
         EpisodeBundle {
             episode_id: Uuid::new_v4(),
             agent_id: Uuid::new_v4(),
@@ -288,9 +307,14 @@ mod tests {
             dyad_id: None,
             timestamp_ref: Utc::now(),
             query: "Hello".to_string(),
-            transcript: turns.into_iter().map(|(c, r)| TranscriptTurn {
-                role: r, content: c.to_string(), speaker_id: None,
-            }).collect(),
+            transcript: turns
+                .into_iter()
+                .map(|(c, r)| TranscriptTurn {
+                    role: r,
+                    content: c.to_string(),
+                    speaker_id: None,
+                })
+                .collect(),
             goal_spec: goal,
             context: serde_json::json!({}),
             provenance: Provenance::AutoPass,
@@ -302,7 +326,13 @@ mod tests {
     #[tokio::test]
     async fn no_goal_is_inapplicable() {
         let ev = SotopiaEvaluator::new();
-        let b = bundle(None, vec![("hi", TranscriptRole::User), ("hello", TranscriptRole::Agent)]);
+        let b = bundle(
+            None,
+            vec![
+                ("hi", TranscriptRole::User),
+                ("hello", TranscriptRole::Agent),
+            ],
+        );
         assert!(ev.evaluate(&b).await.unwrap_err().is_inapplicable());
     }
 
@@ -326,8 +356,14 @@ mod tests {
             ],
         );
         let result = ev.evaluate(&b).await.unwrap();
-        assert!(result.dimension_scores.contains_key(&Dimension::new("goal_completion")));
-        assert!(result.dimension_scores.contains_key(&Dimension::new("social_capital")));
-        assert!(result.dimension_scores.contains_key(&Dimension::new("rapport")));
+        assert!(result
+            .dimension_scores
+            .contains_key(&Dimension::new("goal_completion")));
+        assert!(result
+            .dimension_scores
+            .contains_key(&Dimension::new("social_capital")));
+        assert!(result
+            .dimension_scores
+            .contains_key(&Dimension::new("rapport")));
     }
 }

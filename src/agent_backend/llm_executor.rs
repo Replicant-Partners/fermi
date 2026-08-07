@@ -10,17 +10,25 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
-/// LLM Executor using Anthropic Claude API
+/// LLM Executor using Anthropic Claude API.
+///
+/// Credential-stateless (SPEC_28): holds no API key. The key for each call
+/// arrives on `ExecutionContext.credentials`, resolved per agent from the
+/// `agent_credentials` store. This is what makes sharing one instance
+/// process-wide compatible with per-agent funding.
 pub struct LLMExecutor {
-    api_key: String,
     client: reqwest::Client,
 }
 
+impl Default for LLMExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LLMExecutor {
-    /// Create new LLM executor with API key
-    pub fn new(api_key: String) -> Self {
+    pub fn new() -> Self {
         LLMExecutor {
-            api_key,
             client: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(90))
                 .build()
@@ -28,14 +36,10 @@ impl LLMExecutor {
         }
     }
 
-    /// Create from environment variable ANTHROPIC_API_KEY
+    /// Retained for call-site compatibility. No longer reads env: there is
+    /// nothing to read, because keys are per-execution. Infallible.
     pub fn from_env() -> Result<Self, ExecutionError> {
-        let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
-            ExecutionError::ExecutionFailed(
-                "ANTHROPIC_API_KEY environment variable not set".to_string(),
-            )
-        })?;
-        Ok(Self::new(api_key))
+        Ok(Self::new())
     }
 
     /// Universal preamble prepended to EVERY agent's system prompt.
@@ -267,15 +271,21 @@ CARDINAL RULES (override everything else):
         }
     }
 
-    /// Send a raw ClaudeRequest and return the parsed response
+    /// Send a raw ClaudeRequest and return the parsed response.
+    ///
+    /// `api_key` is supplied per call from `ExecutionContext.credentials`
+    /// (SPEC_28) rather than read from a field captured at construction —
+    /// that field is what made this executor structurally incapable of
+    /// per-agent funding.
     pub(crate) async fn send_request(
         &self,
         request: &ClaudeRequest,
+        api_key: &str,
     ) -> Result<ClaudeResponse, ExecutionError> {
         let response = self
             .client
             .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &self.api_key)
+            .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
             .json(request)
@@ -350,8 +360,12 @@ impl AgentExecutor for LLMExecutor {
             tool_choice: None,
         };
 
-        // Call Claude API
-        let claude_response = self.send_request(&request).await?;
+        // Call Claude API with THIS execution's credential. Resolved from
+        // the agent's owning principal's store entry; never from env.
+        let api_key = context.key_for("anthropic")?;
+        // Stamp who paid, so the run is auditable after the fact.
+        let funding = context.funding_provenance("anthropic");
+        let claude_response = self.send_request(&request, api_key).await?;
 
         // Extract the full response text BEFORE parsing into evidence
         let full_response_text = extract_text_from_content(&claude_response.content);
@@ -402,6 +416,8 @@ impl AgentExecutor for LLMExecutor {
                 provider: Some("anthropic".to_string()),
                 stop_reason,
                 failure_reason,
+                funding_principal: funding.0,
+                credential_source: funding.1,
                 ..Default::default()
             },
             tool_invocations: vec![],
@@ -701,7 +717,7 @@ mod tests {
     /// appear verbatim in `summary` (that was the original issue #4 bug).
     #[test]
     fn parse_response_does_not_stuff_json_contract_into_summary() {
-        let executor = LLMExecutor::new("test-key".into());
+        let executor = LLMExecutor::new();
         let oracle_response = r#"```json
 {
   "items": [{"name": "Tea", "unit_cost": 42}],
@@ -735,7 +751,7 @@ mod tests {
     /// Confirm the JSON-array contract case is also detected, not just objects.
     #[test]
     fn parse_response_recognises_array_contract() {
-        let executor = LLMExecutor::new("test-key".into());
+        let executor = LLMExecutor::new();
         let response = mk_response(r#"[{"name": "a"}, {"name": "b"}]"#);
         let evidence = executor
             .parse_response(&response, "test_agent")
@@ -747,7 +763,7 @@ mod tests {
     /// + findings — the fix is targeted at JSON-contract shapes only.
     #[test]
     fn parse_response_preserves_summary_for_free_form_text() {
-        let executor = LLMExecutor::new("test-key".into());
+        let executor = LLMExecutor::new();
         let response = mk_response(
             "Analysis of the situation:\n\
              - The market is volatile.\n\
@@ -773,7 +789,7 @@ mod tests {
     /// because it returns Ok first.
     #[test]
     fn parse_response_uses_summary_field_when_evidence_data_shape() {
-        let executor = LLMExecutor::new("test-key".into());
+        let executor = LLMExecutor::new();
         let response = mk_response(
             r#"{"key_findings": ["a", "b"], "summary": "headline finding", "confidence": 0.8}"#,
         );

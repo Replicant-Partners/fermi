@@ -72,7 +72,10 @@ pub fn compute_r_hat(chains: &[Vec<Vec<f64>>], n_params: usize) -> Vec<f64> {
 
         let grand_mean: f64 = chain_means.iter().sum::<f64>() / m;
         // Between-chain variance
-        let b: f64 = n * chain_means.iter().map(|cm| (cm - grand_mean).powi(2)).sum::<f64>()
+        let b: f64 = n * chain_means
+            .iter()
+            .map(|cm| (cm - grand_mean).powi(2))
+            .sum::<f64>()
             / (m - 1.0);
         // Within-chain variance
         let w: f64 = chain_vars.iter().sum::<f64>() / m;
@@ -224,8 +227,7 @@ mod tests {
                     .map(|_| {
                         let u1: f64 = rng.gen_range(1e-12..1.0);
                         let u2: f64 = rng.gen::<f64>();
-                        let z = (-2.0 * u1.ln()).sqrt()
-                            * (2.0 * std::f64::consts::PI * u2).cos();
+                        let z = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
                         vec![z]
                     })
                     .collect()
@@ -253,10 +255,16 @@ mod tests {
         let chains: Vec<Vec<Vec<f64>>> = vec![
             (0..n_draws).map(|i| vec![0.0 + 0.001 * i as f64]).collect(),
             (0..n_draws).map(|i| vec![5.0 + 0.001 * i as f64]).collect(),
-            (0..n_draws).map(|i| vec![10.0 + 0.001 * i as f64]).collect(),
+            (0..n_draws)
+                .map(|i| vec![10.0 + 0.001 * i as f64])
+                .collect(),
         ];
         let r_hat = compute_r_hat(&chains, 1);
-        assert!(r_hat[0] > 1.05, "R-hat = {} should signal divergence", r_hat[0]);
+        assert!(
+            r_hat[0] > 1.05,
+            "R-hat = {} should signal divergence",
+            r_hat[0]
+        );
     }
 
     #[test]
@@ -264,7 +272,11 @@ mod tests {
         let chains = iid_normal_chains(4, 1000, 2);
         let ess = effective_sample_size_per_chain(&chains, 1);
         // For 4000 i.i.d. samples, ESS should be near 4000 (within ~20%).
-        assert!(ess[0] > 3000.0, "ESS = {} too low for i.i.d. chains", ess[0]);
+        assert!(
+            ess[0] > 3000.0,
+            "ESS = {} too low for i.i.d. chains",
+            ess[0]
+        );
     }
 
     #[test]

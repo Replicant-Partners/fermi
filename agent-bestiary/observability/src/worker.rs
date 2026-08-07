@@ -65,10 +65,7 @@ impl ObservabilityWorker {
     /// drift fields on entries, runs anomaly detection over the
     /// resulting window, persists found anomalies, and advances the
     /// checkpoint.
-    pub async fn scan_agent(
-        &self,
-        agent_id: Uuid,
-    ) -> Result<ScanReport, ObservabilityError> {
+    pub async fn scan_agent(&self, agent_id: Uuid) -> Result<ScanReport, ObservabilityError> {
         let start = Instant::now();
 
         let mut state = self
@@ -93,11 +90,7 @@ impl ObservabilityWorker {
         // Pull entries since checkpoint, oldest-first.
         let entries = self
             .store
-            .list_timeline_entries_since(
-                agent_id,
-                state.last_scanned_entry_id,
-                self.batch_size,
-            )
+            .list_timeline_entries_since(agent_id, state.last_scanned_entry_id, self.batch_size)
             .await
             .map_err(|e| ObservabilityError::Storage(e.to_string()))?;
 
@@ -139,11 +132,8 @@ impl ObservabilityWorker {
             match drift {
                 Ok(v) => {
                     drift_computations += 1;
-                    let mut flags: Vec<serde_json::Value> = entry
-                        .anomaly_flags
-                        .as_array()
-                        .cloned()
-                        .unwrap_or_default();
+                    let mut flags: Vec<serde_json::Value> =
+                        entry.anomaly_flags.as_array().cloned().unwrap_or_default();
                     if v.anomalous {
                         flags.push(serde_json::Value::String("drift:anomalous".into()));
                     }
@@ -173,16 +163,11 @@ impl ObservabilityWorker {
         // alternative — mutating local copies — risks divergence.
         let refreshed = self
             .store
-            .list_timeline_entries_since(
-                agent_id,
-                state.last_scanned_entry_id,
-                self.batch_size,
-            )
+            .list_timeline_entries_since(agent_id, state.last_scanned_entry_id, self.batch_size)
             .await
             .map_err(|e| ObservabilityError::Storage(e.to_string()))?;
 
-        let detected: Vec<DetectedAnomaly> =
-            self.anomaly.detect_in_window(agent_id, &refreshed);
+        let detected: Vec<DetectedAnomaly> = self.anomaly.detect_in_window(agent_id, &refreshed);
 
         for a in &detected {
             self.anomaly

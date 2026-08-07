@@ -91,7 +91,10 @@ fn encoder_agent_wide_gate_is_synchronous() {
 
 // ── Gate tests ────────────────────────────────────────────────────────────────
 
-fn make_encoded(scope: CorrectionScope, correction_text: Option<String>) -> crate::EncodedIntervention {
+fn make_encoded(
+    scope: CorrectionScope,
+    correction_text: Option<String>,
+) -> crate::EncodedIntervention {
     let req = InterventionRequest {
         anomaly_event_id: Uuid::new_v4(),
         agent_id: Uuid::new_v4(),
@@ -115,7 +118,9 @@ fn make_encoded(scope: CorrectionScope, correction_text: Option<String>) -> crat
 fn gate_episode_scope_always_settles() {
     let gate = CoherenceGate::default();
     let encoded = make_encoded(CorrectionScope::Episode, Some("corrected text".to_string()));
-    let outcome = gate.check(&encoded).expect("episode scope should not block");
+    let outcome = gate
+        .check(&encoded)
+        .expect("episode scope should not block");
     assert_eq!(outcome.verdict, GateVerdict::Settled);
     // gamma should be populated
     assert!(outcome.gamma.is_some());
@@ -137,7 +142,9 @@ fn gate_agent_wide_approves_when_coherent() {
         CorrectionScope::AgentWide,
         Some("the agent must always provide safety guidance".to_string()),
     );
-    let outcome = gate.check(&encoded).expect("should approve with threshold=0");
+    let outcome = gate
+        .check(&encoded)
+        .expect("should approve with threshold=0");
     assert_eq!(outcome.verdict, GateVerdict::Approved);
 }
 
@@ -149,7 +156,9 @@ fn gate_agent_wide_blocks_when_threshold_not_met() {
         CorrectionScope::AgentWide,
         Some("some correction text".to_string()),
     );
-    let err = gate.check(&encoded).expect_err("should block with threshold=1.0");
+    let err = gate
+        .check(&encoded)
+        .expect_err("should block with threshold=1.0");
     match err {
         GateError::Blocked { threshold, .. } => assert_eq!(threshold, 1.0),
         other => panic!("unexpected error: {:?}", other),
@@ -159,7 +168,10 @@ fn gate_agent_wide_blocks_when_threshold_not_met() {
 #[test]
 fn gate_principle_scores_present() {
     let gate = CoherenceGate::default();
-    let encoded = make_encoded(CorrectionScope::Episode, Some("test correction".to_string()));
+    let encoded = make_encoded(
+        CorrectionScope::Episode,
+        Some("test correction".to_string()),
+    );
     let outcome = gate.check(&encoded).unwrap();
     // Should have principle scores from the TEC model.
     assert!(!outcome.principle_scores.is_empty());

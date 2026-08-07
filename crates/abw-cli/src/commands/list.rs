@@ -69,8 +69,8 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<()> {
         return Err(anyhow!("server returned {}: {}", status, body));
     }
 
-    let value: Value = serde_json::from_str(&body)
-        .with_context(|| format!("parsing response: {}", body))?;
+    let value: Value =
+        serde_json::from_str(&body).with_context(|| format!("parsing response: {}", body))?;
     let apps = value
         .get("apps")
         .and_then(|v| v.as_array())
@@ -89,10 +89,17 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<()> {
     if apps.is_empty() {
         if !ctx.quiet {
             println!();
-            let scope = if args.public { "public Apps" } else { "Apps registered" };
+            let scope = if args.public {
+                "public Apps"
+            } else {
+                "Apps registered"
+            };
             println!("  {} No {} match this query.", "·".dimmed(), scope);
             if !args.public && api_key.is_none() {
-                println!("  {} Run `abw login` to see your own private Apps.", "tip:".green().bold());
+                println!(
+                    "  {} Run `abw login` to see your own private Apps.",
+                    "tip:".green().bold()
+                );
             }
             println!();
         }
@@ -100,15 +107,27 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<()> {
     }
 
     if !ctx.quiet {
-        let scope = if args.public { "Public catalogue" } else { "Your Apps" };
+        let scope = if args.public {
+            "Public catalogue"
+        } else {
+            "Your Apps"
+        };
         println!();
-        println!("  {} {} ({}):", "★".yellow().bold(), scope.bold(), apps.len());
+        println!(
+            "  {} {} ({}):",
+            "★".yellow().bold(),
+            scope.bold(),
+            apps.len()
+        );
         println!();
     }
 
     // Render each app on three lines (slug, name+visibility, tagline+homepage)
     for app in &apps {
-        let slug = app.get("slug").and_then(|v| v.as_str()).unwrap_or("(no-slug)");
+        let slug = app
+            .get("slug")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(no-slug)");
         let name = app.get("name").and_then(|v| v.as_str()).unwrap_or(slug);
         let visibility = app
             .get("visibility")
@@ -116,7 +135,10 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<()> {
             .unwrap_or("?");
         let tagline = app.get("tagline").and_then(|v| v.as_str());
         let homepage = app.get("homepage_url").and_then(|v| v.as_str());
-        let owner = app.get("owner_user_id").and_then(|v| v.as_str()).unwrap_or("?");
+        let owner = app
+            .get("owner_user_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
 
         let vis_pill = match visibility {
             "public" => visibility.green().to_string(),

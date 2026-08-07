@@ -8,8 +8,8 @@
 //! best match with score + reasons. kask renders this as an action chip;
 //! operator accepts → dispatches `mutate_document` to write the bind.
 
-use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 use crate::process_v2::{OutputRole, ProcessConfigV2};
 
@@ -18,11 +18,21 @@ use crate::process_v2::{OutputRole, ProcessConfigV2};
 /// Unit families for compatibility filtering (kask UNIT_FAMILIES).
 fn unit_family(unit: &str) -> &'static str {
     let u = unit.to_lowercase();
-    if ["l","ml","m3","gal","fl_oz"].contains(&u.as_str()) { return "volume"; }
-    if ["kg","g","mg","tonne","lb","oz"].contains(&u.as_str()) { return "mass"; }
-    if ["kwh","mj","kj","kcal"].contains(&u.as_str()) { return "energy"; }
-    if ["unit","piece","pieces","can","cans","bottle","bottles","sachet","sachets",
-        "box","boxes","sku","pack","packs","pouch","pouches","jar","jars"].contains(&u.as_str()) {
+    if ["l", "ml", "m3", "gal", "fl_oz"].contains(&u.as_str()) {
+        return "volume";
+    }
+    if ["kg", "g", "mg", "tonne", "lb", "oz"].contains(&u.as_str()) {
+        return "mass";
+    }
+    if ["kwh", "mj", "kj", "kcal"].contains(&u.as_str()) {
+        return "energy";
+    }
+    if [
+        "unit", "piece", "pieces", "can", "cans", "bottle", "bottles", "sachet", "sachets", "box",
+        "boxes", "sku", "pack", "packs", "pouch", "pouches", "jar", "jars",
+    ]
+    .contains(&u.as_str())
+    {
         return "discrete";
     }
     "other"
@@ -174,16 +184,17 @@ pub fn suggest_principal_bindings(process: &ProcessConfigV2) -> Vec<SlotBindingS
 
     // For each non-first stage, check for orphan principals
     for (consumer_idx, consumer_stage) in stages.iter().enumerate().skip(1) {
-        let principals: Vec<_> = consumer_stage.inputs.iter()
-            .filter(|i| {
-                i.role == crate::process_v2::InputRole::Principal
-                && i.from_stage.is_none()
-            })
+        let principals: Vec<_> = consumer_stage
+            .inputs
+            .iter()
+            .filter(|i| i.role == crate::process_v2::InputRole::Principal && i.from_stage.is_none())
             .collect();
 
         // Only auto-suggest for single-orphan-principal stages.
         // Multi-principal ambiguity is left for the operator.
-        if principals.len() != 1 { continue; }
+        if principals.len() != 1 {
+            continue;
+        }
         let consumer_input = &principals[0];
 
         let consumer_unit = consumer_input.qty_unit.as_deref();
@@ -195,11 +206,12 @@ pub fn suggest_principal_bindings(process: &ProcessConfigV2) -> Vec<SlotBindingS
 
         for (upstream_idx, upstream_stage) in stages.iter().enumerate().take(consumer_idx) {
             for upstream_output in &upstream_stage.outputs {
-                let already = already_linked.contains(
-                    &(upstream_stage.id.clone(), upstream_output.name.clone())
-                );
+                let already = already_linked
+                    .contains(&(upstream_stage.id.clone(), upstream_output.name.clone()));
                 let output_slot = Some(upstream_output.name.as_str()); // name as slot proxy
-                let output_unit = upstream_output.density_kg_per_unit.map(|_| upstream_output.qty_unit.as_str());
+                let output_unit = upstream_output
+                    .density_kg_per_unit
+                    .map(|_| upstream_output.qty_unit.as_str());
 
                 if let Some((score, reasons, name_matched)) = score_candidate(
                     consumer_unit,
@@ -262,51 +274,84 @@ mod tests {
             },
             stages: vec![
                 StageV2 {
-                    id: "s1".into(), name: None, description: None,
+                    id: "s1".into(),
+                    name: None,
+                    description: None,
                     inputs: vec![Input {
-                        name: "water".into(), role: InputRole::Principal,
-                        qty: Some(1.0), qty_unit: Some("L".into()),
-                        per: None, per_unit: None, per_basis: Some(PerBasis::Principal),
-                        from_stage: None, from_output: None,
-                        unit_cost: Some(0.001), cost_unit: Some("eur_per_L".into()),
-                        cost_source: None, risk_flags: None,
-                        density_kg_per_unit: Some(1.0), mass_balance: None,
+                        name: "water".into(),
+                        role: InputRole::Principal,
+                        qty: Some(1.0),
+                        qty_unit: Some("L".into()),
+                        per: None,
+                        per_unit: None,
+                        per_basis: Some(PerBasis::Principal),
+                        from_stage: None,
+                        from_output: None,
+                        unit_cost: Some(0.001),
+                        cost_unit: Some("eur_per_L".into()),
+                        cost_source: None,
+                        risk_flags: None,
+                        density_kg_per_unit: Some(1.0),
+                        mass_balance: None,
                     }],
                     outputs: vec![Output {
-                        name: "intermediate".into(), role: OutputRole::DownstreamFeed,
+                        name: "intermediate".into(),
+                        role: OutputRole::DownstreamFeed,
                         qty_per_input_kg: None,
-                        qty_unit: "L".into(), density_kg_per_unit: Some(1.0),
-                        capture_fraction: None, value_per_unit_usd: None,
+                        qty_unit: "L".into(),
+                        density_kg_per_unit: Some(1.0),
+                        capture_fraction: None,
+                        value_per_unit_usd: None,
                         disposal_cost_per_unit_usd: None,
                     }],
                     efficiency: 0.9,
-                    power_kwh_per_input_kg: None, labor_hours_per_input_kg: None,
-                    carbon_intensity: None, duration_hours: None,
+                    power_kwh_per_input_kg: None,
+                    labor_hours_per_input_kg: None,
+                    carbon_intensity: None,
+                    duration_hours: None,
                 },
                 StageV2 {
-                    id: "s2".into(), name: None, description: None,
+                    id: "s2".into(),
+                    name: None,
+                    description: None,
                     inputs: vec![Input {
-                        name: "intermediate".into(), role: InputRole::Principal,
-                        qty: None, qty_unit: Some("L".into()),
-                        per: None, per_unit: None, per_basis: None,
+                        name: "intermediate".into(),
+                        role: InputRole::Principal,
+                        qty: None,
+                        qty_unit: Some("L".into()),
+                        per: None,
+                        per_unit: None,
+                        per_basis: None,
                         // orphan when from_stage is None
                         from_stage: if orphan { None } else { Some("s1".into()) },
                         from_output: None,
-                        unit_cost: None, cost_unit: None, cost_source: None, risk_flags: None,
-                        density_kg_per_unit: Some(1.0), mass_balance: None,
+                        unit_cost: None,
+                        cost_unit: None,
+                        cost_source: None,
+                        risk_flags: None,
+                        density_kg_per_unit: Some(1.0),
+                        mass_balance: None,
                     }],
                     outputs: vec![Output {
-                        name: "product".into(), role: OutputRole::Product,
-                        qty_per_input_kg: None, qty_unit: "L".into(),
-                        density_kg_per_unit: Some(1.0), capture_fraction: None,
-                        value_per_unit_usd: Some(2.0), disposal_cost_per_unit_usd: None,
+                        name: "product".into(),
+                        role: OutputRole::Product,
+                        qty_per_input_kg: None,
+                        qty_unit: "L".into(),
+                        density_kg_per_unit: Some(1.0),
+                        capture_fraction: None,
+                        value_per_unit_usd: Some(2.0),
+                        disposal_cost_per_unit_usd: None,
                     }],
                     efficiency: 0.95,
-                    power_kwh_per_input_kg: None, labor_hours_per_input_kg: None,
-                    carbon_intensity: None, duration_hours: None,
+                    power_kwh_per_input_kg: None,
+                    labor_hours_per_input_kg: None,
+                    carbon_intensity: None,
+                    duration_hours: None,
                 },
             ],
-            elec_price_per_kwh: None, labor_cost_per_hour: None, carbon_price_per_tonne: None,
+            elec_price_per_kwh: None,
+            labor_cost_per_hour: None,
+            carbon_price_per_tonne: None,
         }
     }
 
@@ -335,12 +380,32 @@ mod tests {
         // Two upstream stages: one with downstream_feed, one with sidestream
         // Both volume-compatible — feed should win
         let score_feed = score_candidate(
-            Some("L"), None, None, 1,
-            "out", &OutputRole::DownstreamFeed, Some("L"), None, None, 0, "s0", false,
+            Some("L"),
+            None,
+            None,
+            1,
+            "out",
+            &OutputRole::DownstreamFeed,
+            Some("L"),
+            None,
+            None,
+            0,
+            "s0",
+            false,
         );
         let score_ss = score_candidate(
-            Some("L"), None, None, 1,
-            "out", &OutputRole::Sidestream, Some("L"), None, None, 0, "s0", false,
+            Some("L"),
+            None,
+            None,
+            1,
+            "out",
+            &OutputRole::Sidestream,
+            Some("L"),
+            None,
+            None,
+            0,
+            "s0",
+            false,
         );
         assert!(score_feed.unwrap().0 > score_ss.unwrap().0);
     }
@@ -349,8 +414,18 @@ mod tests {
     fn incompatible_units_returns_none() {
         // Volume consumer, mass upstream → incompatible
         let result = score_candidate(
-            Some("L"), None, None, 1,
-            "out", &OutputRole::DownstreamFeed, Some("kg"), None, None, 0, "s0", false,
+            Some("L"),
+            None,
+            None,
+            1,
+            "out",
+            &OutputRole::DownstreamFeed,
+            Some("kg"),
+            None,
+            None,
+            0,
+            "s0",
+            false,
         );
         assert!(result.is_none());
     }
@@ -358,8 +433,18 @@ mod tests {
     #[test]
     fn null_units_are_permissive() {
         let result = score_candidate(
-            None, None, None, 1,
-            "out", &OutputRole::DownstreamFeed, None, None, None, 0, "s0", false,
+            None,
+            None,
+            None,
+            1,
+            "out",
+            &OutputRole::DownstreamFeed,
+            None,
+            None,
+            None,
+            0,
+            "s0",
+            false,
         );
         assert!(result.is_some());
     }

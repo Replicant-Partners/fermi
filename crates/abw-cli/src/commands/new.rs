@@ -1,10 +1,10 @@
 //! `abw app new <slug>` — scaffold a new App directory.
 
 use super::Ctx;
+use abw_apps_core::{default_name_from_slug, validate_slug};
 use anyhow::{anyhow, Context, Result};
 use clap::Args as ClapArgs;
 use colored::*;
-use abw_apps_core::{default_name_from_slug, validate_slug};
 use std::path::PathBuf;
 
 const MANIFEST_TEMPLATE: &str = include_str!("../../templates/manifest.json");
@@ -42,10 +42,12 @@ pub struct Args {
 
 pub async fn run(ctx: &Ctx, args: Args) -> Result<()> {
     // Validate the slug up front — better to fail before creating directories.
-    validate_slug(&args.slug)
-        .map_err(|msg| anyhow!("invalid slug: {}", msg))?;
+    validate_slug(&args.slug).map_err(|msg| anyhow!("invalid slug: {}", msg))?;
 
-    let dir = args.dir.clone().unwrap_or_else(|| PathBuf::from(&args.slug));
+    let dir = args
+        .dir
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(&args.slug));
     if dir.exists() {
         if !args.force {
             return Err(anyhow!(
@@ -64,12 +66,13 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<()> {
         }
     }
 
-    let name = args.name.unwrap_or_else(|| default_name_from_slug(&args.slug));
+    let name = args
+        .name
+        .unwrap_or_else(|| default_name_from_slug(&args.slug));
     let tagline = args.tagline.unwrap_or_else(|| String::new());
     let description = args.description.unwrap_or_else(|| String::new());
 
-    std::fs::create_dir_all(&dir)
-        .with_context(|| format!("creating {}", dir.display()))?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
 
     let manifest = MANIFEST_TEMPLATE
         .replace("{{SLUG}}", &args.slug)
@@ -88,7 +91,11 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<()> {
 
     if !ctx.quiet {
         println!();
-        println!("  {} Created {}", "✓".green().bold(), dir.display().to_string().bold());
+        println!(
+            "  {} Created {}",
+            "✓".green().bold(),
+            dir.display().to_string().bold()
+        );
         println!();
         println!("  Files:");
         println!("    {} manifest.json      — App manifest", "·".dimmed());
@@ -107,8 +114,7 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<()> {
 }
 
 fn write_file(path: PathBuf, content: &str) -> Result<()> {
-    std::fs::write(&path, content)
-        .with_context(|| format!("writing {}", path.display()))
+    std::fs::write(&path, content).with_context(|| format!("writing {}", path.display()))
 }
 
 /// Minimal JSON-string escaping for substitution into the template.

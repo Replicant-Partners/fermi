@@ -29,7 +29,7 @@ use std::collections::HashMap;
 
 use coherence_core::{
     relations::{IncoherenceKind, IncoherenceRelation},
-    ConversationId, CoherenceSystem, MessageId, ParticipantId, Utterance, UtteranceKind,
+    CoherenceSystem, ConversationId, MessageId, ParticipantId, Utterance, UtteranceKind,
 };
 use coherence_engine::SettlingEngine;
 
@@ -156,9 +156,8 @@ impl CoherenceGate {
 
         // ── Incoherence relation ──────────────────────────────────
         // U0 and U1 are mutually exclusive.
-        let incoherence =
-            IncoherenceRelation::new(u0_id, u1_id, IncoherenceKind::Contradicts)
-                .map_err(|e| GateError::SettlingFailed(e.to_string()))?;
+        let incoherence = IncoherenceRelation::new(u0_id, u1_id, IncoherenceKind::Contradicts)
+            .map_err(|e| GateError::SettlingFailed(e.to_string()))?;
 
         system
             .add_incoherence(incoherence)

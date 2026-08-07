@@ -409,11 +409,26 @@ pub async fn consolidate_agent_handler(
                     let program = ast::Program {
                         statements: vec![ast::Statement::Agent(agent_stmt.clone())],
                     };
+                    // SPEC_28 — dream_narrator is a platform-service agent;
+                    // funded from the `abw-system` principal's store.
+                    let credentials = match crate::resolve_agent(&narrator_state, &narrator_id)
+                        .await
+                    {
+                        Ok(db_agent) => {
+                            crate::build_execution_credentials(&narrator_state, &db_agent, &card)
+                                .await
+                        }
+                        Err(_) => {
+                            fermi::agent_backend::credentials::ResolvedCredentials::unfunded_arc()
+                        }
+                    };
+
                     let context = ExecutionContext {
                         program,
                         agent_card: card,
                         creature_id: None,
                         cognition_tier: None,
+                        credentials,
                     };
                     if let Ok(output) = narrator_state
                         .registry

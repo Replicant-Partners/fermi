@@ -35,7 +35,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 
 use agent_bestiary_evaluators::{
-    Dimension, EvalError, EvalFlag, EvalModel, EvalResult, EvalTier, EpisodeBundle,
+    Dimension, EpisodeBundle, EvalError, EvalFlag, EvalModel, EvalResult, EvalTier,
 };
 
 const MIN_CLAIMS: usize = 1;
@@ -123,7 +123,9 @@ impl EvalModel for FaithfulnessEvaluator {
         // Split response into atomic claims.
         let claims = split_claims(&response_text);
         if claims.len() < MIN_CLAIMS {
-            return Err(EvalError::Inapplicable("response too short to extract claims".into()));
+            return Err(EvalError::Inapplicable(
+                "response too short to extract claims".into(),
+            ));
         }
 
         // Score each claim.
@@ -151,7 +153,11 @@ impl EvalModel for FaithfulnessEvaluator {
         }
 
         let total = (supported + unsupported) as f64;
-        let score = if total > 0.0 { supported as f64 / total } else { 1.0 };
+        let score = if total > 0.0 {
+            supported as f64 / total
+        } else {
+            1.0
+        };
         let latency = t0.elapsed().as_millis() as u64;
 
         let mut result = EvalResult::new(self.name(), self.version())
@@ -195,7 +201,13 @@ fn extract_sources(ctx: &serde_json::Value) -> Vec<String> {
         }
     };
 
-    for key in &["tool_outputs", "documents", "retrieved_chunks", "context", "sources"] {
+    for key in &[
+        "tool_outputs",
+        "documents",
+        "retrieved_chunks",
+        "context",
+        "sources",
+    ] {
         sources.extend(try_key(key));
     }
 
@@ -307,7 +319,10 @@ mod tests {
         let b = bundle_with_context(response, ctx);
         let result = ev.evaluate(&b).await.unwrap();
         let score = result.dimension_scores[&Dimension::new("grounding")];
-        assert!(score < 1.0, "ungrounded response should score < 1.0, got {score}");
+        assert!(
+            score < 1.0,
+            "ungrounded response should score < 1.0, got {score}"
+        );
     }
 
     #[test]

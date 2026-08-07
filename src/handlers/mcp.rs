@@ -298,6 +298,10 @@ pub async fn mcp_agent_rpc(
                 gas_fees: Some(state.gas_fees.clone()),
                 user_id: principal.as_ref().map(|p| p.user_id()),
                 user_secrets: None,
+                // SPEC_28 — funds any agent execution a dispatched tool
+                // triggers (e.g. delegate_to_agent) from THIS agent's
+                // owning principal, not the calling MCP client's.
+                credentials: crate::build_execution_credentials(&state, &db_agent, &card).await,
                 eval_trigger: Some(Arc::new(crate::handlers::eval::EvalTriggerImpl {
                     state: state.clone(),
                 })),
@@ -381,14 +385,20 @@ async fn run_llm_execute(
         statements: vec![ast::Statement::Agent(agent_stmt.clone())],
     };
 
+    // SPEC_28 — an external MCP client invoking this agent must not be
+    // able to borrow the platform's key. Funding follows the agent's owner.
+    let credentials = crate::build_execution_credentials(&state, &db_agent, &card).await;
+
     let context = ExecutionContext {
         program,
         agent_card: card.clone(),
         creature_id: None,
         cognition_tier: None,
+        credentials: credentials.clone(),
     };
 
     let tool_ctx = Arc::new(ToolContext {
+        credentials,
         memory_store: state.memory_store.clone(),
         embedder: state.embedder.clone(),
         registry: state.registry.clone(),

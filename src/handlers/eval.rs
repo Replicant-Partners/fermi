@@ -525,13 +525,19 @@ pub async fn run_eval_cases(
         let program = ast::Program {
             statements: vec![ast::Statement::Agent(agent_stmt.clone())],
         };
+        // SPEC_28 — eval runs are funded by the agent under evaluation,
+        // same as a normal invocation.
+        let credentials = crate::build_execution_credentials(&state, &db_agent, &card).await;
+
         let context = ExecutionContext {
             program,
             agent_card: card.clone(),
             creature_id: None,
             cognition_tier: None,
+            credentials: credentials.clone(),
         };
         let tool_context = Arc::new(ToolContext {
+            credentials,
             memory_store: state.memory_store.clone(),
             embedder: state.embedder.clone(),
             registry: state.registry.clone(),

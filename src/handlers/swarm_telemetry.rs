@@ -435,11 +435,21 @@ pub async fn ingest_telemetry_handler(
             let program = ast::Program {
                 statements: vec![ast::Statement::Agent(agent_stmt.clone())],
             };
+            // SPEC_28 — platform-service agent; funded from the
+            // `abw-system` principal's credential store.
+            let credentials = match crate::resolve_agent(&spawn_state, coordinator_id).await {
+                Ok(db_agent) => {
+                    crate::build_execution_credentials(&spawn_state, &db_agent, &card).await
+                }
+                Err(_) => fermi::agent_backend::credentials::ResolvedCredentials::unfunded_arc(),
+            };
+
             let context = ExecutionContext {
                 program,
                 agent_card: card.clone(),
                 creature_id: None,
                 cognition_tier: None,
+                credentials,
             };
 
             match spawn_state
@@ -460,8 +470,7 @@ pub async fn ingest_telemetry_handler(
 
                     if let Some(row) = db_id {
                         let agent_uuid: Uuid = row.get("agent_id");
-                        let episode =
-                            agent_output_to_episode(agent_uuid, &summary_prompt, &output);
+                        let episode = agent_output_to_episode(agent_uuid, &summary_prompt, &output);
 
                         // Embedding + Spec 22 provenance
                         let embed_text = format!(
@@ -470,22 +479,19 @@ pub async fn ingest_telemetry_handler(
                             output.metadata.reasoning.as_deref().unwrap_or("")
                         );
                         let t_embed = tokio::time::Instant::now();
-                        let provenance = match spawn_state
-                            .embedder
-                            .generate_provenanced(&embed_text)
-                            .await
-                        {
-                            Ok(p) => {
-                                tracing::info!(
-                                    elapsed_ms = t_embed.elapsed().as_millis() as u64,
-                                    model = %p.model_id,
-                                    site = "swarm_coordinator",
-                                    "embed_call"
-                                );
-                                Some(p)
-                            }
-                            Err(_) => None,
-                        };
+                        let provenance =
+                            match spawn_state.embedder.generate_provenanced(&embed_text).await {
+                                Ok(p) => {
+                                    tracing::info!(
+                                        elapsed_ms = t_embed.elapsed().as_millis() as u64,
+                                        model = %p.model_id,
+                                        site = "swarm_coordinator",
+                                        "embed_call"
+                                    );
+                                    Some(p)
+                                }
+                                Err(_) => None,
+                            };
                         let source_ref = serde_json::json!({
                             "kind": "swarm_coordinator",
                             "agent_id": agent_uuid,

@@ -40,8 +40,8 @@ pub use registry::ExecutorRegistry;
 pub use sweep::{SamplingDistribution, SweepConfig, SweepKind, VariableSweep};
 pub use types::{ModelConfig, OutputFormat, ProjectionRequest, ProjectionResponse};
 
-use rand::SeedableRng;
 use rand::rngs::StdRng;
+use rand::SeedableRng;
 use std::collections::HashMap;
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -77,7 +77,10 @@ pub fn project_distribution(
         .collect();
     let mut n_failed = 0usize;
     let mut raw_runs: Vec<HashMap<String, f64>> = Vec::new();
-    let collect_raw = matches!(request.output_format, OutputFormat::RawRuns | OutputFormat::Both);
+    let collect_raw = matches!(
+        request.output_format,
+        OutputFormat::RawRuns | OutputFormat::Both
+    );
 
     for run_index in 0..n_runs {
         // Clone the base config and patch sampled variable values into it
@@ -158,22 +161,18 @@ fn apply_sweep(
                 // Uniform::new is infallible in rand_distr 0.4
                 Uniform::new(*low, *high).sample(rng)
             }
-            SamplingDistribution::Normal { mean, std } => {
-                Normal::new(*mean, *std)
-                    .map_err(|e| ProjectionError::InvalidSweep(e.to_string()))?
-                    .sample(rng)
-            }
+            SamplingDistribution::Normal { mean, std } => Normal::new(*mean, *std)
+                .map_err(|e| ProjectionError::InvalidSweep(e.to_string()))?
+                .sample(rng),
             SamplingDistribution::Triangular { p5, p50, p95 } => {
                 // Triangular::new(min, max, mode)
                 Triangular::new(*p5, *p95, *p50)
                     .map_err(|e| ProjectionError::InvalidSweep(e.to_string()))?
                     .sample(rng)
             }
-            SamplingDistribution::Beta { alpha, beta } => {
-                Beta::new(*alpha, *beta)
-                    .map_err(|e| ProjectionError::InvalidSweep(e.to_string()))?
-                    .sample(rng)
-            }
+            SamplingDistribution::Beta { alpha, beta } => Beta::new(*alpha, *beta)
+                .map_err(|e| ProjectionError::InvalidSweep(e.to_string()))?
+                .sample(rng),
             SamplingDistribution::FromTypicalRange => {
                 // TODO: resolve typical_range from config field metadata
                 // Deferred until field annotation convention is agreed
@@ -201,9 +200,17 @@ mod tests {
     /// A trivial executor that returns whatever "value" field is in its config.
     struct EchoExecutor;
     impl ModelExecutor for EchoExecutor {
-        fn kind(&self) -> &str { "echo" }
-        fn output_dimensions(&self) -> Vec<String> { vec!["value".into()] }
-        fn run(&self, config: &serde_json::Value, _: usize) -> Result<HashMap<String, f64>, ProjectionError> {
+        fn kind(&self) -> &str {
+            "echo"
+        }
+        fn output_dimensions(&self) -> Vec<String> {
+            vec!["value".into()]
+        }
+        fn run(
+            &self,
+            config: &serde_json::Value,
+            _: usize,
+        ) -> Result<HashMap<String, f64>, ProjectionError> {
             let v = config["value"].as_f64().unwrap_or(0.0);
             Ok(HashMap::from([("value".into(), v)]))
         }
@@ -226,7 +233,10 @@ mod tests {
                 kind: SweepKind::MonteCarlo,
                 variables: vec![VariableSweep {
                     path: "/value".into(),
-                    distribution: SamplingDistribution::Uniform { low: 1.0, high: 3.0 },
+                    distribution: SamplingDistribution::Uniform {
+                        low: 1.0,
+                        high: 3.0,
+                    },
                     label: None,
                 }],
             },
@@ -240,7 +250,11 @@ mod tests {
         let summary = response.output.dimension("value").unwrap();
 
         assert_eq!(summary.n_runs, 500);
-        assert!(summary.mean > 1.5 && summary.mean < 2.5, "mean={}", summary.mean);
+        assert!(
+            summary.mean > 1.5 && summary.mean < 2.5,
+            "mean={}",
+            summary.mean
+        );
         assert!(summary.p5 >= 1.0);
         assert!(summary.p95 <= 3.0);
     }
@@ -265,7 +279,10 @@ mod tests {
     #[test]
     fn project_timeseries_returns_stub_error() {
         let request = ProjectionRequest {
-            model: ModelConfig { kind: "echo".into(), config: json!({}) },
+            model: ModelConfig {
+                kind: "echo".into(),
+                config: json!({}),
+            },
             sweep: SweepConfig::default(),
             n_runs: 1,
             seed: None,
@@ -287,7 +304,10 @@ mod tests {
                 kind: SweepKind::MonteCarlo,
                 variables: vec![VariableSweep {
                     path: "/value".into(),
-                    distribution: SamplingDistribution::Normal { mean: 5.0, std: 1.0 },
+                    distribution: SamplingDistribution::Normal {
+                        mean: 5.0,
+                        std: 1.0,
+                    },
                     label: None,
                 }],
             },
@@ -301,6 +321,10 @@ mod tests {
         let r2 = project_distribution(&request, &registry).unwrap();
         let s1 = r1.output.dimension("value").unwrap();
         let s2 = r2.output.dimension("value").unwrap();
-        assert_eq!(s1.mean.to_bits(), s2.mean.to_bits(), "same seed must produce identical output");
+        assert_eq!(
+            s1.mean.to_bits(),
+            s2.mean.to_bits(),
+            "same seed must produce identical output"
+        );
     }
 }

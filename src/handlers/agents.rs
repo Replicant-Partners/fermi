@@ -176,6 +176,13 @@ pub struct ListAgentsParams {
     sort: Option<String>, // "newest", "executions", "name"
     page: Option<usize>,
     limit: Option<usize>,
+    /// Restrict to members of an orchestra (`fermi`, `xaman_ek`).
+    /// Resolved against the roster views from mig-172 — the same
+    /// predicate `/api/orchestras/:name/members` and the agent Manage
+    /// page use. Prefer this over `?tag=fermi-orchestra`, which only
+    /// matches a hand-maintained metadata tag that nothing in the
+    /// approval flow writes.
+    orchestra: Option<String>,
 }
 
 pub async fn list_agents(
@@ -231,6 +238,29 @@ pub async fn list_agents(
         } else {
             real_agents
         };
+
+        // Apply orchestra-membership filter. Authoritative: reads the
+        // roster view, so an agent approved into Fermi shows up here the
+        // moment it's a member — no tag bookkeeping required.
+        if let Some(ref orchestra) = params.orchestra {
+            match crate::handlers::orchestras::orchestra_view_name(orchestra) {
+                Some(view) => {
+                    // `view` is a compile-time constant from ORCHESTRAS,
+                    // never caller input — safe to interpolate.
+                    let member_ids: std::collections::HashSet<uuid::Uuid> =
+                        sqlx::query_scalar(&format!("SELECT agent_id FROM public.{}", view))
+                            .fetch_all(&state.db)
+                            .await
+                            .unwrap_or_default()
+                            .into_iter()
+                            .collect();
+                    filtered.retain(|a| member_ids.contains(&a.agent_id));
+                }
+                // Unknown orchestra name: return empty rather than
+                // silently ignoring the filter and dumping the catalogue.
+                None => filtered.clear(),
+            }
+        }
 
         // Apply tag filter (single tag)
         if let Some(ref tag) = params.tag {
@@ -296,7 +326,19 @@ pub async fn list_agents(
             std::collections::HashMap::new()
         };
 
-        if !page_agents.is_empty() || total > 0 {
+        // An explicit filter that matches nothing is a legitimate empty
+        // answer, not a signal that the catalogue is unavailable. Without
+        // this, a zero-match filter fell through to the filesystem
+        // fallback below, which ignores every filter and returns the
+        // whole `agents/curated` directory — so `?orchestra=fermi` on an
+        // empty roster (or a typo'd `?tag=`) would answer with a pile of
+        // unrelated agents rather than `[]`.
+        let filter_requested = params.search.is_some()
+            || params.tag.is_some()
+            || params.tags.is_some()
+            || params.orchestra.is_some();
+
+        if !page_agents.is_empty() || total > 0 || filter_requested {
             let agents: Vec<Value> = page_agents
                 .iter()
                 .map(|a| {
@@ -1050,10 +1092,27 @@ pub async fn import_agent_handler(
             .cloned()
             .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
         persona_version: 1,
-        fermi_contract: card
-            .get("capabilities")
-            .and_then(|c| c.get("fermi_contract"))
-            .cloned(),
+        // Orchestra membership is NOT importable.
+        //
+        // `agents.fermi_contract IS NOT NULL` is the predicate behind the
+        // `orchestra_fermi_members` view (mig-172), i.e. it *is* Fermi
+        // orchestra membership. Copying it out of a user-supplied card
+        // let any authenticated user mint themselves an "admin-approved"
+        // Fermi member by pasting a contract and self-publishing — a
+        // complete bypass of the review flow in
+        // `handlers::orchestras::approve_orchestra_request_handler`.
+        //
+        // Only platform admins may carry a contract through import (used
+        // for restoring/migrating curated cards). Everyone else imports
+        // the agent without membership and goes through
+        // `POST /api/orchestras/fermi/requests` like any other candidate.
+        fermi_contract: if principal.can_admin() {
+            card.get("capabilities")
+                .and_then(|c| c.get("fermi_contract"))
+                .cloned()
+        } else {
+            None
+        },
         model_params: card
             .get("capabilities")
             .and_then(|c| c.get("model_params"))
@@ -1066,6 +1125,15 @@ pub async fn import_agent_handler(
             .cloned(),
     };
 
+    // Tell the importer we stripped the contract rather than letting them
+    // discover it later by wondering why the orchestra panel says nothing.
+    let contract_stripped = agent.fermi_contract.is_none()
+        && card
+            .get("capabilities")
+            .and_then(|c| c.get("fermi_contract"))
+            .map(|v| !v.is_null())
+            .unwrap_or(false);
+
     let agent_id = state.memory_store.create_agent(&agent).await.map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
@@ -1073,11 +1141,20 @@ pub async fn import_agent_handler(
         )
     })?;
 
-    Ok(Json(json!({
+    let mut body = json!({
         "agent_id": agent_id,
         "agent_name": agent_name,
         "message": "Agent imported successfully"
-    })))
+    });
+    if contract_stripped {
+        body["fermi_contract_stripped"] = json!(true);
+        body["note"] = json!(
+            "The card's fermi_contract was not imported — Fermi orchestra \
+             membership is admin-reviewed. Request it via the agent's \
+             Manage → Orchestras panel once the agent is published."
+        );
+    }
+    Ok(Json(body))
 }
 
 // ─── Custom embeddings import endpoint ─────────────────────────────

@@ -6,10 +6,10 @@
 //! path uses.
 
 use super::Ctx;
+use abw_apps_core::build_manifest;
 use anyhow::{anyhow, Context, Result};
 use clap::Args as ClapArgs;
 use colored::*;
-use abw_apps_core::build_manifest;
 use std::path::PathBuf;
 
 use crate::config::resolve_api_key;
@@ -40,7 +40,11 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<()> {
     let result = build_manifest(partial.clone());
     if !args.skip_local_validation {
         if !ctx.quiet {
-            eprintln!("  {} {}", "Validating".bold(), path.display().to_string().dimmed());
+            eprintln!(
+                "  {} {}",
+                "Validating".bold(),
+                path.display().to_string().dimmed()
+            );
         }
         let passed = render_build_result(&result);
         if !passed {
@@ -89,7 +93,11 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<()> {
         }
         other => {
             let body = probe.text().await.unwrap_or_default();
-            return Err(anyhow!("unexpected status {} probing existence: {}", other, body));
+            return Err(anyhow!(
+                "unexpected status {} probing existence: {}",
+                other,
+                body
+            ));
         }
     };
 
@@ -100,8 +108,18 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<()> {
     };
 
     if !ctx.quiet {
-        let verb = if exists { "Updating".yellow() } else { "Registering".green() }.bold();
-        eprintln!("  {} App '{}' at {}", verb, slug.bold(), ctx.base_url.dimmed());
+        let verb = if exists {
+            "Updating".yellow()
+        } else {
+            "Registering".green()
+        }
+        .bold();
+        eprintln!(
+            "  {} App '{}' at {}",
+            verb,
+            slug.bold(),
+            ctx.base_url.dimmed()
+        );
     }
 
     let req = match method {
@@ -130,7 +148,13 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<()> {
 
     if !ctx.quiet {
         println!();
-        println!("  {} App {} {} on {}", "✓".green().bold(), slug.bold(), if exists { "updated" } else { "registered" }, ctx.base_url.dimmed());
+        println!(
+            "  {} App {} {} on {}",
+            "✓".green().bold(),
+            slug.bold(),
+            if exists { "updated" } else { "registered" },
+            ctx.base_url.dimmed()
+        );
         println!();
         println!("  Next steps:");
         println!("    {} {}/apps/{}", "Catalogue:".bold(), ctx.base_url, slug);

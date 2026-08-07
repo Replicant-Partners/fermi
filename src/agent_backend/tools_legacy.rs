@@ -66,7 +66,19 @@ pub struct ToolContext {
     pub db: Option<sqlx::PgPool>,
     pub gas_fees: Option<crate::gas::GasFees>,
     pub user_id: Option<String>,
+    /// Third-party / MCP tool credentials for the agent owner. NOT LLM
+    /// provider keys — those live on `ExecutionContext.credentials`
+    /// (SPEC_28). Renaming this to `tool_secrets` is P5.3.
     pub user_secrets: Option<std::collections::HashMap<String, String>>,
+    /// LLM provider credentials for the *current* execution, carried here
+    /// only so the delegation tools (`execute_agent`, `delegate_to_agent`)
+    /// can propagate them when they build a child `ExecutionContext`.
+    ///
+    /// Executors read credentials from `ExecutionContext`, never from
+    /// here. Today a delegated child runs on the parent's credentials,
+    /// matching the pre-existing `user_secrets` propagation above;
+    /// funding a child by *its own* owner is a SPEC_28 P5.2 follow-up.
+    pub credentials: std::sync::Arc<crate::agent_backend::credentials::ResolvedCredentials>,
     /// Optional eval-trigger bridge. The library can't reach AppState
     /// (it lives in the bin), so handlers that have AppState build an
     /// EvalTriggerImpl and stash it here. The MCP tool
@@ -4487,6 +4499,8 @@ async fn execute_execute_agent(
         agent_card: card,
         creature_id: None,
         cognition_tier: None,
+        // Delegated child inherits the parent execution's funding.
+        credentials: ctx.credentials.clone(),
     };
 
     let output = if let Some(ws_id) = target_workspace_id {
@@ -4515,6 +4529,7 @@ async fn execute_execute_agent(
                     .flatten();
 
             let target_tool_context = std::sync::Arc::new(ToolContext {
+                credentials: ctx.credentials.clone(),
                 memory_store: ctx.memory_store.clone(),
                 embedder: ctx.embedder.clone(),
                 registry: ctx.registry.clone(),
@@ -4672,10 +4687,13 @@ async fn execute_delegate_to_agent(
         agent_card: card,
         creature_id: None,
         cognition_tier: None,
+        // Delegated child inherits the parent execution's funding.
+        credentials: ctx.credentials.clone(),
     };
 
     // Build a ToolAwareExecutor with workspace tools but NO delegation
     let tool_context = Arc::new(ToolContext {
+        credentials: ctx.credentials.clone(),
         memory_store: ctx.memory_store.clone(),
         embedder: ctx.embedder.clone(),
         registry: ctx.registry.clone(),

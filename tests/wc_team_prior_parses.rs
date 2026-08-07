@@ -205,22 +205,22 @@ fn team_prior_simulates_team_differentiated_rates() {
     // (Transfermarkt, Elo, World Bank) in the design discussion.
     let arg = simulate_team_rate(
         "Argentina",
-        (1.23, 1.43, 1.63),  // socio (high HDI, mid GDP)
-        (0.75, 1.05, 1.35),  // institutional (CONMEBOL strong, league weak)
-        (1.09, 1.27, 1.45),  // dynamic (Elo 2115, defending champion)
-        (1.10, 1.30, 1.50),  // squad (Transfermarkt €807M, top-7)
-        (1.05, 1.25, 1.45),  // tactical (recent xG +1.2, trophy form)
-        (0.90, 1.05, 1.20),  // fixture (favourable Group J)
+        (1.23, 1.43, 1.63), // socio (high HDI, mid GDP)
+        (0.75, 1.05, 1.35), // institutional (CONMEBOL strong, league weak)
+        (1.09, 1.27, 1.45), // dynamic (Elo 2115, defending champion)
+        (1.10, 1.30, 1.50), // squad (Transfermarkt €807M, top-7)
+        (1.05, 1.25, 1.45), // tactical (recent xG +1.2, trophy form)
+        (0.90, 1.05, 1.20), // fixture (favourable Group J)
     );
     // PAN: low across the board, wider spreads (less data).
     let pan = simulate_team_rate(
         "Panama",
-        (0.80, 1.00, 1.20),  // socio
-        (0.50, 0.80, 1.10),  // institutional (small federation)
-        (0.55, 0.75, 0.95),  // dynamic (Elo ~1730)
-        (0.45, 0.65, 0.85),  // squad (limited Big-5 presence)
-        (0.55, 0.75, 0.95),  // tactical
-        (0.85, 1.00, 1.15),  // fixture
+        (0.80, 1.00, 1.20), // socio
+        (0.50, 0.80, 1.10), // institutional (small federation)
+        (0.55, 0.75, 0.95), // dynamic (Elo ~1730)
+        (0.45, 0.65, 0.85), // squad (limited Big-5 presence)
+        (0.55, 0.75, 0.95), // tactical
+        (0.85, 1.00, 1.15), // fixture
     );
 
     eprintln!();
@@ -257,6 +257,7 @@ fn team_prior_simulates_team_differentiated_rates() {
         arg > pan * 5.0,
         "Argentina rate ({:.4}) should be >5x Panama ({:.4}) under \
          Cobb-Douglas elasticities",
-        arg, pan
+        arg,
+        pan
     );
 }

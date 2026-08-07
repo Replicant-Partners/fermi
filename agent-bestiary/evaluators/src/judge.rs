@@ -143,16 +143,20 @@ impl EvalModel for LlmJudgeEvaluator {
         // Inapplicable when there's no transcript at all — the legacy
         // judge needs a response to score.
         if bundle.transcript.is_empty() && bundle.query.trim().is_empty() {
-            return Err(EvalError::Inapplicable(
-                "empty transcript and query".into(),
-            ));
+            return Err(EvalError::Inapplicable("empty transcript and query".into()));
         }
 
         let outcome = self.judge.score(bundle).await?;
 
         let mut result = EvalResult::new(self.name(), self.version())
-            .with_score(Dimension::new("relevance"), normalize_likert(outcome.relevance))
-            .with_score(Dimension::new("accuracy"), normalize_likert(outcome.accuracy))
+            .with_score(
+                Dimension::new("relevance"),
+                normalize_likert(outcome.relevance),
+            )
+            .with_score(
+                Dimension::new("accuracy"),
+                normalize_likert(outcome.accuracy),
+            )
             .with_score(
                 Dimension::new("completeness"),
                 normalize_likert(outcome.completeness),
@@ -192,8 +196,8 @@ mod tests {
             authority_weight: 0.5,
             dyad_id: None,
             persona_version_at_write: None,
-                provider_used: None,
-                model_used: None,
+            provider_used: None,
+            model_used: None,
         };
         EpisodeBundle::from_episode(&ep)
     }
@@ -211,15 +215,9 @@ mod tests {
         let result = ev.evaluate(&dummy_bundle()).await.unwrap();
 
         let scores = &result.dimension_scores;
-        assert!(
-            (scores.get(&Dimension::new("relevance")).unwrap() - 1.0).abs() < 1e-9
-        );
-        assert!(
-            (scores.get(&Dimension::new("accuracy")).unwrap() - 0.5).abs() < 1e-9
-        );
-        assert!(
-            (scores.get(&Dimension::new("completeness")).unwrap() - 0.0).abs() < 1e-9
-        );
+        assert!((scores.get(&Dimension::new("relevance")).unwrap() - 1.0).abs() < 1e-9);
+        assert!((scores.get(&Dimension::new("accuracy")).unwrap() - 0.5).abs() < 1e-9);
+        assert!((scores.get(&Dimension::new("completeness")).unwrap() - 0.0).abs() < 1e-9);
         assert_eq!(result.evaluator_name, "llm_judge");
         assert_eq!(result.evaluator_version, "v1");
         assert_eq!(result.model_used.as_deref(), Some("noop-judge"));
@@ -242,8 +240,6 @@ mod tests {
         // -1 → clamp to 1 → 0.0
         assert!((scores.get(&Dimension::new("accuracy")).unwrap() - 0.0).abs() < 1e-9);
         // 4 → 0.75
-        assert!(
-            (scores.get(&Dimension::new("completeness")).unwrap() - 0.75).abs() < 1e-9
-        );
+        assert!((scores.get(&Dimension::new("completeness")).unwrap() - 0.75).abs() < 1e-9);
     }
 }

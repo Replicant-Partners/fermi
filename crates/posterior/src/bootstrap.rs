@@ -11,12 +11,10 @@
 
 use rand::distributions::WeightedIndex;
 use rand::prelude::*;
-use rand::SeedableRng;
 use rand::rngs::StdRng;
+use rand::SeedableRng;
 
-use crate::{
-    weighted_mean, weighted_var, PosteriorError,
-};
+use crate::{weighted_mean, weighted_var, PosteriorError};
 
 /// Which family the bootstrap should refit on each resample.
 #[derive(Debug, Clone, Copy)]
@@ -40,10 +38,7 @@ pub fn bootstrap_ci(
         return Err(PosteriorError::NoObservations);
     }
     if n_bootstrap == 0 {
-        return Err(PosteriorError::InsufficientData {
-            need: 1,
-            have: 0,
-        });
+        return Err(PosteriorError::InsufficientData { need: 1, have: 0 });
     }
 
     let mut rng: StdRng = match seed {
@@ -181,8 +176,7 @@ mod tests {
     #[test]
     fn bootstrap_lognormal_finite() {
         let obs: Vec<f64> = (1..=50).map(|i| (i as f64).powf(1.1)).collect();
-        let (lo, hi) =
-            bootstrap_ci(&obs, None, 200, Some(2), BootstrapFit::Lognormal).unwrap();
+        let (lo, hi) = bootstrap_ci(&obs, None, 200, Some(2), BootstrapFit::Lognormal).unwrap();
         assert!(lo > 0.0 && hi > 0.0);
         assert!(lo < hi);
     }

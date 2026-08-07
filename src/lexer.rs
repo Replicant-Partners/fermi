@@ -39,21 +39,21 @@ pub enum TokenType {
     Human,
 
     // Factor Model (6-factor orthogonal decomposition)
-    Factor,          // factor block declaration
-    Param,           // param declaration
-    Import,          // import factor/program
-    Residual,        // residualization expression
-    Learnable,       // learnable parameter with prior
-    VarianceShare,   // variance_share field
-    Update,          // update frequency field
-    Formulation,     // formulation field
-    Inputs,          // inputs field
-    Static,          // update: static
-    PerMatch,        // update: per_match
-    PerFixture,      // update: per_fixture
-    Estimate,        // estimate block
-    Output,          // output declaration
-    Exp,             // exp() function for Cobb-Douglas
+    Factor,        // factor block declaration
+    Param,         // param declaration
+    Import,        // import factor/program
+    Residual,      // residualization expression
+    Learnable,     // learnable parameter with prior
+    VarianceShare, // variance_share field
+    Update,        // update frequency field
+    Formulation,   // formulation field
+    Inputs,        // inputs field
+    Static,        // update: static
+    PerMatch,      // update: per_match
+    PerFixture,    // update: per_fixture
+    Estimate,      // estimate block
+    Output,        // output declaration
+    Exp,           // exp() function for Cobb-Douglas
 
     // Literals
     String(String),

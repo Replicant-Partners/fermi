@@ -4,9 +4,9 @@
 //! is just a thin presentation layer that finds the manifest file, parses
 //! it, and renders the builder's `Issue` list as ANSI-coloured CLI output.
 
+use abw_apps_core::{BuildResult, Issue, PartialManifest, Severity};
 use anyhow::{anyhow, Context, Result};
 use colored::*;
-use abw_apps_core::{BuildResult, Issue, PartialManifest, Severity};
 use std::path::{Path, PathBuf};
 
 /// Locate manifest.json from the working directory or from an explicit path.
@@ -43,16 +43,15 @@ pub fn find_manifest(explicit: Option<&Path>) -> Result<PathBuf> {
 }
 
 pub fn read_manifest(path: &Path) -> Result<PartialManifest> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("reading {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let value: serde_json::Value = serde_json::from_str(&text)
         .with_context(|| format!("parsing {} as JSON", path.display()))?;
     Ok(PartialManifest::from_value(&value))
 }
 
 pub fn write_manifest(path: &Path, manifest: &serde_json::Value) -> Result<()> {
-    let pretty = serde_json::to_string_pretty(manifest)
-        .context("serializing manifest")?;
+    let pretty = serde_json::to_string_pretty(manifest).context("serializing manifest")?;
     std::fs::write(path, format!("{}\n", pretty))
         .with_context(|| format!("writing {}", path.display()))?;
     Ok(())

@@ -55,9 +55,9 @@ pub use aggregator::{AggregatedSignal, Aggregator, ConflictFlag, DimensionAggreg
 pub use error::EvalError;
 pub use judge::{JudgeOutcome, LlmJudge, LlmJudgeConfig, LlmJudgeEvaluator, NoopLlmJudge};
 pub use model::EvalModel;
+pub use projection_scoring::{ProjectionLookup, ProjectionObservation, ProjectionScoringEvaluator};
 pub use registry::{EvaluatorRegistry, RegistryOutcome};
 pub use result::{Dimension, EvalFlag, EvalResult, RegistryResult};
-pub use projection_scoring::{ProjectionLookup, ProjectionObservation, ProjectionScoringEvaluator};
 pub use scoring::{BrierEvaluator, BrierLookup, BrierObservation};
 pub use tier::EvalTier;
 

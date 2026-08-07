@@ -61,7 +61,11 @@ impl Resource {
             energy_kwh
         } else {
             let per_unit = self.energy_kwh(1.0);
-            if per_unit > 0.0 { energy_kwh / per_unit } else { 0.0 }
+            if per_unit > 0.0 {
+                energy_kwh / per_unit
+            } else {
+                0.0
+            }
         }
     }
 }
@@ -289,8 +293,12 @@ impl ProcessConfig {
             if out.name != inp.name || out.unit != inp.unit {
                 anyhow::bail!(
                     "Stage '{}' output ({} {}) does not match stage '{}' input ({} {})",
-                    w[0].id, out.name, out.unit,
-                    w[1].id, inp.name, inp.unit,
+                    w[0].id,
+                    out.name,
+                    out.unit,
+                    w[1].id,
+                    inp.name,
+                    inp.unit,
                 );
             }
         }
@@ -316,9 +324,22 @@ mod tests {
             id: "cultivation".into(),
             efficiency: 0.03,
             carbon_intensity: -1.8,
-            input: Resource { name: "photons".into(), unit: "kWh".into(), energy_density: None, density_unit: None },
-            output: Resource { name: "biomass".into(), unit: "kg".into(), energy_density: Some(5.5), density_unit: Some("kcal/g".into()) },
-            capex: Some(CapexProfile { total_usd: 25.0, lifespan_years: 1.0 }),
+            input: Resource {
+                name: "photons".into(),
+                unit: "kWh".into(),
+                energy_density: None,
+                density_unit: None,
+            },
+            output: Resource {
+                name: "biomass".into(),
+                unit: "kg".into(),
+                energy_density: Some(5.5),
+                density_unit: Some("kcal/g".into()),
+            },
+            capex: Some(CapexProfile {
+                total_usd: 25.0,
+                lifespan_years: 1.0,
+            }),
             opex_per_input_unit: Some(0.12),
             sidestreams: None,
             sensors: None,
@@ -355,8 +376,10 @@ mod tests {
     #[test]
     fn resource_kwh_conversion() {
         let r = Resource {
-            name: "biomass".into(), unit: "kg".into(),
-            energy_density: Some(5.5), density_unit: Some("kcal/g".into()),
+            name: "biomass".into(),
+            unit: "kg".into(),
+            energy_density: Some(5.5),
+            density_unit: Some("kcal/g".into()),
         };
         // 1 kg biomass = 1000g × 5.5 kcal/g = 5500 kcal = 5500/860.42 kWh ≈ 6.392 kWh
         let kwh = r.to_kwh(1.0).unwrap();
@@ -367,7 +390,12 @@ mod tests {
     fn process_validation_catches_mismatch() {
         let mut stage2 = algae_stage();
         stage2.id = "fermentation".into();
-        stage2.input = Resource { name: "hydrogen".into(), unit: "kWh".into(), energy_density: None, density_unit: None };
+        stage2.input = Resource {
+            name: "hydrogen".into(),
+            unit: "kWh".into(),
+            energy_density: None,
+            density_unit: None,
+        };
         let config = ProcessConfig {
             name: "bad".into(),
             description: None,

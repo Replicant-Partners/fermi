@@ -216,7 +216,14 @@ fn process_source(source: &str) {
                     Statement::Factor(f) => {
                         println!("   ├─ Label: \"{}\"", f.label.bright_cyan());
                         println!("   ├─ Variance Share: {}", f.variance_share);
-                        println!("   ├─ Inputs: {}", f.inputs.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "));
+                        println!(
+                            "   ├─ Inputs: {}",
+                            f.inputs
+                                .iter()
+                                .map(|i| i.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
                         println!("   └─ Update: {:?}", f.update_frequency);
                     }
                     Statement::Param(p) => {
@@ -226,7 +233,10 @@ fn process_source(source: &str) {
                         println!("   └─ Bindings: {}", i.bindings.len());
                     }
                     Statement::Estimate(e) => {
-                        println!("   └─ Expression: {}", format!("{}", e.expression).bright_yellow());
+                        println!(
+                            "   └─ Expression: {}",
+                            format!("{}", e.expression).bright_yellow()
+                        );
                     }
                     Statement::Output(o) => {
                         println!("   └─ Derived: {}", o.is_derived);

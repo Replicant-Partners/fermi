@@ -40,11 +40,10 @@ async fn main() {
 
     println!("\n📝 Agent Query: {}", agent_stmt.query);
 
-    // Create execution context
-    let context = ExecutionContext {
-        program: Program { statements: vec![] },
-        agent_card: market_agent.clone(),
-    };
+    // Create execution context. `for_agent` leaves credentials unfunded,
+    // which is correct here — this example runs on MockExecutor and must
+    // not be able to spend.
+    let context = ExecutionContext::for_agent(Program { statements: vec![] }, market_agent.clone());
 
     // Execute agent
     println!("\n⚙️  Executing agent with MockExecutor...");

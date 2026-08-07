@@ -124,11 +124,7 @@ impl EvaluatorRegistry {
             let score_below_block = match &r.outcome {
                 Ok(eval) => self
                     .prefilter_block_threshold
-                    .map(|t| {
-                        eval.dimension_scores
-                            .values()
-                            .any(|s| *s < t)
-                    })
+                    .map(|t| eval.dimension_scores.values().any(|s| *s < t))
                     .unwrap_or(false),
                 _ => false,
             };

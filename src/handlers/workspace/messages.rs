@@ -8,8 +8,8 @@ use axum::{
 };
 use fermi::gas::charge_gas;
 use fermi_auth::{
-    credit_charge, credit_charge_purchased_only, credit_deposit_typed, get_or_create_wallet,
-    teams, AuthPrincipal,
+    credit_charge, credit_charge_purchased_only, credit_deposit_typed, get_or_create_wallet, teams,
+    AuthPrincipal,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -30,10 +30,9 @@ use fermi::agent_backend::tools::{ToolContext, ToolRegistry};
 use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
 
+use super::core::{charge_workspace_gas, get_workspace_slug, parse_at_mention};
 use crate::handlers::agents::CreateAgentRequest;
 use crate::{agent_output_to_episode, resolve_agent, resolve_agent_card, AppState};
-use super::core::{charge_workspace_gas, get_workspace_slug, parse_at_mention};
-
 
 // ─── execution_result content policy ───────────────────────────────
 //
@@ -68,10 +67,7 @@ use super::core::{charge_workspace_gas, get_workspace_slug, parse_at_mention};
 // `raw_response` is also exposed in metadata for machine consumers
 // (kask's `_extractBomItems`, comparator narrative readers, etc.) that
 // want the canonical text without re-parsing markdown.
-fn format_execution_result_content(
-    raw_response: &str,
-    evidence_summaries: &[&str],
-) -> String {
+fn format_execution_result_content(raw_response: &str, evidence_summaries: &[&str]) -> String {
     let trimmed_raw = raw_response.trim();
 
     let evidence_block = evidence_summaries
@@ -106,7 +102,6 @@ fn format_execution_result_content(
     }
 }
 
-
 // ─── Workspace Chat ────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -117,8 +112,6 @@ pub struct PostMessageRequest {
     #[serde(default)]
     metadata: Option<Value>,
 }
-
-
 
 /// Broadcast a workspace message to SSE subscribers.
 ///
@@ -223,8 +216,7 @@ pub async fn post_workspace_message_handler(
     // Either path is accepted so kask doesn't have to coordinate a metadata
     // object construction for every cascade.ran / insight.accepted / process.saved
     // write — setting message_type is enough.
-    let is_event_append =
-        req.message_type.as_deref() == Some("event_append")
+    let is_event_append = req.message_type.as_deref() == Some("event_append")
         || matches!(
             req.metadata
                 .as_ref()
@@ -232,8 +224,7 @@ pub async fn post_workspace_message_handler(
                 .and_then(|v| v.as_str()),
             Some("event_append")
         );
-    let is_invocation_path =
-        req.message_type.as_deref() == Some("agent_invocation")
+    let is_invocation_path = req.message_type.as_deref() == Some("agent_invocation")
         || parse_at_mention(&req.content).is_some();
     if !(is_event_append && !is_invocation_path) {
         let charge_result = charge_workspace_gas(
@@ -361,20 +352,25 @@ pub async fn post_workspace_message_handler(
                     // containing process, variations, recent_events, annotations, budget,
                     // workspace_agents. Prepend it so the companion sees the full workspace
                     // state without a separate file-read round-trip.
-                    let bundle_block = req.metadata
+                    let bundle_block = req
+                        .metadata
                         .as_ref()
                         .and_then(|m| m.get("context_bundle"))
-                        .map(|b| format!(
-                            "[CONTEXT BUNDLE]\n{}\n[/CONTEXT BUNDLE]",
-                            serde_json::to_string_pretty(b).unwrap_or_default()
-                        ))
+                        .map(|b| {
+                            format!(
+                                "[CONTEXT BUNDLE]\n{}\n[/CONTEXT BUNDLE]",
+                                serde_json::to_string_pretty(b).unwrap_or_default()
+                            )
+                        })
                         .unwrap_or_default();
 
                     let augmented_query = match (ws_context.is_empty(), bundle_block.is_empty()) {
-                        (true,  true)  => query2.clone(),
-                        (false, true)  => format!("{}\n\n{}", ws_context, query2),
-                        (true,  false) => format!("{}\n\n{}", bundle_block, query2),
-                        (false, false) => format!("{}\n\n{}\n\n{}", ws_context, bundle_block, query2),
+                        (true, true) => query2.clone(),
+                        (false, true) => format!("{}\n\n{}", ws_context, query2),
+                        (true, false) => format!("{}\n\n{}", bundle_block, query2),
+                        (false, false) => {
+                            format!("{}\n\n{}\n\n{}", ws_context, bundle_block, query2)
+                        }
                     };
 
                     // Resolve and execute
@@ -407,11 +403,23 @@ pub async fn post_workspace_message_handler(
                         let program = ast::Program {
                             statements: vec![ast::Statement::Agent(agent_stmt.clone())],
                         };
+                        // SPEC_28 — provider credentials for this run,
+                        // resolved from the AGENT's owning principal.
+                        //
+                        // Note this differs from `user_secrets` below,
+                        // which is keyed on the *caller* (`user_id2`).
+                        // Model keys must follow the agent's owner, not
+                        // whoever @-mentioned it, or an invoker would
+                        // unknowingly pay for someone else's agent.
+                        let credentials =
+                            crate::build_execution_credentials(&state2, &db_agent, &card).await;
+
                         let context = ExecutionContext {
                             program,
                             agent_card: card.clone(),
                             creature_id: None,
                             cognition_tier: None,
+                            credentials: credentials.clone(),
                         };
 
                         // Resolve user secrets for this agent
@@ -471,6 +479,7 @@ pub async fn post_workspace_message_handler(
                             gas_fees: Some(state2.gas_fees.clone()),
                             user_id: Some(user_id2.clone()),
                             user_secrets,
+                            credentials,
                             eval_trigger: Some(Arc::new(
                                 crate::handlers::eval::EvalTriggerImpl {
                                     state: state2.clone(),
@@ -590,8 +599,7 @@ pub async fn post_workspace_message_handler(
                     // has no version history, the keys are present but null.
                     let agent_uuid_opt: Option<uuid::Uuid> =
                         result.as_ref().ok().map(|(_, id)| *id);
-                    let (av_id, av_num): (Option<uuid::Uuid>, Option<i32>) = match agent_uuid_opt
-                    {
+                    let (av_id, av_num): (Option<uuid::Uuid>, Option<i32>) = match agent_uuid_opt {
                         Some(agent_uuid) => state2
                             .memory_store
                             .get_current_agent_version(agent_uuid)
@@ -616,20 +624,15 @@ pub async fn post_workspace_message_handler(
                     //   - agent_version_{id,number} — Doc 12 § Capability 2
                     let (content, metadata, msg_type) = match result {
                         Ok((output, _agent_uuid)) => {
-                            let raw_response = output
-                                .metadata
-                                .reasoning
-                                .clone()
-                                .unwrap_or_default();
+                            let raw_response =
+                                output.metadata.reasoning.clone().unwrap_or_default();
                             let evidence_summaries: Vec<&str> = output
                                 .evidence
                                 .iter()
                                 .map(|e| e.summary.as_deref().unwrap_or(""))
                                 .collect();
-                            let content = format_execution_result_content(
-                                &raw_response,
-                                &evidence_summaries,
-                            );
+                            let content =
+                                format_execution_result_content(&raw_response, &evidence_summaries);
                             let meta = json!({
                                 "agent_name": agent_name2,
                                 "confidence": output.confidence,
@@ -1109,10 +1112,7 @@ pub struct HireAddRequest {
 impl HireAddRequest {
     /// Resolve the request's agent_id into a (uuid, Agent) pair. Handles
     /// both UUID and handle inputs.
-    async fn resolve(
-        &self,
-        state: &AppState,
-    ) -> Result<(uuid::Uuid, Agent), (StatusCode, String)> {
+    async fn resolve(&self, state: &AppState) -> Result<(uuid::Uuid, Agent), (StatusCode, String)> {
         match &self.agent_id {
             AgentRef::Uuid(u) => {
                 let agent = state
@@ -1124,11 +1124,12 @@ impl HireAddRequest {
                 Ok((*u, agent))
             }
             AgentRef::Handle(h) => {
-                let agent = state
-                    .memory_store
-                    .get_agent_by_name(h)
-                    .await
-                    .map_err(|e| (StatusCode::NOT_FOUND, format!("Agent '{}' not found: {}", h, e)))?;
+                let agent = state.memory_store.get_agent_by_name(h).await.map_err(|e| {
+                    (
+                        StatusCode::NOT_FOUND,
+                        format!("Agent '{}' not found: {}", h, e),
+                    )
+                })?;
                 Ok((agent.agent_id, agent))
             }
         }
@@ -1498,7 +1499,12 @@ pub async fn remove_workspace_agent_handler(
             .get_agent_by_name(&agent_id)
             .await
             .map(|a| a.agent_id)
-            .map_err(|e| (StatusCode::NOT_FOUND, format!("Agent '{}' not found: {}", agent_id, e)))?,
+            .map_err(|e| {
+                (
+                    StatusCode::NOT_FOUND,
+                    format!("Agent '{}' not found: {}", agent_id, e),
+                )
+            })?,
     };
 
     // Must be admin+ or the person who added
@@ -1542,7 +1548,6 @@ pub async fn remove_workspace_agent_handler(
 
     Ok(Json(json!({ "message": "Agent removed from workspace" })))
 }
-
 
 // ─── Tests ─────────────────────────────────────────────────────────
 
@@ -1606,10 +1611,7 @@ mod tests {
         let raw = "Body.";
         let summaries = vec!["  finding A  ", "", "  ", "finding B"];
         let content = format_execution_result_content(raw, &summaries);
-        assert_eq!(
-            content,
-            "Body.\n\n**Evidence:**\n- finding A\n- finding B"
-        );
+        assert_eq!(content, "Body.\n\n**Evidence:**\n- finding A\n- finding B");
     }
 
     /// Specifically asserts that whatever this function returns is something
@@ -1707,4 +1709,3 @@ mod tests {
         );
     }
 }
-

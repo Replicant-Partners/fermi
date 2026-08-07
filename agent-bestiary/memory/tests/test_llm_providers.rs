@@ -332,10 +332,7 @@ async fn test_deepseek_provider_via_factory() {
 
     let response = provider.generate_raw(messages, &config).await.unwrap();
     assert!(!response.content.is_empty());
-    println!(
-        "✅ DeepSeek provider works! Response: {}",
-        response.content
-    );
+    println!("✅ DeepSeek provider works! Response: {}", response.content);
 }
 
 #[tokio::test]
@@ -347,10 +344,7 @@ async fn test_kimi_provider_via_factory() {
         None => {
             println!("⏭️  Skipping Kimi test (no KIMI_API_KEY)");
             use std::str::FromStr;
-            assert_eq!(
-                ProviderType::from_str("kimi").unwrap(),
-                ProviderType::Kimi
-            );
+            assert_eq!(ProviderType::from_str("kimi").unwrap(), ProviderType::Kimi);
             assert_eq!(
                 ProviderType::from_str("moonshot").unwrap(),
                 ProviderType::Kimi
@@ -411,10 +405,7 @@ fn test_provider_type_parsing() {
         ProviderType::from_str("deepseek").unwrap(),
         ProviderType::DeepSeek
     );
-    assert_eq!(
-        ProviderType::from_str("kimi").unwrap(),
-        ProviderType::Kimi
-    );
+    assert_eq!(ProviderType::from_str("kimi").unwrap(), ProviderType::Kimi);
     assert_eq!(
         ProviderType::from_str("moonshot").unwrap(),
         ProviderType::Kimi

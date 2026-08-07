@@ -46,18 +46,18 @@ pub mod provenance;
 pub mod registry;
 pub mod rheology;
 
-use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
 pub use manifest::{
-    ContributionMode, ContextSchema, ContextSource, ModelManifest, ParamSchema, StateFieldSchema,
+    ContextSchema, ContextSource, ContributionMode, ModelManifest, ParamSchema, StateFieldSchema,
 };
 pub use provenance::Provenance;
 pub use rheology::{
-    AlgaeViscosity, FlowRegime, RheologyInput, RheologyManifest, RheologyModel, RheologyOutput,
-    list_rheology_manifests, known_rheology_uris, resolve_rheology,
+    known_rheology_uris, list_rheology_manifests, resolve_rheology, AlgaeViscosity, FlowRegime,
+    RheologyInput, RheologyManifest, RheologyModel, RheologyOutput,
 };
 
 /// One sample on a property's trajectory.
@@ -192,17 +192,21 @@ pub trait DynamicsModel: Send + Sync {
 /// Pure — deterministic for a given `SkillInput` (modulo `generated_at` timestamp).
 pub fn apply_dynamics_model(input: SkillInput) -> Result<SkillOutput, String> {
     // Resolve model — pass input so registry can read context/params
-    let model = registry::resolve(&input.model_uri, Some(&input))
-        .ok_or_else(|| format!("Unknown model URI: '{}'. Known models: {}",
+    let model = registry::resolve(&input.model_uri, Some(&input)).ok_or_else(|| {
+        format!(
+            "Unknown model URI: '{}'. Known models: {}",
             input.model_uri,
-            registry::known_uris().join(", ")))?;
+            registry::known_uris().join(", ")
+        )
+    })?;
 
     // Validate: all required state variables must be provided.
     // Missing keys silently defaulting to 0.0 would produce wrong trajectories
     // without any signal — e.g. bc_yield=0 is valid, but omitting it entirely
     // by mistake should be a loud error.
     let order = model.state_order();
-    let missing: Vec<&str> = order.iter()
+    let missing: Vec<&str> = order
+        .iter()
         .filter(|uri| !input.initial_state.contains_key(*uri))
         .map(|s| s.as_str())
         .collect();
@@ -215,9 +219,7 @@ pub fn apply_dynamics_model(input: SkillInput) -> Result<SkillOutput, String> {
     }
 
     // Build initial state vector in manifest order (all keys validated above)
-    let y0: Vec<f64> = order.iter()
-        .map(|uri| input.initial_state[uri])
-        .collect();
+    let y0: Vec<f64> = order.iter().map(|uri| input.initial_state[uri]).collect();
 
     // Determine integration horizon
     let horizon_days = match &input.horizon {
@@ -226,35 +228,34 @@ pub fn apply_dynamics_model(input: SkillInput) -> Result<SkillOutput, String> {
     };
 
     // Sample cadence (default: 6h = 0.25 days)
-    let cadence_days = input.sample_cadence
+    let cadence_days = input
+        .sample_cadence
         .as_ref()
         .map(|c| c.hours / 24.0)
         .unwrap_or(0.25);
 
     // Step size: default from manifest, override via params
     let manifest = model.manifest();
-    let step_days = input.params_override
+    let step_days = input
+        .params_override
         .get("step_size_days")
         .copied()
         .unwrap_or(manifest.default_step_days);
 
     // Integrate
-    let trajectory = integrator::integrate(
-        model.as_ref(),
-        &y0,
-        horizon_days,
-        step_days,
-        cadence_days,
-    )?;
+    let trajectory =
+        integrator::integrate(model.as_ref(), &y0, horizon_days, step_days, cadence_days)?;
 
     // Apply until-property-reaches termination if requested
     let trajectory = match &input.horizon {
-        Horizon::UntilPropertyReaches { property, value, .. } => {
+        Horizon::UntilPropertyReaches {
+            property, value, ..
+        } => {
             let prop_idx = order.iter().position(|u| u == property);
             if let Some(idx) = prop_idx {
-                let cutoff = trajectory.iter().position(|(_, y)| {
-                    (y[idx] - value).abs() < 1e-3 || y[idx] <= *value
-                });
+                let cutoff = trajectory
+                    .iter()
+                    .position(|(_, y)| (y[idx] - value).abs() < 1e-3 || y[idx] <= *value);
                 if let Some(end) = cutoff {
                     trajectory[..=end].to_vec()
                 } else {
@@ -282,7 +283,13 @@ pub fn apply_dynamics_model(input: SkillInput) -> Result<SkillOutput, String> {
     // Compute derived quantities (Level 1 coupling — post-integration, no feedback)
     let derived_quantities = derive_rheology(&trajectories, &input);
 
-    Ok(SkillOutput { trajectories, derived_quantities, provenance: prov, converged, notes })
+    Ok(SkillOutput {
+        trajectories,
+        derived_quantities,
+        provenance: prov,
+        converged,
+        notes,
+    })
 }
 
 // ─── Level 1 rheology coupling ────────────────────────────────────────────────
@@ -323,22 +330,34 @@ fn derive_rheology(
     };
 
     // Read operating conditions from process_context (same as ODE model)
-    let temp_c = input.process_context
-        .get("temperature_c").and_then(|v| v.as_f64()).unwrap_or(26.0);
-    let agitation_rpm = input.process_context
-        .get("agitation_rpm").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let temp_c = input
+        .process_context
+        .get("temperature_c")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(26.0);
+    let agitation_rpm = input
+        .process_context
+        .get("agitation_rpm")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
 
     // Convert agitation rpm → approximate shear rate (γ̇ ≈ N_imp × rpm)
     // N_imp ≈ 20 for a standard Rushton turbine — reasonable default
     // for algae/BC bioreactors. Operator can override via params_override.
-    let n_imp = input.params_override
-        .get("rheology_n_imp").copied().unwrap_or(20.0);
+    let n_imp = input
+        .params_override
+        .get("rheology_n_imp")
+        .copied()
+        .unwrap_or(20.0);
     let shear_rate = if agitation_rpm > 0.0 {
         n_imp * agitation_rpm
     } else {
         // Static culture: gentle natural convection, ~0.01–0.1 s⁻¹
-        input.params_override
-            .get("rheology_static_shear").copied().unwrap_or(0.05)
+        input
+            .params_override
+            .get("rheology_static_shear")
+            .copied()
+            .unwrap_or(0.05)
     };
 
     // Build rheology model — respects params_override for k0, ea, c_n, etc.
@@ -346,15 +365,22 @@ fn derive_rheology(
         temperature_c: temp_c,
         shear_rate_per_s: shear_rate,
         volume_fraction: 0.0, // placeholder — overridden per point
-        params_override: input.params_override.iter()
-            .filter(|(k, _)| matches!(k.as_str(), "k0" | "ea" | "c_n" | "n_min" | "density_kg_m3" | "t_ref_k"))
+        params_override: input
+            .params_override
+            .iter()
+            .filter(|(k, _)| {
+                matches!(
+                    k.as_str(),
+                    "k0" | "ea" | "c_n" | "n_min" | "density_kg_m3" | "t_ref_k"
+                )
+            })
             .map(|(k, v)| (k.clone(), *v))
             .collect(),
     });
 
     // Compute per-point
-    let mut viscosity_pts   = Vec::with_capacity(conc_pts.len());
-    let mut flow_index_pts  = Vec::with_capacity(conc_pts.len());
+    let mut viscosity_pts = Vec::with_capacity(conc_pts.len());
+    let mut flow_index_pts = Vec::with_capacity(conc_pts.len());
     let mut consistency_pts = Vec::with_capacity(conc_pts.len());
     let mut warned_high_viscosity = false;
 
@@ -371,9 +397,18 @@ fn derive_rheology(
 
         match rheology.compute(&rheology_input) {
             Ok(r) => {
-                viscosity_pts.push(DerivedPoint { t_hours: pt.t_hours, value: r.viscosity_pa_s });
-                flow_index_pts.push(DerivedPoint { t_hours: pt.t_hours, value: r.flow_index_n });
-                consistency_pts.push(DerivedPoint { t_hours: pt.t_hours, value: r.consistency_index_k });
+                viscosity_pts.push(DerivedPoint {
+                    t_hours: pt.t_hours,
+                    value: r.viscosity_pa_s,
+                });
+                flow_index_pts.push(DerivedPoint {
+                    t_hours: pt.t_hours,
+                    value: r.flow_index_n,
+                });
+                consistency_pts.push(DerivedPoint {
+                    t_hours: pt.t_hours,
+                    value: r.consistency_index_k,
+                });
 
                 // Note: viscosity threshold for pumping concern (~10× water = 0.01 Pa·s)
                 if !warned_high_viscosity && r.viscosity_pa_s > 0.01 {
@@ -383,9 +418,18 @@ fn derive_rheology(
             }
             Err(_) => {
                 // On compute error, push NaN so the trajectory stays aligned
-                viscosity_pts.push(DerivedPoint { t_hours: pt.t_hours, value: f64::NAN });
-                flow_index_pts.push(DerivedPoint { t_hours: pt.t_hours, value: f64::NAN });
-                consistency_pts.push(DerivedPoint { t_hours: pt.t_hours, value: f64::NAN });
+                viscosity_pts.push(DerivedPoint {
+                    t_hours: pt.t_hours,
+                    value: f64::NAN,
+                });
+                flow_index_pts.push(DerivedPoint {
+                    t_hours: pt.t_hours,
+                    value: f64::NAN,
+                });
+                consistency_pts.push(DerivedPoint {
+                    t_hours: pt.t_hours,
+                    value: f64::NAN,
+                });
             }
         }
     }
@@ -491,7 +535,9 @@ mod tests {
             !output.derived_quantities.is_empty(),
             "bc_optimization should produce derived rheology quantities"
         );
-        let viscosity = output.derived_quantities.iter()
+        let viscosity = output
+            .derived_quantities
+            .iter()
             .find(|d| d.property_uri == "phys:dynamic_viscosity_pa_s")
             .expect("viscosity trajectory must be present");
         assert_eq!(
@@ -501,30 +547,42 @@ mod tests {
         );
         // All viscosity values must be positive and finite
         for pt in &viscosity.points {
-            assert!(pt.value > 0.0 && pt.value.is_finite(),
-                "viscosity must be positive and finite at t={}h, got {}", pt.t_hours, pt.value);
+            assert!(
+                pt.value > 0.0 && pt.value.is_finite(),
+                "viscosity must be positive and finite at t={}h, got {}",
+                pt.t_hours,
+                pt.value
+            );
         }
     }
 
     #[test]
     fn viscosity_increases_as_bc_yield_grows() {
         let output = apply_dynamics_model(bc_input()).unwrap();
-        let viscosity = output.derived_quantities.iter()
+        let viscosity = output
+            .derived_quantities
+            .iter()
             .find(|d| d.property_uri == "phys:dynamic_viscosity_pa_s")
             .unwrap();
         let first = viscosity.points.first().unwrap().value;
-        let last  = viscosity.points.last().unwrap().value;
+        let last = viscosity.points.last().unwrap().value;
         // More BC → higher volume fraction → higher viscosity
-        assert!(last >= first,
+        assert!(
+            last >= first,
             "viscosity should not decrease as BC accumulates. first={:.3e}, last={:.3e}",
-            first, last);
+            first,
+            last
+        );
     }
 
     #[test]
     fn pellicle_model_produces_derived_viscosity() {
         let output = apply_dynamics_model(pellicle_input()).unwrap();
         assert!(
-            output.derived_quantities.iter().any(|d| d.property_uri == "phys:dynamic_viscosity_pa_s"),
+            output
+                .derived_quantities
+                .iter()
+                .any(|d| d.property_uri == "phys:dynamic_viscosity_pa_s"),
             "pellicle_growth should also produce viscosity derived quantity"
         );
     }
@@ -556,19 +614,32 @@ mod tests {
     fn derived_trajectory_time_axis_matches_primary() {
         let output = apply_dynamics_model(bc_input()).unwrap();
         let primary_times: Vec<f64> = output.trajectories["bio:bc_yield_g_per_l"]
-            .iter().map(|p| p.t_hours).collect();
-        let derived_times: Vec<f64> = output.derived_quantities.iter()
+            .iter()
+            .map(|p| p.t_hours)
+            .collect();
+        let derived_times: Vec<f64> = output
+            .derived_quantities
+            .iter()
             .find(|d| d.property_uri == "phys:dynamic_viscosity_pa_s")
-            .unwrap().points.iter().map(|p| p.t_hours).collect();
-        assert_eq!(primary_times, derived_times,
-            "derived quantity time axis must be identical to primary trajectory time axis");
+            .unwrap()
+            .points
+            .iter()
+            .map(|p| p.t_hours)
+            .collect();
+        assert_eq!(
+            primary_times, derived_times,
+            "derived quantity time axis must be identical to primary trajectory time axis"
+        );
     }
 
     #[test]
     fn three_derived_quantities_for_bc_model() {
         let output = apply_dynamics_model(bc_input()).unwrap();
-        let uris: Vec<&str> = output.derived_quantities.iter()
-            .map(|d| d.property_uri.as_str()).collect();
+        let uris: Vec<&str> = output
+            .derived_quantities
+            .iter()
+            .map(|d| d.property_uri.as_str())
+            .collect();
         assert!(uris.contains(&"phys:dynamic_viscosity_pa_s"));
         assert!(uris.contains(&"phys:flow_index_n"));
         assert!(uris.contains(&"phys:consistency_index_k"));

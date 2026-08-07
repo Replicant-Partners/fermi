@@ -52,10 +52,7 @@ impl DriftThreshold {
     /// the agent card if present, otherwise fall back to the static
     /// constant.
     pub fn from_agent_capability_gates(gates: &serde_json::Value) -> Self {
-        if let Some(override_value) = gates
-            .get("drift_threshold")
-            .and_then(|v| v.as_f64())
-        {
+        if let Some(override_value) = gates.get("drift_threshold").and_then(|v| v.as_f64()) {
             return DriftThreshold::Static(override_value.clamp(0.0, 1.0));
         }
         DriftThreshold::Static(DEFAULT_DRIFT_THRESHOLD)
@@ -81,8 +78,7 @@ impl DriftThreshold {
                 }
                 let mean = sample.iter().sum::<f64>() / sample.len() as f64;
                 let variance =
-                    sample.iter().map(|v| (v - mean).powi(2)).sum::<f64>()
-                        / sample.len() as f64;
+                    sample.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / sample.len() as f64;
                 let std_dev = variance.sqrt();
                 drift_norm > mean + sigma_multiplier * std_dev
             }

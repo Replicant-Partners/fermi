@@ -70,13 +70,15 @@ pub async fn execute_agent(
         confidence_threshold: request.confidence_threshold,
     };
 
-    // Create execution context
-    let context = ExecutionContext {
-        program: Program { statements: vec![] },
-        agent_card: card.clone(),
-        creature_id: None,
-        cognition_tier: None,
-    };
+    // Create execution context.
+    //
+    // This legacy surface's `AppState` holds only a registry — no DB, no
+    // encryptor — so it cannot reach the credential store. Credentials are
+    // therefore `unfunded`: any agent needing a provider key reports
+    // `ExecutionError::Unfunded` rather than silently drawing on the
+    // platform's key (SPEC_28). The live surface is
+    // `handlers::execution::execute_agent_handler`.
+    let context = ExecutionContext::for_agent(Program { statements: vec![] }, card.clone());
 
     // Execute agent
     let output = state

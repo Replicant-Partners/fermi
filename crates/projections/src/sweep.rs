@@ -23,10 +23,7 @@ pub enum SweepKind {
     /// Walk forward through discrete timesteps.
     /// Each step advances the model by `step_size` time units.
     /// STUB — interface fixed, implementation deferred.
-    TimeEvolution {
-        steps: u32,
-        step_size_seconds: f64,
-    },
+    TimeEvolution { steps: u32, step_size_seconds: f64 },
 }
 
 impl Default for SweepKind {
@@ -58,11 +55,24 @@ pub struct VariableSweep {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SamplingDistribution {
-    Uniform { low: f64, high: f64 },
-    Normal  { mean: f64, std: f64 },
+    Uniform {
+        low: f64,
+        high: f64,
+    },
+    Normal {
+        mean: f64,
+        std: f64,
+    },
     /// Triangular parameterised as (p5, p50, p95) — matches FPL convention.
-    Triangular { p5: f64, p50: f64, p95: f64 },
-    Beta    { alpha: f64, beta: f64 },
+    Triangular {
+        p5: f64,
+        p50: f64,
+        p95: f64,
+    },
+    Beta {
+        alpha: f64,
+        beta: f64,
+    },
     /// Use the typical_range declared in the model config field.
     /// The engine resolves this at runtime from the config metadata.
     FromTypicalRange,

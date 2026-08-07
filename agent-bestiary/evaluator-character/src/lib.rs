@@ -44,8 +44,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use agent_bestiary_evaluators::{
-    Dimension, EvalError, EvalModel, EvalResult, EvalTier, EpisodeBundle,
-    TranscriptRole,
+    Dimension, EpisodeBundle, EvalError, EvalModel, EvalResult, EvalTier, TranscriptRole,
 };
 
 /// Optional LLM provider configuration.
@@ -101,9 +100,10 @@ impl EvalModel for CharacterEvaluator {
     async fn evaluate(&self, bundle: &EpisodeBundle) -> Result<EvalResult, EvalError> {
         let t0 = Instant::now();
 
-        let card = bundle.agent_card.as_ref().ok_or_else(|| {
-            EvalError::Inapplicable("agent card missing from bundle".into())
-        })?;
+        let card = bundle
+            .agent_card
+            .as_ref()
+            .ok_or_else(|| EvalError::Inapplicable("agent card missing from bundle".into()))?;
 
         let system_prompt = card.system_prompt.as_deref().ok_or_else(|| {
             EvalError::Inapplicable("no system prompt to evaluate persona fidelity against".into())
@@ -124,14 +124,31 @@ impl EvalModel for CharacterEvaluator {
             .join(" ");
 
         if response_text.trim().is_empty() {
-            return Err(EvalError::Inapplicable("no agent response to evaluate".into()));
+            return Err(EvalError::Inapplicable(
+                "no agent response to evaluate".into(),
+            ));
         }
 
         if let Some(llm) = &self.llm {
-            return llm_score(llm, system_prompt, &response_text, bundle, self.name(), self.version(), t0).await;
+            return llm_score(
+                llm,
+                system_prompt,
+                &response_text,
+                bundle,
+                self.name(),
+                self.version(),
+                t0,
+            )
+            .await;
         }
 
-        heuristic_score(system_prompt, &response_text, self.name(), self.version(), t0)
+        heuristic_score(
+            system_prompt,
+            &response_text,
+            self.name(),
+            self.version(),
+            t0,
+        )
     }
 }
 
@@ -148,19 +165,35 @@ fn extract_commitments(prompt: &str) -> Commitments {
     let lower = prompt.to_lowercase();
 
     // Tone markers.
-    let tone_words: Vec<String> = ["formal", "technical", "concise", "empathetic", "casual",
-        "professional", "friendly", "analytical", "creative"]
-        .iter()
-        .filter(|&&w| lower.contains(w))
-        .map(|&w| w.to_string())
-        .collect();
+    let tone_words: Vec<String> = [
+        "formal",
+        "technical",
+        "concise",
+        "empathetic",
+        "casual",
+        "professional",
+        "friendly",
+        "analytical",
+        "creative",
+    ]
+    .iter()
+    .filter(|&&w| lower.contains(w))
+    .map(|&w| w.to_string())
+    .collect();
 
     // Expertise domains — simple keyword extraction after trigger phrases.
     let mut expertise_domains = Vec::new();
-    for trigger in &["expert in ", "specializes in ", "specialised in ", "focused on "] {
+    for trigger in &[
+        "expert in ",
+        "specializes in ",
+        "specialised in ",
+        "focused on ",
+    ] {
         if let Some(pos) = lower.find(trigger) {
             let after = &lower[pos + trigger.len()..];
-            let domain: String = after.split(['.', ',', '\n', ';']).next()
+            let domain: String = after
+                .split(['.', ',', '\n', ';'])
+                .next()
                 .unwrap_or("")
                 .trim()
                 .chars()
@@ -177,7 +210,9 @@ fn extract_commitments(prompt: &str) -> Commitments {
     for trigger in &["never ", "do not ", "avoid ", "must not "] {
         if let Some(pos) = lower.find(trigger) {
             let after = &lower[pos + trigger.len()..];
-            let prohibited: String = after.split(['.', ',', '\n']).next()
+            let prohibited: String = after
+                .split(['.', ',', '\n'])
+                .next()
                 .unwrap_or("")
                 .trim()
                 .chars()
@@ -189,7 +224,11 @@ fn extract_commitments(prompt: &str) -> Commitments {
         }
     }
 
-    Commitments { tone_words, expertise_domains, prohibitions }
+    Commitments {
+        tone_words,
+        expertise_domains,
+        prohibitions,
+    }
 }
 
 // ── Heuristic scorer ──────────────────────────────────────────────────────────
@@ -216,21 +255,29 @@ fn heuristic_score(
             .with_score("value_alignment", 0.5)
             .with_confidence(0.3)
             .with_latency_ms(latency)
-            .with_rationale("No extractable commitments in system prompt; neutral score.".to_string()));
+            .with_rationale(
+                "No extractable commitments in system prompt; neutral score.".to_string(),
+            ));
     }
 
     // Tone matching.
-    let tone_hits = commitments.tone_words.iter()
+    let tone_hits = commitments
+        .tone_words
+        .iter()
         .filter(|w| resp_lower.contains(w.as_str()))
         .count();
 
     // Domain keyword matching.
-    let domain_hits = commitments.expertise_domains.iter()
+    let domain_hits = commitments
+        .expertise_domains
+        .iter()
         .filter(|d| resp_lower.contains(d.as_str()))
         .count();
 
     // Prohibition violations (lower is worse).
-    let prohibition_violations = commitments.prohibitions.iter()
+    let prohibition_violations = commitments
+        .prohibitions
+        .iter()
         .filter(|p| resp_lower.contains(p.as_str()))
         .count();
 
@@ -259,8 +306,10 @@ fn heuristic_score(
         .with_latency_ms(latency)
         .with_rationale(format!(
             "Heuristic: tone={}/{}, domain={}/{}, violations={}",
-            tone_hits, commitments.tone_words.len(),
-            domain_hits, commitments.expertise_domains.len(),
+            tone_hits,
+            commitments.tone_words.len(),
+            domain_hits,
+            commitments.expertise_domains.len(),
             prohibition_violations
         )))
 }
@@ -324,7 +373,10 @@ Return ONLY valid JSON:
         .await
         .map_err(|e| EvalError::Provider(e.to_string()))?;
 
-    let raw: serde_json::Value = resp.json().await.map_err(|e| EvalError::Malformed(e.to_string()))?;
+    let raw: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| EvalError::Malformed(e.to_string()))?;
     let content = raw["content"][0]["text"]
         .as_str()
         .ok_or_else(|| EvalError::Malformed("no text in response".into()))?;
@@ -412,13 +464,19 @@ mod tests {
             "The technical implementation uses formal gradient descent optimization for the machine learning model.",
         );
         let result = ev.evaluate(&b).await.unwrap();
-        assert!(result.dimension_scores.contains_key(&Dimension::new("persona_fidelity")));
-        assert!(result.dimension_scores.contains_key(&Dimension::new("value_alignment")));
+        assert!(result
+            .dimension_scores
+            .contains_key(&Dimension::new("persona_fidelity")));
+        assert!(result
+            .dimension_scores
+            .contains_key(&Dimension::new("value_alignment")));
     }
 
     #[test]
     fn commitment_extraction_finds_tone() {
-        let c = extract_commitments("You are a formal technical expert who must never discuss personal topics.");
+        let c = extract_commitments(
+            "You are a formal technical expert who must never discuss personal topics.",
+        );
         assert!(c.tone_words.contains(&"formal".to_string()));
         assert!(c.tone_words.contains(&"technical".to_string()));
         assert!(!c.prohibitions.is_empty());

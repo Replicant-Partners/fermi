@@ -32,16 +32,12 @@ pub fn fit_beta_conjugate(
     failures: u32,
 ) -> Result<FittedDistribution, PosteriorError> {
     if successes == 0 && failures == 0 {
-        return Err(PosteriorError::InsufficientData {
-            need: 1,
-            have: 0,
-        });
+        return Err(PosteriorError::InsufficientData { need: 1, have: 0 });
     }
     let alpha = 1.0 + successes as f64;
     let beta = 1.0 + failures as f64;
 
-    let dist = StatrsBeta::new(alpha, beta)
-        .map_err(|_| PosteriorError::DegenerateVariance(0.0))?;
+    let dist = StatrsBeta::new(alpha, beta).map_err(|_| PosteriorError::DegenerateVariance(0.0))?;
     let ci_low = dist.inverse_cdf(0.05);
     let ci_high = dist.inverse_cdf(0.95);
 
@@ -98,13 +94,7 @@ pub fn fit_beta_moments(
     let n_eff = effective_sample_size(weights, observations.len());
 
     // Bootstrap CI on the mean of the fitted distribution
-    let (ci_low, ci_high) = bootstrap_ci(
-        observations,
-        weights,
-        1000,
-        None,
-        BootstrapFit::Beta,
-    )?;
+    let (ci_low, ci_high) = bootstrap_ci(observations, weights, 1000, None, BootstrapFit::Beta)?;
 
     Ok(FittedDistribution::Beta {
         alpha,

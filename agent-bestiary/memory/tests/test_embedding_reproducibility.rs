@@ -47,7 +47,11 @@ async fn test_mock_embedder_round_trip() {
         // calls `generate(source_text)` — the result must match.
         assert_eq!(written.source_text, *text, "source_text round-trip");
         assert_eq!(written.dim, embedder.dimension() as i32, "dim invariant");
-        assert_eq!(written.vector.len(), written.dim as usize, "vector length matches dim");
+        assert_eq!(
+            written.vector.len(),
+            written.dim as usize,
+            "vector length matches dim"
+        );
 
         let regenerated = embedder.generate(&written.source_text).await.unwrap();
         let cos = cosine_similarity(&regenerated, &written.vector);

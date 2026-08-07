@@ -206,19 +206,18 @@ fn resolve_substitutions(value: &str, ctx: &WorkspaceContext) -> Result<String, 
     }
     let mut out = value.to_string();
     if out.contains("${workspace.entity_id}") {
-        let entity = ctx
-            .entity_id
-            .as_deref()
-            .ok_or(ExtractorError::NoEntity)?;
+        let entity = ctx.entity_id.as_deref().ok_or(ExtractorError::NoEntity)?;
         out = out.replace("${workspace.entity_id}", entity);
     }
     Ok(out)
 }
 
 fn config_get<'a>(config: &'a JsonValue, key: &str) -> Result<&'a JsonValue, ExtractorError> {
-    config.get(key).ok_or_else(|| ExtractorError::MissingConfig {
-        key: key.to_string(),
-    })
+    config
+        .get(key)
+        .ok_or_else(|| ExtractorError::MissingConfig {
+            key: key.to_string(),
+        })
 }
 
 fn config_get_str(config: &JsonValue, key: &str) -> Result<String, ExtractorError> {
@@ -529,7 +528,8 @@ mod tests {
         let e = BinaryWinnerIdMatch;
         let outcome = json!({ "winner_team_id": "ARG", "home_goals": 2 });
         let ctx = WorkspaceContext::with_entity("ARG");
-        let cfg = json!({ "winner_field": "winner_team_id", "match_value": "${workspace.entity_id}" });
+        let cfg =
+            json!({ "winner_field": "winner_team_id", "match_value": "${workspace.entity_id}" });
         assert_eq!(e.extract(&outcome, &ctx, &cfg).unwrap(), Some(1.0));
     }
 
@@ -538,7 +538,8 @@ mod tests {
         let e = BinaryWinnerIdMatch;
         let outcome = json!({ "winner_team_id": "MEX" });
         let ctx = WorkspaceContext::with_entity("ARG");
-        let cfg = json!({ "winner_field": "winner_team_id", "match_value": "${workspace.entity_id}" });
+        let cfg =
+            json!({ "winner_field": "winner_team_id", "match_value": "${workspace.entity_id}" });
         assert_eq!(e.extract(&outcome, &ctx, &cfg).unwrap(), Some(0.0));
     }
 
@@ -547,7 +548,8 @@ mod tests {
         let e = BinaryWinnerIdMatch;
         let outcome = json!({ "score": "2-1" });
         let ctx = WorkspaceContext::with_entity("ARG");
-        let cfg = json!({ "winner_field": "winner_team_id", "match_value": "${workspace.entity_id}" });
+        let cfg =
+            json!({ "winner_field": "winner_team_id", "match_value": "${workspace.entity_id}" });
         assert!(matches!(
             e.extract(&outcome, &ctx, &cfg),
             Err(ExtractorError::MissingField { .. })

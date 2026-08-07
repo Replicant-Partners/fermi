@@ -122,8 +122,16 @@ fn rate_series_is_chronological() {
     let mut prev_ts = "";
     for point in arr {
         let ts = point["ts"].as_str().unwrap();
-        assert!(ts >= prev_ts, "rate_series not chronological: {} after {}", ts, prev_ts);
-        assert!(point["rate"].is_number(), "rate_series points must have numeric 'rate'");
+        assert!(
+            ts >= prev_ts,
+            "rate_series not chronological: {} after {}",
+            ts,
+            prev_ts
+        );
+        assert!(
+            point["rate"].is_number(),
+            "rate_series points must have numeric 'rate'"
+        );
         prev_ts = ts;
     }
 }
@@ -144,10 +152,14 @@ fn events_have_kind_and_ts() {
     let arr = v["events"].as_array().unwrap();
     assert!(!arr.is_empty());
     for ev in arr {
-        assert!(ev.get("kind").and_then(|v| v.as_str()).is_some(),
-                "every event must have a string 'kind'");
-        assert!(ev.get("ts").and_then(|v| v.as_str()).is_some(),
-                "every event must have a string 'ts'");
+        assert!(
+            ev.get("kind").and_then(|v| v.as_str()).is_some(),
+            "every event must have a string 'kind'"
+        );
+        assert!(
+            ev.get("ts").and_then(|v| v.as_str()).is_some(),
+            "every event must have a string 'ts'"
+        );
     }
 }
 
@@ -157,7 +169,12 @@ fn events_are_chronological_after_merge() {
     let mut prev_ts = "";
     for ev in v["events"].as_array().unwrap() {
         let ts = ev["ts"].as_str().unwrap();
-        assert!(ts >= prev_ts, "events not chronological: {} after {}", ts, prev_ts);
+        assert!(
+            ts >= prev_ts,
+            "events not chronological: {} after {}",
+            ts,
+            prev_ts
+        );
         prev_ts = ts;
     }
 }
@@ -199,8 +216,11 @@ fn rate_revision_event_carries_full_context() {
         "revision_trigger",
         "reason",
     ] {
-        assert!(revision.get(*key).is_some(),
-                "rate_revision event missing '{}'", key);
+        assert!(
+            revision.get(*key).is_some(),
+            "rate_revision event missing '{}'",
+            key
+        );
     }
     // The bayesops_refit trigger should be visible — that's the whole
     // point of R-3 Piece 1.
@@ -227,8 +247,11 @@ fn bayesops_fit_event_carries_impact_assessment() {
         "rate_after",
         "delta_pp",
     ] {
-        assert!(fit.get(*key).is_some(),
-                "bayesops_fit event missing '{}'", key);
+        assert!(
+            fit.get(*key).is_some(),
+            "bayesops_fit event missing '{}'",
+            key
+        );
     }
     let decision = fit["decision"].as_str().unwrap();
     assert!(

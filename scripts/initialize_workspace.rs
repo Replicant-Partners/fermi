@@ -29,7 +29,10 @@ use std::fs;
 use std::process::ExitCode;
 
 #[derive(ClapParser, Debug)]
-#[command(name = "initialize-workspace", about = "Run a factor-model FPL template against params.json and emit workspace outputs.")]
+#[command(
+    name = "initialize-workspace",
+    about = "Run a factor-model FPL template against params.json and emit workspace outputs."
+)]
 struct Args {
     /// Path to FPL template (e.g. templates/world_cup/team_prior.fpl)
     #[arg(short = 't', long)]
@@ -185,7 +188,9 @@ fn main() -> ExitCode {
     log(&format!(
         "Running factor-model simulation: {} iterations{}",
         iterations,
-        args.seed.map(|s| format!(" (seed={})", s)).unwrap_or_default()
+        args.seed
+            .map(|s| format!(" (seed={})", s))
+            .unwrap_or_default()
     ));
 
     let results = match executor.execute(&program) {
@@ -197,7 +202,10 @@ fn main() -> ExitCode {
     };
 
     // --- Build outputs JSON ---------------------------------------------
-    let estimate_name = results.estimate_name.clone().unwrap_or_else(|| "response".into());
+    let estimate_name = results
+        .estimate_name
+        .clone()
+        .unwrap_or_else(|| "response".into());
 
     let mut outputs = serde_json::Map::new();
 
@@ -257,16 +265,19 @@ fn main() -> ExitCode {
     // under those same names. The next sim run will pick them up via
     // Expression::LearnablePrior fallback logic in the evaluator.
     if let Some(manifest) = &results.learnable_manifest {
-        let entries: Vec<Value> = manifest.iter().map(|li| {
-            json!({
-                "name": li.name,
-                "initial": li.initial,
-                "sigma": li.sigma,
-                "owner": li.owner,
-                "current_value": numeric_params.get(&li.name).copied().unwrap_or(li.initial),
-                "is_overridden": numeric_params.contains_key(&li.name),
+        let entries: Vec<Value> = manifest
+            .iter()
+            .map(|li| {
+                json!({
+                    "name": li.name,
+                    "initial": li.initial,
+                    "sigma": li.sigma,
+                    "owner": li.owner,
+                    "current_value": numeric_params.get(&li.name).copied().unwrap_or(li.initial),
+                    "is_overridden": numeric_params.contains_key(&li.name),
+                })
             })
-        }).collect();
+            .collect();
         outputs.insert("learnable_manifest".into(), Value::Array(entries));
     }
 
@@ -277,8 +288,10 @@ fn main() -> ExitCode {
     // (with full FittedDistribution details), or from the static prior
     // because no fit was available. UI consumes this for status badges.
     if !results.learnable_drivers.is_empty() {
-        let entries: Vec<Value> = results.learnable_drivers.iter().map(|r| {
-            match &r.source {
+        let entries: Vec<Value> = results
+            .learnable_drivers
+            .iter()
+            .map(|r| match &r.source {
                 fermi::executor::LearnableSource::Fitted { fitted } => {
                     let key = format!("{}_fitted", r.name);
                     json!({
@@ -300,8 +313,8 @@ fn main() -> ExitCode {
                     "name": r.name,
                     "status": "static",
                 }),
-            }
-        }).collect();
+            })
+            .collect();
         outputs.insert("learnable_drivers".into(), Value::Array(entries));
     }
 

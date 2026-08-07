@@ -20,8 +20,8 @@ use serde_json::{json, Value};
 use sqlx::Row;
 use uuid::Uuid;
 
-use fermi_auth::AuthPrincipal;
 use crate::AppState;
+use fermi_auth::AuthPrincipal;
 
 // ─── List sessions ────────────────────────────────────────────────────────────
 
@@ -167,14 +167,16 @@ pub async fn xaman_session_message_handler(
     .ok_or((StatusCode::NOT_FOUND, "Active session not found".into()))?;
 
     let mut messages: Vec<Value> = row
-        .try_get::<Value,_>("messages")
+        .try_get::<Value, _>("messages")
         .unwrap_or(json!([]))
         .as_array()
         .cloned()
         .unwrap_or_default();
     let existing_title: Option<String> = row.try_get("title").unwrap_or(None);
-    let session_type: String = row.try_get("session_type").unwrap_or_else(|_| "free".into());
-    let mut in_progress: Value = row.try_get::<Value,_>("in_progress").unwrap_or(json!({}));
+    let session_type: String = row
+        .try_get("session_type")
+        .unwrap_or_else(|_| "free".into());
+    let mut in_progress: Value = row.try_get::<Value, _>("in_progress").unwrap_or(json!({}));
     let stored_page_ctx: Option<String> = row.try_get("page_context").unwrap_or(None);
 
     // Merge any client-supplied in_progress patch first
@@ -184,19 +186,18 @@ pub async fn xaman_session_message_handler(
 
     // Build the session-context prefix injected into the query so xamanEK
     // knows it is in a session and what has been built so far.
-    let page_ctx = body.page_context.as_deref()
+    let page_ctx = body
+        .page_context
+        .as_deref()
         .or(stored_page_ctx.as_deref())
         .unwrap_or("");
 
-    let in_progress_str = serde_json::to_string_pretty(&in_progress)
-        .unwrap_or_else(|_| "{}".to_string());
+    let in_progress_str =
+        serde_json::to_string_pretty(&in_progress).unwrap_or_else(|_| "{}".to_string());
 
     let session_prefix = format!(
         "[SESSION type={} id={}]\n[IN_PROGRESS]\n{}\n[/IN_PROGRESS]\n[PAGE] {} [/PAGE]\n\n",
-        session_type,
-        session_id,
-        in_progress_str,
-        page_ctx,
+        session_type, session_id, in_progress_str, page_ctx,
     );
 
     let full_query = format!("{}{}", session_prefix, body.message);
@@ -238,7 +239,8 @@ pub async fn xaman_session_message_handler(
     };
 
     // Check if session is ready to create (status field in in_progress)
-    let ready_to_create = in_progress.get("status")
+    let ready_to_create = in_progress
+        .get("status")
         .and_then(|v| v.as_str())
         .map(|s| s == "ready_to_create")
         .unwrap_or(false);
@@ -362,9 +364,7 @@ pub async fn create_app_from_session_handler(
             format!("session is type '{}', not 'app_design'", session_type),
         ));
     }
-    let in_progress: Value = row
-        .try_get("in_progress")
-        .unwrap_or(json!({}));
+    let in_progress: Value = row.try_get("in_progress").unwrap_or(json!({}));
 
     // Run through the builder substrate.
     let partial = PartialManifest::from_value(&in_progress);
@@ -411,12 +411,10 @@ pub async fn create_app_from_session_handler(
         .map(|i| (i.severity, i.field.clone(), i.message.clone()))
         .collect();
 
-    let manifest = result
-        .manifest
-        .ok_or((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "builder returned no manifest despite passing validation (bug)".into(),
-        ))?;
+    let manifest = result.manifest.ok_or((
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "builder returned no manifest despite passing validation (bug)".into(),
+    ))?;
 
     let slug = manifest["slug"]
         .as_str()
@@ -471,7 +469,10 @@ pub async fn create_app_from_session_handler(
         if msg.contains("unique") || msg.contains("duplicate") {
             (
                 StatusCode::CONFLICT,
-                format!("App slug '{}' is already taken — pick a different slug in the session", slug),
+                format!(
+                    "App slug '{}' is already taken — pick a different slug in the session",
+                    slug
+                ),
             )
         } else {
             (StatusCode::INTERNAL_SERVER_ERROR, msg)
@@ -575,11 +576,7 @@ fn merge_json(target: &mut Value, patch: &Value) {
 
 // ─── Internal: call xaman_ek agent ───────────────────────────────────────────
 
-async fn call_xaman_ek(
-    state: &AppState,
-    _user_id: &str,
-    query: &str,
-) -> Result<String, String> {
+async fn call_xaman_ek(state: &AppState, _user_id: &str, query: &str) -> Result<String, String> {
     use crate::{resolve_agent, resolve_agent_card};
     use fermi::agent_backend::executor::{AgentExecutor, ExecutionContext};
     use fermi::ast;
@@ -605,11 +602,17 @@ async fn call_xaman_ek(
         statements: vec![ast::Statement::Agent(agent_stmt.clone())],
     };
 
+    // SPEC_28 — xaman_ek is a platform-service agent, so this resolves
+    // the `abw-system` principal's store keys. Same code path as any
+    // owner-owned agent; "system" is a principal, not a key path.
+    let credentials = crate::build_execution_credentials(state, &db_agent, &card).await;
+
     let context = ExecutionContext {
         program,
         agent_card: card,
         creature_id: None,
         cognition_tier: None,
+        credentials,
     };
 
     let output = state
@@ -628,7 +631,9 @@ async fn call_xaman_ek(
             .iter()
             .flat_map(|e| {
                 let mut parts = Vec::new();
-                if let Some(ref s) = e.summary { parts.push(s.clone()); }
+                if let Some(ref s) = e.summary {
+                    parts.push(s.clone());
+                }
                 parts.extend(e.key_findings.iter().cloned());
                 parts
             })

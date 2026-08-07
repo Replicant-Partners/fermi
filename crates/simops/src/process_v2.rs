@@ -14,8 +14,8 @@
 //! hard-required. Deserialising a document without it, or with any value
 //! other than 2, produces a deserialisation error at the handler boundary.
 
-use std::collections::BTreeMap;
 use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::BTreeMap;
 
 // ─── Flexible f64 deserialiser ────────────────────────────────────────────────
 // Accepts bare f64 (0.97) OR tagged-union ({ "value": 0.97 }) OR string ("0.97").
@@ -23,7 +23,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 // ABW should accept both and always emit bare f64 in responses.
 
 fn deserialize_flexible_f64<'de, D: Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
-    use serde::de::{self, Visitor, MapAccess};
+    use serde::de::{self, MapAccess, Visitor};
     use std::fmt;
 
     struct Flex;
@@ -32,11 +32,18 @@ fn deserialize_flexible_f64<'de, D: Deserializer<'de>>(d: D) -> Result<f64, D::E
         fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
             write!(f, "a number or {{ value: number }} object")
         }
-        fn visit_f64<E: de::Error>(self, v: f64) -> Result<f64, E> { Ok(v) }
-        fn visit_i64<E: de::Error>(self, v: i64) -> Result<f64, E> { Ok(v as f64) }
-        fn visit_u64<E: de::Error>(self, v: u64) -> Result<f64, E> { Ok(v as f64) }
+        fn visit_f64<E: de::Error>(self, v: f64) -> Result<f64, E> {
+            Ok(v)
+        }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<f64, E> {
+            Ok(v as f64)
+        }
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<f64, E> {
+            Ok(v as f64)
+        }
         fn visit_str<E: de::Error>(self, v: &str) -> Result<f64, E> {
-            v.parse::<f64>().map_err(|_| de::Error::invalid_value(de::Unexpected::Str(v), &self))
+            v.parse::<f64>()
+                .map_err(|_| de::Error::invalid_value(de::Unexpected::Str(v), &self))
         }
         fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<f64, A::Error> {
             let mut value: Option<f64> = None;
@@ -53,8 +60,10 @@ fn deserialize_flexible_f64<'de, D: Deserializer<'de>>(d: D) -> Result<f64, D::E
     d.deserialize_any(Flex)
 }
 
-fn deserialize_optional_flexible_f64<'de, D: Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
-    use serde::de::{self, Visitor, MapAccess};
+fn deserialize_optional_flexible_f64<'de, D: Deserializer<'de>>(
+    d: D,
+) -> Result<Option<f64>, D::Error> {
+    use serde::de::{self, MapAccess, Visitor};
     use std::fmt;
 
     struct OptFlex;
@@ -63,19 +72,34 @@ fn deserialize_optional_flexible_f64<'de, D: Deserializer<'de>>(d: D) -> Result<
         fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
             write!(f, "null, a number, or {{ value: number }}")
         }
-        fn visit_none<E: de::Error>(self) -> Result<Option<f64>, E> { Ok(None) }
-        fn visit_unit<E: de::Error>(self) -> Result<Option<f64>, E> { Ok(None) }
-        fn visit_f64<E: de::Error>(self, v: f64) -> Result<Option<f64>, E> { Ok(Some(v)) }
-        fn visit_i64<E: de::Error>(self, v: i64) -> Result<Option<f64>, E> { Ok(Some(v as f64)) }
-        fn visit_u64<E: de::Error>(self, v: u64) -> Result<Option<f64>, E> { Ok(Some(v as f64)) }
+        fn visit_none<E: de::Error>(self) -> Result<Option<f64>, E> {
+            Ok(None)
+        }
+        fn visit_unit<E: de::Error>(self) -> Result<Option<f64>, E> {
+            Ok(None)
+        }
+        fn visit_f64<E: de::Error>(self, v: f64) -> Result<Option<f64>, E> {
+            Ok(Some(v))
+        }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<Option<f64>, E> {
+            Ok(Some(v as f64))
+        }
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<Option<f64>, E> {
+            Ok(Some(v as f64))
+        }
         fn visit_str<E: de::Error>(self, v: &str) -> Result<Option<f64>, E> {
-            Ok(Some(v.parse::<f64>().map_err(|_| de::Error::invalid_value(de::Unexpected::Str(v), &self))?))
+            Ok(Some(v.parse::<f64>().map_err(|_| {
+                de::Error::invalid_value(de::Unexpected::Str(v), &self)
+            })?))
         }
         fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Option<f64>, A::Error> {
             let mut value: Option<f64> = None;
             while let Some(key) = map.next_key::<String>()? {
-                if key == "value" { value = Some(map.next_value()?); }
-                else { let _: serde_json::Value = map.next_value()?; }
+                if key == "value" {
+                    value = Some(map.next_value()?);
+                } else {
+                    let _: serde_json::Value = map.next_value()?;
+                }
             }
             Ok(value)
         }
@@ -376,8 +400,12 @@ pub struct Throughput {
     pub runs_per_year: Option<f64>,
 }
 
-fn default_qty_per_run() -> f64 { 1.0 }
-fn default_qty_unit() -> String { "unit".to_string() }
+fn default_qty_per_run() -> f64 {
+    1.0
+}
+fn default_qty_unit() -> String {
+    "unit".to_string()
+}
 
 // ─── ScaleRequest ─────────────────────────────────────────────────────────────
 
@@ -462,14 +490,25 @@ impl ScalingRegime {
     /// Apply this regime to (base_value_per_instance, instance_count).
     /// Returns the total across all active instances.
     pub fn apply(&self, base_value: f64, n: usize) -> f64 {
-        if !base_value.is_finite() { return base_value; }
-        if n == 0 { return 0.0; }
-        if n == 1 { return base_value; }
+        if !base_value.is_finite() {
+            return base_value;
+        }
+        if n == 0 {
+            return 0.0;
+        }
+        if n == 1 {
+            return base_value;
+        }
         let n_f = n as f64;
         match self {
             Self::Named(s) if s == "constant" => base_value,
-            Self::Named(_) => base_value * n_f,  // "linear" or unknown → linear
-            Self::Structured { kind, exponent, base, per_instance } => match kind.as_str() {
+            Self::Named(_) => base_value * n_f, // "linear" or unknown → linear
+            Self::Structured {
+                kind,
+                exponent,
+                base,
+                per_instance,
+            } => match kind.as_str() {
                 "constant" => base_value,
                 "power" => {
                     let exp = exponent.unwrap_or(1.0).max(0.0);
@@ -487,17 +526,24 @@ impl ScalingRegime {
 }
 
 impl Default for ScalingRegime {
-    fn default() -> Self { Self::Named("linear".into()) }
+    fn default() -> Self {
+        Self::Named("linear".into())
+    }
 }
 
 /// Scaling map per lens for a parallel stage.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct StageScaling {
-    #[serde(default)] pub materials: Option<ScalingRegime>,
-    #[serde(default)] pub energy: Option<ScalingRegime>,
-    #[serde(default)] pub labor: Option<ScalingRegime>,
-    #[serde(default)] pub carbon: Option<ScalingRegime>,
-    #[serde(default)] pub output_qty: Option<ScalingRegime>,
+    #[serde(default)]
+    pub materials: Option<ScalingRegime>,
+    #[serde(default)]
+    pub energy: Option<ScalingRegime>,
+    #[serde(default)]
+    pub labor: Option<ScalingRegime>,
+    #[serde(default)]
+    pub carbon: Option<ScalingRegime>,
+    #[serde(default)]
+    pub output_qty: Option<ScalingRegime>,
 }
 
 /// One physical vessel/instance within a parallel stage.
@@ -508,7 +554,9 @@ pub struct ParallelInstance {
     #[serde(default = "default_running")]
     pub status: String,
 }
-fn default_running() -> String { "running".into() }
+fn default_running() -> String {
+    "running".into()
+}
 
 impl ParallelInstance {
     /// Active instances contribute to the stage total.
@@ -521,7 +569,7 @@ impl ParallelInstance {
 /// Parallelism block for one stage in the twin manifest.
 #[derive(Debug, Clone, Deserialize)]
 pub struct StageParallelism {
-    pub kind: String,  // "parallel_instances"
+    pub kind: String, // "parallel_instances"
     #[serde(default)]
     pub instances: Vec<ParallelInstance>,
     #[serde(default)]
@@ -530,7 +578,11 @@ pub struct StageParallelism {
 
 impl StageParallelism {
     pub fn active_count(&self) -> usize {
-        self.instances.iter().filter(|i| i.is_active()).count().max(1)
+        self.instances
+            .iter()
+            .filter(|i| i.is_active())
+            .count()
+            .max(1)
     }
 }
 

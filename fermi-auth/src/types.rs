@@ -477,9 +477,17 @@ mod team_capability_tests {
     /// else stops a typo becoming a stored value. It must stay strict.
     #[test]
     fn from_str_rejects_anything_unrecognised() {
-        assert_eq!(TeamCapability::from_str("resolve"), Some(TeamCapability::Resolve));
-        assert_eq!(TeamCapability::from_str("spend"), Some(TeamCapability::Spend));
-        for bad in ["Resolve", "RESOLVE", "resolve ", "", "admin", "delete", "resolv"] {
+        assert_eq!(
+            TeamCapability::from_str("resolve"),
+            Some(TeamCapability::Resolve)
+        );
+        assert_eq!(
+            TeamCapability::from_str("spend"),
+            Some(TeamCapability::Spend)
+        );
+        for bad in [
+            "Resolve", "RESOLVE", "resolve ", "", "admin", "delete", "resolv",
+        ] {
             assert!(
                 TeamCapability::from_str(bad).is_none(),
                 "must reject {:?} — a near-miss stored silently would read as a grant",

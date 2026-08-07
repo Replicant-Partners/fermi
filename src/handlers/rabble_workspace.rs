@@ -226,9 +226,9 @@ pub async fn dispatch_rabble_action(
             .and_then(|r| r.try_get::<String, _>("cognition_tier").ok())
             .and_then(|t| match t.as_str() {
                 "standard" => Some(CognitionTier::Standard),
-                "premium"  => Some(CognitionTier::Premium),
-                "free"     => Some(CognitionTier::Free),
-                _          => None,
+                "premium" => Some(CognitionTier::Premium),
+                "free" => Some(CognitionTier::Free),
+                _ => None,
             })
         } else {
             None
@@ -254,11 +254,8 @@ pub async fn dispatch_rabble_action(
         card,
     );
 
-    let (cognition_tier, slug, (mut card, _kg_embedding)) = tokio::join!(
-        cognition_tier_fut,
-        slug_fut,
-        kg_fut,
-    );
+    let (cognition_tier, slug, (mut card, _kg_embedding)) =
+        tokio::join!(cognition_tier_fut, slug_fut, kg_fut,);
 
     // Apply tier resolution to card (patching model/provider in place)
     if let Some(ref tier) = cognition_tier {
@@ -279,15 +276,20 @@ pub async fn dispatch_rabble_action(
     let program = ast::Program {
         statements: vec![ast::Statement::Agent(agent_stmt.clone())],
     };
+    // SPEC_28 — credentials for this creature/agent execution.
+    let credentials = crate::build_execution_credentials(&state, &db_agent, &card).await;
+
     let context = ExecutionContext {
         program,
         agent_card: card.clone(),
         creature_id,
         cognition_tier,
+        credentials: credentials.clone(),
     };
 
     // Build ToolContext
     let tool_context = Arc::new(ToolContext {
+        credentials,
         memory_store: state.memory_store.clone(),
         embedder: state.embedder.clone(),
         registry: state.registry.clone(),
@@ -333,10 +335,13 @@ pub async fn dispatch_rabble_action(
                 if summary.is_empty() && e.key_findings.is_empty() {
                     None
                 } else {
-                    Some(serde_json::to_string(&serde_json::json!({
-                        "summary": summary,
-                        "key_findings": e.key_findings,
-                    })).unwrap_or_default())
+                    Some(
+                        serde_json::to_string(&serde_json::json!({
+                            "summary": summary,
+                            "key_findings": e.key_findings,
+                        }))
+                        .unwrap_or_default(),
+                    )
                 }
             })
         })
@@ -363,12 +368,12 @@ pub async fn dispatch_rabble_action(
 
     // ── Background housekeeping (does not block response) ──────────────────
     {
-        let state_bg      = state.clone();
-        let output_bg     = output.clone();
-        let query_bg      = query.to_string();
-        let agent_id_bg   = db_agent.agent_id;
-        let response_bg   = response_text.clone();
-        let action_bg     = action_type.to_string();
+        let state_bg = state.clone();
+        let output_bg = output.clone();
+        let query_bg = query.to_string();
+        let agent_id_bg = db_agent.agent_id;
+        let response_bg = response_text.clone();
+        let action_bg = action_type.to_string();
         let agent_name_bg = agent_name.to_string();
 
         tokio::spawn(async move {
@@ -422,7 +427,8 @@ pub async fn dispatch_rabble_action(
             let total = exec_fee + gas_fee;
             let agent_ids = get_workspace_agent_ids(&state_bg.db, workspace_id).await;
             let ws_id_str = workspace_id.to_string();
-            if let Ok(ws_wallet) = get_or_create_wallet(&state_bg.db, "workspace", &ws_id_str).await {
+            if let Ok(ws_wallet) = get_or_create_wallet(&state_bg.db, "workspace", &ws_id_str).await
+            {
                 let _ = charge_and_distribute(
                     &state_bg.db,
                     ws_wallet.wallet_id,

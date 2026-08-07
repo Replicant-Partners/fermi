@@ -46,6 +46,4 @@ pub use trend::{TrendAnalyzer, TrendSeries, TrendWindow};
 pub use worker::{ObservabilityWorker, ScanReport};
 
 // Re-export the storage shape consumers will most often touch.
-pub use agent_bestiary_memory::{
-    AgentObservabilityState, AnomalyEvent, DyadState, TimelineEntry,
-};
+pub use agent_bestiary_memory::{AgentObservabilityState, AnomalyEvent, DyadState, TimelineEntry};

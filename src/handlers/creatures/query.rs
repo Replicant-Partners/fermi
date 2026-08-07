@@ -1305,7 +1305,9 @@ pub async fn creature_cognition_handler(
     .ok_or_else(|| (StatusCode::NOT_FOUND, "Creature not found".into()))?;
 
     let cognition_level: i32 = row.try_get("cognition_level").unwrap_or(0);
-    let cognition_tier: String = row.try_get("cognition_tier").unwrap_or_else(|_| "free".into());
+    let cognition_tier: String = row
+        .try_get("cognition_tier")
+        .unwrap_or_else(|_| "free".into());
 
     // Tier thresholds for upgrade nudge: if level suggests the creature has
     // outgrown free, surface a hint. Thresholds are intentionally generous.

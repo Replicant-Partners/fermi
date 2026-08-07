@@ -87,8 +87,7 @@ impl TrendAnalyzer {
 /// max-time entry.
 pub fn compute_series(entries: &[TimelineEntry]) -> BTreeMap<String, TrendSeries> {
     let mut buckets: BTreeMap<String, Vec<f64>> = BTreeMap::new();
-    let mut latest_by_dim: BTreeMap<String, (chrono::DateTime<chrono::Utc>, f64)> =
-        BTreeMap::new();
+    let mut latest_by_dim: BTreeMap<String, (chrono::DateTime<chrono::Utc>, f64)> = BTreeMap::new();
 
     for e in entries {
         let Some(obj) = e.dim_scores.as_object() else {
@@ -119,8 +118,7 @@ pub fn compute_series(entries: &[TimelineEntry]) -> BTreeMap<String, TrendSeries
         }
         let n = vals.len();
         let mean = vals.iter().sum::<f64>() / n as f64;
-        let variance =
-            vals.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n as f64;
+        let variance = vals.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n as f64;
         let std_dev = variance.sqrt();
         let min = vals.iter().cloned().fold(f64::INFINITY, f64::min);
         let max = vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);

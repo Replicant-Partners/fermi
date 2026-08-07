@@ -66,11 +66,11 @@
 //! 5. **Physical unit clarity**: kLa is 1/day (not 1/h), all rates in
 //!    day-consistent units matching the rest of the dynamics crate.
 
-use std::collections::BTreeMap;
 use crate::{
-    DynamicsModel, ModelManifest, Note,
     manifest::{ContextSchema, ContextSource, ContributionMode, ParamSchema, StateFieldSchema},
+    DynamicsModel, ModelManifest, Note,
 };
+use std::collections::BTreeMap;
 
 /// Gas constant for pressure calculations: L·bar/(mol·K)
 const R_BAR: f64 = 0.08314;
@@ -118,17 +118,17 @@ impl KombuchaF2Carbonation {
     pub fn from_context(temperature_c: f64, params: &BTreeMap<String, f64>) -> Self {
         let get = |k: &str, default: f64| params.get(k).copied().unwrap_or(default);
         Self {
-            mu_base:       get("mu_base",   0.5),
-            t_ref_c:       get("t_ref_c",  22.0),
-            k_temp:        get("k_temp",    0.07),
-            k_s:           get("k_s",       5.0),
-            k_d:           get("k_d",       0.05),
-            y_xs:          get("y_xs",      0.1),
-            m_maint:       get("m_maint",   0.01),
-            y_co2_s:       get("y_co2_s",   0.48),
-            kla:           get("kla",       4.0),
-            v_liq:         get("v_liq",     0.45),
-            v_head:        get("v_head",    0.05),
+            mu_base: get("mu_base", 0.5),
+            t_ref_c: get("t_ref_c", 22.0),
+            k_temp: get("k_temp", 0.07),
+            k_s: get("k_s", 5.0),
+            k_d: get("k_d", 0.05),
+            y_xs: get("y_xs", 0.1),
+            m_maint: get("m_maint", 0.01),
+            y_co2_s: get("y_co2_s", 0.48),
+            kla: get("kla", 4.0),
+            v_liq: get("v_liq", 0.45),
+            v_head: get("v_head", 0.05),
             temperature_c,
         }
     }
@@ -294,9 +294,7 @@ impl DynamicsModel for KombuchaF2Carbonation {
         //   dP/dt = (n_dot · R_bar · T) / V_head
         //   n_dot = transfer_rate · V_liq / MW_CO2   [mol/day]
         let t_k = self.temperature_c + 273.15;
-        let dp_dt = transfer_rate
-            * (self.v_liq / self.v_head)
-            * (R_BAR * t_k / MW_CO2);
+        let dp_dt = transfer_rate * (self.v_liq / self.v_head) * (R_BAR * t_k / MW_CO2);
 
         dy[0] = dx_dt;
         dy[1] = ds_dt;
@@ -315,7 +313,9 @@ impl DynamicsModel for KombuchaF2Carbonation {
 
     fn is_converged(&self, history: &[(f64, Vec<f64>)]) -> bool {
         // Converged when: sugar exhausted AND pressure stabilised
-        if history.len() < 10 { return false; }
+        if history.len() < 10 {
+            return false;
+        }
         let last = &history[history.len() - 10..];
         let sugar_exhausted = last.iter().all(|(_, y)| y[1] < 0.1);
         let pressure_stable = {
@@ -335,9 +335,9 @@ impl DynamicsModel for KombuchaF2Carbonation {
 
         for (t, y) in trajectory {
             let _x = y[0];
-            let s  = y[1];
-            let c  = y[2];
-            let p  = y[3];
+            let s = y[1];
+            let c = y[2];
+            let p = y[3];
 
             // Burst risk: > 3.5 bar is approaching glass bottle safety limit
             if !warned_pressure && p > 3.5 {
@@ -411,7 +411,11 @@ mod tests {
         let y = initial_state();
         let mut dy = vec![0.0; 4];
         model.system(0.0, &y, &mut dy);
-        assert!(dy[0] > 0.0, "Yeast must grow when sugar present, got dy[0]={}", dy[0]);
+        assert!(
+            dy[0] > 0.0,
+            "Yeast must grow when sugar present, got dy[0]={}",
+            dy[0]
+        );
     }
 
     #[test]
@@ -444,7 +448,11 @@ mod tests {
         let y = vec![0.1, 20.0, c_sat + 2.0, 1.0]; // CO₂ above saturation
         let mut dy = vec![0.0; 4];
         model.system(0.0, &y, &mut dy);
-        assert!(dy[3] > 0.0, "Pressure must rise when CO₂ supersaturated: dy[3]={}", dy[3]);
+        assert!(
+            dy[3] > 0.0,
+            "Pressure must rise when CO₂ supersaturated: dy[3]={}",
+            dy[3]
+        );
     }
 
     #[test]
@@ -452,14 +460,22 @@ mod tests {
         // C < C_sat → absorption from headspace into liquid
         let model = default_model();
         let c_sat = model.co2_sat_g_per_l(3.0); // high pressure → high saturation
-        // Put liquid well below saturation, with sugar depleted (no co2 production)
+                                                // Put liquid well below saturation, with sugar depleted (no co2 production)
         let y = vec![0.0, 0.0, 0.0, 3.0]; // C=0 << C_sat at P=3 bar
         let mut dy = vec![0.0; 4];
         model.system(0.0, &y, &mut dy);
         // transfer_rate = kLa * (0 - C_sat) < 0 → dc_dt = 0 - negative = positive
-        assert!(dy[2] > 0.0, "CO₂ must dissolve into liquid when undersaturated: dy[2]={}", dy[2]);
+        assert!(
+            dy[2] > 0.0,
+            "CO₂ must dissolve into liquid when undersaturated: dy[2]={}",
+            dy[2]
+        );
         // pressure must fall as CO₂ transfers from headspace to liquid
-        assert!(dy[3] < 0.0, "Pressure must drop when CO₂ dissolves: dy[3]={}", dy[3]);
+        assert!(
+            dy[3] < 0.0,
+            "Pressure must drop when CO₂ dissolves: dy[3]={}",
+            dy[3]
+        );
     }
 
     #[test]
@@ -472,7 +488,8 @@ mod tests {
         assert!(
             c_sat_cold > c_sat_warm,
             "Cold liquid must hold more CO₂. cold={:.3}, warm={:.3}",
-            c_sat_cold, c_sat_warm
+            c_sat_cold,
+            c_sat_warm
         );
     }
 
@@ -483,7 +500,8 @@ mod tests {
         assert!(
             warm.mu_max() > cool.mu_max(),
             "Warmer must give higher mu_max. warm={:.4}, cool={:.4}",
-            warm.mu_max(), cool.mu_max()
+            warm.mu_max(),
+            cool.mu_max()
         );
     }
 
@@ -519,7 +537,9 @@ mod tests {
         ];
         let notes = model.generate_notes(&traj);
         assert!(
-            notes.iter().any(|n| n.severity == "warning" && n.message.contains("burst")),
+            notes
+                .iter()
+                .any(|n| n.severity == "warning" && n.message.contains("burst")),
             "Expected burst warning note"
         );
     }

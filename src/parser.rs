@@ -459,8 +459,14 @@ impl Parser {
                 self.advance();
                 Ok(*b)
             }
-            TokenType::Identifier(s) if s == "true" => { self.advance(); Ok(true) }
-            TokenType::Identifier(s) if s == "false" => { self.advance(); Ok(false) }
+            TokenType::Identifier(s) if s == "true" => {
+                self.advance();
+                Ok(true)
+            }
+            TokenType::Identifier(s) if s == "false" => {
+                self.advance();
+                Ok(false)
+            }
             _ => Err(ParseError::UnexpectedToken {
                 expected: "boolean (true/false)".to_string(),
                 found: token.token_type.clone(),
@@ -1190,7 +1196,11 @@ impl Parser {
                 };
                 self.consume_token(TokenType::RParen, ")")?;
                 // name is assigned later by Executor::assign_learnable_names
-                Ok(Expression::LearnablePrior { initial, sigma, name: None })
+                Ok(Expression::LearnablePrior {
+                    initial,
+                    sigma,
+                    name: None,
+                })
             }
             TokenType::Residual => {
                 self.advance();
@@ -1203,7 +1213,10 @@ impl Parser {
                     upstream.push(factor_name);
                 }
                 self.consume_token(TokenType::RParen, ")")?;
-                Ok(Expression::Residual { raw: Box::new(raw), upstream })
+                Ok(Expression::Residual {
+                    raw: Box::new(raw),
+                    upstream,
+                })
             }
             TokenType::Exp => {
                 self.advance();
@@ -1445,7 +1458,9 @@ impl Parser {
 
             while !self.check(&TokenType::RBrace) && !self.is_at_end() {
                 self.skip_newlines();
-                if self.check(&TokenType::RBrace) { break; }
+                if self.check(&TokenType::RBrace) {
+                    break;
+                }
 
                 let field = self.consume_identifier_or_keyword()?;
                 self.consume_token(TokenType::Colon, ":")?;
@@ -1529,7 +1544,11 @@ impl Parser {
             None
         };
 
-        Ok(ParamDecl { name, param_type, default_value })
+        Ok(ParamDecl {
+            name,
+            param_type,
+            default_value,
+        })
     }
 
     /// Parse: import factor X1 with ( input1 = expr, input2 = expr )
@@ -1550,7 +1569,9 @@ impl Parser {
 
             while !self.check(&TokenType::RParen) && !self.is_at_end() {
                 self.skip_newlines();
-                if self.check(&TokenType::RParen) { break; }
+                if self.check(&TokenType::RParen) {
+                    break;
+                }
                 let input_name = self.consume_identifier()?;
                 self.consume_token(TokenType::Equals, "=")?;
                 let value = self.parse_expression()?;
@@ -1563,7 +1584,10 @@ impl Parser {
             self.consume_token(TokenType::RParen, ")")?;
         }
 
-        Ok(ImportStmt { factor_name, bindings })
+        Ok(ImportStmt {
+            factor_name,
+            bindings,
+        })
     }
 
     /// Parse: estimate tournament_strength as: expression
@@ -1600,7 +1624,11 @@ impl Parser {
             }
         }
 
-        Ok(OutputStmt { name, expression, is_derived })
+        Ok(OutputStmt {
+            name,
+            expression,
+            is_derived,
+        })
     }
 
     /// Skip over newline tokens.
@@ -1631,17 +1659,50 @@ impl Parser {
                 Ok(s)
             }
             // Allow keywords as identifiers in field position
-            TokenType::Inputs => { self.advance(); Ok("inputs".to_string()) }
-            TokenType::Formulation => { self.advance(); Ok("formulation".to_string()) }
-            TokenType::VarianceShare => { self.advance(); Ok("variance_share".to_string()) }
-            TokenType::Update => { self.advance(); Ok("update".to_string()) }
-            TokenType::Static => { self.advance(); Ok("static".to_string()) }
-            TokenType::PerMatch => { self.advance(); Ok("per_match".to_string()) }
-            TokenType::PerFixture => { self.advance(); Ok("per_fixture".to_string()) }
-            TokenType::Output => { self.advance(); Ok("output".to_string()) }
-            TokenType::Source => { self.advance(); Ok("source".to_string()) }
-            TokenType::Factor => { self.advance(); Ok("factor".to_string()) }
-            TokenType::Learnable => { self.advance(); Ok("learnable".to_string()) }
+            TokenType::Inputs => {
+                self.advance();
+                Ok("inputs".to_string())
+            }
+            TokenType::Formulation => {
+                self.advance();
+                Ok("formulation".to_string())
+            }
+            TokenType::VarianceShare => {
+                self.advance();
+                Ok("variance_share".to_string())
+            }
+            TokenType::Update => {
+                self.advance();
+                Ok("update".to_string())
+            }
+            TokenType::Static => {
+                self.advance();
+                Ok("static".to_string())
+            }
+            TokenType::PerMatch => {
+                self.advance();
+                Ok("per_match".to_string())
+            }
+            TokenType::PerFixture => {
+                self.advance();
+                Ok("per_fixture".to_string())
+            }
+            TokenType::Output => {
+                self.advance();
+                Ok("output".to_string())
+            }
+            TokenType::Source => {
+                self.advance();
+                Ok("source".to_string())
+            }
+            TokenType::Factor => {
+                self.advance();
+                Ok("factor".to_string())
+            }
+            TokenType::Learnable => {
+                self.advance();
+                Ok("learnable".to_string())
+            }
             _ => Err(ParseError::UnexpectedToken {
                 expected: "identifier".to_string(),
                 found: token.token_type.clone(),
@@ -1778,10 +1839,7 @@ driver won continuous {
         if let Statement::Driver(d) = &program.statements[0] {
             let ff = d.feeds_from.as_ref().unwrap();
             assert_eq!(ff.auto_accept_threshold_pp, None);
-            assert_eq!(
-                ff.config.get("value").and_then(|v| v.as_bool()),
-                Some(true)
-            );
+            assert_eq!(ff.config.get("value").and_then(|v| v.as_bool()), Some(true));
         } else {
             panic!("Expected Driver statement");
         }

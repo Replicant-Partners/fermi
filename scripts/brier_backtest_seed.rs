@@ -74,7 +74,7 @@ struct Question {
     actual_outcome: bool,
     predicted_probability: f64,
     resolved_date: String,
-    agents: Vec<String>,    // agent_name strings — resolved to UUIDs at runtime
+    agents: Vec<String>, // agent_name strings — resolved to UUIDs at runtime
     tags: Vec<String>,
 }
 
@@ -94,8 +94,8 @@ async fn main() -> Result<()> {
     // Load questions
     let yaml = std::fs::read_to_string(&args.questions)
         .with_context(|| format!("Failed to read {}", args.questions))?;
-    let fixture: QuestionsFile = serde_yaml::from_str(&yaml)
-        .with_context(|| "Failed to parse questions YAML")?;
+    let fixture: QuestionsFile =
+        serde_yaml::from_str(&yaml).with_context(|| "Failed to parse questions YAML")?;
 
     println!("Loaded {} questions", fixture.questions.len());
 
@@ -103,7 +103,9 @@ async fn main() -> Result<()> {
     let opts = PgConnectOptions::from_str(&args.database_url)
         .context("Invalid DATABASE_URL")?
         .statement_cache_capacity(0);
-    let pool = PgPool::connect_with(opts).await.context("DB connection failed")?;
+    let pool = PgPool::connect_with(opts)
+        .await
+        .context("DB connection failed")?;
 
     // Pre-load agent name → UUID mapping
     let agent_rows = sqlx::query("SELECT agent_id, agent_name FROM agents")
@@ -145,29 +147,41 @@ async fn main() -> Result<()> {
 
         // Validate probability
         if q.predicted_probability < 0.0 || q.predicted_probability > 1.0 {
-            eprintln!("  ERROR {} — predicted_probability out of range: {}", q.id, q.predicted_probability);
+            eprintln!(
+                "  ERROR {} — predicted_probability out of range: {}",
+                q.id, q.predicted_probability
+            );
             errors += 1;
             continue;
         }
 
         // Resolve agent names → UUIDs
-        let agents_used: Vec<serde_json::Value> = q.agents.iter()
+        let agents_used: Vec<serde_json::Value> = q
+            .agents
+            .iter()
             .filter_map(|name| {
-                agent_map.get(name).map(|id| serde_json::json!({
-                    "agent_id": id.to_string(),
-                    "agent_name": name,
-                    "source": "backtest_seed",
-                }))
+                agent_map.get(name).map(|id| {
+                    serde_json::json!({
+                        "agent_id": id.to_string(),
+                        "agent_name": name,
+                        "source": "backtest_seed",
+                    })
+                })
             })
             .collect();
 
-        let unknown_agents: Vec<&str> = q.agents.iter()
+        let unknown_agents: Vec<&str> = q
+            .agents
+            .iter()
             .filter(|name| !agent_map.contains_key(*name))
             .map(|s| s.as_str())
             .collect();
 
         if !unknown_agents.is_empty() {
-            eprintln!("  WARN  {} — unknown agents (will skip them): {:?}", q.id, unknown_agents);
+            eprintln!(
+                "  WARN  {} — unknown agents (will skip them): {:?}",
+                q.id, unknown_agents
+            );
         }
 
         if agents_used.is_empty() {

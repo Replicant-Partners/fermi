@@ -43,14 +43,12 @@ pub use tethering::{
 
 // ─── Re-exports: agent_modules ─────────────────────────────────────
 pub use agent_modules::{
-    creature_dream_handler, creature_level_handler, enemy_sensor_handler, genome_profiler_handler,
-    prey_locator_handler, forage_handler,
+    creature_dream_handler, creature_level_handler, enemy_sensor_handler, forage_handler,
+    genome_profiler_handler, prey_locator_handler,
 };
 
 // ─── Re-exports: goals ─────────────────────────────────────────────
-pub use goals::{
-    create_goal_handler, list_goals_handler, update_goal_handler,
-};
+pub use goals::{create_goal_handler, list_goals_handler, update_goal_handler};
 
 // ─── Re-exports: identity ──────────────────────────────────────────
 pub use identity::{
@@ -335,14 +333,20 @@ pub(crate) async fn trigger_swarm_host_welcome(
         statements: vec![ast::Statement::Agent(agent_stmt.clone())],
     };
 
+    // SPEC_28 — credentials resolved before the card is moved into the
+    // context below.
+    let credentials = crate::build_execution_credentials(&state, &db_agent, &card).await;
+
     let context = ExecutionContext {
         program,
         agent_card: card,
         creature_id: None,
         cognition_tier: None,
+        credentials: credentials.clone(),
     };
 
     let tool_context = Arc::new(ToolContext {
+        credentials,
         memory_store: state.memory_store.clone(),
         embedder: state.embedder.clone(),
         registry: state.registry.clone(),

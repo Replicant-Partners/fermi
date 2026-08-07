@@ -74,10 +74,6 @@ mod legacy;
 
 // Re-export everything the rest of the codebase uses from the legacy module.
 pub use legacy::{
-    BuiltinToolDef,
-    EvalTrigger,
-    ToolContext,
-    ToolRegistry,
     // Tool-declaration validation. Names in `capabilities.mcp_tools` must
     // resolve to a dispatch arm in `ToolRegistry::execute`, or they become
     // phantom tools: advertised to the model and over `/mcp/agents/:id`,
@@ -85,13 +81,17 @@ pub use legacy::{
     invalid_tool_declarations,
     platform_tool_names,
     platform_tools,
+    BuiltinToolDef,
+    EvalTrigger,
+    ToolContext,
     ToolDeclarationError,
+    ToolRegistry,
 };
 
 use crate::agent_backend::agent_card::AgentCard;
+use ::dynamics;
 use async_trait::async_trait;
 use serde_json::json;
-use ::dynamics;
 
 // ─── Skill trait ─────────────────────────────────────────────────────────────
 
@@ -134,18 +134,17 @@ pub trait Skill: Send + Sync {
     /// `true` (default): the LLM can choose to invoke it.
     /// `false`: the executor invokes it directly as part of the pipeline,
     ///          without an LLM round-trip (e.g. internal classification pipelines).
-    fn is_llm_visible(&self) -> bool { true }
+    fn is_llm_visible(&self) -> bool {
+        true
+    }
 
     /// Domain category — used by xamanEK for capability discovery and
     /// composition recommendations.
     fn category(&self) -> SkillCategory;
 
     /// Execute the skill. Must be deterministic for a given input.
-    async fn execute(
-        &self,
-        input: &serde_json::Value,
-        ctx: &ToolContext,
-    ) -> Result<String, String>;
+    async fn execute(&self, input: &serde_json::Value, ctx: &ToolContext)
+        -> Result<String, String>;
 }
 
 /// Domain category for a skill.
@@ -197,63 +196,203 @@ struct ApplyDynamicsModel;
 struct ListDynamicsModels;
 struct ApplyRheologyModel;
 
-#[async_trait] impl Skill for H3Resolve {
-    fn name(&self) -> &'static str { "h3_resolve" }
-    fn description(&self) -> &'static str { "H3 hexagonal grid: gps_to_h3, h3_to_gps, neighbors, distance, grid_disk." }
-    fn category(&self) -> SkillCategory { SkillCategory::Spatial }
-    fn input_schema(&self) -> serde_json::Value { json!({"type":"object","properties":{"operation":{"type":"string"},"lat":{"type":"number"},"lng":{"type":"number"},"h3_cell":{"type":"string"},"resolution":{"type":"integer","default":12},"k":{"type":"integer","default":1}},"required":["operation"]}) }
-    async fn execute(&self, input: &serde_json::Value, ctx: &ToolContext) -> Result<String, String> { legacy::ToolRegistry::standard().execute("h3_resolve", input, ctx).await }
+#[async_trait]
+impl Skill for H3Resolve {
+    fn name(&self) -> &'static str {
+        "h3_resolve"
+    }
+    fn description(&self) -> &'static str {
+        "H3 hexagonal grid: gps_to_h3, h3_to_gps, neighbors, distance, grid_disk."
+    }
+    fn category(&self) -> SkillCategory {
+        SkillCategory::Spatial
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type":"object","properties":{"operation":{"type":"string"},"lat":{"type":"number"},"lng":{"type":"number"},"h3_cell":{"type":"string"},"resolution":{"type":"integer","default":12},"k":{"type":"integer","default":1}},"required":["operation"]})
+    }
+    async fn execute(
+        &self,
+        input: &serde_json::Value,
+        ctx: &ToolContext,
+    ) -> Result<String, String> {
+        legacy::ToolRegistry::standard()
+            .execute("h3_resolve", input, ctx)
+            .await
+    }
 }
-#[async_trait] impl Skill for Geocode {
-    fn name(&self) -> &'static str { "geocode" }
-    fn description(&self) -> &'static str { "Convert address to GPS coordinates via OpenStreetMap Nominatim." }
-    fn category(&self) -> SkillCategory { SkillCategory::Spatial }
-    fn input_schema(&self) -> serde_json::Value { json!({"type":"object","properties":{"address":{"type":"string"}},"required":["address"]}) }
-    async fn execute(&self, input: &serde_json::Value, ctx: &ToolContext) -> Result<String, String> { legacy::ToolRegistry::standard().execute("geocode", input, ctx).await }
+#[async_trait]
+impl Skill for Geocode {
+    fn name(&self) -> &'static str {
+        "geocode"
+    }
+    fn description(&self) -> &'static str {
+        "Convert address to GPS coordinates via OpenStreetMap Nominatim."
+    }
+    fn category(&self) -> SkillCategory {
+        SkillCategory::Spatial
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type":"object","properties":{"address":{"type":"string"}},"required":["address"]})
+    }
+    async fn execute(
+        &self,
+        input: &serde_json::Value,
+        ctx: &ToolContext,
+    ) -> Result<String, String> {
+        legacy::ToolRegistry::standard()
+            .execute("geocode", input, ctx)
+            .await
+    }
 }
-#[async_trait] impl Skill for RunMonteCarlo {
-    fn name(&self) -> &'static str { "run_monte_carlo" }
-    fn description(&self) -> &'static str { "Execute an FPL program via Monte Carlo engine. Returns mean, p5/p50/p95, std_dev, histogram." }
-    fn category(&self) -> SkillCategory { SkillCategory::Simulation }
-    fn input_schema(&self) -> serde_json::Value { json!({"type":"object","properties":{"program":{"type":"string"},"iterations":{"type":"integer","default":10000}},"required":["program"]}) }
-    async fn execute(&self, input: &serde_json::Value, ctx: &ToolContext) -> Result<String, String> { legacy::ToolRegistry::standard().execute("run_monte_carlo", input, ctx).await }
+#[async_trait]
+impl Skill for RunMonteCarlo {
+    fn name(&self) -> &'static str {
+        "run_monte_carlo"
+    }
+    fn description(&self) -> &'static str {
+        "Execute an FPL program via Monte Carlo engine. Returns mean, p5/p50/p95, std_dev, histogram."
+    }
+    fn category(&self) -> SkillCategory {
+        SkillCategory::Simulation
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type":"object","properties":{"program":{"type":"string"},"iterations":{"type":"integer","default":10000}},"required":["program"]})
+    }
+    async fn execute(
+        &self,
+        input: &serde_json::Value,
+        ctx: &ToolContext,
+    ) -> Result<String, String> {
+        legacy::ToolRegistry::standard()
+            .execute("run_monte_carlo", input, ctx)
+            .await
+    }
 }
-#[async_trait] impl Skill for RunSensitivityAnalysis {
-    fn name(&self) -> &'static str { "run_sensitivity_analysis" }
-    fn description(&self) -> &'static str { "Sobol global sensitivity analysis (Saltelli) on an FPL program." }
-    fn category(&self) -> SkillCategory { SkillCategory::Simulation }
-    fn input_schema(&self) -> serde_json::Value { json!({"type":"object","properties":{"program":{"type":"string"},"samples":{"type":"integer","default":1000}},"required":["program"]}) }
-    async fn execute(&self, input: &serde_json::Value, ctx: &ToolContext) -> Result<String, String> { legacy::ToolRegistry::standard().execute("run_sensitivity_analysis", input, ctx).await }
+#[async_trait]
+impl Skill for RunSensitivityAnalysis {
+    fn name(&self) -> &'static str {
+        "run_sensitivity_analysis"
+    }
+    fn description(&self) -> &'static str {
+        "Sobol global sensitivity analysis (Saltelli) on an FPL program."
+    }
+    fn category(&self) -> SkillCategory {
+        SkillCategory::Simulation
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type":"object","properties":{"program":{"type":"string"},"samples":{"type":"integer","default":1000}},"required":["program"]})
+    }
+    async fn execute(
+        &self,
+        input: &serde_json::Value,
+        ctx: &ToolContext,
+    ) -> Result<String, String> {
+        legacy::ToolRegistry::standard()
+            .execute("run_sensitivity_analysis", input, ctx)
+            .await
+    }
 }
-#[async_trait] impl Skill for GbifTaxonomyTree {
-    fn name(&self) -> &'static str { "gbif_taxonomy_tree" }
-    fn description(&self) -> &'static str { "Resolve full GBIF taxonomy tree for a taxon." }
-    fn category(&self) -> SkillCategory { SkillCategory::Biology }
-    fn input_schema(&self) -> serde_json::Value { json!({"type":"object","properties":{"taxon_key":{"type":"integer"},"scientific_name":{"type":"string"}}}) }
-    async fn execute(&self, input: &serde_json::Value, ctx: &ToolContext) -> Result<String, String> { legacy::ToolRegistry::standard().execute("gbif_taxonomy_tree", input, ctx).await }
+#[async_trait]
+impl Skill for GbifTaxonomyTree {
+    fn name(&self) -> &'static str {
+        "gbif_taxonomy_tree"
+    }
+    fn description(&self) -> &'static str {
+        "Resolve full GBIF taxonomy tree for a taxon."
+    }
+    fn category(&self) -> SkillCategory {
+        SkillCategory::Biology
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type":"object","properties":{"taxon_key":{"type":"integer"},"scientific_name":{"type":"string"}}})
+    }
+    async fn execute(
+        &self,
+        input: &serde_json::Value,
+        ctx: &ToolContext,
+    ) -> Result<String, String> {
+        legacy::ToolRegistry::standard()
+            .execute("gbif_taxonomy_tree", input, ctx)
+            .await
+    }
 }
-#[async_trait] impl Skill for SegmentCreatureWings {
-    fn name(&self) -> &'static str { "segment_creature_wings" }
-    fn description(&self) -> &'static str { "Segment wing regions from creature image for phenotype analysis." }
-    fn is_llm_visible(&self) -> bool { false }
-    fn category(&self) -> SkillCategory { SkillCategory::Biology }
-    fn input_schema(&self) -> serde_json::Value { json!({"type":"object","properties":{"image_path":{"type":"string"},"creature_id":{"type":"string"}},"required":["image_path"]}) }
-    async fn execute(&self, input: &serde_json::Value, ctx: &ToolContext) -> Result<String, String> { legacy::ToolRegistry::standard().execute("segment_creature_wings", input, ctx).await }
+#[async_trait]
+impl Skill for SegmentCreatureWings {
+    fn name(&self) -> &'static str {
+        "segment_creature_wings"
+    }
+    fn description(&self) -> &'static str {
+        "Segment wing regions from creature image for phenotype analysis."
+    }
+    fn is_llm_visible(&self) -> bool {
+        false
+    }
+    fn category(&self) -> SkillCategory {
+        SkillCategory::Biology
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type":"object","properties":{"image_path":{"type":"string"},"creature_id":{"type":"string"}},"required":["image_path"]})
+    }
+    async fn execute(
+        &self,
+        input: &serde_json::Value,
+        ctx: &ToolContext,
+    ) -> Result<String, String> {
+        legacy::ToolRegistry::standard()
+            .execute("segment_creature_wings", input, ctx)
+            .await
+    }
 }
-#[async_trait] impl Skill for ActivateFormation {
-    fn name(&self) -> &'static str { "activate_formation" }
-    fn description(&self) -> &'static str { "Activate an Onto4MAT formation algorithm for a swarm." }
-    fn category(&self) -> SkillCategory { SkillCategory::Formation }
-    fn input_schema(&self) -> serde_json::Value { json!({"type":"object","properties":{"swarm_id":{"type":"string"},"algorithm_id":{"type":"string"}},"required":["swarm_id","algorithm_id"]}) }
-    async fn execute(&self, input: &serde_json::Value, ctx: &ToolContext) -> Result<String, String> { legacy::ToolRegistry::standard().execute("activate_formation", input, ctx).await }
+#[async_trait]
+impl Skill for ActivateFormation {
+    fn name(&self) -> &'static str {
+        "activate_formation"
+    }
+    fn description(&self) -> &'static str {
+        "Activate an Onto4MAT formation algorithm for a swarm."
+    }
+    fn category(&self) -> SkillCategory {
+        SkillCategory::Formation
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type":"object","properties":{"swarm_id":{"type":"string"},"algorithm_id":{"type":"string"}},"required":["swarm_id","algorithm_id"]})
+    }
+    async fn execute(
+        &self,
+        input: &serde_json::Value,
+        ctx: &ToolContext,
+    ) -> Result<String, String> {
+        legacy::ToolRegistry::standard()
+            .execute("activate_formation", input, ctx)
+            .await
+    }
 }
-#[async_trait] impl Skill for ScanNearbyCreatures {
-    fn name(&self) -> &'static str { "scan_nearby_creatures" }
-    fn description(&self) -> &'static str { "H3 proximity scan for creature threat assessment." }
-    fn is_llm_visible(&self) -> bool { false }
-    fn category(&self) -> SkillCategory { SkillCategory::Spatial }
-    fn input_schema(&self) -> serde_json::Value { json!({"type":"object","properties":{"h3_cell":{"type":"string"},"radius_rings":{"type":"integer","default":3}},"required":["h3_cell"]}) }
-    async fn execute(&self, input: &serde_json::Value, ctx: &ToolContext) -> Result<String, String> { legacy::ToolRegistry::standard().execute("scan_nearby_creatures", input, ctx).await }
+#[async_trait]
+impl Skill for ScanNearbyCreatures {
+    fn name(&self) -> &'static str {
+        "scan_nearby_creatures"
+    }
+    fn description(&self) -> &'static str {
+        "H3 proximity scan for creature threat assessment."
+    }
+    fn is_llm_visible(&self) -> bool {
+        false
+    }
+    fn category(&self) -> SkillCategory {
+        SkillCategory::Spatial
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type":"object","properties":{"h3_cell":{"type":"string"},"radius_rings":{"type":"integer","default":3}},"required":["h3_cell"]})
+    }
+    async fn execute(
+        &self,
+        input: &serde_json::Value,
+        ctx: &ToolContext,
+    ) -> Result<String, String> {
+        legacy::ToolRegistry::standard()
+            .execute("scan_nearby_creatures", input, ctx)
+            .await
+    }
 }
 
 macro_rules! simops_skill {
@@ -270,24 +409,56 @@ macro_rules! simops_skill {
     }
 }
 
-simops_skill!(SimopsCascadeForward,    "simops_cascade_forward",        "SimOps forward cascade: compute downstream outputs.");
-simops_skill!(SimopsCascadeBackward,   "simops_cascade_backward",       "SimOps backward cascade: infer inputs to achieve target outputs.");
-simops_skill!(SimopsKpiCompute,        "simops_kpi_compute",            "Compute KPIs from a batch of process observations.");
-simops_skill!(SimopsPredictorTrain,    "simops_predictor_train",        "Train a SimOps surrogate predictor from historical observations.");
-simops_skill!(SimopsPredictorForecast, "simops_predictor_forecast",     "Forecast outputs using a trained SimOps surrogate predictor.");
-simops_skill!(SimopsOptimizeScale,     "simops_optimize_scale",         "Scale a process configuration to a new target throughput.");
-simops_skill!(SimopsOptimizeSingleInput,"simops_optimize_single_input", "Optimize a single input variable to hit a target output.");
+simops_skill!(
+    SimopsCascadeForward,
+    "simops_cascade_forward",
+    "SimOps forward cascade: compute downstream outputs."
+);
+simops_skill!(
+    SimopsCascadeBackward,
+    "simops_cascade_backward",
+    "SimOps backward cascade: infer inputs to achieve target outputs."
+);
+simops_skill!(
+    SimopsKpiCompute,
+    "simops_kpi_compute",
+    "Compute KPIs from a batch of process observations."
+);
+simops_skill!(
+    SimopsPredictorTrain,
+    "simops_predictor_train",
+    "Train a SimOps surrogate predictor from historical observations."
+);
+simops_skill!(
+    SimopsPredictorForecast,
+    "simops_predictor_forecast",
+    "Forecast outputs using a trained SimOps surrogate predictor."
+);
+simops_skill!(
+    SimopsOptimizeScale,
+    "simops_optimize_scale",
+    "Scale a process configuration to a new target throughput."
+);
+simops_skill!(
+    SimopsOptimizeSingleInput,
+    "simops_optimize_single_input",
+    "Optimize a single input variable to hit a target output."
+);
 
 #[async_trait]
 impl Skill for ApplyDynamicsModel {
-    fn name(&self) -> &'static str { "apply_dynamics_model" }
+    fn name(&self) -> &'static str {
+        "apply_dynamics_model"
+    }
     fn description(&self) -> &'static str {
         "Run an ODE-based dynamics model (kombucha fermentation, pellicle growth, BC optimization, linear decay) \
          and return trajectories for each state dimension over the requested horizon. \
          Input: model_uri, initial_state (property URIs → values), process_context, \
          params_override, horizon {kind, days}, sample_cadence {hours}."
     }
-    fn category(&self) -> SkillCategory { SkillCategory::ProcessOptimization }
+    fn category(&self) -> SkillCategory {
+        SkillCategory::ProcessOptimization
+    }
     fn input_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
@@ -327,14 +498,18 @@ impl Skill for ApplyDynamicsModel {
 
 #[async_trait]
 impl Skill for ApplyRheologyModel {
-    fn name(&self) -> &'static str { "apply_rheology_model" }
+    fn name(&self) -> &'static str {
+        "apply_rheology_model"
+    }
     fn description(&self) -> &'static str {
         "Compute instantaneous fluid rheology (viscosity, flow index, regime) for an algae \
          suspension at given operating conditions. Power-law model with Arrhenius temperature \
          dependence. Input: model_uri, temperature_c, shear_rate_per_s, volume_fraction, \
          optional params_override. No time integration — single operating point."
     }
-    fn category(&self) -> SkillCategory { SkillCategory::ProcessOptimization }
+    fn category(&self) -> SkillCategory {
+        SkillCategory::ProcessOptimization
+    }
     fn input_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
@@ -353,7 +528,8 @@ impl Skill for ApplyRheologyModel {
         input: &serde_json::Value,
         _ctx: &ToolContext,
     ) -> Result<String, String> {
-        let uri = input.get("model_uri")
+        let uri = input
+            .get("model_uri")
             .and_then(|v| v.as_str())
             .unwrap_or("kask:rheology/algae_viscosity@v1");
         let model = dynamics::resolve_rheology(uri)
@@ -367,13 +543,17 @@ impl Skill for ApplyRheologyModel {
 
 #[async_trait]
 impl Skill for ListDynamicsModels {
-    fn name(&self) -> &'static str { "list_dynamics_models" }
+    fn name(&self) -> &'static str {
+        "list_dynamics_models"
+    }
     fn description(&self) -> &'static str {
         "List all available ODE dynamics models with their manifests: \
          URI, applies_to_set (property URIs), params_schema, context_schema. \
          Use to discover which model covers a given set of sensor property URIs."
     }
-    fn category(&self) -> SkillCategory { SkillCategory::ProcessOptimization }
+    fn category(&self) -> SkillCategory {
+        SkillCategory::ProcessOptimization
+    }
     fn input_schema(&self) -> serde_json::Value {
         json!({ "type": "object", "properties": {} })
     }
@@ -428,7 +608,10 @@ impl SkillRegistry {
 
     /// Skills by category — used by xamanEK for capability discovery.
     pub fn by_category(category: SkillCategory) -> Vec<Box<dyn Skill>> {
-        Self::all().into_iter().filter(|s| s.category() == category).collect()
+        Self::all()
+            .into_iter()
+            .filter(|s| s.category() == category)
+            .collect()
     }
 }
 

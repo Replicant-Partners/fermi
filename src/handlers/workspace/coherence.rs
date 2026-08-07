@@ -8,8 +8,8 @@ use axum::{
 };
 use fermi::gas::charge_gas;
 use fermi_auth::{
-    credit_charge, credit_charge_purchased_only, credit_deposit_typed, get_or_create_wallet,
-    teams, AuthPrincipal,
+    credit_charge, credit_charge_purchased_only, credit_deposit_typed, get_or_create_wallet, teams,
+    AuthPrincipal,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -29,11 +29,10 @@ use fermi::agent_backend::tools::{ToolContext, ToolRegistry};
 use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
 
-use crate::handlers::agents::CreateAgentRequest;
-use crate::{agent_output_to_episode, resolve_agent, resolve_agent_card, AppState};
 use super::core::{charge_workspace_gas, get_workspace_slug, parse_at_mention};
 use super::messages::{broadcast_message, message_to_json};
-
+use crate::handlers::agents::CreateAgentRequest;
+use crate::{agent_output_to_episode, resolve_agent, resolve_agent_card, AppState};
 
 // ─── Coherence Evaluation ────────────────────────────────────────────
 
@@ -225,11 +224,30 @@ pub async fn evaluate_coherence_handler(
                 let program = ast::Program {
                     statements: vec![ast::Statement::Agent(agent_stmt.clone())],
                 };
+                // SPEC_28 — this path calls `registry.execute_agent`
+                // directly (no ToolContext), so before this change it had
+                // no way to carry credentials at all and always drew on
+                // the platform's env key. `cohere_and_coordinate` is a
+                // platform-service agent, so resolving its DB row funds it
+                // from the `abw-system` principal's store.
+                let credentials = match crate::resolve_agent(&state, "cohere_and_coordinate").await
+                {
+                    Ok(db_agent) => {
+                        crate::build_execution_credentials(&state, &db_agent, &card).await
+                    }
+                    // Not registered in the DB: unfunded, which fails
+                    // loudly below rather than silently spending.
+                    Err(_) => {
+                        fermi::agent_backend::credentials::ResolvedCredentials::unfunded_arc()
+                    }
+                };
+
                 let context = ExecutionContext {
                     program,
                     agent_card: card,
                     creature_id: None,
                     cognition_tier: None,
+                    credentials,
                 };
                 match state.registry.execute_agent(&agent_stmt, &context).await {
                     Ok(output) => output.metadata.reasoning,
@@ -266,9 +284,15 @@ pub async fn evaluate_coherence_handler(
     };
 
     let (sender_id, sender_name) = if consultant_output.is_some() {
-        ("cohere_and_coordinate".to_string(), "Cohere & Coordinate".to_string())
+        (
+            "cohere_and_coordinate".to_string(),
+            "Cohere & Coordinate".to_string(),
+        )
     } else {
-        ("coherence_evaluator".to_string(), "Coherence Evaluator".to_string())
+        (
+            "coherence_evaluator".to_string(),
+            "Coherence Evaluator".to_string(),
+        )
     };
 
     let update_msg = WorkspaceMessage {
@@ -1109,4 +1133,3 @@ pub async fn get_workspace_workflow_handler(
 // ---------------------------------------------------------------------------
 // Agent creation wizard helpers
 // ---------------------------------------------------------------------------
-

@@ -77,9 +77,7 @@ impl Default for Aggregator {
 
 impl Aggregator {
     pub fn new(conflict_threshold: f64) -> Self {
-        Self {
-            conflict_threshold,
-        }
+        Self { conflict_threshold }
     }
 
     /// Merge per-evaluator outcomes into an aggregated signal.
@@ -99,10 +97,11 @@ impl Aggregator {
                         active_evaluators.push(r.evaluator_name.clone());
                     }
                     for (dim, score) in &eval.dimension_scores {
-                        per_dim_map
-                            .entry(dim.clone())
-                            .or_default()
-                            .push((r.evaluator_name.clone(), *score, eval.confidence));
+                        per_dim_map.entry(dim.clone()).or_default().push((
+                            r.evaluator_name.clone(),
+                            *score,
+                            eval.confidence,
+                        ));
                     }
                     for f in &eval.flags {
                         all_flags.push(f.clone());
@@ -167,11 +166,7 @@ fn mean_and_spread(contribs: &[(String, f64, f64)]) -> (f64, f64) {
     // confidences are zero (defensive).
     let total_w: f64 = contribs.iter().map(|(_, _, w)| *w).sum();
     let mean = if total_w > f64::EPSILON {
-        contribs
-            .iter()
-            .map(|(_, s, w)| s * w)
-            .sum::<f64>()
-            / total_w
+        contribs.iter().map(|(_, s, w)| s * w).sum::<f64>() / total_w
     } else {
         contribs.iter().map(|(_, s, _)| *s).sum::<f64>() / contribs.len() as f64
     };
@@ -194,11 +189,7 @@ mod tests {
     use crate::tier::EvalTier;
     use crate::EvalError;
 
-    fn ok_result(
-        name: &str,
-        version: &str,
-        dim_scores: &[(&str, f64)],
-    ) -> RegistryResult {
+    fn ok_result(name: &str, version: &str, dim_scores: &[(&str, f64)]) -> RegistryResult {
         let mut eval = EvalResult::new(name, version);
         for (d, s) in dim_scores {
             eval = eval.with_score(*d, *s);
@@ -286,7 +277,9 @@ mod tests {
     #[test]
     fn confidence_weights_the_mean() {
         let agg = Aggregator::default();
-        let mut a_eval = EvalResult::new("a", "1").with_score("x", 0.0).with_confidence(0.0);
+        let mut a_eval = EvalResult::new("a", "1")
+            .with_score("x", 0.0)
+            .with_confidence(0.0);
         // confidence 0.0 should fall back to unweighted mean
         a_eval.confidence = 0.0;
         let a = RegistryResult {
@@ -295,7 +288,9 @@ mod tests {
             outcome: Ok(a_eval),
             latency_ms: 0,
         };
-        let b_eval = EvalResult::new("b", "1").with_score("x", 1.0).with_confidence(1.0);
+        let b_eval = EvalResult::new("b", "1")
+            .with_score("x", 1.0)
+            .with_confidence(1.0);
         let b = RegistryResult {
             evaluator_name: "b".into(),
             tier: EvalTier::Dimensional,

@@ -46,7 +46,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use fermi_auth::{teams, AuthPrincipal};
-use simops::{suggest_principal_bindings, process_v2::ProcessConfigV2};
+use simops::{process_v2::ProcessConfigV2, suggest_principal_bindings};
 
 use crate::AppState;
 
@@ -156,7 +156,8 @@ pub async fn mutate_document_handler(
     let user_id = principal.user_id();
     let (ws_uuid, slug) = resolve_workspace(&state, &workspace_id, &user_id).await?;
 
-    let source_msg_id = req.source_message_id
+    let source_msg_id = req
+        .source_message_id
         .as_deref()
         .and_then(|s| s.parse::<Uuid>().ok());
 
@@ -178,19 +179,29 @@ pub async fn mutate_document_handler(
     });
 
     let action_id = log_action(
-        &state, ws_uuid, "mutate_document",
-        "user", &user_id,
+        &state,
+        ws_uuid,
+        "mutate_document",
+        "user",
+        &user_id,
         req.app_schema.as_deref(),
-        &payload, confirmation, source_msg_id,
-    ).await?;
+        &payload,
+        confirmation,
+        source_msg_id,
+    )
+    .await?;
 
     // Apply immediately if auto
     let applied = if confirmation == "auto" {
         if let Some(ref content) = req.content {
-            let commit_msg = req.rationale
+            let commit_msg = req
+                .rationale
                 .as_deref()
                 .unwrap_or("action: mutate_document");
-            match state.workspace_git.commit_file(&slug, &req.path, content, commit_msg) {
+            match state
+                .workspace_git
+                .commit_file(&slug, &req.path, content, commit_msg)
+            {
                 Ok(sha) => {
                     sqlx::query(
                         "UPDATE workspace_action_log
@@ -214,14 +225,16 @@ pub async fn mutate_document_handler(
                     .execute(&state.db)
                     .await
                     .ok();
-                    return Err((StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("Git write failed: {}", e)));
+                    return Err((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Git write failed: {}", e),
+                    ));
                 }
             }
         } else {
             // No content supplied for auto — pend it
             sqlx::query(
-                "UPDATE workspace_action_log SET confirmation = 'pending' WHERE action_id = $1"
+                "UPDATE workspace_action_log SET confirmation = 'pending' WHERE action_id = $1",
             )
             .bind(action_id)
             .execute(&state.db)
@@ -250,7 +263,7 @@ pub async fn mutate_document_handler(
 pub struct ForkStateRequest {
     pub app_schema: Option<String>,
     pub name: String,
-    pub from: Option<String>,     // slug of source state; "base" or a variant slug
+    pub from: Option<String>, // slug of source state; "base" or a variant slug
     pub patch: Value,
     pub hypothesis: Option<String>,
     pub source_message_id: Option<String>,
@@ -265,15 +278,23 @@ pub async fn fork_state_handler(
     let user_id = principal.user_id();
     let (ws_uuid, slug) = resolve_workspace(&state, &workspace_id, &user_id).await?;
 
-    let source_msg_id = req.source_message_id
+    let source_msg_id = req
+        .source_message_id
         .as_deref()
         .and_then(|s| s.parse::<Uuid>().ok());
 
     // Derive a filesystem-safe slug from the name
-    let variant_slug = req.name
+    let variant_slug = req
+        .name
         .to_lowercase()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .trim_matches('-')
         .to_string();
@@ -287,11 +308,17 @@ pub async fn fork_state_handler(
     });
 
     let action_id = log_action(
-        &state, ws_uuid, "fork_state",
-        "user", &user_id,
+        &state,
+        ws_uuid,
+        "fork_state",
+        "user",
+        &user_id,
         req.app_schema.as_deref(),
-        &payload, "auto", source_msg_id,
-    ).await?;
+        &payload,
+        "auto",
+        source_msg_id,
+    )
+    .await?;
 
     // Write the variation file to git
     let variant_path = format!("simops/variations/{}.yaml", variant_slug);
@@ -303,25 +330,31 @@ pub async fn fork_state_handler(
         req.hypothesis.as_deref().unwrap_or("no hypothesis")
     );
 
-    let apply_result = match state.workspace_git.commit_file(&slug, &variant_path, &content, &commit_msg) {
-        Ok(sha) => {
-            sqlx::query(
-                "UPDATE workspace_action_log
+    let apply_result =
+        match state
+            .workspace_git
+            .commit_file(&slug, &variant_path, &content, &commit_msg)
+        {
+            Ok(sha) => {
+                sqlx::query(
+                    "UPDATE workspace_action_log
                  SET applied = true, applied_at = NOW(), apply_result = $1
                  WHERE action_id = $2",
-            )
-            .bind(json!({ "sha": sha, "path": variant_path, "slug": variant_slug }))
-            .bind(action_id)
-            .execute(&state.db)
-            .await
-            .ok();
-            json!({ "sha": sha, "path": variant_path, "slug": variant_slug })
-        }
-        Err(e) => {
-            return Err((StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Git write failed: {}", e)));
-        }
-    };
+                )
+                .bind(json!({ "sha": sha, "path": variant_path, "slug": variant_slug }))
+                .bind(action_id)
+                .execute(&state.db)
+                .await
+                .ok();
+                json!({ "sha": sha, "path": variant_path, "slug": variant_slug })
+            }
+            Err(e) => {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Git write failed: {}", e),
+                ));
+            }
+        };
 
     Ok(Json(json!({
         "action_id": action_id,
@@ -344,7 +377,7 @@ pub struct CompareRequest {
     pub app_schema: Option<String>,
     pub variants: Vec<String>,
     pub metrics: Option<Vec<String>>,
-    pub narrate_via: Option<String>,   // agent_id of the narrator (e.g. "comparator")
+    pub narrate_via: Option<String>, // agent_id of the narrator (e.g. "comparator")
     pub source_message_id: Option<String>,
 }
 
@@ -357,7 +390,8 @@ pub async fn compare_handler(
     let user_id = principal.user_id();
     let (ws_uuid, _slug) = resolve_workspace(&state, &workspace_id, &user_id).await?;
 
-    let source_msg_id = req.source_message_id
+    let source_msg_id = req
+        .source_message_id
         .as_deref()
         .and_then(|s| s.parse::<Uuid>().ok());
 
@@ -368,11 +402,17 @@ pub async fn compare_handler(
     });
 
     let action_id = log_action(
-        &state, ws_uuid, "compare",
-        "user", &user_id,
+        &state,
+        ws_uuid,
+        "compare",
+        "user",
+        &user_id,
         req.app_schema.as_deref(),
-        &payload, "auto", source_msg_id,
-    ).await?;
+        &payload,
+        "auto",
+        source_msg_id,
+    )
+    .await?;
 
     Ok(Json(json!({
         "action_id": action_id,
@@ -406,7 +446,8 @@ pub async fn invoke_member_handler(
     let user_id = principal.user_id();
     let (ws_uuid, _slug) = resolve_workspace(&state, &workspace_id, &user_id).await?;
 
-    let source_msg_id = req.source_message_id
+    let source_msg_id = req
+        .source_message_id
         .as_deref()
         .and_then(|s| s.parse::<Uuid>().ok());
 
@@ -417,11 +458,17 @@ pub async fn invoke_member_handler(
     });
 
     let action_id = log_action(
-        &state, ws_uuid, "invoke_member",
-        "user", &user_id,
+        &state,
+        ws_uuid,
+        "invoke_member",
+        "user",
+        &user_id,
         req.app_schema.as_deref(),
-        &payload, "auto", source_msg_id,
-    ).await?;
+        &payload,
+        "auto",
+        source_msg_id,
+    )
+    .await?;
 
     Ok(Json(json!({
         "action_id": action_id,
@@ -440,7 +487,7 @@ pub async fn invoke_member_handler(
 #[derive(Deserialize)]
 pub struct AnnotateSchemaRequest {
     pub app_schema: Option<String>,
-    pub path: Option<String>,          // file path to update (optional)
+    pub path: Option<String>, // file path to update (optional)
     pub stage_id: Option<String>,
     pub field: String,
     pub observable_property: String,
@@ -459,7 +506,8 @@ pub async fn annotate_schema_handler(
     let user_id = principal.user_id();
     let (ws_uuid, _slug) = resolve_workspace(&state, &workspace_id, &user_id).await?;
 
-    let source_msg_id = req.source_message_id
+    let source_msg_id = req
+        .source_message_id
         .as_deref()
         .and_then(|s| s.parse::<Uuid>().ok());
 
@@ -474,11 +522,17 @@ pub async fn annotate_schema_handler(
     });
 
     let action_id = log_action(
-        &state, ws_uuid, "annotate_schema",
-        "user", &user_id,
+        &state,
+        ws_uuid,
+        "annotate_schema",
+        "user",
+        &user_id,
         req.app_schema.as_deref(),
-        &payload, "auto", source_msg_id,
-    ).await?;
+        &payload,
+        "auto",
+        source_msg_id,
+    )
+    .await?;
 
     Ok(Json(json!({
         "action_id": action_id,
@@ -497,10 +551,10 @@ pub async fn annotate_schema_handler(
 #[derive(Deserialize)]
 pub struct AnnotateRequest {
     pub app_schema: Option<String>,
-    pub kind: String,        // critique | insight | risk | decision
-    pub target: String,      // e.g. "stage:fermentation", "process", "variation:co2-capture"
+    pub kind: String,   // critique | insight | risk | decision
+    pub target: String, // e.g. "stage:fermentation", "process", "variation:co2-capture"
     pub body: String,
-    pub severity: Option<String>,  // info | warn | block
+    pub severity: Option<String>, // info | warn | block
     pub source_message_id: Option<String>,
 }
 
@@ -513,20 +567,28 @@ pub async fn annotate_handler(
     let user_id = principal.user_id();
     let (ws_uuid, _slug) = resolve_workspace(&state, &workspace_id, &user_id).await?;
 
-    let source_msg_id = req.source_message_id
+    let source_msg_id = req
+        .source_message_id
         .as_deref()
         .and_then(|s| s.parse::<Uuid>().ok());
 
     // Validate kind and severity
     let kind = req.kind.as_str();
     if !["critique", "insight", "risk", "decision"].contains(&kind) {
-        return Err((StatusCode::BAD_REQUEST,
-            format!("Invalid kind '{}' — must be critique|insight|risk|decision", kind)));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Invalid kind '{}' — must be critique|insight|risk|decision",
+                kind
+            ),
+        ));
     }
     let severity = req.severity.as_deref().unwrap_or("info");
     if !["info", "warn", "block"].contains(&severity) {
-        return Err((StatusCode::BAD_REQUEST,
-            format!("Invalid severity '{}' — must be info|warn|block", severity)));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("Invalid severity '{}' — must be info|warn|block", severity),
+        ));
     }
 
     let payload = json!({
@@ -537,11 +599,17 @@ pub async fn annotate_handler(
     });
 
     let action_id = log_action(
-        &state, ws_uuid, "annotate",
-        "user", &user_id,
+        &state,
+        ws_uuid,
+        "annotate",
+        "user",
+        &user_id,
         req.app_schema.as_deref(),
-        &payload, "auto", source_msg_id,
-    ).await?;
+        &payload,
+        "auto",
+        source_msg_id,
+    )
+    .await?;
 
     // Also insert into workspace_annotations for direct querying
     let annotation_id: Uuid = sqlx::query(
@@ -689,11 +757,14 @@ pub async fn accept_action_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .ok_or((StatusCode::NOT_FOUND, "Action not found".to_string()))?;
 
-    let action_type: String = row.try_get("action_type")
+    let action_type: String = row
+        .try_get("action_type")
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let payload: Value = row.try_get("payload")
+    let payload: Value = row
+        .try_get("payload")
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let confirmation: String = row.try_get("confirmation")
+    let confirmation: String = row
+        .try_get("confirmation")
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if confirmation == "accepted" || confirmation == "rejected" {
@@ -704,17 +775,27 @@ pub async fn accept_action_handler(
     let apply_result = match action_type.as_str() {
         "mutate_document" => {
             let path = payload.get("path").and_then(|v| v.as_str()).unwrap_or("");
-            let content = req.content
+            let content = req
+                .content
                 .as_deref()
                 .or_else(|| payload.get("content").and_then(|v| v.as_str()))
                 .unwrap_or("");
-            let rationale = payload.get("rationale").and_then(|v| v.as_str())
+            let rationale = payload
+                .get("rationale")
+                .and_then(|v| v.as_str())
                 .unwrap_or("action: mutate_document (accepted)");
             if !path.is_empty() && !content.is_empty() {
-                match state.workspace_git.commit_file(&slug, path, content, rationale) {
+                match state
+                    .workspace_git
+                    .commit_file(&slug, path, content, rationale)
+                {
                     Ok(sha) => json!({ "sha": sha, "path": path }),
-                    Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("Git write failed: {}", e))),
+                    Err(e) => {
+                        return Err((
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("Git write failed: {}", e),
+                        ))
+                    }
                 }
             } else {
                 req.apply_result.clone().unwrap_or(json!({}))
@@ -776,7 +857,9 @@ pub async fn reject_action_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    Ok(Json(json!({ "action_id": action_uuid, "status": "rejected" })))
+    Ok(Json(
+        json!({ "action_id": action_uuid, "status": "rejected" }),
+    ))
 }
 
 // ─── Annotations ─────────────────────────────────────────────────────────────
@@ -813,7 +896,9 @@ pub async fn list_annotations_handler(
         "created_at":    r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").ok().map(|t| t.to_rfc3339()),
     })).collect();
 
-    Ok(Json(json!({ "annotations": annotations, "count": annotations.len() })))
+    Ok(Json(
+        json!({ "annotations": annotations, "count": annotations.len() }),
+    ))
 }
 
 pub async fn resolve_annotation_handler(
@@ -840,7 +925,9 @@ pub async fn resolve_annotation_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    Ok(Json(json!({ "annotation_id": annotation_uuid, "resolved": true })))
+    Ok(Json(
+        json!({ "annotation_id": annotation_uuid, "resolved": true }),
+    ))
 }
 
 // ─── POST /api/simops/cascade/suggest-bindings ────────────────────────────────
@@ -894,8 +981,12 @@ pub struct MigrateParallelismRequest {
     #[serde(default)]
     pub confirmation: Option<String>,
 }
-fn default_process_path() -> String { "simops/process.yaml".into() }
-fn default_twin_path() -> String { "simops/twins/primary/twin.yaml".into() }
+fn default_process_path() -> String {
+    "simops/process.yaml".into()
+}
+fn default_twin_path() -> String {
+    "simops/twins/primary/twin.yaml".into()
+}
 
 pub async fn migrate_parallelism_to_twin_handler(
     State(state): State<AppState>,
@@ -915,16 +1006,32 @@ pub async fn migrate_parallelism_to_twin_handler(
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .map_err(|e| (StatusCode::NOT_FOUND, format!("Could not read {}: {}", req.process_path, e)))?;
+    .map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("Could not read {}: {}", req.process_path, e),
+        )
+    })?;
 
     // Parse as JSON (YAML is valid JSON superset for our process shape)
-    let mut process_json: serde_json::Value = serde_yaml::from_str(&process_content)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Failed to parse process YAML: {e}")))?;
+    let mut process_json: serde_json::Value =
+        serde_yaml::from_str(&process_content).map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Failed to parse process YAML: {e}"),
+            )
+        })?;
 
     // Run migration — move stage.parallelism to twin manifest
-    let stages = process_json.get_mut("stages")
+    let stages = process_json
+        .get_mut("stages")
         .and_then(|s| s.as_array_mut())
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, "process.stages is missing or not an array".into()))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "process.stages is missing or not an array".into(),
+            )
+        })?;
 
     let mut twin_parallelism = serde_json::Map::new();
     let mut stages_migrated = 0usize;
@@ -934,7 +1041,8 @@ pub async fn migrate_parallelism_to_twin_handler(
             if let Some(par) = obj.get("parallelism").cloned() {
                 let kind = par.get("kind").and_then(|k| k.as_str()).unwrap_or("");
                 if kind == "parallel_instances" {
-                    let stage_id = obj.get("id")
+                    let stage_id = obj
+                        .get("id")
                         .and_then(|id| id.as_str())
                         .unwrap_or("unknown")
                         .to_string();
@@ -959,8 +1067,12 @@ pub async fn migrate_parallelism_to_twin_handler(
     }
 
     // Serialise cleaned process back to YAML
-    let cleaned_yaml = serde_yaml::to_string(&process_json)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("YAML serialisation failed: {e}")))?;
+    let cleaned_yaml = serde_yaml::to_string(&process_json).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("YAML serialisation failed: {e}"),
+        )
+    })?;
 
     // Build twin manifest YAML
     let twin_manifest = serde_json::json!({
@@ -972,8 +1084,12 @@ pub async fn migrate_parallelism_to_twin_handler(
         "status": "active",
         "derived_from": null,
     });
-    let twin_yaml = serde_yaml::to_string(&twin_manifest)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Twin YAML serialisation failed: {e}")))?;
+    let twin_yaml = serde_yaml::to_string(&twin_manifest).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Twin YAML serialisation failed: {e}"),
+        )
+    })?;
 
     let confirmation = req.confirmation.as_deref().unwrap_or("ask");
 
@@ -985,9 +1101,17 @@ pub async fn migrate_parallelism_to_twin_handler(
     });
 
     let action_id = log_action(
-        &state, ws_uuid, "migrate_parallelism_to_twin",
-        "user", &user_id, Some("kask_simops"), &payload, confirmation, None,
-    ).await?;
+        &state,
+        ws_uuid,
+        "migrate_parallelism_to_twin",
+        "user",
+        &user_id,
+        Some("kask_simops"),
+        &payload,
+        confirmation,
+        None,
+    )
+    .await?;
 
     let mut process_sha = None;
     let mut twin_sha = None;
@@ -995,25 +1119,33 @@ pub async fn migrate_parallelism_to_twin_handler(
     if confirmation == "auto" {
         // Write cleaned process
         match state.workspace_git.commit_file(
-            &slug, &req.process_path, &cleaned_yaml,
-            &format!("migrate: move stage.parallelism to twin manifest (spec 36a A.1.5)")
+            &slug,
+            &req.process_path,
+            &cleaned_yaml,
+            &format!("migrate: move stage.parallelism to twin manifest (spec 36a A.1.5)"),
         ) {
-            Ok(sha) => { process_sha = Some(sha); }
+            Ok(sha) => {
+                process_sha = Some(sha);
+            }
             Err(e) => tracing::warn!("migrate: process write failed: {e}"),
         }
 
         // Write twin manifest
         match state.workspace_git.commit_file(
-            &slug, &req.twin_path, &twin_yaml,
-            "migrate: create twin manifest with relocated parallelism"
+            &slug,
+            &req.twin_path,
+            &twin_yaml,
+            "migrate: create twin manifest with relocated parallelism",
         ) {
-            Ok(sha) => { twin_sha = Some(sha); }
+            Ok(sha) => {
+                twin_sha = Some(sha);
+            }
             Err(e) => tracing::warn!("migrate: twin write failed: {e}"),
         }
 
         let _ = sqlx::query(
             "UPDATE workspace_action_log SET applied = true, applied_at = NOW()
-             WHERE action_id = $1"
+             WHERE action_id = $1",
         )
         .bind(action_id)
         .execute(&state.db)
@@ -1039,10 +1171,10 @@ pub struct LogObservationRequest {
     pub location_lat: Option<f64>,
     pub location_lng: Option<f64>,
     pub location_name: Option<String>,
-    pub quantity: Option<String>,     // trace | sparse | moderate | abundant
+    pub quantity: Option<String>, // trace | sparse | moderate | abundant
     pub habitat: Option<String>,
     pub substrate: Option<String>,
-    pub conditions: Option<Value>,    // { temp_c, humidity_pct, rainfall_prior_7d_mm, ... }
+    pub conditions: Option<Value>, // { temp_c, humidity_pct, rainfall_prior_7d_mm, ... }
     pub harvested: Option<bool>,
     pub harvest_notes: Option<String>,
     pub processing_path: Option<String>,
@@ -1051,7 +1183,7 @@ pub struct LogObservationRequest {
     pub opted_in_shared: Option<bool>,
     pub goal_id: Option<String>,
     pub creature_id: Option<String>,
-    pub taxa_group: Option<String>,   // fungi | plant | lichen | other
+    pub taxa_group: Option<String>, // fungi | plant | lichen | other
     pub edibility: Option<String>,
     pub source_message_id: Option<String>,
 }
@@ -1071,31 +1203,38 @@ pub async fn log_observation_handler(
     let user_id = principal.user_id();
     let (ws_uuid, _slug) = resolve_workspace(&state, &workspace_id, &user_id).await?;
 
-    let source_msg_id = req.source_message_id
+    let source_msg_id = req
+        .source_message_id
         .as_deref()
         .and_then(|s| s.parse::<Uuid>().ok());
 
-    let goal_uuid: Option<Uuid> = req.goal_id
-        .as_deref()
-        .and_then(|s| s.parse().ok());
+    let goal_uuid: Option<Uuid> = req.goal_id.as_deref().and_then(|s| s.parse().ok());
 
-    let creature_uuid: Option<Uuid> = req.creature_id
-        .as_deref()
-        .and_then(|s| s.parse().ok());
+    let creature_uuid: Option<Uuid> = req.creature_id.as_deref().and_then(|s| s.parse().ok());
 
     // Validate quantity and edibility
     let quantity = req.quantity.as_deref();
     if let Some(q) = quantity {
         if !["trace", "sparse", "moderate", "abundant"].contains(&q) {
-            return Err((StatusCode::BAD_REQUEST,
-                format!("Invalid quantity '{}' — must be trace|sparse|moderate|abundant", q)));
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Invalid quantity '{}' — must be trace|sparse|moderate|abundant",
+                    q
+                ),
+            ));
         }
     }
     let edibility = req.edibility.as_deref();
     if let Some(e) = edibility {
         if !["edible", "choice", "toxic", "unknown", "inedible"].contains(&e) {
-            return Err((StatusCode::BAD_REQUEST,
-                format!("Invalid edibility '{}' — must be edible|choice|toxic|unknown|inedible", e)));
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Invalid edibility '{}' — must be edible|choice|toxic|unknown|inedible",
+                    e
+                ),
+            ));
         }
     }
 
@@ -1146,8 +1285,12 @@ pub async fn log_observation_handler(
     .bind(req.opted_in_shared.unwrap_or(false))
     .fetch_one(&state.db)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR,
-        format!("Failed to store observation: {}", e)))?
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to store observation: {}", e),
+        )
+    })?
     .try_get("observation_id")
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -1162,11 +1305,17 @@ pub async fn log_observation_handler(
     });
 
     let action_id = log_action(
-        &state, ws_uuid, "log_observation",
-        "user", &user_id,
+        &state,
+        ws_uuid,
+        "log_observation",
+        "user",
+        &user_id,
         Some("kask_wild/1"),
-        &payload, "auto", source_msg_id,
-    ).await?;
+        &payload,
+        "auto",
+        source_msg_id,
+    )
+    .await?;
 
     // Update goal progress if goal_id provided
     if let Some(gid) = goal_uuid {

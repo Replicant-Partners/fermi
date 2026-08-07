@@ -50,8 +50,12 @@ struct Args {
     database_url: Option<String>,
 
     /// Nomic reference-model endpoint. Defaults to Ollama's local endpoint.
-    #[arg(long, env = "NOMIC_BASE_URL", global = true,
-          default_value = "http://localhost:11434/v1/embeddings")]
+    #[arg(
+        long,
+        env = "NOMIC_BASE_URL",
+        global = true,
+        default_value = "http://localhost:11434/v1/embeddings"
+    )]
     nomic_base_url: String,
 }
 
@@ -152,7 +156,15 @@ async fn main() -> Result<()> {
             batch_size,
             confirm,
         } => {
-            refresh_cmd(&pool, vendor_model_id, force, max_age_days, batch_size, confirm).await
+            refresh_cmd(
+                &pool,
+                vendor_model_id,
+                force,
+                max_age_days,
+                batch_size,
+                confirm,
+            )
+            .await
         }
         Cmd::Status => status_cmd(&pool).await,
     }
@@ -243,7 +255,10 @@ async fn seed_cmd(
 
     if !confirm {
         println!();
-        println!("⚠ Dry-run only (no --confirm). Would seed {} anchors.", filtered.len());
+        println!(
+            "⚠ Dry-run only (no --confirm). Would seed {} anchors.",
+            filtered.len()
+        );
         return Ok(());
     }
 
@@ -561,11 +576,7 @@ async fn refresh_one_vendor(
            )
         "#,
         max_age_days,
-        staleness = if force {
-            "OR FALSE"
-        } else {
-            ""
-        }
+        staleness = if force { "OR FALSE" } else { "" }
     );
 
     let rows = sqlx::query(&candidate_sql)
@@ -722,12 +733,11 @@ async fn status_cmd(pool: &PgPool) -> Result<()> {
     println!();
 
     // Reference-side counts (one row per anchor in the seed bucket)
-    let total_anchors: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM embedding_anchors WHERE vendor_model_id IS NULL",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or(0);
+    let total_anchors: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM embedding_anchors WHERE vendor_model_id IS NULL")
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
     println!("  Total reference (seed) anchors: {}", total_anchors);
 
     let by_source = sqlx::query(

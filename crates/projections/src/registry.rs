@@ -1,7 +1,7 @@
+use crate::error::ProjectionError;
+use crate::executor::ModelExecutor;
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::executor::ModelExecutor;
-use crate::error::ProjectionError;
 
 /// Registry of all available model executors.
 /// Executors register themselves by kind string.

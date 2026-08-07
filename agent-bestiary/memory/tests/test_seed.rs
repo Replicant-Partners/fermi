@@ -63,7 +63,9 @@ async fn test_composition_version_create_and_list() {
         proposed_by: Some("cohere_and_coordinate".to_string()),
         accepted_by: None,
         rejected_by: None,
-        rejection_note: Some("Rationale: arousal spread was 0.1, below 0.25 threshold.".to_string()),
+        rejection_note: Some(
+            "Rationale: arousal spread was 0.1, below 0.25 threshold.".to_string(),
+        ),
         created_at: Utc::now(),
     };
 
@@ -220,7 +222,9 @@ async fn test_valence_persists_through_update() {
     let stored_valence = retrieved.valence.expect("valence should be stored");
 
     assert_eq!(
-        stored_valence.get("primary_affect").and_then(|v| v.as_str()),
+        stored_valence
+            .get("primary_affect")
+            .and_then(|v| v.as_str()),
         Some("analytical")
     );
     assert_eq!(
@@ -240,7 +244,6 @@ async fn test_valence_persists_through_update() {
     println!("✅ Agent valence round-trip through update works!");
     seed.cleanup(&store).await.unwrap();
 }
-
 
 #[tokio::test]
 async fn test_episode_queries() {

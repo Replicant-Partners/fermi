@@ -2424,6 +2424,21 @@ impl ApiClient {
         self.get("/api/agents?orchestra=fermi&limit=200").await
     }
 
+    /// The authoritative Fermi roster: `GET /api/orchestras/fermi/members`,
+    /// served straight from the `orchestra_fermi_members` view.
+    ///
+    /// Used to *verify* the `?orchestra=` filter on `list_agents` actually
+    /// applied. A query parameter an older server doesn't recognise is
+    /// silently ignored, and the response then contains every agent on the
+    /// platform — which the console would render as "104 fermi orchestra
+    /// agents", confidently wrong. A missing endpoint 404s loudly; an
+    /// ignored parameter does not. So membership is confirmed against a
+    /// dedicated endpoint that *cannot* return a non-member.
+    pub async fn list_orchestra_members(&self, orchestra: &str) -> Result<JsonValue, ApiError> {
+        self.get(&format!("/api/orchestras/{orchestra}/members"))
+            .await
+    }
+
     /// Get a specific agent's card.
     pub async fn get_agent(&self, agent_id: &str) -> Result<JsonValue, ApiError> {
         self.get(&format!("/api/agents/{}", agent_id)).await

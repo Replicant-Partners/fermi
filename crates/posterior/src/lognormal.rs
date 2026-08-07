@@ -92,11 +92,7 @@ mod tests {
         let fd = fit_lognormal_moments(&obs, None).unwrap();
         match fd {
             FittedDistribution::Lognormal { median, sigma, .. } => {
-                assert!(
-                    (median - 100.0).abs() / 100.0 < 0.05,
-                    "median = {}",
-                    median
-                );
+                assert!((median - 100.0).abs() / 100.0 < 0.05, "median = {}", median);
                 assert!((sigma - 0.3).abs() < 0.05, "sigma = {}", sigma);
             }
             _ => unreachable!(),

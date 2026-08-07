@@ -36,8 +36,7 @@ fn fit_marginal_request_deserializes_from_wire_json() {
     });
 
     // Echo the same destructuring the handler does
-    let observations: Vec<f64> =
-        serde_json::from_value(body["observations"].clone()).unwrap();
+    let observations: Vec<f64> = serde_json::from_value(body["observations"].clone()).unwrap();
     let family: DistFamily = serde_json::from_value(body["family"].clone()).unwrap();
     assert_eq!(family, DistFamily::Beta);
 
@@ -86,7 +85,10 @@ fn fit_marginal_with_weights_in_wire_json() {
     meta.source_description = body["source_description"].as_str().unwrap().to_string();
 
     assert!(matches!(fitted, FittedDistribution::Normal { .. }));
-    assert_eq!(meta.source_description, "5 observations, 2 real + 3 synthetic");
+    assert_eq!(
+        meta.source_description,
+        "5 observations, 2 real + 3 synthetic"
+    );
 }
 
 #[test]
@@ -130,9 +132,7 @@ fn synthetic_linear_dataset(n: usize) -> Vec<WeightedSample> {
             let x: f64 = rng.gen_range(-2.0..2.0);
             let u1: f64 = rng.gen_range(1e-12..1.0);
             let u2: f64 = rng.gen::<f64>();
-            let noise = 0.3
-                * (-2.0 * u1.ln()).sqrt()
-                * (2.0 * std::f64::consts::PI * u2).cos();
+            let noise = 0.3 * (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
             let y = 2.0 + 0.5 * x + noise;
             let mut features = HashMap::new();
             features.insert("x".to_string(), x);
@@ -226,8 +226,7 @@ async fn fit_then_predict_round_trip_through_cache() {
         "posterior_id": id,
         "features": { "x": 1.0 }
     });
-    let predict_id: Uuid =
-        serde_json::from_value(predict_request["posterior_id"].clone()).unwrap();
+    let predict_id: Uuid = serde_json::from_value(predict_request["posterior_id"].clone()).unwrap();
     let predict_features: HashMap<String, f64> =
         serde_json::from_value(predict_request["features"].clone()).unwrap();
 
@@ -330,10 +329,7 @@ async fn list_and_evict_cache_lifecycle() {
     let cache: Arc<DashMap<Uuid, ConditionalPosterior>> = Arc::new(DashMap::new());
 
     // Start empty
-    let listing: Vec<serde_json::Value> = cache
-        .iter()
-        .map(|e| json!({ "id": e.key() }))
-        .collect();
+    let listing: Vec<serde_json::Value> = cache.iter().map(|e| json!({ "id": e.key() })).collect();
     assert_eq!(listing.len(), 0);
 
     // Fit + insert

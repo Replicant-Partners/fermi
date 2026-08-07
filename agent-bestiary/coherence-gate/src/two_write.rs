@@ -101,8 +101,8 @@ impl TwoWriteMemory {
                 synthetic_episode_id
             });
 
-        let coherence_check_json = serde_json::to_value(gate_outcome)
-            .unwrap_or(serde_json::Value::Null);
+        let coherence_check_json =
+            serde_json::to_value(gate_outcome).unwrap_or(serde_json::Value::Null);
 
         let minimum_update_set_json = serde_json::to_value(&gate_outcome.minimum_update_set)
             .unwrap_or(serde_json::Value::Null);
@@ -206,8 +206,7 @@ impl TwoWriteMemory {
             provenance: Provenance::SyntheticCorrection,
             authority_weight: intervention.authority_weight, // 1.0
             dyad_id: original.and_then(|e| e.dyad_id.clone()),
-            persona_version_at_write: original
-                .and_then(|e| e.persona_version_at_write),
+            persona_version_at_write: original.and_then(|e| e.persona_version_at_write),
             provider_used: original.and_then(|e| e.provider_used.clone()),
             model_used: original.and_then(|e| e.model_used.clone()),
         })

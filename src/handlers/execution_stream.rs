@@ -117,11 +117,19 @@ pub async fn execute_agent_stream_handler(
         statements: vec![ast::Statement::Agent(agent_stmt.clone())],
     };
 
+    // SPEC_28 — credentials resolved once, read by BOTH branches below.
+    // The `prompt_demands_format` branch delegates straight to the shared
+    // startup executor; before this, that branch could only ever use the
+    // platform's env key, silently mis-billing every structured-output
+    // agent (16 of the 17 that take it declare `anthropic`).
+    let credentials = crate::build_execution_credentials(&state, &db_agent, &card).await;
+
     let context = ExecutionContext {
         program,
         agent_card: card.clone(),
         creature_id: None,
         cognition_tier: None,
+        credentials: credentials.clone(),
     };
 
     // ── Build executor ─────────────────────────────────────────────
@@ -156,6 +164,7 @@ pub async fn execute_agent_stream_handler(
             // agent-owned key for third-party agents, env fallback
             // (platform key) for tier=System.
             user_secrets: resolve_agent_owner_secrets(&state, &db_agent).await,
+            credentials: credentials.clone(),
             eval_trigger: Some(Arc::new(crate::handlers::eval::EvalTriggerImpl {
                 state: state.clone(),
             })),

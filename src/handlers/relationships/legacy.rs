@@ -12,8 +12,8 @@ use serde_json::{json, Value as JsonValue};
 use sqlx::Row;
 use uuid::Uuid;
 
-use crate::AppState;
 use super::propagation::{dispatch_propagation, PropagateRequest, PropagateResult};
+use crate::AppState;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateRelationshipRequest {

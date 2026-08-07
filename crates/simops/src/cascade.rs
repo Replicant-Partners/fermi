@@ -221,9 +221,22 @@ mod tests {
                     id: "cultivation".into(),
                     efficiency: 0.03,
                     carbon_intensity: -1.8,
-                    input: Resource { name: "photons".into(), unit: "kWh".into(), energy_density: None, density_unit: None },
-                    output: Resource { name: "biomass".into(), unit: "kg".into(), energy_density: Some(5.5), density_unit: Some("kcal/g".into()) },
-                    capex: Some(CapexProfile { total_usd: 25.0, lifespan_years: 1.0 }),
+                    input: Resource {
+                        name: "photons".into(),
+                        unit: "kWh".into(),
+                        energy_density: None,
+                        density_unit: None,
+                    },
+                    output: Resource {
+                        name: "biomass".into(),
+                        unit: "kg".into(),
+                        energy_density: Some(5.5),
+                        density_unit: Some("kcal/g".into()),
+                    },
+                    capex: Some(CapexProfile {
+                        total_usd: 25.0,
+                        lifespan_years: 1.0,
+                    }),
                     opex_per_input_unit: Some(0.12),
                     sidestreams: None,
                     sensors: None,
@@ -232,8 +245,18 @@ mod tests {
                     id: "fermentation".into(),
                     efficiency: 0.20,
                     carbon_intensity: 0.3,
-                    input: Resource { name: "biomass".into(), unit: "kg".into(), energy_density: Some(5.5), density_unit: Some("kcal/g".into()) },
-                    output: Resource { name: "hydrogen".into(), unit: "kWh".into(), energy_density: None, density_unit: None },
+                    input: Resource {
+                        name: "biomass".into(),
+                        unit: "kg".into(),
+                        energy_density: Some(5.5),
+                        density_unit: Some("kcal/g".into()),
+                    },
+                    output: Resource {
+                        name: "hydrogen".into(),
+                        unit: "kWh".into(),
+                        energy_density: None,
+                        density_unit: None,
+                    },
                     capex: None,
                     opex_per_input_unit: None,
                     sidestreams: None,
@@ -243,8 +266,18 @@ mod tests {
                     id: "fuel_cell".into(),
                     efficiency: 0.60,
                     carbon_intensity: 0.0,
-                    input: Resource { name: "hydrogen".into(), unit: "kWh".into(), energy_density: None, density_unit: None },
-                    output: Resource { name: "electricity".into(), unit: "kWh".into(), energy_density: None, density_unit: None },
+                    input: Resource {
+                        name: "hydrogen".into(),
+                        unit: "kWh".into(),
+                        energy_density: None,
+                        density_unit: None,
+                    },
+                    output: Resource {
+                        name: "electricity".into(),
+                        unit: "kWh".into(),
+                        energy_density: None,
+                        density_unit: None,
+                    },
                     capex: None,
                     opex_per_input_unit: None,
                     sidestreams: None,
@@ -267,7 +300,8 @@ mod tests {
         let expected_biomass_kg = biomass_energy_kwh / kwh_per_kg;
         assert!(
             (result.stages[0].output_quantity - expected_biomass_kg).abs() < 1e-6,
-            "biomass_kg = {}", result.stages[0].output_quantity
+            "biomass_kg = {}",
+            result.stages[0].output_quantity
         );
         // fermentation: biomass_energy_kwh × 0.20 = 6 kWh H2
         let h2_kwh = biomass_energy_kwh * 0.20;
@@ -301,7 +335,9 @@ mod tests {
         // 3% photosynthetic × 20% fermentation × 60% fuel cell = 0.0036
         let process = algae_h2_process();
         let result = cascade_forward(&process, 10_000.0);
-        let ner = result.system_ner.expect("algae_h2 has photonic input → NER defined");
+        let ner = result
+            .system_ner
+            .expect("algae_h2 has photonic input → NER defined");
         assert!(ner < 0.01, "system NER should be tiny: {}", ner);
     }
 
@@ -318,23 +354,33 @@ mod tests {
             feature_of_interest: None,
             elec_price_per_kwh: None,
             maintenance_cost_usd: None,
-            stages: vec![
-                Stage {
-                    id: "ferment".into(),
-                    efficiency: 0.85,
-                    carbon_intensity: 0.04,
-                    input:  Resource { name: "water".into(), unit: "L".into(),
-                                       energy_density: None, density_unit: None },
-                    output: Resource { name: "kombucha".into(), unit: "L".into(),
-                                       energy_density: None, density_unit: None },
-                    capex: None, opex_per_input_unit: None,
-                    sidestreams: None, sensors: None,
+            stages: vec![Stage {
+                id: "ferment".into(),
+                efficiency: 0.85,
+                carbon_intensity: 0.04,
+                input: Resource {
+                    name: "water".into(),
+                    unit: "L".into(),
+                    energy_density: None,
+                    density_unit: None,
                 },
-            ],
+                output: Resource {
+                    name: "kombucha".into(),
+                    unit: "L".into(),
+                    energy_density: None,
+                    density_unit: None,
+                },
+                capex: None,
+                opex_per_input_unit: None,
+                sidestreams: None,
+                sensors: None,
+            }],
         };
         let result = cascade_forward(&process, 200.0);
-        assert!(result.system_ner.is_none(),
-            "L→L with no energy_density must report NER as None (undefined), not Some(0.0)");
+        assert!(
+            result.system_ner.is_none(),
+            "L→L with no energy_density must report NER as None (undefined), not Some(0.0)"
+        );
         // Per-stage NER also None for the same reason.
         assert!(result.stages[0].stage_ner.is_none());
         // But the cascade still flows — output should be 200 × 0.85 = 170.

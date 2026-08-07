@@ -25,9 +25,9 @@
 //! // output.viscosity_pa_s ≈ 0.0012 (shear-thinning algae at 25°C, 100 1/s, 15% φ)
 //! ```
 
-use std::collections::BTreeMap;
+use crate::manifest::{ContextSchema, ContextSource, ModelManifest, ParamSchema, StateFieldSchema};
 use serde::{Deserialize, Serialize};
-use crate::manifest::{ModelManifest, ParamSchema, StateFieldSchema, ContextSchema, ContextSource};
+use std::collections::BTreeMap;
 
 // ─── Trait ────────────────────────────────────────────────────────────────────
 
@@ -168,7 +168,7 @@ impl Default for AlgaeViscosity {
         Self {
             k0: 0.001,
             ea: 15_000.0,
-            t_ref_k: 298.15,  // 25°C
+            t_ref_k: 298.15, // 25°C
             c_n: 0.8,
             n_min: 0.1,
             density_kg_m3: 1_050.0,
@@ -177,19 +177,36 @@ impl Default for AlgaeViscosity {
 }
 
 impl AlgaeViscosity {
-    pub fn from_params(k0: f64, ea: f64, t_ref_k: f64, c_n: f64, n_min: f64, density_kg_m3: f64) -> Self {
-        Self { k0, ea, t_ref_k, c_n, n_min, density_kg_m3 }
+    pub fn from_params(
+        k0: f64,
+        ea: f64,
+        t_ref_k: f64,
+        c_n: f64,
+        n_min: f64,
+        density_kg_m3: f64,
+    ) -> Self {
+        Self {
+            k0,
+            ea,
+            t_ref_k,
+            c_n,
+            n_min,
+            density_kg_m3,
+        }
     }
 
     pub fn from_input(input: &RheologyInput) -> Self {
         let d = Self::default();
         Self {
-            k0:            *input.params_override.get("k0").unwrap_or(&d.k0),
-            ea:            *input.params_override.get("ea").unwrap_or(&d.ea),
-            t_ref_k:       *input.params_override.get("t_ref_k").unwrap_or(&d.t_ref_k),
-            c_n:           *input.params_override.get("c_n").unwrap_or(&d.c_n),
-            n_min:         *input.params_override.get("n_min").unwrap_or(&d.n_min),
-            density_kg_m3: *input.params_override.get("density_kg_m3").unwrap_or(&d.density_kg_m3),
+            k0: *input.params_override.get("k0").unwrap_or(&d.k0),
+            ea: *input.params_override.get("ea").unwrap_or(&d.ea),
+            t_ref_k: *input.params_override.get("t_ref_k").unwrap_or(&d.t_ref_k),
+            c_n: *input.params_override.get("c_n").unwrap_or(&d.c_n),
+            n_min: *input.params_override.get("n_min").unwrap_or(&d.n_min),
+            density_kg_m3: *input
+                .params_override
+                .get("density_kg_m3")
+                .unwrap_or(&d.density_kg_m3),
         }
     }
 
@@ -197,11 +214,11 @@ impl AlgaeViscosity {
     /// Used by `derive_rheology` to pass calibrated params back into per-point compute calls.
     pub fn to_input_overrides(&self) -> BTreeMap<String, f64> {
         BTreeMap::from([
-            ("k0".into(),            self.k0),
-            ("ea".into(),            self.ea),
-            ("t_ref_k".into(),       self.t_ref_k),
-            ("c_n".into(),           self.c_n),
-            ("n_min".into(),         self.n_min),
+            ("k0".into(), self.k0),
+            ("ea".into(), self.ea),
+            ("t_ref_k".into(), self.t_ref_k),
+            ("c_n".into(), self.c_n),
+            ("n_min".into(), self.n_min),
             ("density_kg_m3".into(), self.density_kg_m3),
         ])
     }
@@ -242,13 +259,22 @@ impl RheologyModel for AlgaeViscosity {
 
         // Validate inputs
         if input.temperature_c < -273.15 {
-            return Err(format!("temperature_c {} is below absolute zero", input.temperature_c));
+            return Err(format!(
+                "temperature_c {} is below absolute zero",
+                input.temperature_c
+            ));
         }
         if input.shear_rate_per_s <= 0.0 {
-            return Err(format!("shear_rate_per_s must be > 0, got {}", input.shear_rate_per_s));
+            return Err(format!(
+                "shear_rate_per_s must be > 0, got {}",
+                input.shear_rate_per_s
+            ));
         }
         if !(0.0..=1.0).contains(&input.volume_fraction) {
-            return Err(format!("volume_fraction must be in [0, 1], got {}", input.volume_fraction));
+            return Err(format!(
+                "volume_fraction must be in [0, 1], got {}",
+                input.volume_fraction
+            ));
         }
 
         let t_k = input.temperature_c + 273.15;
@@ -338,12 +364,23 @@ mod tests {
         // Bug fix validation: Arrhenius must have NEGATIVE exponent.
         // Higher temperature → lower viscosity.
         let model = AlgaeViscosity::default();
-        let cold = model.compute(&RheologyInput { temperature_c: 10.0, ..default_input() }).unwrap();
-        let warm = model.compute(&RheologyInput { temperature_c: 35.0, ..default_input() }).unwrap();
+        let cold = model
+            .compute(&RheologyInput {
+                temperature_c: 10.0,
+                ..default_input()
+            })
+            .unwrap();
+        let warm = model
+            .compute(&RheologyInput {
+                temperature_c: 35.0,
+                ..default_input()
+            })
+            .unwrap();
         assert!(
             warm.viscosity_pa_s < cold.viscosity_pa_s,
             "Viscosity must decrease with temperature. cold={:.6}, warm={:.6}",
-            cold.viscosity_pa_s, warm.viscosity_pa_s
+            cold.viscosity_pa_s,
+            warm.viscosity_pa_s
         );
     }
 
@@ -351,12 +388,23 @@ mod tests {
     fn viscosity_decreases_with_shear_rate_for_shear_thinning() {
         // n < 1 → shear-thinning → μ decreases as γ̇ increases
         let model = AlgaeViscosity::default();
-        let slow = model.compute(&RheologyInput { shear_rate_per_s: 10.0,  ..default_input() }).unwrap();
-        let fast = model.compute(&RheologyInput { shear_rate_per_s: 1000.0, ..default_input() }).unwrap();
+        let slow = model
+            .compute(&RheologyInput {
+                shear_rate_per_s: 10.0,
+                ..default_input()
+            })
+            .unwrap();
+        let fast = model
+            .compute(&RheologyInput {
+                shear_rate_per_s: 1000.0,
+                ..default_input()
+            })
+            .unwrap();
         assert!(
             fast.viscosity_pa_s < slow.viscosity_pa_s,
             "Shear-thinning: viscosity must drop at higher shear rates. slow={:.6}, fast={:.6}",
-            slow.viscosity_pa_s, fast.viscosity_pa_s
+            slow.viscosity_pa_s,
+            fast.viscosity_pa_s
         );
         assert_eq!(slow.regime, FlowRegime::ShearThinning);
     }
@@ -365,12 +413,23 @@ mod tests {
     fn higher_concentration_more_shear_thinning() {
         // More algae → lower n → stronger shear-thinning behaviour
         let model = AlgaeViscosity::default();
-        let dilute = model.compute(&RheologyInput { volume_fraction: 0.05, ..default_input() }).unwrap();
-        let dense  = model.compute(&RheologyInput { volume_fraction: 0.30, ..default_input() }).unwrap();
+        let dilute = model
+            .compute(&RheologyInput {
+                volume_fraction: 0.05,
+                ..default_input()
+            })
+            .unwrap();
+        let dense = model
+            .compute(&RheologyInput {
+                volume_fraction: 0.30,
+                ..default_input()
+            })
+            .unwrap();
         assert!(
             dense.flow_index_n < dilute.flow_index_n,
             "Dense suspension must have lower n. dilute={:.4}, dense={:.4}",
-            dilute.flow_index_n, dense.flow_index_n
+            dilute.flow_index_n,
+            dense.flow_index_n
         );
     }
 
@@ -378,7 +437,12 @@ mod tests {
     fn zero_concentration_is_newtonian() {
         // φ = 0 → n = 1.0 → Newtonian water-like fluid
         let model = AlgaeViscosity::default();
-        let output = model.compute(&RheologyInput { volume_fraction: 0.0, ..default_input() }).unwrap();
+        let output = model
+            .compute(&RheologyInput {
+                volume_fraction: 0.0,
+                ..default_input()
+            })
+            .unwrap();
         assert_eq!(output.regime, FlowRegime::Newtonian);
         assert!((output.flow_index_n - 1.0).abs() < 0.02);
     }
@@ -387,8 +451,16 @@ mod tests {
     fn flow_index_clamped_above_n_min() {
         // Very high concentration should not drive n to zero or negative
         let model = AlgaeViscosity::default();
-        let output = model.compute(&RheologyInput { volume_fraction: 0.99, ..default_input() }).unwrap();
-        assert!(output.flow_index_n >= model.n_min, "n must not drop below n_min");
+        let output = model
+            .compute(&RheologyInput {
+                volume_fraction: 0.99,
+                ..default_input()
+            })
+            .unwrap();
+        assert!(
+            output.flow_index_n >= model.n_min,
+            "n must not drop below n_min"
+        );
     }
 
     #[test]
@@ -403,14 +475,18 @@ mod tests {
         assert!(
             (output.viscosity_pa_s - mu_expected).abs() / mu_expected < 1e-6,
             "At T_ref viscosity must equal k0 * gamma^(n-1). got={:.6e}, expected={:.6e}",
-            output.viscosity_pa_s, mu_expected
+            output.viscosity_pa_s,
+            mu_expected
         );
     }
 
     #[test]
     fn invalid_shear_rate_returns_error() {
         let model = AlgaeViscosity::default();
-        let result = model.compute(&RheologyInput { shear_rate_per_s: 0.0, ..default_input() });
+        let result = model.compute(&RheologyInput {
+            shear_rate_per_s: 0.0,
+            ..default_input()
+        });
         assert!(result.is_err());
     }
 

@@ -4,9 +4,9 @@
 //! model-agnostic dispatch. This module adapts that to the `ode_solvers`
 //! `System<f64, VectorN>` trait using nalgebra dynamic vectors.
 
-use ode_solvers::{DVector, Rk4, System};
-use crate::DynamicsModel;
 use crate::coupled::CoupledSystem;
+use crate::DynamicsModel;
+use ode_solvers::{DVector, Rk4, System};
 
 /// Adapter that bridges `DynamicsModel` (slice-based) to `ode_solvers::System`.
 struct ModelAdapter<'a> {
@@ -39,14 +39,17 @@ pub fn integrate(
         return Err(format!("horizon_days must be > 0, got {horizon_days}"));
     }
     if step_days <= 0.0 || step_days > horizon_days {
-        return Err(format!("step_days must be in (0, horizon_days], got {step_days}"));
+        return Err(format!(
+            "step_days must be in (0, horizon_days], got {step_days}"
+        ));
     }
 
     let y0_vec = DVector::from_vec(y0.to_vec());
     let adapter = ModelAdapter { model, n };
     let mut solver = Rk4::new(adapter, 0.0_f64, y0_vec, horizon_days, step_days);
 
-    solver.integrate()
+    solver
+        .integrate()
         .map_err(|e| format!("Integration failed: {:?}", e))?;
 
     let x_out = solver.x_out();
@@ -95,17 +98,25 @@ pub fn integrate_coupled(
     cadence_days: f64,
 ) -> Result<Vec<(f64, Vec<f64>)>, String> {
     let n = y0.len();
-    if n == 0 { return Err("Union state vector is empty".into()); }
-    if horizon_days <= 0.0 { return Err(format!("horizon_days must be > 0, got {horizon_days}")); }
+    if n == 0 {
+        return Err("Union state vector is empty".into());
+    }
+    if horizon_days <= 0.0 {
+        return Err(format!("horizon_days must be > 0, got {horizon_days}"));
+    }
     if step_days <= 0.0 || step_days > horizon_days {
-        return Err(format!("step_days must be in (0, horizon_days], got {step_days}"));
+        return Err(format!(
+            "step_days must be in (0, horizon_days], got {step_days}"
+        ));
     }
 
     let y0_vec = DVector::from_vec(y0.to_vec());
     let adapter = CoupledAdapter { coupled };
     let mut solver = Rk4::new(adapter, 0.0_f64, y0_vec, horizon_days, step_days);
 
-    solver.integrate().map_err(|e| format!("RK4 integration failed: {:?}", e))?;
+    solver
+        .integrate()
+        .map_err(|e| format!("RK4 integration failed: {:?}", e))?;
 
     let x_out = solver.x_out();
     let y_out = solver.y_out();
@@ -130,14 +141,20 @@ pub fn integrate_coupled(
 mod tests {
     use super::*;
 
-    struct ExponentialDecay { pub k: f64 }
+    struct ExponentialDecay {
+        pub k: f64,
+    }
 
     impl DynamicsModel for ExponentialDecay {
-        fn manifest(&self) -> crate::ModelManifest { unimplemented!() }
+        fn manifest(&self) -> crate::ModelManifest {
+            unimplemented!()
+        }
         fn system(&self, _t: f64, y: &[f64], dy: &mut [f64]) {
             dy[0] = -self.k * y[0];
         }
-        fn state_order(&self) -> Vec<String> { vec!["test:value".into()] }
+        fn state_order(&self) -> Vec<String> {
+            vec!["test:value".into()]
+        }
     }
 
     #[test]
@@ -152,7 +169,9 @@ mod tests {
         let expected = 10.0 * (-0.5 * 4.0_f64).exp();
         assert!(
             (final_pt.1[0] - expected).abs() < 0.01,
-            "Got {}, expected {}", final_pt.1[0], expected
+            "Got {}, expected {}",
+            final_pt.1[0],
+            expected
         );
     }
 
@@ -161,7 +180,10 @@ mod tests {
         let model = ExponentialDecay { k: 0.1 };
         let result = integrate(&model, &[5.0], 6.0, 0.01, 1.0).unwrap();
         // 6 days at 1-day cadence → approximately 7 points (0..=6)
-        assert!(result.len() >= 6 && result.len() <= 8,
-            "Expected ~7 points, got {}", result.len());
+        assert!(
+            result.len() >= 6 && result.len() <= 8,
+            "Expected ~7 points, got {}",
+            result.len()
+        );
     }
 }

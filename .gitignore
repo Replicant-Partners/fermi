@@ -82,3 +82,6 @@ crates/abw-cli/.env
 
 # Integrity audit transcripts (may contain sample row ids)
 integrity-audit-*.txt
+
+# local commit-message drafts
+.gitmsg-*

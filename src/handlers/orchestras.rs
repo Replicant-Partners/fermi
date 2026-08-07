@@ -88,6 +88,19 @@ fn orchestra_by_name(name: &str) -> Option<&'static OrchestraSpec> {
     ORCHESTRAS.iter().find(|o| o.name == name)
 }
 
+/// Roster view for an orchestra, or `None` if the name isn't a known
+/// orchestra. Exposed so other handlers (e.g. `/api/agents?orchestra=`)
+/// can filter on the *same* membership predicate this module serves
+/// instead of inventing a parallel one — the divergence that let an
+/// agent read MEMBER on its Manage page while being absent from the
+/// Fermi console's fleet list.
+///
+/// The returned name is a compile-time constant from `ORCHESTRAS`, so it
+/// is safe to `format!` into a query. Never pass caller input through.
+pub fn orchestra_view_name(name: &str) -> Option<&'static str> {
+    orchestra_by_name(name).map(|o| o.view_name)
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // GET /api/orchestras
 // ═══════════════════════════════════════════════════════════════════
@@ -160,13 +173,25 @@ pub async fn list_orchestra_members_handler(
     // different column sets — a fully-typed query per view would be
     // cleaner, but format!() into a whitelisted view name is safe
     // (name comes from the ORCHESTRAS const, not user input).
+    // The two roster views expose different column sets: only the fermi
+    // view carries membership provenance (mig-180), because only fermi has
+    // grants to have provenance about. xaman_ek membership is implicit in
+    // being published, so there is nothing to attribute.
+    let provenance_cols = if spec.name == "fermi" {
+        ", membership_source, membership_granted_at, membership_granted_by"
+    } else {
+        ", NULL::text AS membership_source, \
+           NULL::timestamptz AS membership_granted_at, \
+           NULL::text AS membership_granted_by"
+    };
+
     let rows = sqlx::query(&format!(
         "SELECT agent_id, agent_name, agent_type, tier, description, tags, \
                 fermi_contract, output_contract, owner_user_id, \
-                created_at, updated_at \
+                created_at, updated_at{} \
            FROM public.{} \
           ORDER BY agent_name",
-        spec.view_name
+        provenance_cols, spec.view_name
     ))
     .fetch_all(&state.db)
     .await
@@ -187,6 +212,12 @@ pub async fn list_orchestra_members_handler(
                 "owner_user_id":    r.try_get::<Option<String>, _>("owner_user_id").ok().flatten(),
                 "created_at":       r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").ok().map(|d| d.to_rfc3339()),
                 "updated_at":       r.try_get::<chrono::DateTime<chrono::Utc>, _>("updated_at").ok().map(|d| d.to_rfc3339()),
+                // SPEC_29 — how each member was admitted: 'approved'
+                // (reviewed, has a receipt), 'curated_seed' (platform boot
+                // seed, never reviewed), or 'admin_grant' (override).
+                "membership_source":     r.try_get::<Option<String>, _>("membership_source").ok().flatten(),
+                "membership_granted_at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("membership_granted_at").ok().flatten().map(|d| d.to_rfc3339()),
+                "membership_granted_by": r.try_get::<Option<String>, _>("membership_granted_by").ok().flatten(),
             })
         })
         .collect();
@@ -220,10 +251,65 @@ pub async fn agent_orchestras_handler(
         .await
         .unwrap_or(false);
 
+        // Per-agent membership provenance, read from the ONE place that
+        // states it (SPEC_29 / mig-180: `orchestra_members.source`).
+        //
+        // Previously this re-derived provenance by querying the requests
+        // table — a second opinion that could disagree with the roster.
+        // Now there is a single source of truth and every surface reads it.
+        //
+        // `membership_rule` remains a static description of the
+        // orchestra's *policy*; it is not a claim about this agent, and
+        // the template no longer renders it as one.
+        let grant = sqlx::query(
+            "SELECT source, granted_by, granted_at \
+               FROM public.orchestra_members \
+              WHERE agent_id = $1 AND orchestra_name = $2",
+        )
+        .bind(agent.agent_id)
+        .bind(spec.name)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+
+        let source = grant
+            .as_ref()
+            .and_then(|r| r.try_get::<String, _>("source").ok());
+
+        // Honest answers only:
+        //   "none"       — not a member.
+        //   "implicit"   — membership is implicit by design (xaman_ek);
+        //                  there is no review to report.
+        //   "approved"   — an admin approved it; there is a receipt.
+        //   "unreviewed" — a member via curated_seed / admin_grant. It has
+        //                  never been through review, and the UI says so.
+        let provenance = if !is_member {
+            "none"
+        } else if !spec.accepts_requests {
+            "implicit"
+        } else {
+            match source.as_deref() {
+                Some("approved") => "approved",
+                _ => "unreviewed",
+            }
+        };
+
         memberships.push(json!({
             "orchestra":  spec.name,
             "is_member":  is_member,
             "membership_rule": spec.membership_rule,
+            "provenance": provenance,
+            "membership_source": source,
+            "reviewed_by": grant
+                .as_ref()
+                .and_then(|r| r.try_get::<Option<String>, _>("granted_by").ok())
+                .flatten(),
+            "reviewed_at": grant
+                .as_ref()
+                .and_then(|r| r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("granted_at").ok())
+                .flatten()
+                .map(|d| d.to_rfc3339()),
         }));
     }
 
@@ -351,16 +437,27 @@ pub async fn submit_orchestra_request_handler(
         ));
     }
 
-    // Refuse if agent is already a member (nothing to request).
-    let already_member: bool = sqlx::query_scalar(&format!(
-        "SELECT EXISTS(SELECT 1 FROM public.{} WHERE agent_id = $1)",
-        spec.view_name
-    ))
+    // Refuse if the agent is already an APPROVED member — there's nothing
+    // to request.
+    //
+    // Deliberately scoped to `source='approved'` (SPEC_29). A member whose
+    // provenance is `curated_seed` or `admin_grant` has never been through
+    // review, so it must still be able to request one. Before mig-180 this
+    // check was "is a member at all", which meant an agent that acquired a
+    // contract outside the governance loop was *locked out* of that loop by
+    // the very state it had created — 409 "already a member" with no
+    // approval on record anywhere.
+    let already_approved: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM public.orchestra_members \
+                        WHERE orchestra_name = $1 AND agent_id = $2 \
+                          AND source = 'approved')",
+    )
+    .bind(&name)
     .bind(agent.agent_id)
     .fetch_one(&state.db)
     .await
     .unwrap_or(false);
-    if already_member {
+    if already_approved {
         return Err((
             StatusCode::CONFLICT,
             format!("Agent {} is already a {} member", agent.agent_name, name),
@@ -605,9 +702,9 @@ pub async fn approve_orchestra_request_handler(
         )
     })?;
 
-    // Set the contract on the agent. For 'fermi' the column is
-    // `fermi_contract`; extending to other orchestras will need a
-    // per-orchestra mapping here.
+    // Set the contract on the agent — the agent's *capability* (which
+    // output shape it can emit). Since SPEC_29 / mig-180 this no longer
+    // confers membership; the orchestra_members insert below does.
     if name == "fermi" {
         sqlx::query(
             "UPDATE public.agents SET fermi_contract = $1, updated_at = NOW() \
@@ -653,6 +750,40 @@ pub async fn approve_orchestra_request_handler(
         )
     })?;
 
+    // Grant membership. THIS is what admits the agent to the orchestra
+    // (SPEC_29): the roster view joins orchestra_members, so nothing
+    // outside this admin-gated transaction can produce a member.
+    //
+    // `request_id` is mandatory for source='approved' (enforced by the
+    // `approved_has_request` CHECK), so every approved membership carries
+    // a receipt pointing at the request that authorised it.
+    //
+    // ON CONFLICT: re-approving an existing member refreshes provenance
+    // rather than erroring, so an admin can upgrade a legacy
+    // `curated_seed` row to a properly reviewed `approved` one.
+    sqlx::query(
+        "INSERT INTO public.orchestra_members \
+         (orchestra_name, agent_id, source, request_id, granted_by) \
+         VALUES ($1, $2, 'approved', $3, $4) \
+         ON CONFLICT (orchestra_name, agent_id) DO UPDATE \
+            SET source = 'approved', \
+                request_id = EXCLUDED.request_id, \
+                granted_by = EXCLUDED.granted_by, \
+                granted_at = NOW()",
+    )
+    .bind(&name)
+    .bind(agent_id)
+    .bind(request_uuid)
+    .bind(&admin_user_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("grant membership: {}", e),
+        )
+    })?;
+
     // Governance audit trail (mig-164 lives on).
     sqlx::query(
         "INSERT INTO public.admin_bypass_events \
@@ -691,6 +822,111 @@ pub async fn approve_orchestra_request_handler(
         "agent_id":    agent_id,
         "status":      "approved",
         "reviewed_by": admin_user_id,
+    })))
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DELETE /api/orchestras/{name}/members/{agent_id}
+// ═══════════════════════════════════════════════════════════════════
+
+/// Revoke an agent's orchestra membership (SPEC_29).
+///
+/// Now that membership is stated rather than inferred, leaving is a real
+/// operation: delete the grant. Previously "leaving" meant clearing
+/// `agents.fermi_contract`, which conflated revoking membership with
+/// destroying the agent's declared output capability — two different
+/// things. The contract is left intact here; the agent keeps its shape
+/// and can request readmission.
+///
+/// Admin-gated by the same predicate as approval, and audited, because
+/// revocation is as much a governance decision as admission.
+pub async fn revoke_orchestra_member_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path((name, agent_id_or_name)): Path<(String, String)>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_orchestra_admin(&state, &principal, &name).await?;
+
+    let spec = orchestra_by_name(&name).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("Unknown orchestra: {}", name),
+        )
+    })?;
+    if !spec.accepts_requests {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Membership in '{}' is implicit ({}) — there is no grant to revoke",
+                name, spec.membership_rule
+            ),
+        ));
+    }
+
+    let agent = resolve_agent(&state, &agent_id_or_name).await?;
+    let admin_user_id = principal.user_id();
+
+    let mut tx = state.db.begin().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("begin tx: {}", e),
+        )
+    })?;
+
+    let deleted = sqlx::query(
+        "DELETE FROM public.orchestra_members \
+          WHERE orchestra_name = $1 AND agent_id = $2",
+    )
+    .bind(&name)
+    .bind(agent.agent_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("revoke membership: {}", e),
+        )
+    })?
+    .rows_affected();
+
+    if deleted == 0 {
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("Agent {} is not a {} member", agent.agent_name, name),
+        ));
+    }
+
+    sqlx::query(
+        "INSERT INTO public.admin_bypass_events \
+         (admin_user_id, target_type, target_id, action, details) \
+         VALUES ($1, 'agent', $2, 'orchestra_revoke', $3)",
+    )
+    .bind(&admin_user_id)
+    .bind(agent.agent_id.to_string())
+    .bind(json!({ "orchestra": name }))
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("audit: {}", e)))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("commit: {}", e)))?;
+
+    tracing::info!(
+        orchestra = %name,
+        agent_id = %agent.agent_id,
+        revoked_by = %admin_user_id,
+        "Orchestra membership revoked"
+    );
+
+    Ok(Json(json!({
+        "orchestra":  name,
+        "agent_id":   agent.agent_id,
+        "agent_name": agent.agent_name,
+        "status":     "revoked",
+        "revoked_by": admin_user_id,
+        "note": "The agent's fermi_contract (its declared output capability) \
+                 was left intact; only orchestra membership was removed.",
     })))
 }
 

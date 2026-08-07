@@ -65,7 +65,10 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<()> {
 
     if !ctx.quiet {
         println!();
-        println!("  {} Open the following URL to authenticate:", "→".cyan().bold());
+        println!(
+            "  {} Open the following URL to authenticate:",
+            "→".cyan().bold()
+        );
         println!("    {}", auth_url.underline());
         println!();
     }
@@ -105,7 +108,11 @@ async fn save_credentials(ctx: &Ctx, api_key: &str, user: Option<&str>) -> Resul
 
     if !ctx.quiet {
         println!();
-        println!("  {} Logged in to {}", "✓".green().bold(), ctx.base_url.bold());
+        println!(
+            "  {} Logged in to {}",
+            "✓".green().bold(),
+            ctx.base_url.bold()
+        );
         if let Some(u) = user {
             println!("  {} {}", "user:".dimmed(), u);
         }
@@ -127,7 +134,11 @@ pub async fn whoami(ctx: &Ctx) -> Result<()> {
             println!("  {}  {}", "api key: ".bold(), masked);
         }
         None => {
-            println!("  {}  {}", "api key: ".bold(), "(not set — run `abw login`)".dimmed());
+            println!(
+                "  {}  {}",
+                "api key: ".bold(),
+                "(not set — run `abw login`)".dimmed()
+            );
         }
     }
     if let Some(u) = creds.user {
@@ -141,7 +152,10 @@ pub async fn logout(ctx: &Ctx) -> Result<()> {
     config::remove()?;
     if !ctx.quiet {
         println!();
-        println!("  {} Credentials removed from this machine.", "✓".green().bold());
+        println!(
+            "  {} Credentials removed from this machine.",
+            "✓".green().bold()
+        );
         println!("  {} {}", "base url:".dimmed(), ctx.base_url);
         println!();
     }
@@ -176,7 +190,9 @@ async fn wait_for_callback(
 
         if !path_and_query.starts_with("/cb") {
             // Unknown path — likely a probe. Send 404 and keep listening.
-            write_response(&mut socket, 404, "text/plain", "not found").await.ok();
+            write_response(&mut socket, 404, "text/plain", "not found")
+                .await
+                .ok();
             continue;
         }
 
@@ -184,7 +200,10 @@ async fn wait_for_callback(
         let params = parse_query(query);
 
         // CSRF check.
-        let received_state = params.iter().find(|(k, _)| k == "state").map(|(_, v)| v.as_str());
+        let received_state = params
+            .iter()
+            .find(|(k, _)| k == "state")
+            .map(|(_, v)| v.as_str());
         if received_state != Some(expected_state) {
             write_response(
                 &mut socket,
@@ -214,16 +233,16 @@ async fn wait_for_callback(
             .iter()
             .find(|(k, _)| k == "api_key")
             .map(|(_, v)| v.clone())
-            .ok_or_else(|| {
-                anyhow!("OAuth callback missing api_key parameter")
-            })?;
+            .ok_or_else(|| anyhow!("OAuth callback missing api_key parameter"))?;
 
         let user = params
             .iter()
             .find(|(k, _)| k == "user")
             .map(|(_, v)| v.clone());
 
-        write_response(&mut socket, 200, "text/html", &success_page()).await.ok();
+        write_response(&mut socket, 200, "text/html", &success_page())
+            .await
+            .ok();
 
         return Ok((api_key, user));
     }
@@ -328,10 +347,9 @@ fn urldecode(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(
-                std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""),
-                16,
-            ) {
+            if let Ok(byte) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
+            {
                 out.push(byte);
                 i += 3;
                 continue;

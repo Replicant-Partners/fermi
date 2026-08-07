@@ -45,7 +45,9 @@ async fn try_pool() -> Option<PgPool> {
         }
     });
     let url = std::env::var("DATABASE_URL").ok()?;
-    let opts = PgConnectOptions::from_str(&url).ok()?.statement_cache_capacity(0);
+    let opts = PgConnectOptions::from_str(&url)
+        .ok()?
+        .statement_cache_capacity(0);
     sqlx::pool::PoolOptions::new()
         .max_connections(2)
         .acquire_timeout(std::time::Duration::from_secs(10))
@@ -165,10 +167,11 @@ async fn teardown_workspace(pool: &PgPool, workspace_id: Uuid, owner_id: &str) {
         .bind(workspace_id)
         .execute(pool)
         .await;
-    let _ = sqlx::query("DELETE FROM workspace_dependencies WHERE downstream_id=$1 OR upstream_id=$1")
-        .bind(workspace_id)
-        .execute(pool)
-        .await;
+    let _ =
+        sqlx::query("DELETE FROM workspace_dependencies WHERE downstream_id=$1 OR upstream_id=$1")
+            .bind(workspace_id)
+            .execute(pool)
+            .await;
     let _ = sqlx::query("DELETE FROM fermi_forecasts WHERE workspace_id=$1")
         .bind(workspace_id)
         .execute(pool)

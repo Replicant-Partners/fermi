@@ -15,20 +15,29 @@ fn parse_agent_json(text: &str, fallback: serde_json::Value) -> serde_json::Valu
     // Try 1: bare JSON (most common after our fixes)
     let t = text.trim();
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(t) {
-        if v.is_object() || v.is_array() { return v; }
+        if v.is_object() || v.is_array() {
+            return v;
+        }
     }
 
     // Try 2: extract from ```json ... ``` fence (with optional prose before/after)
-    let fence_start = text.find("```json")
+    let fence_start = text
+        .find("```json")
         .or_else(|| text.find("```JSON"))
         .or_else(|| text.find("```\n{"))
         .or_else(|| text.find("```\n["));
     if let Some(fs) = fence_start {
-        let after_fence = text[fs..].trim_start_matches('`').trim_start_matches("json").trim_start_matches("JSON").trim_start();
+        let after_fence = text[fs..]
+            .trim_start_matches('`')
+            .trim_start_matches("json")
+            .trim_start_matches("JSON")
+            .trim_start();
         if let Some(fe) = after_fence.find("```") {
             let candidate = after_fence[..fe].trim();
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(candidate) {
-                if v.is_object() || v.is_array() { return v; }
+                if v.is_object() || v.is_array() {
+                    return v;
+                }
             }
         }
     }
@@ -39,7 +48,9 @@ fn parse_agent_json(text: &str, fallback: serde_json::Value) -> serde_json::Valu
             if end > start {
                 let candidate = &text[start..=end];
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(candidate) {
-                    if v.is_object() { return v; }
+                    if v.is_object() {
+                        return v;
+                    }
                 }
             }
         }
@@ -61,14 +72,16 @@ use uuid::Uuid;
 
 use crate::handlers::rabble_workspace;
 use crate::AppState;
+use agent_bestiary_memory::{
+    ConsolidationLock, ConsolidationWorker, LLMProviderConfig, LLMProviderFactory, ProviderType,
+};
 use fermi::gas::charge_gas;
 use fermi_auth::{get_or_create_wallet, AuthPrincipal};
-use agent_bestiary_memory::{ConsolidationLock, ConsolidationWorker, LLMProviderConfig, LLMProviderFactory, ProviderType};
 use std::sync::Arc;
 
 #[derive(serde::Deserialize)]
 pub struct ForageRequest {
-    pub action: String,  // "enable" | "disable" | "scout" | "log"
+    pub action: String, // "enable" | "disable" | "scout" | "log"
     pub lat: Option<f64>,
     pub lng: Option<f64>,
     pub species: Option<String>,
@@ -79,8 +92,8 @@ pub struct ForageRequest {
     pub flavor_notes: Option<String>,
     pub opted_in_shared: Option<bool>,
     pub goal_id: Option<String>,
-    pub photo_urls: Option<Vec<String>>,  // workspace git raw URLs
-    pub photo_url: Option<String>,        // single photo URL for identify action
+    pub photo_urls: Option<Vec<String>>, // workspace git raw URLs
+    pub photo_url: Option<String>,       // single photo URL for identify action
 }
 
 use super::helpers::{
@@ -247,10 +260,10 @@ pub async fn enemy_sensor_handler(
                 )
             })?;
 
-             let parsed: serde_json::Value = parse_agent_json(
-                 &assessment,
-                 json!({ "threat_level": "unknown", "summary": assessment, "threats": [] }),
-             );
+            let parsed: serde_json::Value = parse_agent_json(
+                &assessment,
+                json!({ "threat_level": "unknown", "summary": assessment, "threats": [] }),
+            );
 
             // Record in creature log (background)
             let threat_level = parsed
@@ -511,12 +524,15 @@ pub async fn genome_profiler_handler(
                     .flatten()
             });
 
-            let cache_is_valid = cached.as_ref().map(|p| {
-                p.get("taxonomy")
-                    .and_then(|v| v.as_object())
-                    .map(|m| !m.is_empty())
-                    .unwrap_or(false)
-            }).unwrap_or(false);
+            let cache_is_valid = cached
+                .as_ref()
+                .map(|p| {
+                    p.get("taxonomy")
+                        .and_then(|v| v.as_object())
+                        .map(|m| !m.is_empty())
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false);
 
             if cache_is_valid {
                 return Ok(Json(json!({
@@ -1456,7 +1472,8 @@ pub async fn creature_dream_handler(
                         api_key: key,
                         model: "claude-haiku-4-5-20251001".to_string(),
                         base_url: None,
-                    }).ok()
+                    })
+                    .ok()
                 });
 
                 for agent_name in &active_agents {
@@ -1473,7 +1490,10 @@ pub async fn creature_dream_handler(
                     let agent_uuid = match agent_uuid {
                         Some(id) => id,
                         None => {
-                            eprintln!("[dream] agent {} not found in DB, skipping consolidation", agent_name);
+                            eprintln!(
+                                "[dream] agent {} not found in DB, skipping consolidation",
+                                agent_name
+                            );
                             continue;
                         }
                     };
@@ -1491,11 +1511,17 @@ pub async fn creature_dream_handler(
                     .unwrap_or(0);
 
                     if episode_count == 0 {
-                        eprintln!("[dream] {} has no unconsolidated episodes, skipping", agent_name);
+                        eprintln!(
+                            "[dream] {} has no unconsolidated episodes, skipping",
+                            agent_name
+                        );
                         continue;
                     }
 
-                    eprintln!("[dream] consolidating {} ({} episodes)", agent_name, episode_count);
+                    eprintln!(
+                        "[dream] consolidating {} ({} episodes)",
+                        agent_name, episode_count
+                    );
 
                     let lock = Arc::new(ConsolidationLock::new(
                         Arc::new(pool_bg.clone()),
@@ -1561,7 +1587,9 @@ pub async fn creature_dream_handler(
                                 }
                             }
                         }
-                        Err(e) => eprintln!("[dream] consolidation failed for {}: {}", agent_name, e),
+                        Err(e) => {
+                            eprintln!("[dream] consolidation failed for {}: {}", agent_name, e)
+                        }
                     }
                 }
                 eprintln!("[dream] cycle complete for creature {}", creature_id);
@@ -1613,11 +1641,15 @@ pub async fn forage_handler(
     match req.action.as_str() {
         "enable" => {
             toggle_module(pool, creature_id, "forage", true).await;
-            Ok(Json(json!({ "creature_id": creature_id, "forage": "enabled" })))
+            Ok(Json(
+                json!({ "creature_id": creature_id, "forage": "enabled" }),
+            ))
         }
         "disable" => {
             toggle_module(pool, creature_id, "forage", false).await;
-            Ok(Json(json!({ "creature_id": creature_id, "forage": "disabled" })))
+            Ok(Json(
+                json!({ "creature_id": creature_id, "forage": "disabled" }),
+            ))
         }
         "scout" => {
             // Check module enabled
@@ -1628,11 +1660,18 @@ pub async fn forage_handler(
             .fetch_optional(pool)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-            .and_then(|r| r.try_get::<Option<Vec<String>>, _>("active_modules").ok().flatten())
+            .and_then(|r| {
+                r.try_get::<Option<Vec<String>>, _>("active_modules")
+                    .ok()
+                    .flatten()
+            })
             .unwrap_or_default();
 
             if !modules.contains(&"forage".to_string()) {
-                return Err((StatusCode::BAD_REQUEST, "Forage module not enabled".to_string()));
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "Forage module not enabled".to_string(),
+                ));
             }
 
             // Charge gas
@@ -1706,8 +1745,18 @@ pub async fn forage_handler(
                 ),
             )
             .await
-            .map_err(|_| (StatusCode::GATEWAY_TIMEOUT, "Scout timed out — try again".to_string()))?
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Scout failed: {}", e)))?;
+            .map_err(|_| {
+                (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    "Scout timed out — try again".to_string(),
+                )
+            })?
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Scout failed: {}", e),
+                )
+            })?;
 
             let parsed = parse_agent_json(
                 &result,
@@ -1723,8 +1772,10 @@ pub async fn forage_handler(
         }
         "log" => {
             // Log a foraging observation directly (no agent call needed)
-            let species = req.species.as_deref()
-                .ok_or((StatusCode::BAD_REQUEST, "species is required for log action".to_string()))?;
+            let species = req.species.as_deref().ok_or((
+                StatusCode::BAD_REQUEST,
+                "species is required for log action".to_string(),
+            ))?;
 
             let flavor_profile = if let Some(ref notes) = req.flavor_notes {
                 json!({ "tasting_notes": notes })
@@ -1732,15 +1783,15 @@ pub async fn forage_handler(
                 json!({})
             };
 
-            let goal_uuid: Option<uuid::Uuid> = req.goal_id
-                .as_deref()
-                .and_then(|s| s.parse().ok());
+            let goal_uuid: Option<uuid::Uuid> = req.goal_id.as_deref().and_then(|s| s.parse().ok());
 
             // Collect photo URLs — from array or single field
-            let photo_urls: Vec<String> = req.photo_urls.clone()
-                .unwrap_or_else(|| req.photo_url.as_ref()
+            let photo_urls: Vec<String> = req.photo_urls.clone().unwrap_or_else(|| {
+                req.photo_url
+                    .as_ref()
                     .map(|u| vec![u.clone()])
-                    .unwrap_or_default());
+                    .unwrap_or_default()
+            });
             let photo_urls_val: Option<serde_json::Value> = if photo_urls.is_empty() {
                 None
             } else {
@@ -1770,10 +1821,19 @@ pub async fn forage_handler(
             .bind(req.harvest_notes.as_deref())
             .bind(&flavor_profile)
             .bind(req.opted_in_shared.unwrap_or(false))
-            .bind(if photo_urls.is_empty() { None } else { Some(&photo_urls as &Vec<String>) })
+            .bind(if photo_urls.is_empty() {
+                None
+            } else {
+                Some(&photo_urls as &Vec<String>)
+            })
             .fetch_one(&state.db)
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to log observation: {}", e)))?
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to log observation: {}", e),
+                )
+            })?
             .try_get("observation_id")
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -1805,8 +1865,10 @@ pub async fn forage_handler(
             // The client uploads the photo to the workspace git first, then
             // passes the raw URL here. We build a vision message directly
             // using the Anthropic messages API with an image URL content block.
-            let photo_url = req.photo_url.as_deref()
-                .ok_or((StatusCode::BAD_REQUEST, "photo_url is required for identify action".to_string()))?;
+            let photo_url = req.photo_url.as_deref().ok_or((
+                StatusCode::BAD_REQUEST,
+                "photo_url is required for identify action".to_string(),
+            ))?;
 
             let habitat_hint = req.habitat.as_deref().unwrap_or("unknown habitat");
             let location_hint = match (req.lat, req.lng) {
@@ -1814,8 +1876,12 @@ pub async fn forage_handler(
                 _ => "unknown".to_string(),
             };
 
-            let api_key = std::env::var("ANTHROPIC_API_KEY")
-                .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "ANTHROPIC_API_KEY not set".to_string()))?;
+            let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "ANTHROPIC_API_KEY not set".to_string(),
+                )
+            })?;
 
             // Build a vision request: text instruction + image URL block
             let request_body = json!({
@@ -1875,16 +1941,24 @@ pub async fn forage_handler(
                 .json(&request_body)
                 .send()
                 .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Vision API request failed: {}", e)))?;
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Vision API request failed: {}", e),
+                    )
+                })?;
 
             if !resp.status().is_success() {
                 let err = resp.text().await.unwrap_or_default();
-                return Err((StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Vision API error: {}", err)));
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Vision API error: {}", err),
+                ));
             }
 
-            let claude_resp: serde_json::Value = resp.json().await
+            let claude_resp: serde_json::Value = resp
+                .json()
+                .await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
             let raw_text = claude_resp
@@ -1911,7 +1985,10 @@ pub async fn forage_handler(
 
         other => Err((
             StatusCode::BAD_REQUEST,
-            format!("Unknown action '{}' — use enable|disable|scout|log|identify", other),
+            format!(
+                "Unknown action '{}' — use enable|disable|scout|log|identify",
+                other
+            ),
         )),
     }
 }

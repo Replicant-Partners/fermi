@@ -162,9 +162,15 @@ impl FittedDistribution {
     /// data, narrow = well-fitted.
     pub fn ci_width(&self) -> f64 {
         match self {
-            Self::Beta { ci_high, ci_low, .. } => ci_high - ci_low,
-            Self::Normal { ci_high, ci_low, .. } => ci_high - ci_low,
-            Self::Lognormal { ci_high, ci_low, .. } => ci_high - ci_low,
+            Self::Beta {
+                ci_high, ci_low, ..
+            } => ci_high - ci_low,
+            Self::Normal {
+                ci_high, ci_low, ..
+            } => ci_high - ci_low,
+            Self::Lognormal {
+                ci_high, ci_low, ..
+            } => ci_high - ci_low,
             Self::Triangular { p5, p95, .. } => p95 - p5,
         }
     }
@@ -259,7 +265,9 @@ pub enum PosteriorError {
     #[error("observations contain NaN or infinity at index {0}")]
     NonFiniteObservation(usize),
 
-    #[error("variance is zero or non-finite (sample_var = {0}); cannot fit parametric distribution")]
+    #[error(
+        "variance is zero or non-finite (sample_var = {0}); cannot fit parametric distribution"
+    )]
     DegenerateVariance(f64),
 
     #[error("insufficient data: need at least {need}, have {have}")]
@@ -402,11 +410,7 @@ pub(crate) fn weighted_var(observations: &[f64], weights: Option<&[f64]>) -> f64
             if n < 2 {
                 return 0.0;
             }
-            observations
-                .iter()
-                .map(|x| (x - mu).powi(2))
-                .sum::<f64>()
-                / (n as f64 - 1.0)
+            observations.iter().map(|x| (x - mu).powi(2)).sum::<f64>() / (n as f64 - 1.0)
         }
         Some(w) => {
             let sw: f64 = w.iter().sum();

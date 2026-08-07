@@ -4,15 +4,17 @@
 //! Members are discovered by querying fermi_forecasts.relationship_groups
 //! instead of explicit forecast_ids arrays.
 
+pub mod apply;
 pub mod groups;
+pub mod legacy;
 pub mod membership;
 pub mod propagation;
-pub mod apply;
-pub mod undo;
-pub mod requeue;
-pub mod legacy;
 pub mod recompose;
+pub mod requeue;
+pub mod undo;
 
-pub use propagation::{dispatch_propagation, dispatch_propagation_group, PropagateRequest, PropagateResult, DeltaEntry};
 pub use apply::ApplyDismissRequest;
-pub use legacy::{CreateRelationshipRequest};
+pub use legacy::CreateRelationshipRequest;
+pub use propagation::{
+    dispatch_propagation, dispatch_propagation_group, DeltaEntry, PropagateRequest, PropagateResult,
+};

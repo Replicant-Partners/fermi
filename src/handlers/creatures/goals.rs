@@ -23,9 +23,9 @@ use super::helpers::verify_creature_ownership;
 pub struct CreateGoalRequest {
     pub title: String,
     pub description: String,
-    pub goal_type: Option<String>,  // species_watch | accumulation | location_scout | condition_track | bioconversion | custom
+    pub goal_type: Option<String>, // species_watch | accumulation | location_scout | condition_track | bioconversion | custom
     pub parameters: Option<Value>,
-    pub wild_workspace_id: Option<String>,  // UUID of kask-wild workspace if already created
+    pub wild_workspace_id: Option<String>, // UUID of kask-wild workspace if already created
 }
 
 /// POST /api/creatures/:creature_id/goals
@@ -42,14 +42,27 @@ pub async fn create_goal_handler(
     let _ = verify_creature_ownership(pool, creature_id, &user_id).await?;
 
     let goal_type = req.goal_type.as_deref().unwrap_or("custom");
-    let valid_types = ["species_watch", "accumulation", "location_scout",
-                       "condition_track", "bioconversion", "custom"];
+    let valid_types = [
+        "species_watch",
+        "accumulation",
+        "location_scout",
+        "condition_track",
+        "bioconversion",
+        "custom",
+    ];
     if !valid_types.contains(&goal_type) {
-        return Err((StatusCode::BAD_REQUEST,
-            format!("Invalid goal_type '{}' — must be one of: {}", goal_type, valid_types.join("|"))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Invalid goal_type '{}' — must be one of: {}",
+                goal_type,
+                valid_types.join("|")
+            ),
+        ));
     }
 
-    let wild_workspace_uuid: Option<Uuid> = req.wild_workspace_id
+    let wild_workspace_uuid: Option<Uuid> = req
+        .wild_workspace_id
         .as_deref()
         .and_then(|s| s.parse().ok());
 
@@ -72,8 +85,12 @@ pub async fn create_goal_handler(
     .bind(wild_workspace_uuid)
     .fetch_one(pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR,
-        format!("Failed to create goal: {}", e)))?
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to create goal: {}", e),
+        )
+    })?
     .try_get("goal_id")
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -159,8 +176,7 @@ pub async fn update_goal_handler(
     let status = req.get("status").and_then(|v| v.as_str());
     if let Some(s) = status {
         if !["active", "achieved", "paused", "abandoned"].contains(&s) {
-            return Err((StatusCode::BAD_REQUEST,
-                format!("Invalid status '{}'", s)));
+            return Err((StatusCode::BAD_REQUEST, format!("Invalid status '{}'", s)));
         }
         sqlx::query(
             "UPDATE creature_goals SET status = $1,

@@ -393,7 +393,6 @@ pub enum Expression {
     Exp(Box<Expression>),
 }
 
-
 // ═══════════════════════════════════════════════════════════════════
 // Program helpers — accessors, mutators, builders for the console
 // ═══════════════════════════════════════════════════════════════════
@@ -401,7 +400,9 @@ pub enum Expression {
 impl Program {
     /// Create an empty program.
     pub fn empty() -> Self {
-        Self { statements: Vec::new() }
+        Self {
+            statements: Vec::new(),
+        }
     }
 
     /// Create a program with just a question.
@@ -426,10 +427,13 @@ impl Program {
     }
 
     pub fn drivers(&self) -> Vec<&DriverStmt> {
-        self.statements.iter().filter_map(|s| match s {
-            Statement::Driver(d) => Some(d),
-            _ => None,
-        }).collect()
+        self.statements
+            .iter()
+            .filter_map(|s| match s {
+                Statement::Driver(d) => Some(d),
+                _ => None,
+            })
+            .collect()
     }
 
     pub fn driver(&self, name: &str) -> Option<&DriverStmt> {
@@ -437,17 +441,23 @@ impl Program {
     }
 
     pub fn evidence_items(&self) -> Vec<&EvidenceStmt> {
-        self.statements.iter().filter_map(|s| match s {
-            Statement::Evidence(e) => Some(e),
-            _ => None,
-        }).collect()
+        self.statements
+            .iter()
+            .filter_map(|s| match s {
+                Statement::Evidence(e) => Some(e),
+                _ => None,
+            })
+            .collect()
     }
 
     pub fn agents(&self) -> Vec<&AgentStmt> {
-        self.statements.iter().filter_map(|s| match s {
-            Statement::Agent(a) => Some(a),
-            _ => None,
-        }).collect()
+        self.statements
+            .iter()
+            .filter_map(|s| match s {
+                Statement::Agent(a) => Some(a),
+                _ => None,
+            })
+            .collect()
     }
 
     pub fn agent(&self, name: &str) -> Option<&AgentStmt> {
@@ -469,31 +479,43 @@ impl Program {
     }
 
     pub fn factors(&self) -> Vec<&FactorStmt> {
-        self.statements.iter().filter_map(|s| match s {
-            Statement::Factor(f) => Some(f),
-            _ => None,
-        }).collect()
+        self.statements
+            .iter()
+            .filter_map(|s| match s {
+                Statement::Factor(f) => Some(f),
+                _ => None,
+            })
+            .collect()
     }
 
     pub fn params(&self) -> Vec<&ParamDecl> {
-        self.statements.iter().filter_map(|s| match s {
-            Statement::Param(p) => Some(p),
-            _ => None,
-        }).collect()
+        self.statements
+            .iter()
+            .filter_map(|s| match s {
+                Statement::Param(p) => Some(p),
+                _ => None,
+            })
+            .collect()
     }
 
     pub fn imports(&self) -> Vec<&ImportStmt> {
-        self.statements.iter().filter_map(|s| match s {
-            Statement::Import(i) => Some(i),
-            _ => None,
-        }).collect()
+        self.statements
+            .iter()
+            .filter_map(|s| match s {
+                Statement::Import(i) => Some(i),
+                _ => None,
+            })
+            .collect()
     }
 
     pub fn estimates(&self) -> Vec<&EstimateStmt> {
-        self.statements.iter().filter_map(|s| match s {
-            Statement::Estimate(e) => Some(e),
-            _ => None,
-        }).collect()
+        self.statements
+            .iter()
+            .filter_map(|s| match s {
+                Statement::Estimate(e) => Some(e),
+                _ => None,
+            })
+            .collect()
     }
 
     pub fn add_factor(&mut self, factor: FactorStmt) {
@@ -530,7 +552,11 @@ impl Program {
     // ── Builders / mutators ───────────────────────────────────────
 
     pub fn set_question(&mut self, question: QuestionStmt) {
-        if let Some(pos) = self.statements.iter().position(|s| matches!(s, Statement::Question(_))) {
+        if let Some(pos) = self
+            .statements
+            .iter()
+            .position(|s| matches!(s, Statement::Question(_)))
+        {
             self.statements[pos] = Statement::Question(question);
         } else {
             self.statements.insert(0, Statement::Question(question));
@@ -538,42 +564,73 @@ impl Program {
     }
 
     pub fn add_driver(&mut self, driver: DriverStmt) {
-        if let Some(pos) = self.statements.iter().position(|s| matches!(s, Statement::Driver(d) if d.name == driver.name)) {
+        if let Some(pos) = self
+            .statements
+            .iter()
+            .position(|s| matches!(s, Statement::Driver(d) if d.name == driver.name))
+        {
             self.statements[pos] = Statement::Driver(driver);
         } else {
-            let insert_pos = self.statements.iter()
+            let insert_pos = self
+                .statements
+                .iter()
                 .rposition(|s| matches!(s, Statement::Driver(_)))
                 .map(|p| p + 1)
-                .or_else(|| self.statements.iter().rposition(|s| matches!(s, Statement::Question(_))).map(|p| p + 1))
+                .or_else(|| {
+                    self.statements
+                        .iter()
+                        .rposition(|s| matches!(s, Statement::Question(_)))
+                        .map(|p| p + 1)
+                })
                 .unwrap_or(self.statements.len());
-            self.statements.insert(insert_pos, Statement::Driver(driver));
+            self.statements
+                .insert(insert_pos, Statement::Driver(driver));
         }
     }
 
     pub fn remove_driver(&mut self, name: &str) -> bool {
         let before = self.statements.len();
-        self.statements.retain(|s| !matches!(s, Statement::Driver(d) if d.name == name));
+        self.statements
+            .retain(|s| !matches!(s, Statement::Driver(d) if d.name == name));
         self.statements.len() < before
     }
 
     pub fn add_evidence(&mut self, evidence: EvidenceStmt) {
-        if let Some(pos) = self.statements.iter().position(|s| matches!(s, Statement::Evidence(e) if e.id == evidence.id)) {
+        if let Some(pos) = self
+            .statements
+            .iter()
+            .position(|s| matches!(s, Statement::Evidence(e) if e.id == evidence.id))
+        {
             self.statements[pos] = Statement::Evidence(evidence);
         } else {
-            let insert_pos = self.statements.iter()
+            let insert_pos = self
+                .statements
+                .iter()
                 .rposition(|s| matches!(s, Statement::Evidence(_) | Statement::Driver(_)))
                 .map(|p| p + 1)
                 .unwrap_or(self.statements.len());
-            self.statements.insert(insert_pos, Statement::Evidence(evidence));
+            self.statements
+                .insert(insert_pos, Statement::Evidence(evidence));
         }
     }
 
     pub fn add_agent(&mut self, agent: AgentStmt) {
-        if let Some(pos) = self.statements.iter().position(|s| matches!(s, Statement::Agent(a) if a.name == agent.name)) {
+        if let Some(pos) = self
+            .statements
+            .iter()
+            .position(|s| matches!(s, Statement::Agent(a) if a.name == agent.name))
+        {
             self.statements[pos] = Statement::Agent(agent);
         } else {
-            let insert_pos = self.statements.iter()
-                .rposition(|s| matches!(s, Statement::Agent(_) | Statement::Evidence(_) | Statement::Driver(_)))
+            let insert_pos = self
+                .statements
+                .iter()
+                .rposition(|s| {
+                    matches!(
+                        s,
+                        Statement::Agent(_) | Statement::Evidence(_) | Statement::Driver(_)
+                    )
+                })
                 .map(|p| p + 1)
                 .unwrap_or(self.statements.len());
             self.statements.insert(insert_pos, Statement::Agent(agent));
@@ -581,10 +638,16 @@ impl Program {
     }
 
     pub fn set_model(&mut self, model: ModelStmt) {
-        if let Some(pos) = self.statements.iter().position(|s| matches!(s, Statement::Model(_))) {
+        if let Some(pos) = self
+            .statements
+            .iter()
+            .position(|s| matches!(s, Statement::Model(_)))
+        {
             self.statements[pos] = Statement::Model(model);
         } else {
-            let insert_pos = self.statements.iter()
+            let insert_pos = self
+                .statements
+                .iter()
                 .rposition(|s| !matches!(s, Statement::Simulate(_)))
                 .map(|p| p + 1)
                 .unwrap_or(self.statements.len());
@@ -593,7 +656,11 @@ impl Program {
     }
 
     pub fn set_simulate(&mut self, sim: SimulateStmt) {
-        if let Some(pos) = self.statements.iter().position(|s| matches!(s, Statement::Simulate(_))) {
+        if let Some(pos) = self
+            .statements
+            .iter()
+            .position(|s| matches!(s, Statement::Simulate(_)))
+        {
             self.statements[pos] = Statement::Simulate(sim);
         } else {
             self.statements.push(Statement::Simulate(sim));
@@ -684,12 +751,14 @@ impl fmt::Display for Expression {
             Expression::Residual { raw, upstream } => {
                 write!(f, "residual({}, {})", raw, upstream.join(", "))
             }
-            Expression::LearnablePrior { initial, sigma, name } => {
-                match name {
-                    Some(n) => write!(f, "learnable[{}]({}, {})", n, initial, sigma),
-                    None => write!(f, "learnable({}, {})", initial, sigma),
-                }
-            }
+            Expression::LearnablePrior {
+                initial,
+                sigma,
+                name,
+            } => match name {
+                Some(n) => write!(f, "learnable[{}]({}, {})", n, initial, sigma),
+                None => write!(f, "learnable({}, {})", initial, sigma),
+            },
             Expression::ParamRef(field) => write!(f, "param:{}", field),
             Expression::FactorRef(name) => write!(f, "{}", name),
             Expression::Exp(inner) => write!(f, "exp({})", inner),

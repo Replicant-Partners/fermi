@@ -123,7 +123,9 @@ impl EpisodeBundle {
         Self {
             episode_id: episode.episode_id,
             agent_id: episode.agent_id,
-            persona_version: episode.persona_version_at_write.unwrap_or(agent.persona_version),
+            persona_version: episode
+                .persona_version_at_write
+                .unwrap_or(agent.persona_version),
             dyad_id: episode.dyad_id.clone(),
             timestamp_ref: episode.timestamp_ref,
             query: episode.query.clone(),

@@ -2,15 +2,15 @@
 //!
 //! `resolve(uri)` is the single dispatch point. Add new models here.
 
-use crate::{DynamicsModel, SkillInput};
 use crate::models::{
-    linear_decay::LinearDecay,
-    kombucha_fermentation::KombuchaFermentation,
-    kombucha_f2_carbonation::KombuchaF2Carbonation,
-    pellicle_growth::PellicleGrowth,
     bc_optimization::BcOptimization,
+    kombucha_f2_carbonation::KombuchaF2Carbonation,
+    kombucha_fermentation::KombuchaFermentation,
+    linear_decay::LinearDecay,
+    pellicle_growth::PellicleGrowth,
     solid_liquid_extraction::{SolidLiquidExtraction, SolventKind},
 };
+use crate::{DynamicsModel, SkillInput};
 
 /// Resolve a model URI to a boxed DynamicsModel instance.
 /// Returns None if the URI is unknown.
@@ -43,16 +43,18 @@ pub fn resolve(model_uri: &str, input: Option<&SkillInput>) -> Option<Box<dyn Dy
             Some(Box::new(LinearDecay::new(property_uri, k, target)))
         }
 
-        "kask:dynamics/kombucha_fermentation@v1" => {
-            Some(Box::new(KombuchaFermentation::from_temperature(temp_c, ph_floor)))
-        }
+        "kask:dynamics/kombucha_fermentation@v1" => Some(Box::new(
+            KombuchaFermentation::from_temperature(temp_c, ph_floor),
+        )),
 
         "kask:dynamics/pellicle_growth@v1" => {
             let p_max = input
                 .and_then(|i| i.params_override.get("p_max"))
                 .copied()
                 .unwrap_or(8.0);
-            Some(Box::new(PellicleGrowth::from_temperature(temp_c, ph_floor, p_max)))
+            Some(Box::new(PellicleGrowth::from_temperature(
+                temp_c, ph_floor, p_max,
+            )))
         }
 
         "kask:dynamics/bc_optimization@v1" => {
@@ -74,20 +76,20 @@ pub fn resolve(model_uri: &str, input: Option<&SkillInput>) -> Option<Box<dyn Dy
                 .copied()
                 .unwrap_or(6.0);
             Some(Box::new(BcOptimization::from_context(
-                temp_c, agitation_rpm, do_pct, &carbon, ph_floor, bc_max,
+                temp_c,
+                agitation_rpm,
+                do_pct,
+                &carbon,
+                ph_floor,
+                bc_max,
             )))
         }
 
         "kask:dynamics/kombucha_f2_carbonation@v1" => {
-            Some(Box::new(KombuchaF2Carbonation::from_context(
-                temp_c,
-                &{
-                    let mut p = input
-                        .map(|i| i.params_override.clone())
-                        .unwrap_or_default();
-                    p
-                },
-            )))
+            Some(Box::new(KombuchaF2Carbonation::from_context(temp_c, &{
+                let mut p = input.map(|i| i.params_override.clone()).unwrap_or_default();
+                p
+            })))
         }
 
         "kask:dynamics/solid_liquid_extraction@v1" => {
@@ -104,23 +106,22 @@ pub fn resolve(model_uri: &str, input: Option<&SkillInput>) -> Option<Box<dyn Dy
             let cs_initial = input
                 .and_then(|i| i.params_override.get("cs_initial"))
                 .copied();
-            let ae = input
-                .and_then(|i| i.params_override.get("Ae"))
-                .copied();
-            let ea = input
-                .and_then(|i| i.params_override.get("Ea"))
-                .copied();
-            let ae_deg = input
-                .and_then(|i| i.params_override.get("Ae_deg"))
-                .copied();
-            let ea_deg = input
-                .and_then(|i| i.params_override.get("Ea_deg"))
-                .copied();
+            let ae = input.and_then(|i| i.params_override.get("Ae")).copied();
+            let ea = input.and_then(|i| i.params_override.get("Ea")).copied();
+            let ae_deg = input.and_then(|i| i.params_override.get("Ae_deg")).copied();
+            let ea_deg = input.and_then(|i| i.params_override.get("Ea_deg")).copied();
             let degradation_onset = input
                 .and_then(|i| i.params_override.get("degradation_onset"))
                 .copied();
             Some(Box::new(SolidLiquidExtraction::from_context(
-                temp_c, solvent, cs_initial, ae, ea, ae_deg, ea_deg, degradation_onset,
+                temp_c,
+                solvent,
+                cs_initial,
+                ae,
+                ea,
+                ae_deg,
+                ea_deg,
+                degradation_onset,
             )))
         }
 

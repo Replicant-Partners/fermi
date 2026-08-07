@@ -4,11 +4,11 @@
 //! that decays toward a floor (e.g. brix toward minimum, pH toward floor).
 //! The registry constructs instances with the correct property URI.
 
-use std::collections::BTreeMap;
 use crate::{
-    DynamicsModel, ModelManifest, Note,
     manifest::{ContextSchema, ContextSource, ContributionMode, ParamSchema, StateFieldSchema},
+    DynamicsModel, ModelManifest, Note,
 };
+use std::collections::BTreeMap;
 
 pub struct LinearDecay {
     /// The property URI this instance models (e.g. "chem:ph_value").
@@ -21,7 +21,11 @@ pub struct LinearDecay {
 
 impl LinearDecay {
     pub fn new(property_uri: impl Into<String>, k: f64, target: f64) -> Self {
-        Self { property_uri: property_uri.into(), k, target }
+        Self {
+            property_uri: property_uri.into(),
+            k,
+            target,
+        }
     }
 }
 
@@ -79,9 +83,12 @@ impl DynamicsModel for LinearDecay {
     }
 
     fn is_converged(&self, history: &[(f64, Vec<f64>)]) -> bool {
-        if history.len() < 5 { return false; }
+        if history.len() < 5 {
+            return false;
+        }
         let last_5 = &history[history.len() - 5..];
-        let max_delta = last_5.windows(2)
+        let max_delta = last_5
+            .windows(2)
             .map(|w| (w[1].1[0] - w[0].1[0]).abs())
             .fold(0.0_f64, f64::max);
         max_delta < 1e-4

@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use serde_json::Value;
 use crate::error::ProjectionError;
+use serde_json::Value;
+use std::collections::HashMap;
 
 /// The contract every deterministic model must implement to participate
 /// in distributional projection.

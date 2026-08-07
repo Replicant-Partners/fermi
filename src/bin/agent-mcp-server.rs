@@ -17,12 +17,43 @@ use serde_json::json;
 use std::sync::Arc;
 
 use fermi::agent_backend::{
-    agent_card::AgentCard, executor::ExecutionContext, llm_executor::LLMExecutor,
+    agent_card::AgentCard,
+    credentials::{CredentialSource, ResolvedCredentials},
+    executor::ExecutionContext,
+    llm_executor::LLMExecutor,
     registry::AgentRegistry,
 };
+
+/// Credentials for this **single-tenant, operator-local** stdio server.
+///
+/// SPEC_28 bans env-sourced provider keys in the multi-tenant server
+/// (`src/handlers/`, `src/agent_backend/`) because there "whose key is
+/// this?" has a per-agent answer that env cannot express. This binary is
+/// different in kind: one operator, on their own machine, running their
+/// own agents on their own key. Reading env here is correct — and doing it
+/// at the call site (rather than inside the credential type) keeps the
+/// invariant greppable and the exception visible.
+fn operator_credentials() -> std::sync::Arc<ResolvedCredentials> {
+    let mut b = ResolvedCredentials::builder().funding_principal("local-operator");
+    for (env_var, provider) in [
+        ("ANTHROPIC_API_KEY", "anthropic"),
+        ("OPENAI_API_KEY", "openai"),
+        ("DEEPSEEK_API_KEY", "deepseek"),
+        ("OPENROUTER_API_KEY", "openrouter"),
+        ("MISTRAL_API_KEY", "mistral"),
+        ("QWEN_API_KEY", "qwen"),
+        ("GLM_API_KEY", "glm"),
+        ("KIMI_API_KEY", "kimi"),
+    ] {
+        if let Ok(key) = std::env::var(env_var) {
+            b = b.key(provider, key, CredentialSource::PrincipalDefault);
+        }
+    }
+    b.build_arc()
+}
 use fermi::ast::AgentStmt;
-use fermi::{Executor, Lexer, Parser, SemanticAnalyzer};
 use fermi::sensitivity::full_sensitivity_analysis;
+use fermi::{Executor, Lexer, Parser, SemanticAnalyzer};
 
 // BayesOps (Spec 14 §5.6) — fitting and what-if query tools.
 // Same library that backs the HTTP surface at /api/bayesops/*; MCP is
@@ -423,6 +454,7 @@ impl ServerHandler for AgentBestiaryHandler {
                     agent_card: card.clone(),
                     creature_id: None,
                     cognition_tier: None,
+                    credentials: operator_credentials(),
                 };
 
                 // Execute the agent
@@ -614,6 +646,7 @@ impl ServerHandler for AgentBestiaryHandler {
                     agent_card: card.clone(),
                     creature_id: None,
                     cognition_tier: None,
+                    credentials: operator_credentials(),
                 };
 
                 let result = self
@@ -641,14 +674,13 @@ impl ServerHandler for AgentBestiaryHandler {
             }
 
             "fermi_execute_fpl" => {
-                let tool: FermiExecuteFplTool = serde_json::from_value(
-                    serde_json::Value::Object(params.arguments.unwrap_or_default()),
-                )
+                let tool: FermiExecuteFplTool = serde_json::from_value(serde_json::Value::Object(
+                    params.arguments.unwrap_or_default(),
+                ))
                 .map_err(|e| CallToolError::new(e))?;
 
                 // Parse the FPL program through the full pipeline
-                let program = parse_fpl(&tool.fpl_program)
-                    .map_err(CallToolError::from_message)?;
+                let program = parse_fpl(&tool.fpl_program).map_err(CallToolError::from_message)?;
 
                 // Execute Monte Carlo simulation
                 let iterations = (tool.iterations.unwrap_or(10_000) as usize).min(100_000);
@@ -656,7 +688,8 @@ impl ServerHandler for AgentBestiaryHandler {
                     Some(seed) => Executor::with_seed(iterations, seed),
                     None => Executor::new(iterations),
                 };
-                let results = executor.execute(&program)
+                let results = executor
+                    .execute(&program)
                     .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
                 let output = json!({
@@ -685,25 +718,28 @@ impl ServerHandler for AgentBestiaryHandler {
                 )
                 .map_err(|e| CallToolError::new(e))?;
 
-                let program = parse_fpl(&tool.fpl_program)
-                    .map_err(CallToolError::from_message)?;
+                let program = parse_fpl(&tool.fpl_program).map_err(CallToolError::from_message)?;
 
                 let iterations = (tool.iterations.unwrap_or(5_000) as usize).min(50_000);
                 let analysis = full_sensitivity_analysis(&program, iterations)
                     .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
                 // Build per-driver sensitivity objects, ranked by total-order index
-                let drivers: Vec<serde_json::Value> = analysis.ranked_drivers.iter()
+                let drivers: Vec<serde_json::Value> = analysis
+                    .ranked_drivers
+                    .iter()
                     .filter_map(|name| analysis.driver_sensitivities.get(name))
-                    .map(|s| json!({
-                        "driver": s.driver_name,
-                        "first_order_index": s.first_order_index,
-                        "total_order_index": s.total_order_index,
-                        "variance_contribution": s.variance_contribution,
-                        "standard_error": s.standard_error,
-                        "ci_low":  (s.total_order_index - 1.96 * s.standard_error).max(0.0),
-                        "ci_high": (s.total_order_index + 1.96 * s.standard_error).min(1.0),
-                    }))
+                    .map(|s| {
+                        json!({
+                            "driver": s.driver_name,
+                            "first_order_index": s.first_order_index,
+                            "total_order_index": s.total_order_index,
+                            "variance_contribution": s.variance_contribution,
+                            "standard_error": s.standard_error,
+                            "ci_low":  (s.total_order_index - 1.96 * s.standard_error).max(0.0),
+                            "ci_high": (s.total_order_index + 1.96 * s.standard_error).min(1.0),
+                        })
+                    })
                     .collect();
 
                 let output = json!({
@@ -724,9 +760,9 @@ impl ServerHandler for AgentBestiaryHandler {
 
             // ── BayesOps tools ───────────────────────────────────────────────
             "fermi_fit_marginal" => {
-                let tool: FermiFitMarginalTool = serde_json::from_value(
-                    serde_json::Value::Object(params.arguments.unwrap_or_default()),
-                )
+                let tool: FermiFitMarginalTool = serde_json::from_value(serde_json::Value::Object(
+                    params.arguments.unwrap_or_default(),
+                ))
                 .map_err(|e| CallToolError::new(e))?;
 
                 let family = parse_dist_family(tool.family.as_deref())
@@ -765,26 +801,31 @@ impl ServerHandler for AgentBestiaryHandler {
                 // Return the entire posterior JSON so the caller can pass it back
                 // to predict / sensitivity / etc. The MCP world is stateless —
                 // no server-side cache.
-                let output = serde_json::to_value(&posterior)
-                    .map_err(|e| CallToolError::from_message(format!("serialise posterior: {}", e)))?;
+                let output = serde_json::to_value(&posterior).map_err(|e| {
+                    CallToolError::from_message(format!("serialise posterior: {}", e))
+                })?;
                 Ok(CallToolResult::text_content(vec![
                     serde_json::to_string_pretty(&output).unwrap().into(),
                 ]))
             }
 
             "fermi_predict" => {
-                let tool: FermiPredictTool = serde_json::from_value(
-                    serde_json::Value::Object(params.arguments.unwrap_or_default()),
-                )
+                let tool: FermiPredictTool = serde_json::from_value(serde_json::Value::Object(
+                    params.arguments.unwrap_or_default(),
+                ))
                 .map_err(|e| CallToolError::new(e))?;
 
-                let posterior: ConditionalPosterior = serde_json::from_value(tool.posterior.into_inner())
-                    .map_err(|e| CallToolError::from_message(format!("invalid posterior: {}", e)))?;
+                let posterior: ConditionalPosterior =
+                    serde_json::from_value(tool.posterior.into_inner()).map_err(|e| {
+                        CallToolError::from_message(format!("invalid posterior: {}", e))
+                    })?;
                 let features: std::collections::HashMap<String, f64> =
-                    serde_json::from_value(tool.features.into_inner())
-                        .map_err(|e| CallToolError::from_message(format!("invalid features: {}", e)))?;
+                    serde_json::from_value(tool.features.into_inner()).map_err(|e| {
+                        CallToolError::from_message(format!("invalid features: {}", e))
+                    })?;
 
-                let fitted = posterior.predict(&features)
+                let fitted = posterior
+                    .predict(&features)
                     .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
                 let output = json!({
@@ -802,18 +843,24 @@ impl ServerHandler for AgentBestiaryHandler {
                 )
                 .map_err(|e| CallToolError::new(e))?;
 
-                let posterior: ConditionalPosterior = serde_json::from_value(tool.posterior.into_inner())
-                    .map_err(|e| CallToolError::from_message(format!("invalid posterior: {}", e)))?;
+                let posterior: ConditionalPosterior =
+                    serde_json::from_value(tool.posterior.into_inner()).map_err(|e| {
+                        CallToolError::from_message(format!("invalid posterior: {}", e))
+                    })?;
                 let feature_ranges: std::collections::HashMap<String, (f64, f64)> =
-                    serde_json::from_value(tool.feature_ranges.into_inner())
-                        .map_err(|e| CallToolError::from_message(format!("invalid feature_ranges: {}", e)))?;
+                    serde_json::from_value(tool.feature_ranges.into_inner()).map_err(|e| {
+                        CallToolError::from_message(format!("invalid feature_ranges: {}", e))
+                    })?;
                 let n = tool.n_samples.unwrap_or(256u32);
 
-                let result = posterior.input_sensitivity(&feature_ranges, n as usize)
+                let result = posterior
+                    .input_sensitivity(&feature_ranges, n as usize)
                     .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
                 Ok(CallToolResult::text_content(vec![
-                    serde_json::to_string_pretty(&json!({ "sensitivity": result })).unwrap().into(),
+                    serde_json::to_string_pretty(&json!({ "sensitivity": result }))
+                        .unwrap()
+                        .into(),
                 ]))
             }
 
@@ -823,14 +870,21 @@ impl ServerHandler for AgentBestiaryHandler {
                 )
                 .map_err(|e| CallToolError::new(e))?;
 
-                let posterior: ConditionalPosterior = serde_json::from_value(tool.posterior.into_inner())
-                    .map_err(|e| CallToolError::from_message(format!("invalid posterior: {}", e)))?;
-                let a: std::collections::HashMap<String, f64> = serde_json::from_value(tool.a.into_inner())
-                    .map_err(|e| CallToolError::from_message(format!("invalid scenario a: {}", e)))?;
-                let b: std::collections::HashMap<String, f64> = serde_json::from_value(tool.b.into_inner())
-                    .map_err(|e| CallToolError::from_message(format!("invalid scenario b: {}", e)))?;
+                let posterior: ConditionalPosterior =
+                    serde_json::from_value(tool.posterior.into_inner()).map_err(|e| {
+                        CallToolError::from_message(format!("invalid posterior: {}", e))
+                    })?;
+                let a: std::collections::HashMap<String, f64> =
+                    serde_json::from_value(tool.a.into_inner()).map_err(|e| {
+                        CallToolError::from_message(format!("invalid scenario a: {}", e))
+                    })?;
+                let b: std::collections::HashMap<String, f64> =
+                    serde_json::from_value(tool.b.into_inner()).map_err(|e| {
+                        CallToolError::from_message(format!("invalid scenario b: {}", e))
+                    })?;
 
-                let comp = posterior.compare_scenarios(&a, &b)
+                let comp = posterior
+                    .compare_scenarios(&a, &b)
                     .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
                 Ok(CallToolResult::text_content(vec![
@@ -839,21 +893,28 @@ impl ServerHandler for AgentBestiaryHandler {
             }
 
             "fermi_prob_exceeds" => {
-                let tool: FermiProbExceedsTool = serde_json::from_value(
-                    serde_json::Value::Object(params.arguments.unwrap_or_default()),
-                )
+                let tool: FermiProbExceedsTool = serde_json::from_value(serde_json::Value::Object(
+                    params.arguments.unwrap_or_default(),
+                ))
                 .map_err(|e| CallToolError::new(e))?;
 
-                let posterior: ConditionalPosterior = serde_json::from_value(tool.posterior.into_inner())
-                    .map_err(|e| CallToolError::from_message(format!("invalid posterior: {}", e)))?;
-                let features: std::collections::HashMap<String, f64> = serde_json::from_value(tool.features.into_inner())
-                    .map_err(|e| CallToolError::from_message(format!("invalid features: {}", e)))?;
+                let posterior: ConditionalPosterior =
+                    serde_json::from_value(tool.posterior.into_inner()).map_err(|e| {
+                        CallToolError::from_message(format!("invalid posterior: {}", e))
+                    })?;
+                let features: std::collections::HashMap<String, f64> =
+                    serde_json::from_value(tool.features.into_inner()).map_err(|e| {
+                        CallToolError::from_message(format!("invalid features: {}", e))
+                    })?;
 
-                let probability = posterior.prob_exceeds(&features, tool.threshold)
+                let probability = posterior
+                    .prob_exceeds(&features, tool.threshold)
                     .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
                 Ok(CallToolResult::text_content(vec![
-                    serde_json::to_string_pretty(&json!({ "probability": probability })).unwrap().into(),
+                    serde_json::to_string_pretty(&json!({ "probability": probability }))
+                        .unwrap()
+                        .into(),
                 ]))
             }
 
@@ -863,10 +924,14 @@ impl ServerHandler for AgentBestiaryHandler {
                 )
                 .map_err(|e| CallToolError::new(e))?;
 
-                let posterior: ConditionalPosterior = serde_json::from_value(tool.posterior.into_inner())
-                    .map_err(|e| CallToolError::from_message(format!("invalid posterior: {}", e)))?;
-                let fixed: std::collections::HashMap<String, f64> = serde_json::from_value(tool.fixed_features.into_inner())
-                    .map_err(|e| CallToolError::from_message(format!("invalid fixed_features: {}", e)))?;
+                let posterior: ConditionalPosterior =
+                    serde_json::from_value(tool.posterior.into_inner()).map_err(|e| {
+                        CallToolError::from_message(format!("invalid posterior: {}", e))
+                    })?;
+                let fixed: std::collections::HashMap<String, f64> =
+                    serde_json::from_value(tool.fixed_features.into_inner()).map_err(|e| {
+                        CallToolError::from_message(format!("invalid fixed_features: {}", e))
+                    })?;
 
                 // search_range comes in as a 2-element Vec<f64> for schema friendliness;
                 // convert back to the (lo, hi) tuple the backend expects.
@@ -878,13 +943,14 @@ impl ServerHandler for AgentBestiaryHandler {
                 }
                 let search_range = (tool.search_range[0], tool.search_range[1]);
 
-                let result = posterior.optimise_for_target(
-                    &fixed,
-                    &tool.free_feature,
-                    search_range,
-                    tool.target_threshold,
-                )
-                .map_err(|e| CallToolError::from_message(e.to_string()))?;
+                let result = posterior
+                    .optimise_for_target(
+                        &fixed,
+                        &tool.free_feature,
+                        search_range,
+                        tool.target_threshold,
+                    )
+                    .map_err(|e| CallToolError::from_message(e.to_string()))?;
 
                 Ok(CallToolResult::text_content(vec![
                     serde_json::to_string_pretty(&result).unwrap().into(),
@@ -917,14 +983,22 @@ fn parse_dist_family(name: Option<&str>) -> std::result::Result<DistFamily, Stri
 fn parse_fpl(source: &str) -> std::result::Result<fermi::ast::Program, String> {
     let lexer = Lexer::new(source);
     let tokens = lexer.tokenize().map_err(|errs| {
-        errs.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; ")
+        errs.iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("; ")
     })?;
     let mut parser = Parser::new(tokens);
     let program = parser.parse().map_err(|e| format!("Parse error: {e}"))?;
     let analyzer = SemanticAnalyzer::new();
     let analysis = analyzer.analyze(&program);
     if !analysis.errors.is_empty() {
-        let msgs = analysis.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; ");
+        let msgs = analysis
+            .errors
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
         return Err(format!("Semantic error: {msgs}"));
     }
     Ok(program)
@@ -993,10 +1067,14 @@ async fn main() -> SdkResult<()> {
     // Load agents directory from environment or use default
     let agents_dir = std::env::var("AGENTS_DIR").unwrap_or_else(|_| "agents/curated".to_string());
 
-    // Create agent registry with LLM executor if API key is available
-    let registry = if let Ok(llm_executor) = LLMExecutor::from_env() {
+    // Create agent registry with LLM executor if a key is available.
+    //
+    // `LLMExecutor::from_env()` is now infallible (it holds no key — keys
+    // travel on the ExecutionContext), so the presence check has to be
+    // explicit here rather than inferred from its Result.
+    let registry = if std::env::var("ANTHROPIC_API_KEY").is_ok() {
         eprintln!("✓ Using LLM Executor (Claude API)");
-        Arc::new(AgentRegistry::with_executor(Arc::new(llm_executor)))
+        Arc::new(AgentRegistry::with_executor(Arc::new(LLMExecutor::new())))
     } else {
         eprintln!("⚠ No ANTHROPIC_API_KEY found, using Mock Executor");
         Arc::new(AgentRegistry::new())

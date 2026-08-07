@@ -128,21 +128,23 @@ pub async fn resolve_workspace_handler(
     // Only `active` workspaces can be resolved. Resolving a workspace
     // twice is a usage error (use a separate `update-resolution`
     // endpoint if/when we need to amend a resolution after the fact).
-    let current_status: Option<String> = sqlx::query_scalar(
-        "SELECT workspace_status FROM teams WHERE id = $1"
-    )
-    .bind(ws_uuid)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let current_status: Option<String> =
+        sqlx::query_scalar("SELECT workspace_status FROM teams WHERE id = $1")
+            .bind(ws_uuid)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let current_status = current_status
-        .ok_or((StatusCode::NOT_FOUND, "Workspace not found".into()))?;
+    let current_status =
+        current_status.ok_or((StatusCode::NOT_FOUND, "Workspace not found".into()))?;
 
     if current_status != "active" {
         return Err((
             StatusCode::CONFLICT,
-            format!("Workspace is already in '{}' state; only 'active' workspaces can be resolved", current_status),
+            format!(
+                "Workspace is already in '{}' state; only 'active' workspaces can be resolved",
+                current_status
+            ),
         ));
     }
 
@@ -162,7 +164,7 @@ pub async fn resolve_workspace_handler(
     // still happens.
     let predicted_probability: Option<f64> = sqlx::query_scalar(
         "SELECT value FROM workspace_outputs
-         WHERE workspace_id = $1 AND key = 'predicted_probability'"
+         WHERE workspace_id = $1 AND key = 'predicted_probability'",
     )
     .bind(ws_uuid)
     .fetch_optional(&state.db)
@@ -195,7 +197,7 @@ pub async fn resolve_workspace_handler(
             resolution_notes   = $6,
             resolution_source  = $7,
             brier_score        = $8
-         WHERE id = $1"
+         WHERE id = $1",
     )
     .bind(ws_uuid)
     .bind(new_status)
@@ -228,7 +230,7 @@ pub async fn resolve_workspace_handler(
             value      = EXCLUDED.value,
             version    = workspace_outputs.version + 1,
             updated_at = NOW(),
-            updated_by = EXCLUDED.updated_by"
+            updated_by = EXCLUDED.updated_by",
     )
     .bind(ws_uuid)
     .bind(json!({
@@ -302,14 +304,13 @@ pub async fn resolve_workspace_handler(
         let ws_id_q = ws_uuid;
         tokio::spawn(async move {
             // Find the forecast linked to this workspace.
-            let forecast_id: Option<String> = sqlx::query_scalar(
-                "SELECT id FROM public.fermi_forecasts WHERE workspace_id = $1",
-            )
-            .bind(ws_id_q)
-            .fetch_optional(&pool_q)
-            .await
-            .ok()
-            .flatten();
+            let forecast_id: Option<String> =
+                sqlx::query_scalar("SELECT id FROM public.fermi_forecasts WHERE workspace_id = $1")
+                    .bind(ws_id_q)
+                    .fetch_optional(&pool_q)
+                    .await
+                    .ok()
+                    .flatten();
             let Some(fid) = forecast_id else {
                 return;
             };
@@ -353,7 +354,10 @@ pub async fn resolve_workspace_handler(
             upstream_workspace_id: upstream_id_bg,
         };
         if let Err(e) = crate::handlers::workspace::refit::refit_workspace(
-            &pool_bg, &registry_bg, ws_id_bg, trigger,
+            &pool_bg,
+            &registry_bg,
+            ws_id_bg,
+            trigger,
         )
         .await
         {

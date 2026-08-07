@@ -127,9 +127,7 @@ pub fn single_input_solve(
         .iter()
         .enumerate()
         .filter(|(j, _)| *j != free_idx)
-        .map(|(j, name)| {
-            predictor.coefficients[j] * fixed_inputs.get(name).copied().unwrap_or(0.0)
-        })
+        .map(|(j, name)| predictor.coefficients[j] * fixed_inputs.get(name).copied().unwrap_or(0.0))
         .sum();
 
     let free_value = ((target_output - predictor.intercept - fixed_sum) / beta_free)
@@ -203,8 +201,7 @@ mod tests {
             ("nutrients_kg".to_string(), 6.0),
             ("temp_c".to_string(), 26.0),
         ]);
-        let result =
-            single_input_solve(&model, &fixed, "lighting_kwh", 5.2, 0.0, 500.0).unwrap();
+        let result = single_input_solve(&model, &fixed, "lighting_kwh", 5.2, 0.0, 500.0).unwrap();
         assert!(result.converged, "residual was {}", result.residual);
         // lighting should be higher than reference to hit a higher target
         assert!(*result.inputs.get("lighting_kwh").unwrap() > 120.0);

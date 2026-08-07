@@ -67,12 +67,10 @@ impl SocialInteractionTracker {
         human_id: Option<&str>,
         signal: &AggregatedSignal,
     ) -> Result<SocialUpdate, ObservabilityError> {
-        let dyad_id = dyad_id.ok_or_else(|| {
-            ObservabilityError::Inapplicable("no dyad_id on episode".into())
-        })?;
-        let human_id = human_id.ok_or_else(|| {
-            ObservabilityError::Inapplicable("no human_id provided".into())
-        })?;
+        let dyad_id = dyad_id
+            .ok_or_else(|| ObservabilityError::Inapplicable("no dyad_id on episode".into()))?;
+        let human_id = human_id
+            .ok_or_else(|| ObservabilityError::Inapplicable("no human_id provided".into()))?;
 
         let prev = self
             .store
@@ -108,10 +106,7 @@ impl SocialInteractionTracker {
             Some(v) => smooth(prev.trust, v),
             None => prev.trust,
         };
-        let new_reciprocity = match (
-            dim_value("social_capital"),
-            dim_value("goal_completion"),
-        ) {
+        let new_reciprocity = match (dim_value("social_capital"), dim_value("goal_completion")) {
             (Some(a), Some(b)) => smooth(prev.reciprocity, (a + b) / 2.0),
             (Some(a), None) | (None, Some(a)) => smooth(prev.reciprocity, a),
             (None, None) => prev.reciprocity,

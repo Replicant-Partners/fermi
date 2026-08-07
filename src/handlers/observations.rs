@@ -591,11 +591,15 @@ pub async fn ingest_observations_handler(
         tokio::spawn(async move {
             for (i, obs) in obs_copy.iter().enumerate() {
                 // Skip synthetic observations — only process real sensor readings
-                let source = obs.extra.as_ref()
+                let source = obs
+                    .extra
+                    .as_ref()
                     .and_then(|e| e.get("source"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                if source == "simops_simulation" { continue; }
+                if source == "simops_simulation" {
+                    continue;
+                }
 
                 let (oid, _) = &derived_copy[i];
                 let conditions = obs.extra.clone();
@@ -611,8 +615,9 @@ pub async fn ingest_observations_handler(
                     conditions,
                 };
                 let _ = crate::handlers::simops_benchmark::resolve_against_projection(
-                    &pool_bg, &reading
-                ).await;
+                    &pool_bg, &reading,
+                )
+                .await;
             }
         });
     }
@@ -651,11 +656,21 @@ pub async fn ingest_observations_handler(
             let program = ast::Program {
                 statements: vec![ast::Statement::Agent(agent_stmt.clone())],
             };
+            // SPEC_28 — platform-service agent; funded from the
+            // `abw-system` principal's credential store.
+            let credentials = match crate::resolve_agent(&spawn_state, analyst_id).await {
+                Ok(db_agent) => {
+                    crate::build_execution_credentials(&spawn_state, &db_agent, &card).await
+                }
+                Err(_) => fermi::agent_backend::credentials::ResolvedCredentials::unfunded_arc(),
+            };
+
             let context = ExecutionContext {
                 program,
                 agent_card: card.clone(),
                 creature_id: None,
                 cognition_tier: None,
+                credentials,
             };
 
             match spawn_state
@@ -683,22 +698,19 @@ pub async fn ingest_observations_handler(
                             output.metadata.reasoning.as_deref().unwrap_or("")
                         );
                         let t_embed = tokio::time::Instant::now();
-                        let provenance = match spawn_state
-                            .embedder
-                            .generate_provenanced(&embed_text)
-                            .await
-                        {
-                            Ok(p) => {
-                                tracing::info!(
-                                    elapsed_ms = t_embed.elapsed().as_millis() as u64,
-                                    model = %p.model_id,
-                                    site = "observation_analyst",
-                                    "embed_call"
-                                );
-                                Some(p)
-                            }
-                            Err(_) => None,
-                        };
+                        let provenance =
+                            match spawn_state.embedder.generate_provenanced(&embed_text).await {
+                                Ok(p) => {
+                                    tracing::info!(
+                                        elapsed_ms = t_embed.elapsed().as_millis() as u64,
+                                        model = %p.model_id,
+                                        site = "observation_analyst",
+                                        "embed_call"
+                                    );
+                                    Some(p)
+                                }
+                                Err(_) => None,
+                            };
                         let source_ref = serde_json::json!({
                             "kind": "observation_analyst",
                             "agent_id": agent_uuid,

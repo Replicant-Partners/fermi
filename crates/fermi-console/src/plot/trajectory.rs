@@ -216,16 +216,19 @@ impl TrajectorySpec {
         let t = f.hover_x(local_x, local_y)?;
         let model = self.model_series();
         let crowd = self.crowd_series();
-        let model_pct = (!model.is_empty()).then(|| interpolate(&model, t)).flatten();
-        let crowd_pct = (!crowd.is_empty()).then(|| interpolate(&crowd, t)).flatten();
+        let model_pct = (!model.is_empty())
+            .then(|| interpolate(&model, t))
+            .flatten();
+        let crowd_pct = (!crowd.is_empty())
+            .then(|| interpolate(&crowd, t))
+            .flatten();
         let corr = self.correlated(&f);
         Some(Probe {
             t,
             model_pct,
             crowd_pct,
             edge_pp: model_pct.zip(crowd_pct).map(|(m, c)| m - c),
-            event: nearest_event(&corr, t, self.px_per_sec(&f), EVENT_LATCH_PX)
-                .map(|e| e.index),
+            event: nearest_event(&corr, t, self.px_per_sec(&f), EVENT_LATCH_PX).map(|e| e.index),
         })
     }
 }
@@ -239,12 +242,21 @@ mod tests {
             model: vec![
                 Point { t: 0.0, pct: 10.0 },
                 Point { t: 99.0, pct: 10.0 },
-                Point { t: 101.0, pct: 20.0 },
-                Point { t: 200.0, pct: 20.0 },
+                Point {
+                    t: 101.0,
+                    pct: 20.0,
+                },
+                Point {
+                    t: 200.0,
+                    pct: 20.0,
+                },
             ],
             crowd: vec![
                 Point { t: 0.0, pct: 15.0 },
-                Point { t: 200.0, pct: 15.0 },
+                Point {
+                    t: 200.0,
+                    pct: 15.0,
+                },
             ],
             events: vec![
                 Event {
@@ -428,10 +440,7 @@ mod tests {
     #[test]
     fn the_y_axis_never_implies_a_negative_probability() {
         let mut d = data();
-        d.model = vec![
-            Point { t: 0.0, pct: 0.4 },
-            Point { t: 100.0, pct: 0.6 },
-        ];
+        d.model = vec![Point { t: 0.0, pct: 0.4 }, Point { t: 100.0, pct: 0.6 }];
         d.crowd.clear();
         d.base_rate_pct = None;
         d.crowd_price_pct = None;

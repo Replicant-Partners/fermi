@@ -4774,11 +4774,40 @@
                 actionBtn = `<button class="owner-btn" style="border-color:var(--aqua);color:var(--aqua);font-size:0.8em;padding:3px 10px" onclick="requestOrchestraMembership('${m.orchestra}','${agentId}')">Request Membership</button>`;
               }
 
+              // Per-agent provenance, not the orchestra's policy blurb.
+              // `membership_rule` describes how the orchestra admits
+              // agents in general; printing it here made every member
+              // read as "admin-approved" whether or not anyone reviewed
+              // it. Show what the record actually says.
+              let provenanceLine;
+              if (m.provenance === "approved") {
+                const who = m.reviewed_by ? ` by ${escapeHtml(m.reviewed_by)}` : "";
+                const when = m.reviewed_at
+                  ? ` on ${escapeHtml(new Date(m.reviewed_at).toLocaleDateString())}`
+                  : "";
+                provenanceLine = `<div style="font-size:0.72em;color:var(--green);margin-top:2px">approved${who}${when}</div>`;
+              } else if (m.provenance === "implicit") {
+                provenanceLine = `<div style="font-size:0.72em;color:var(--fg4);margin-top:2px">${escapeHtml(m.membership_rule || "")}</div>`;
+              } else if (m.provenance === "unreviewed") {
+                // Member, but never through review. `membership_source`
+                // says how it got in, honestly — curated_seed (platform
+                // boot seed) or admin_grant (override).
+                const how =
+                  m.membership_source === "curated_seed"
+                    ? "platform-seeded — not admin-reviewed"
+                    : m.membership_source === "admin_grant"
+                      ? "granted by an admin — no review on record"
+                      : "no approval on record";
+                provenanceLine = `<div style="font-size:0.72em;color:var(--yellow);margin-top:2px">${escapeHtml(how)}</div>`;
+              } else {
+                provenanceLine = `<div style="font-size:0.72em;color:var(--fg4);margin-top:2px">${escapeHtml(m.membership_rule || "")}</div>`;
+              }
+
               return `
                 <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--bg0);border:1px solid var(--bg3);border-radius:6px;margin-bottom:6px">
                   <div style="flex:1">
                     <div style="font-family:'JetBrains Mono',monospace;font-size:0.9em;color:var(--fg1)">${m.orchestra}</div>
-                    <div style="font-size:0.72em;color:var(--fg4);margin-top:2px">${escapeHtml(m.membership_rule || "")}</div>
+                    ${provenanceLine}
                     ${pending && pending.review_note ? `<div style="font-size:0.72em;color:var(--yellow);margin-top:2px">note: ${escapeHtml(pending.review_note)}</div>` : ""}
                   </div>
                   ${statusPill}

@@ -279,7 +279,11 @@ impl AgentRegistry {
             // calculate_cost returns 0.0 for them so total_cost_usd stays
             // accurate as "cloud spend" and the catalogue badge can surface
             // "Runs locally — no per-execution charge" when cost == 0.
-            let cost = calculate_cost(&card.capabilities.provider, &card.capabilities.model, tokens);
+            let cost = calculate_cost(
+                &card.capabilities.provider,
+                &card.capabilities.model,
+                tokens,
+            );
             card.usage.total_cost_usd += cost;
         }
 

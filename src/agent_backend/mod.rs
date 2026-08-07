@@ -19,7 +19,14 @@
 /// - `llm_executor.rs` — simple LLM executor (no tools)
 /// - `simops_tools.rs` — SimOps deterministic implementations (used by skills/simops.rs)
 pub mod agent_card;
+/// Per-execution provider credentials (SPEC_28). The single path by which
+/// an executor obtains an LLM API key.
+pub mod credentials;
 pub mod executor;
+/// SPEC_28 acceptance tests: an agent's funding must not depend on the
+/// shape of its output. Test-only module.
+#[cfg(test)]
+mod funding_parity_tests;
 pub mod kg_context;
 pub mod llm_executor;
 /// Outbound MCP client: lets an agent consume tools from remote MCP

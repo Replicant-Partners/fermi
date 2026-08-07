@@ -93,9 +93,8 @@ impl From<sqlx::Error> for ForkError {
 const FLAG_UNUSED_AGENTS: bool = true;
 
 /// File paths matching these patterns are flagged as incidental.
-const INCIDENTAL_FILE_PATTERNS: &[&str] = &[
-    "scratch", "tmp", "temp", "test", "debug", ".log", ".bak",
-];
+const INCIDENTAL_FILE_PATTERNS: &[&str] =
+    &["scratch", "tmp", "temp", "test", "debug", ".log", ".bak"];
 
 /// Budget = average observed spend per session × 1.3 headroom, clamped.
 const MIN_BUDGET: i32 = 50;
@@ -132,7 +131,8 @@ pub async fn introspect_workspace_to_draft(
     let workspace_name: String = row.try_get("name").unwrap_or_default();
     let workspace_slug: Option<String> = row.try_get("slug").ok();
     let mission: Option<String> = row.try_get("mission").ok();
-    let composition_strategist_id: Option<uuid::Uuid> = row.try_get("coordination_strategist_id").ok();
+    let composition_strategist_id: Option<uuid::Uuid> =
+        row.try_get("coordination_strategist_id").ok();
     let origin: Option<String> = row.try_get("origin").ok();
     let workspace_budget: i32 = row.try_get("workspace_budget").unwrap_or(0);
     let workspace_spent: i32 = row.try_get("workspace_spent").unwrap_or(0);
@@ -145,12 +145,11 @@ pub async fn introspect_workspace_to_draft(
             // Heuristic: an origin that's something other than the generic
             // personal/bestiary buckets likely points at an App slug already.
             // Could still be e.g. "rabble_swarm" — check the apps table.
-            let app_row: Option<(String,)> = sqlx::query_as::<_, (String,)>(
-                "SELECT slug FROM apps WHERE slug = $1 LIMIT 1",
-            )
-            .bind(o)
-            .fetch_optional(db)
-            .await?;
+            let app_row: Option<(String,)> =
+                sqlx::query_as::<_, (String,)>("SELECT slug FROM apps WHERE slug = $1 LIMIT 1")
+                    .bind(o)
+                    .fetch_optional(db)
+                    .await?;
             if let Some((slug,)) = app_row {
                 return Err(ForkError::AlreadyAnApp(slug));
             }
@@ -200,23 +199,29 @@ pub async fn introspect_workspace_to_draft(
 
     if !unused.is_empty() {
         let summary = if unused.len() == 1 {
-            format!("'{}' was hired but never executed in this workspace", unused[0])
+            format!(
+                "'{}' was hired but never executed in this workspace",
+                unused[0]
+            )
         } else {
-            format!("{} hired agents were never executed: {}", unused.len(), unused.join(", "))
+            format!(
+                "{} hired agents were never executed: {}",
+                unused.len(),
+                unused.join(", ")
+            )
         };
         issues.push(
-            Issue::suggest("workspace_template.auto_hire", summary)
-                .with_fix(Fix {
-                    label: format!("Remove unused agent(s) from auto_hire ({})", unused.len()),
-                    patch: json!([{
-                        "op": "replace",
-                        "path": "/workspace_template/auto_hire",
-                        "value": fleet.iter()
-                            .filter(|a| !unused.contains(a))
-                            .cloned()
-                            .collect::<Vec<_>>(),
-                    }]),
-                }),
+            Issue::suggest("workspace_template.auto_hire", summary).with_fix(Fix {
+                label: format!("Remove unused agent(s) from auto_hire ({})", unused.len()),
+                patch: json!([{
+                    "op": "replace",
+                    "path": "/workspace_template/auto_hire",
+                    "value": fleet.iter()
+                        .filter(|a| !unused.contains(a))
+                        .cloned()
+                        .collect::<Vec<_>>(),
+                }]),
+            }),
         );
     }
 
@@ -461,9 +466,18 @@ mod tests {
 
     #[test]
     fn derive_slug_prefers_workspace_slug() {
-        assert_eq!(derive_slug_from_workspace("Efrain Notes", Some("efrain_notes")), "efrain_notes");
-        assert_eq!(derive_slug_from_workspace("Efrain Notes", None), "efrain_notes");
+        assert_eq!(
+            derive_slug_from_workspace("Efrain Notes", Some("efrain_notes")),
+            "efrain_notes"
+        );
+        assert_eq!(
+            derive_slug_from_workspace("Efrain Notes", None),
+            "efrain_notes"
+        );
         // Workspace slug invalid → fall back to name slugify
-        assert_eq!(derive_slug_from_workspace("Efrain Notes", Some("123badslug")), "efrain_notes");
+        assert_eq!(
+            derive_slug_from_workspace("Efrain Notes", Some("123badslug")),
+            "efrain_notes"
+        );
     }
 }

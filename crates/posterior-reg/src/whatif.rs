@@ -56,7 +56,10 @@ pub fn predict(
     //   E[Y]     = E[μ_i]
     //   Var[Y]   = E[σ_i²] + Var[μ_i]
     let mean_of_means: f64 = means.iter().sum::<f64>() / means.len() as f64;
-    let var_of_means: f64 = means.iter().map(|m| (m - mean_of_means).powi(2)).sum::<f64>()
+    let var_of_means: f64 = means
+        .iter()
+        .map(|m| (m - mean_of_means).powi(2))
+        .sum::<f64>()
         / (means.len() as f64);
     let mean_of_vars: f64 = stds.iter().map(|s| s * s).sum::<f64>() / stds.len() as f64;
     let total_var = mean_of_vars + var_of_means;
@@ -119,12 +122,16 @@ pub fn input_sensitivity(
     // Validate ranges
     let mut ranges_vec: Vec<(f64, f64)> = Vec::with_capacity(p);
     for fname in feature_names {
-        let (lo, hi) = feature_ranges.get(fname).ok_or_else(|| {
-            RegressionError::MissingFeature {
-                name: fname.clone(),
-                sample: format!("feature_ranges {:?}", feature_ranges.keys().collect::<Vec<_>>()),
-            }
-        })?;
+        let (lo, hi) =
+            feature_ranges
+                .get(fname)
+                .ok_or_else(|| RegressionError::MissingFeature {
+                    name: fname.clone(),
+                    sample: format!(
+                        "feature_ranges {:?}",
+                        feature_ranges.keys().collect::<Vec<_>>()
+                    ),
+                })?;
         if !lo.is_finite() || !hi.is_finite() || hi <= lo {
             return Err(RegressionError::Internal(format!(
                 "invalid range for {}: ({}, {})",
@@ -296,7 +303,11 @@ pub fn compare_scenarios(
         0.5
     };
 
-    let risk_ratio = if std_b > 0.0 { std_a / std_b } else { f64::INFINITY };
+    let risk_ratio = if std_b > 0.0 {
+        std_a / std_b
+    } else {
+        f64::INFINITY
+    };
 
     Ok(ScenarioComparison {
         a: dist_a,

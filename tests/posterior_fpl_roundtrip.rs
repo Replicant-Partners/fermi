@@ -30,17 +30,18 @@ fn parse_driver_with_distribution(fitted: &FittedDistribution) -> Distribution {
         )
     });
 
-    let program = Parser::new(tokens)
-        .parse()
-        .unwrap_or_else(|e| panic!("Parser failed on {:?}: {:?}\nsource:\n{}", fitted, e, source));
+    let program = Parser::new(tokens).parse().unwrap_or_else(|e| {
+        panic!(
+            "Parser failed on {:?}: {:?}\nsource:\n{}",
+            fitted, e, source
+        )
+    });
 
     // Find the driver statement and return its distribution.
     for stmt in program.statements {
         if let Statement::Driver(d) = stmt {
             if d.name == "fitted_driver" {
-                return d
-                    .distribution
-                    .expect("driver had no distribution clause");
+                return d.distribution.expect("driver had no distribution clause");
             }
         }
     }

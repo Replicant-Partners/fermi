@@ -41,7 +41,12 @@ impl LinearNormal {
     fn linear_predictor(params: &[f64], n_features: usize, x: &[f64]) -> f64 {
         let intercept = Self::intercept(params);
         let betas = Self::betas(params, n_features);
-        intercept + betas.iter().zip(x.iter()).map(|(b, xj)| b * xj).sum::<f64>()
+        intercept
+            + betas
+                .iter()
+                .zip(x.iter())
+                .map(|(b, xj)| b * xj)
+                .sum::<f64>()
     }
 }
 
@@ -71,9 +76,7 @@ impl RegressionModel for LinearNormal {
         let sigma = log_sigma.exp();
         let resid = outcome - mu;
         // log N(resid; 0, sigma) = -0.5 log(2π) - log_sigma - resid²/(2σ²)
-        -0.5 * (2.0 * std::f64::consts::PI).ln()
-            - log_sigma
-            - 0.5 * (resid / sigma).powi(2)
+        -0.5 * (2.0 * std::f64::consts::PI).ln() - log_sigma - 0.5 * (resid / sigma).powi(2)
     }
 
     fn grad_log_likelihood_at(
@@ -168,8 +171,8 @@ mod tests {
             let mut down = params.clone();
             up[i] += eps;
             down[i] -= eps;
-            let fd = (m.log_likelihood_at(&up, &x, y) - m.log_likelihood_at(&down, &x, y))
-                / (2.0 * eps);
+            let fd =
+                (m.log_likelihood_at(&up, &x, y) - m.log_likelihood_at(&down, &x, y)) / (2.0 * eps);
             assert!(
                 (analytical[i] - fd).abs() < 1e-6,
                 "param {}: analytical={}, fd={}",

@@ -66,10 +66,7 @@ pub fn validate(slug: &str) -> Result<(), String> {
 /// use crate::slug;
 /// slug::validate_http("name", &req.agent_name)?;
 /// ```
-pub fn validate_http(
-    field: &str,
-    slug: &str,
-) -> Result<(), (axum::http::StatusCode, String)> {
+pub fn validate_http(field: &str, slug: &str) -> Result<(), (axum::http::StatusCode, String)> {
     validate(slug).map_err(|msg| {
         (
             axum::http::StatusCode::BAD_REQUEST,
@@ -97,8 +94,7 @@ mod tests {
     fn rejects_slash_separator() {
         let err = validate("efra-ai/05-valuation").unwrap_err();
         assert!(
-            err.contains("only lowercase letters, digits, and underscores")
-                || err.contains("/"),
+            err.contains("only lowercase letters, digits, and underscores") || err.contains("/"),
             "error message must explain the rule; got {err}"
         );
     }

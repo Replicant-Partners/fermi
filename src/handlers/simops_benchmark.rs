@@ -75,19 +75,33 @@ pub async fn commit_projection(
     // Table existence check — non-fatal if migration 141 pending
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM information_schema.tables
-         WHERE table_name='process_projection_commits')"
-    ).fetch_one(pool).await.unwrap_or(false);
-    if !exists { return None; }
+         WHERE table_name='process_projection_commits')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+    if !exists {
+        return None;
+    }
 
     let hash = projection_commitment_hash(
-        &observation_id, predicted_value, model_uri, phenomenon_time_ms
+        &observation_id,
+        predicted_value,
+        model_uri,
+        phenomenon_time_ms,
     );
 
     // Idempotent
     let already: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM process_projection_commits WHERE commitment_hash=$1)"
-    ).bind(&hash).fetch_one(pool).await.unwrap_or(false);
-    if already { return Some(hash); }
+        "SELECT EXISTS(SELECT 1 FROM process_projection_commits WHERE commitment_hash=$1)",
+    )
+    .bind(&hash)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+    if already {
+        return Some(hash);
+    }
 
     let _ = sqlx::query(
         r#"INSERT INTO process_projection_commits
@@ -95,7 +109,7 @@ pub async fn commit_projection(
             observable_property, feature_of_interest, predicted_value,
             model_uri, stage_id, commitment_hash, committed_at,
             phenomenon_time_ms, process_context)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),$11,$12)"#
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),$11,$12)"#,
     )
     .bind(observation_id)
     .bind(projection_id)
@@ -137,16 +151,18 @@ pub struct RealReading {
 ///   always:        'any_reading'
 ///   if delta>thr:  'anomaly_delta'
 ///   if at interval: 'sample_point'
-pub async fn resolve_against_projection(
-    pool: &PgPool,
-    reading: &RealReading,
-) -> usize {
+pub async fn resolve_against_projection(pool: &PgPool, reading: &RealReading) -> usize {
     // Table existence check
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM information_schema.tables
-         WHERE table_name='process_spacetime')"
-    ).fetch_one(pool).await.unwrap_or(false);
-    if !exists { return 0; }
+         WHERE table_name='process_spacetime')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+    if !exists {
+        return 0;
+    }
 
     // Find the most recent committed projection for this property/feature
     // within the last 30 days (configurable via sample config)
@@ -161,7 +177,7 @@ pub async fn resolve_against_projection(
              AND ($2::text IS NULL OR c.feature_of_interest = $2)
              AND c.committed_at >= NOW() - INTERVAL '30 days'
            ORDER BY c.committed_at DESC
-           LIMIT 1"#
+           LIMIT 1"#,
     )
     .bind(&reading.observable_property)
     .bind(reading.feature_of_interest.as_deref())
@@ -169,7 +185,9 @@ pub async fn resolve_against_projection(
     .await
     .unwrap_or(None);
 
-    let Some(proj) = proj_row else { return 0; };
+    let Some(proj) = proj_row else {
+        return 0;
+    };
 
     let commit_id: Uuid = proj.get("commit_id");
     let predicted: f64 = proj.get("predicted_value");
@@ -183,20 +201,20 @@ pub async fn resolve_against_projection(
     let abs_err = (predicted - actual).abs();
     let rel_err = abs_err / actual.abs().max(1e-9);
     let accuracy = (1.0 - rel_err.min(1.0)).clamp(0.0, 1.0);
-    let direction = if (predicted - actual).abs() < 1e-9 { "exact" }
-                    else if predicted > actual { "over" } else { "under" };
+    let direction = if (predicted - actual).abs() < 1e-9 {
+        "exact"
+    } else if predicted > actual {
+        "over"
+    } else {
+        "under"
+    };
 
     // Load sample config for this workspace/property
-    let (sample_interval, anomaly_threshold) = load_sample_config(
-        pool,
-        reading.workspace_id,
-        &reading.observable_property,
-    ).await;
+    let (sample_interval, anomaly_threshold) =
+        load_sample_config(pool, reading.workspace_id, &reading.observable_property).await;
 
     // Determine which resolution modes apply
-    let mut modes: Vec<(&str, Option<f64>, Option<f64>)> = vec![
-        ("any_reading", None, None),
-    ];
+    let mut modes: Vec<(&str, Option<f64>, Option<f64>)> = vec![("any_reading", None, None)];
 
     // Anomaly delta mode: rel_err exceeds threshold
     if rel_err > anomaly_threshold {
@@ -209,9 +227,11 @@ pub async fn resolve_against_projection(
     if let Some(pms) = phenom_ms {
         let pred_time = chrono::DateTime::<Utc>::from_timestamp_millis(pms);
         if let Some(pred_t) = pred_time {
-            let hours_since_pred = reading.measured_at
+            let hours_since_pred = reading
+                .measured_at
                 .signed_duration_since(pred_t)
-                .num_seconds() as f64 / 3600.0;
+                .num_seconds() as f64
+                / 3600.0;
             // Within 15 minutes of a sample interval boundary
             let remainder = hours_since_pred % sample_interval;
             let near_boundary = remainder < 0.25 || (sample_interval - remainder) < 0.25;
@@ -228,12 +248,22 @@ pub async fn resolve_against_projection(
              FROM process_spacetime
              WHERE model_uri = $1
                AND resolved_at >= NOW() - INTERVAL '30 days'
-             LIMIT 1"
-        ).bind(mu).fetch_optional(pool).await.ok().flatten()
-    } else { None };
+             LIMIT 1",
+        )
+        .bind(mu)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+    } else {
+        None
+    };
 
-    let workspace_id = reading.workspace_id
-        .or_else(|| proj.try_get::<Option<Uuid>, _>("commit_workspace_id").ok().flatten());
+    let workspace_id = reading.workspace_id.or_else(|| {
+        proj.try_get::<Option<Uuid>, _>("commit_workspace_id")
+            .ok()
+            .flatten()
+    });
 
     let mut written = 0usize;
     for (mode, anom_thr, samp_int) in modes {
@@ -248,7 +278,7 @@ pub async fn resolve_against_projection(
                 conditions_at_measure, loop5_model_accuracy,
                 committed_at, resolved_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
-                       $13,$14,$15,$16,$17,$18,$19,$20,$21,$22,NOW())"#
+                       $13,$14,$15,$16,$17,$18,$19,$20,$21,$22,NOW())"#,
         )
         .bind(commit_id)
         .bind(workspace_id)
@@ -275,7 +305,9 @@ pub async fn resolve_against_projection(
         .execute(pool)
         .await;
 
-        if r.is_ok() { written += 1; }
+        if r.is_ok() {
+            written += 1;
+        }
     }
     written
 }
@@ -294,14 +326,16 @@ async fn load_sample_config(
                AND (observable_property = $2 OR observable_property = '*')
                AND enabled = true
              ORDER BY CASE WHEN observable_property = $2 THEN 0 ELSE 1 END
-             LIMIT 1"
+             LIMIT 1",
         )
         .bind(wid)
         .bind(property)
         .fetch_optional(pool)
         .await
         .unwrap_or(None)
-    } else { None };
+    } else {
+        None
+    };
 
     // Fall back to platform defaults
     let (interval, threshold) = if let Some(r) = row {
@@ -317,7 +351,11 @@ async fn load_sample_config(
 
 // ── GET /api/simops/process-spacetime/:workspace_id ───────────────────────
 
-use axum::{extract::{Path, Query, State}, http::StatusCode, Json};
+use axum::{
+    extract::{Path, Query, State},
+    http::StatusCode,
+    Json,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -328,7 +366,7 @@ use fermi_auth::AuthPrincipal;
 pub struct ProcessSpacetimeQuery {
     pub model_uri: Option<String>,
     pub observable_property: Option<String>,
-    pub resolution_mode: Option<String>,  // all | any_reading | sample_point | anomaly_delta
+    pub resolution_mode: Option<String>, // all | any_reading | sample_point | anomaly_delta
     pub days: Option<i64>,
     pub limit: Option<i64>,
 }
@@ -351,8 +389,11 @@ pub async fn process_spacetime_handler(
 
     let table_exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM information_schema.tables
-         WHERE table_name='process_spacetime')"
-    ).fetch_one(pool).await.unwrap_or(false);
+         WHERE table_name='process_spacetime')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
 
     if !table_exists {
         return Ok(Json(json!({
@@ -370,8 +411,16 @@ pub async fn process_spacetime_handler(
         "anomaly_delta" => "AND resolution_mode = 'anomaly_delta'",
         _ => "AND TRUE",
     };
-    let prop_clause = if q.observable_property.is_some() { "AND observable_property = $4" } else { "AND TRUE" };
-    let model_clause = if q.model_uri.is_some() { "AND model_uri = $5" } else { "AND TRUE" };
+    let prop_clause = if q.observable_property.is_some() {
+        "AND observable_property = $4"
+    } else {
+        "AND TRUE"
+    };
+    let model_clause = if q.model_uri.is_some() {
+        "AND model_uri = $5"
+    } else {
+        "AND TRUE"
+    };
 
     let sql = format!(
         r#"SELECT
@@ -391,15 +440,18 @@ pub async fn process_spacetime_handler(
            LIMIT $3"#
     );
 
-    let mut query = sqlx::query(&sql)
-        .bind(workspace_id)
-        .bind(days)
-        .bind(limit);
+    let mut query = sqlx::query(&sql).bind(workspace_id).bind(days).bind(limit);
 
-    if let Some(ref prop) = q.observable_property { query = query.bind(prop); }
-    if let Some(ref mu) = q.model_uri { query = query.bind(mu); }
+    if let Some(ref prop) = q.observable_property {
+        query = query.bind(prop);
+    }
+    if let Some(ref mu) = q.model_uri {
+        query = query.bind(mu);
+    }
 
-    let rows = query.fetch_all(pool).await
+    let rows = query
+        .fetch_all(pool)
+        .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let spacetime: Vec<Value> = rows.iter().map(|r| {
@@ -426,24 +478,40 @@ pub async fn process_spacetime_handler(
 
     // Summary metrics
     let n = spacetime.len();
-    let anomalies: Vec<&Value> = spacetime.iter().filter(|r| r["resolution_mode"] == "anomaly_delta").collect();
-    let accuracy_vals: Vec<f64> = spacetime.iter()
+    let anomalies: Vec<&Value> = spacetime
+        .iter()
+        .filter(|r| r["resolution_mode"] == "anomaly_delta")
+        .collect();
+    let accuracy_vals: Vec<f64> = spacetime
+        .iter()
         .filter_map(|r| r["accuracy_score"].as_f64())
         .collect();
-    let mean_accuracy = if accuracy_vals.is_empty() { None }
-        else { Some(accuracy_vals.iter().sum::<f64>() / accuracy_vals.len() as f64) };
+    let mean_accuracy = if accuracy_vals.is_empty() {
+        None
+    } else {
+        Some(accuracy_vals.iter().sum::<f64>() / accuracy_vals.len() as f64)
+    };
 
     // Per-model summary
-    let mut model_stats: std::collections::HashMap<String, (f64, usize)> = std::collections::HashMap::new();
+    let mut model_stats: std::collections::HashMap<String, (f64, usize)> =
+        std::collections::HashMap::new();
     for row in &spacetime {
         if let (Some(mu), Some(acc)) = (row["model_uri"].as_str(), row["accuracy_score"].as_f64()) {
             let e = model_stats.entry(mu.to_string()).or_insert((0.0, 0));
-            e.0 += acc; e.1 += 1;
+            e.0 += acc;
+            e.1 += 1;
         }
     }
-    let model_accuracy: Value = model_stats.iter().map(|(mu, (sum, n))| {
-        (mu.clone(), json!({ "mean_accuracy": sum/(*n as f64), "n": n }))
-    }).collect::<serde_json::Map<_,_>>().into();
+    let model_accuracy: Value = model_stats
+        .iter()
+        .map(|(mu, (sum, n))| {
+            (
+                mu.clone(),
+                json!({ "mean_accuracy": sum/(*n as f64), "n": n }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>()
+        .into();
 
     Ok(Json(json!({
         "workspace_id": workspace_id,
@@ -468,7 +536,7 @@ pub async fn get_sample_config_handler(
         "SELECT observable_property, sample_interval_hours, anomaly_threshold, enabled
          FROM process_sample_config
          WHERE workspace_id = $1 OR workspace_id = '00000000-0000-0000-0000-000000000000'
-         ORDER BY CASE WHEN workspace_id = $1 THEN 0 ELSE 1 END, observable_property"
+         ORDER BY CASE WHEN workspace_id = $1 THEN 0 ELSE 1 END, observable_property",
     )
     .bind(workspace_id)
     .fetch_all(&state.db)
@@ -482,7 +550,9 @@ pub async fn get_sample_config_handler(
         "enabled": r.try_get::<bool,_>("enabled").ok(),
     })).collect();
 
-    Ok(Json(json!({ "workspace_id": workspace_id, "config": config })))
+    Ok(Json(
+        json!({ "workspace_id": workspace_id, "config": config }),
+    ))
 }
 
 /// PUT /api/simops/workspaces/:workspace_id/sample-config
@@ -490,7 +560,7 @@ pub async fn get_sample_config_handler(
 pub struct SampleConfigUpdate {
     pub observable_property: String,
     pub sample_interval_hours: Option<f64>,
-    pub anomaly_threshold_pct: Option<f64>,  // 0-100; stored as 0-1
+    pub anomaly_threshold_pct: Option<f64>, // 0-100; stored as 0-1
     pub enabled: Option<bool>,
 }
 
@@ -509,7 +579,7 @@ pub async fn put_sample_config_handler(
            ON CONFLICT (workspace_id, observable_property) DO UPDATE SET
              sample_interval_hours = COALESCE($3, process_sample_config.sample_interval_hours),
              anomaly_threshold = COALESCE($4, process_sample_config.anomaly_threshold),
-             enabled = COALESCE($5, process_sample_config.enabled)"#
+             enabled = COALESCE($5, process_sample_config.enabled)"#,
     )
     .bind(workspace_id)
     .bind(&body.observable_property)

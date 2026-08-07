@@ -789,7 +789,8 @@ pub struct CockpitState {
     // stays empty and the agent picker shows "No research agents found in
     // registry." — exactly what Mario hit.
     //
-    // The server keeps the same list at GET /api/agents?tag=fermi-orchestra.
+    // The server keeps the authoritative roster at
+    // GET /api/agents?orchestra=fermi (the mig-172 membership view).
     // We fetch it lazily on first cockpit open (or on demand from the
     // picker) and cache it here. `render_agent_picker` falls back to this
     // list when `state.registry` returns zero cards, so the picker works
@@ -1756,15 +1757,17 @@ impl CockpitState {
         cx.notify();
     }
 
-    /// v0.8.13: hydrate the server-agents cache when the local
-    /// filesystem registry is empty. Called lazily from the picker
-    /// on first render if `state.registry.list_cards()` returned zero
-    /// fermi-orchestra cards. Idempotent — subsequent calls no-op
-    /// unless `server_agent_cards_fetched` has been reset by the caller.
+    /// Hydrate the server-side Fermi roster cache from
+    /// `GET /api/agents?orchestra=fermi` (the mig-172 membership view).
     ///
-    /// The response shape is whatever `GET /api/agents?tag=fermi-orchestra`
-    /// returns — we only extract `agent_id`, `display_alias`, and
-    /// `description` per card because that's all the picker renders.
+    /// Now unconditional rather than "only when the local registry is
+    /// empty": the picker and `discover_research_agents` present the
+    /// UNION of local cards and server members, so this cache is needed
+    /// on every install, not just packaged ones with no `agents/` dir.
+    ///
+    /// Idempotent within a session via `server_agent_cards_fetched`; use
+    /// `refresh_server_agent_cards` to pick up newly admitted members
+    /// without restarting the app.
     pub fn load_server_agent_cards(&mut self, cx: &mut Context<Self>) {
         if self.server_agent_cards_loading || self.server_agent_cards_fetched {
             return;
@@ -1773,20 +1776,50 @@ impl CockpitState {
         cx.notify();
         let api = self.api.clone();
         cx.spawn(async move |this, cx| {
-            let result = api.list_agents().await;
+            // Same two-call verification as `FermiConsole::fetch_agents`:
+            // `?orchestra=fermi` is silently ignored by a server that
+            // predates it, which would hydrate the picker with every
+            // agent on the platform. Confirm against the roster endpoint,
+            // whose path encodes the constraint.
+            let (result, roster_res) =
+                futures::join!(api.list_agents(), api.list_orchestra_members("fermi"));
             this.update(cx, |state, cx| {
                 state.server_agent_cards_loading = false;
                 state.server_agent_cards_fetched = true;
                 match result {
                     Ok(data) => {
-                        let arr = data
+                        let mut arr = data
                             .get("agents")
                             .and_then(|v| v.as_array())
                             .cloned()
                             .or_else(|| data.as_array().cloned())
                             .unwrap_or_default();
+
+                        match &roster_res {
+                            Ok(roster) => {
+                                let filtered = fermi_console::roster::retain_members(arr, roster);
+                                if filtered.server_ignored_filter {
+                                    log::warn!(
+                                        "[registry] server ignored ?orchestra=fermi ({} returned, \
+                                         {} are members) — filtered client-side",
+                                        filtered.received,
+                                        filtered.cards.len()
+                                    );
+                                }
+                                arr = filtered.cards;
+                            }
+                            Err(e) => {
+                                log::error!(
+                                    "[registry] roster unavailable ({e}); refusing to hydrate \
+                                     {} unverified agents as orchestra members",
+                                    arr.len()
+                                );
+                                arr.clear();
+                            }
+                        }
+
                         log::info!(
-                            "[registry] hydrated {} agent cards from server (local filesystem returned 0)",
+                            "[registry] hydrated {} fermi member(s) from server",
                             arr.len()
                         );
                         state.server_agent_cards = arr;
@@ -1800,6 +1833,18 @@ impl CockpitState {
             .ok();
         })
         .detach();
+    }
+
+    /// Force a re-fetch of the server roster.
+    ///
+    /// `server_agent_cards_fetched` is a one-shot latch that was only ever
+    /// cleared by constructing a fresh `CockpitState`. That meant an agent
+    /// admitted to the orchestra while the console was open stayed
+    /// invisible until the operator restarted the app — the last step of
+    /// the publish → approve → use loop silently required a restart.
+    pub fn refresh_server_agent_cards(&mut self, cx: &mut Context<Self>) {
+        self.server_agent_cards_fetched = false;
+        self.load_server_agent_cards(cx);
     }
 
     /// Manually re-trigger the Polymarket type-ahead search for the
@@ -3105,18 +3150,50 @@ impl CockpitState {
         }
     }
 
-    /// Discover research-relevant agents from the local registry.
-    /// Filters by agent_type and tags to find agents suitable for forecasting.
+    /// Discover research-relevant agents for the Fermi orchestra.
+    ///
+    /// Union of the local registry (on-disk curated cards, identified by
+    /// the hand-authored `fermi-orchestra` tag) and the server roster
+    /// (`/api/agents?orchestra=fermi`, i.e. the authoritative mig-172
+    /// membership view), deduped by agent_id.
+    ///
+    /// Local-only was the bug: a third-party agent admitted to the
+    /// orchestra by an admin has no card on this machine and does not
+    /// carry the tag, so it was undiscoverable here even though the
+    /// server considered it a full member.
     fn discover_research_agents(&self) -> Vec<(String, String)> {
-        let cards = self.registry.list_cards().unwrap_or_default();
-        cards
-            .iter()
-            .filter(|card| {
-                // Only agents tagged for the Fermi forecasting orchestra
-                card.metadata.tags.iter().any(|t| t == "fermi-orchestra")
-            })
-            .map(|card| (card.agent_id.clone(), card.metadata.description.clone()))
-            .collect()
+        let mut out: Vec<(String, String)> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        for card in self.registry.list_cards().unwrap_or_default().iter() {
+            if card.metadata.tags.iter().any(|t| t == "fermi-orchestra")
+                && seen.insert(card.agent_id.clone())
+            {
+                out.push((card.agent_id.clone(), card.metadata.description.clone()));
+            }
+        }
+
+        for c in self.server_agent_cards.iter() {
+            let Some(id) = c.get("agent_id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            // Infrastructure agents (fermi itself, xaman_ek) are not hires.
+            if c.get("tier").and_then(|v| v.as_str()) == Some("system") {
+                continue;
+            }
+            if !seen.insert(id.to_string()) {
+                continue;
+            }
+            let desc = c
+                .get("description")
+                .and_then(|v| v.as_str())
+                .or_else(|| c.get("display_alias").and_then(|v| v.as_str()))
+                .unwrap_or("")
+                .to_string();
+            out.push((id.to_string(), desc));
+        }
+
+        out
     }
 
     /// Fire a single agent in the background. Results flow back via cx.spawn.
@@ -3361,12 +3438,12 @@ impl CockpitState {
                         statements: vec![Statement::Agent(agent_stmt.clone())],
                     };
 
-                    let context = ExecutionContext {
-                        program,
-                        agent_card: card.clone(),
-                        creature_id: None,
-                        cognition_tier: None,
-                    };
+                    // The console executes agents through the server's SSE
+                    // endpoint, which resolves credentials server-side
+                    // (SPEC_28). This local context is only used for the
+                    // in-process path, which must not spend — hence
+                    // unfunded.
+                    let context = ExecutionContext::for_agent(program, card.clone());
 
                     // Also use tokio::spawn for local execution (it uses reqwest too)
                     let handle = tokio::spawn(async move {
@@ -4169,22 +4246,15 @@ impl CockpitState {
     pub fn open_agent_picker(&mut self, driver_name: &str, cx: &mut Context<Self>) {
         self.save_focused_driver(cx);
         self.agent_search_query.clear();
-        // v0.8.13: if the local filesystem registry is empty, fetch the
-        // server-backed agent list so the picker has something to show.
-        // Lazy — only fires once per cockpit session, and only when we
-        // need it. Cost: one API call, ~1KB response.
-        let local_empty = self
-            .registry
-            .list_cards()
-            .map(|cards| {
-                !cards
-                    .iter()
-                    .any(|c| c.metadata.tags.iter().any(|t| t == "fermi-orchestra"))
-            })
-            .unwrap_or(true);
-        if local_empty && !self.server_agent_cards_fetched {
-            self.load_server_agent_cards(cx);
-        }
+        // Fetch the server-side Fermi roster so the picker can show the
+        // union of local cards and admitted orchestra members.
+        //
+        // This used to be gated on the local registry being EMPTY, which
+        // made server members unreachable on any normal install: local
+        // cards existed, so the fetch never fired, so an admin-approved
+        // third-party agent could not be assigned to a driver. Always
+        // fetch. Lazy and once per session; cost is one ~1KB call.
+        self.load_server_agent_cards(cx);
         self.focused_node = FocusedNode::AgentPicker(driver_name.to_string());
         self.right_tab = RightTab::Edit;
 
@@ -11745,6 +11815,16 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
             .child(format!("— disabled: {}", reason))
     });
 
+    let save_disabled_hint = save_disabled_reason.map(|reason| {
+        div()
+            .flex()
+            .items_center()
+            .px(px(6.0))
+            .text_size(px(10.0))
+            .text_color(rgb(theme::FG_FAINT))
+            .child(format!("— {}", reason))
+    });
+
     let mut chip_row = div()
         .flex()
         .flex_wrap()
@@ -11752,8 +11832,11 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
         .mt(px(6.0))
         .child(research_chip)
         .child(simulate_chip)
-        .child(save_chip)
-        .child(publish_chip);
+        .child(save_chip);
+    if let Some(hint) = save_disabled_hint {
+        chip_row = chip_row.child(hint);
+    }
+    chip_row = chip_row.child(publish_chip);
     if let Some(hint) = publish_disabled_hint {
         chip_row = chip_row.child(hint);
     }
@@ -14136,71 +14219,66 @@ fn render_agent_picker(
 
     // Get all available agents for the "Other agents" section.
     //
-    // Primary source: the local `state.registry` (populated from
-    // `agents/curated/` on startup).
+    // UNION of two sources, deduped by agent_id:
     //
-    // v0.8.13 fallback: when the local registry is empty (packaged
-    // client, unexpected CWD, missing $AGENTS_DIR), use the server-
-    // cached list from `/api/agents?tag=fermi-orchestra`. This is what
-    // fixes Mario's "No research agents found in registry." — execution
-    // still routes through the server SSE path, so the picker doesn't
-    // need the local `AgentCard` struct for anything but the chip label.
-    let local_agents: Vec<(String, String, Vec<String>)> = state
-        .registry
-        .list_cards()
-        .unwrap_or_default()
-        .iter()
-        .filter(|card| {
-            card.metadata.tags.iter().any(|t| t == "fermi-orchestra")
-                && card.agent_id != "fermi"
-                && card.agent_id != recommended
-        })
-        .map(|card| {
-            (
+    //   1. the local `state.registry` (`agents/curated/`), filtered by the
+    //      hand-authored `fermi-orchestra` tag — correct for on-disk cards;
+    //   2. `state.server_agent_cards`, from `/api/agents?orchestra=fermi`,
+    //      i.e. the authoritative mig-172 roster view.
+    //
+    // This was previously an either/or (`if !local.is_empty() { local }
+    // else { server }`), which meant that on any install WITH local
+    // curated cards — the normal case — a newly admitted third-party
+    // orchestra member could never be assigned to a driver. It was
+    // approved, it showed MEMBER on its own page, and it was unusable.
+    //
+    // The server branch also used to re-filter on the `fermi-orchestra`
+    // tag. That tag is authored by hand in card JSON and is never written
+    // by the approval flow, so the re-filter excluded precisely the
+    // DB-native members this fallback existed to surface. Server rows
+    // arrive pre-filtered by membership; re-filtering them on a tag is
+    // both redundant and wrong.
+    let mut available_agents: Vec<(String, String, Vec<String>)> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for card in state.registry.list_cards().unwrap_or_default().iter() {
+        if !card.metadata.tags.iter().any(|t| t == "fermi-orchestra") {
+            continue;
+        }
+        if card.agent_id == "fermi" || card.agent_id == recommended {
+            continue;
+        }
+        if seen.insert(card.agent_id.clone()) {
+            available_agents.push((
                 card.agent_id.clone(),
                 card.metadata.description.clone(),
                 card.capabilities.skills.clone(),
-            )
-        })
-        .collect();
+            ));
+        }
+    }
 
-    let available_agents: Vec<(String, String, Vec<String>)> = if !local_agents.is_empty() {
-        local_agents
-    } else {
-        state
-            .server_agent_cards
-            .iter()
-            .filter_map(|c| {
-                let id = c.get("agent_id").and_then(|v| v.as_str())?;
-                if id == "fermi" || id == recommended {
-                    return None;
-                }
-                // Server rows carry tags as a JSON array; keep only
-                // fermi-orchestra ones. Some tiers (e.g. tier=System)
-                // are also excluded server-side by the list_agents
-                // handler but we double-check here for safety.
-                let has_orchestra_tag = c
-                    .get("tags")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|t| t.as_str())
-                            .any(|t| t == "fermi-orchestra")
-                    })
-                    .unwrap_or(false);
-                if !has_orchestra_tag {
-                    return None;
-                }
-                let display = c
-                    .get("display_alias")
-                    .and_then(|v| v.as_str())
-                    .or_else(|| c.get("description").and_then(|v| v.as_str()))
-                    .unwrap_or("")
-                    .to_string();
-                Some((id.to_string(), display, Vec::<String>::new()))
-            })
-            .collect()
-    };
+    for c in state.server_agent_cards.iter() {
+        let Some(id) = c.get("agent_id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if id == "fermi" || id == recommended {
+            continue;
+        }
+        // Infrastructure agents aren't hireable specialists.
+        if c.get("tier").and_then(|v| v.as_str()) == Some("system") {
+            continue;
+        }
+        if !seen.insert(id.to_string()) {
+            continue; // already contributed by the local registry
+        }
+        let display = c
+            .get("display_alias")
+            .and_then(|v| v.as_str())
+            .or_else(|| c.get("description").and_then(|v| v.as_str()))
+            .unwrap_or("")
+            .to_string();
+        available_agents.push((id.to_string(), display, Vec::<String>::new()));
+    }
 
     let recommended_desc = state
         .registry

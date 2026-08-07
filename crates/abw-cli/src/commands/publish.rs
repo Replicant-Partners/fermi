@@ -23,7 +23,12 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<()> {
     let url = ctx.url(&format!("/api/apps/{}/publish", args.slug));
 
     if !ctx.quiet {
-        eprintln!("  {} '{}' to {}", "Publishing".bold(), args.slug.bold(), ctx.base_url.dimmed());
+        eprintln!(
+            "  {} '{}' to {}",
+            "Publishing".bold(),
+            args.slug.bold(),
+            ctx.base_url.dimmed()
+        );
     }
 
     let resp = http
@@ -42,8 +47,18 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<()> {
 
     if !ctx.quiet {
         println!();
-        println!("  {} App '{}' is now {}", "✓".green().bold(), args.slug.bold(), "public".green().bold());
-        println!("  {} {}/apps/{}", "Catalogue:".bold(), ctx.base_url, args.slug);
+        println!(
+            "  {} App '{}' is now {}",
+            "✓".green().bold(),
+            args.slug.bold(),
+            "public".green().bold()
+        );
+        println!(
+            "  {} {}/apps/{}",
+            "Catalogue:".bold(),
+            ctx.base_url,
+            args.slug
+        );
         println!();
     }
     Ok(())

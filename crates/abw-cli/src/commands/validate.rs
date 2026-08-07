@@ -5,10 +5,10 @@
 //! `Error`-severity issues; `Warning`/`Suggestion`/`Info` are advisory.
 
 use super::Ctx;
+use abw_apps_core::build_manifest;
 use anyhow::{anyhow, Result};
 use clap::Args as ClapArgs;
 use colored::*;
-use abw_apps_core::build_manifest;
 use std::path::PathBuf;
 
 use crate::manifest_io::{find_manifest, read_manifest, render_build_result};
@@ -27,7 +27,11 @@ pub struct Args {
 pub async fn run(ctx: &Ctx, args: Args) -> Result<()> {
     let path = find_manifest(args.manifest.as_deref())?;
     if !ctx.quiet {
-        eprintln!("  {} {}", "Validating".bold(), path.display().to_string().dimmed());
+        eprintln!(
+            "  {} {}",
+            "Validating".bold(),
+            path.display().to_string().dimmed()
+        );
     }
 
     let partial = read_manifest(&path)?;

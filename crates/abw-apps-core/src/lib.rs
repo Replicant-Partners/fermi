@@ -86,16 +86,36 @@ pub struct Fix {
 
 impl Issue {
     pub fn error<F: Into<String>, M: Into<String>>(field: F, message: M) -> Self {
-        Self { severity: Severity::Error, field: field.into(), message: message.into(), fix: None }
+        Self {
+            severity: Severity::Error,
+            field: field.into(),
+            message: message.into(),
+            fix: None,
+        }
     }
     pub fn warn<F: Into<String>, M: Into<String>>(field: F, message: M) -> Self {
-        Self { severity: Severity::Warning, field: field.into(), message: message.into(), fix: None }
+        Self {
+            severity: Severity::Warning,
+            field: field.into(),
+            message: message.into(),
+            fix: None,
+        }
     }
     pub fn info<F: Into<String>, M: Into<String>>(field: F, message: M) -> Self {
-        Self { severity: Severity::Info, field: field.into(), message: message.into(), fix: None }
+        Self {
+            severity: Severity::Info,
+            field: field.into(),
+            message: message.into(),
+            fix: None,
+        }
     }
     pub fn suggest<F: Into<String>, M: Into<String>>(field: F, message: M) -> Self {
-        Self { severity: Severity::Suggestion, field: field.into(), message: message.into(), fix: None }
+        Self {
+            severity: Severity::Suggestion,
+            field: field.into(),
+            message: message.into(),
+            fix: None,
+        }
     }
     pub fn with_fix(mut self, fix: Fix) -> Self {
         self.fix = Some(fix);
@@ -138,14 +158,29 @@ impl PartialManifest {
             slug: v.get("slug").and_then(|x| x.as_str()).map(String::from),
             name: v.get("name").and_then(|x| x.as_str()).map(String::from),
             tagline: v.get("tagline").and_then(|x| x.as_str()).map(String::from),
-            description: v.get("description").and_then(|x| x.as_str()).map(String::from),
-            homepage_url: v.get("homepage_url").and_then(|x| x.as_str()).map(String::from),
+            description: v
+                .get("description")
+                .and_then(|x| x.as_str())
+                .map(String::from),
+            homepage_url: v
+                .get("homepage_url")
+                .and_then(|x| x.as_str())
+                .map(String::from),
             icon_url: v.get("icon_url").and_then(|x| x.as_str()).map(String::from),
-            composition_slug: v.get("composition_slug").and_then(|x| x.as_str()).map(String::from),
-            schema_slug: v.get("schema_slug").and_then(|x| x.as_str()).map(String::from),
+            composition_slug: v
+                .get("composition_slug")
+                .and_then(|x| x.as_str())
+                .map(String::from),
+            schema_slug: v
+                .get("schema_slug")
+                .and_then(|x| x.as_str())
+                .map(String::from),
             schema_json: v.get("schema_json").cloned(),
             workspace_template: v.get("workspace_template").cloned(),
-            visibility: v.get("visibility").and_then(|x| x.as_str()).map(String::from),
+            visibility: v
+                .get("visibility")
+                .and_then(|x| x.as_str())
+                .map(String::from),
             metadata: v.get("metadata").cloned(),
         }
     }
@@ -176,13 +211,19 @@ impl BuildResult {
 
     /// Convenience: return only errors. Useful for the CLI's exit-code path.
     pub fn errors(&self) -> Vec<&Issue> {
-        self.issues.iter().filter(|i| i.severity == Severity::Error).collect()
+        self.issues
+            .iter()
+            .filter(|i| i.severity == Severity::Error)
+            .collect()
     }
 
     /// Convenience: return only warnings + suggestions. Useful for the
     /// `abw app validate` "show me what to improve" path.
     pub fn non_blocking(&self) -> Vec<&Issue> {
-        self.issues.iter().filter(|i| i.severity != Severity::Error).collect()
+        self.issues
+            .iter()
+            .filter(|i| i.severity != Severity::Error)
+            .collect()
     }
 }
 
@@ -198,14 +239,25 @@ pub fn validate_slug(slug: &str) -> Result<(), String> {
     if slug.len() < 3 || slug.len() > 64 {
         return Err(format!("slug must be 3-64 chars, got {}", slug.len()));
     }
-    if !slug.chars().next().map(|c| c.is_ascii_lowercase()).unwrap_or(false) {
+    if !slug
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_lowercase())
+        .unwrap_or(false)
+    {
         return Err("slug must start with a lowercase letter".into());
     }
-    if !slug.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
+    if !slug
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    {
         return Err("slug must contain only lowercase letters, digits, and underscores".into());
     }
     if is_reserved(slug) {
-        return Err(format!("'{}' is a reserved platform origin tag and cannot be used as an App slug", slug));
+        return Err(format!(
+            "'{}' is a reserved platform origin tag and cannot be used as an App slug",
+            slug
+        ));
     }
     Ok(())
 }
@@ -216,7 +268,10 @@ pub fn validate_visibility(v: &str) -> Result<(), String> {
     if VALID_VISIBILITIES.contains(&v) {
         Ok(())
     } else {
-        Err(format!("visibility must be one of {:?}, got '{}'", VALID_VISIBILITIES, v))
+        Err(format!(
+            "visibility must be one of {:?}, got '{}'",
+            VALID_VISIBILITIES, v
+        ))
     }
 }
 
@@ -308,7 +363,10 @@ fn validate_workspace_template(template: &Value, slug: &str, issues: &mut Vec<Is
     // auto_hire
     if let Some(auto_hire) = template.get("auto_hire") {
         if !auto_hire.is_array() {
-            issues.push(Issue::error("workspace_template.auto_hire", "must be an array of agent_id strings"));
+            issues.push(Issue::error(
+                "workspace_template.auto_hire",
+                "must be an array of agent_id strings",
+            ));
         } else {
             let arr = auto_hire.as_array().unwrap();
             if arr.is_empty() {
@@ -331,7 +389,10 @@ fn validate_workspace_template(template: &Value, slug: &str, issues: &mut Vec<Is
     // initial_files
     if let Some(files) = template.get("initial_files") {
         if !files.is_array() {
-            issues.push(Issue::error("workspace_template.initial_files", "must be an array of file objects"));
+            issues.push(Issue::error(
+                "workspace_template.initial_files",
+                "must be an array of file objects",
+            ));
         } else {
             let arr = files.as_array().unwrap();
             let mut has_manifest = false;
@@ -410,12 +471,18 @@ pub fn build_manifest(input: PartialManifest) -> BuildResult {
             Ok(()) => s.to_string(),
             Err(msg) => {
                 issues.push(Issue::error("slug", msg));
-                return BuildResult { manifest: None, issues };
+                return BuildResult {
+                    manifest: None,
+                    issues,
+                };
             }
         },
         None => {
             issues.push(Issue::error("slug", "slug is required"));
-            return BuildResult { manifest: None, issues };
+            return BuildResult {
+                manifest: None,
+                issues,
+            };
         }
     };
 
@@ -423,7 +490,10 @@ pub fn build_manifest(input: PartialManifest) -> BuildResult {
     let name = input.name.clone().unwrap_or_else(|| {
         issues.push(Issue::info(
             "name",
-            format!("name defaulted to '{}' (derived from slug)", default_name_from_slug(&slug)),
+            format!(
+                "name defaulted to '{}' (derived from slug)",
+                default_name_from_slug(&slug)
+            ),
         ));
         default_name_from_slug(&slug)
     });
@@ -440,7 +510,10 @@ pub fn build_manifest(input: PartialManifest) -> BuildResult {
         });
 
     let visibility = input.visibility.clone().unwrap_or_else(|| {
-        issues.push(Issue::info("visibility", "visibility defaulted to 'private'"));
+        issues.push(Issue::info(
+            "visibility",
+            "visibility defaulted to 'private'",
+        ));
         "private".into()
     });
     if let Err(msg) = validate_visibility(&visibility) {
@@ -463,7 +536,10 @@ pub fn build_manifest(input: PartialManifest) -> BuildResult {
             "consider adding a description — xamanEK uses it to explain your App to other users",
         ));
     }
-    if input.composition_slug.is_none() && input.schema_json.is_none() && input.schema_slug.is_none() {
+    if input.composition_slug.is_none()
+        && input.schema_json.is_none()
+        && input.schema_slug.is_none()
+    {
         issues.push(Issue::suggest(
             "schema_json",
             "consider declaring either a schema_json (inline) or a schema_slug (reference) so the canonical document is introspectable",
@@ -473,7 +549,10 @@ pub fn build_manifest(input: PartialManifest) -> BuildResult {
     // Step 5: bail if blocking errors.
     let has_errors = issues.iter().any(|i| i.severity == Severity::Error);
     if has_errors {
-        return BuildResult { manifest: None, issues };
+        return BuildResult {
+            manifest: None,
+            issues,
+        };
     }
 
     // Step 6: assemble the finalized manifest.
@@ -484,16 +563,35 @@ pub fn build_manifest(input: PartialManifest) -> BuildResult {
         "visibility": visibility,
     });
     let obj = manifest.as_object_mut().unwrap();
-    if let Some(v) = input.tagline { obj.insert("tagline".into(), json!(v)); }
-    if let Some(v) = input.description { obj.insert("description".into(), json!(v)); }
-    if let Some(v) = input.homepage_url { obj.insert("homepage_url".into(), json!(v)); }
-    if let Some(v) = input.icon_url { obj.insert("icon_url".into(), json!(v)); }
-    if let Some(v) = input.composition_slug { obj.insert("composition_slug".into(), json!(v)); }
-    if let Some(v) = input.schema_slug { obj.insert("schema_slug".into(), json!(v)); }
-    if let Some(v) = input.schema_json { obj.insert("schema_json".into(), v); }
-    if let Some(v) = input.metadata { obj.insert("metadata".into(), v); }
+    if let Some(v) = input.tagline {
+        obj.insert("tagline".into(), json!(v));
+    }
+    if let Some(v) = input.description {
+        obj.insert("description".into(), json!(v));
+    }
+    if let Some(v) = input.homepage_url {
+        obj.insert("homepage_url".into(), json!(v));
+    }
+    if let Some(v) = input.icon_url {
+        obj.insert("icon_url".into(), json!(v));
+    }
+    if let Some(v) = input.composition_slug {
+        obj.insert("composition_slug".into(), json!(v));
+    }
+    if let Some(v) = input.schema_slug {
+        obj.insert("schema_slug".into(), json!(v));
+    }
+    if let Some(v) = input.schema_json {
+        obj.insert("schema_json".into(), v);
+    }
+    if let Some(v) = input.metadata {
+        obj.insert("metadata".into(), v);
+    }
 
-    BuildResult { manifest: Some(manifest), issues }
+    BuildResult {
+        manifest: Some(manifest),
+        issues,
+    }
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -508,14 +606,14 @@ mod tests {
         assert!(validate_slug("kask_simops").is_ok());
         assert!(validate_slug("a12_b34").is_ok());
 
-        assert!(validate_slug("").is_err());                  // empty
-        assert!(validate_slug("ab").is_err());                // too short
-        assert!(validate_slug(&"a".repeat(65)).is_err());     // too long
-        assert!(validate_slug("Efrain").is_err());            // uppercase
-        assert!(validate_slug("1efrain").is_err());           // leading digit
-        assert!(validate_slug("efrain-2").is_err());          // hyphen
-        assert!(validate_slug("efrain ai").is_err());         // space
-        assert!(validate_slug("rabble_swarm").is_err());      // reserved
+        assert!(validate_slug("").is_err()); // empty
+        assert!(validate_slug("ab").is_err()); // too short
+        assert!(validate_slug(&"a".repeat(65)).is_err()); // too long
+        assert!(validate_slug("Efrain").is_err()); // uppercase
+        assert!(validate_slug("1efrain").is_err()); // leading digit
+        assert!(validate_slug("efrain-2").is_err()); // hyphen
+        assert!(validate_slug("efrain ai").is_err()); // space
+        assert!(validate_slug("rabble_swarm").is_err()); // reserved
     }
 
     #[test]
@@ -541,7 +639,11 @@ mod tests {
             ..Default::default()
         };
         let result = build_manifest(input);
-        assert!(!result.has_errors(), "minimal input should succeed: {:#?}", result.errors());
+        assert!(
+            !result.has_errors(),
+            "minimal input should succeed: {:#?}",
+            result.errors()
+        );
         let manifest = result.manifest.expect("expected manifest");
         assert_eq!(manifest["slug"], "efrain");
         assert_eq!(manifest["name"], "Efrain");
@@ -600,7 +702,11 @@ mod tests {
             ..Default::default()
         };
         let result = build_manifest(input);
-        assert!(!result.has_errors(), "full input should pass: {:#?}", result.errors());
+        assert!(
+            !result.has_errors(),
+            "full input should pass: {:#?}",
+            result.errors()
+        );
         let m = result.manifest.expect("manifest");
         assert_eq!(m["slug"], "efrain");
         assert_eq!(m["tagline"], "AI-augmented research notes");
@@ -640,8 +746,14 @@ mod tests {
         let warning = result.non_blocking().into_iter().find(|i| {
             i.field == "workspace_template.initial_files" && i.severity == Severity::Warning
         });
-        assert!(warning.is_some(), "expected a warning about missing manifest.yaml");
-        assert!(warning.unwrap().fix.is_some(), "expected the warning to carry an auto-fix");
+        assert!(
+            warning.is_some(),
+            "expected a warning about missing manifest.yaml"
+        );
+        assert!(
+            warning.unwrap().fix.is_some(),
+            "expected the warning to carry an auto-fix"
+        );
     }
 
     #[test]
@@ -667,6 +779,10 @@ mod tests {
         });
         let input = PartialManifest::from_value(&kask);
         let result = build_manifest(input);
-        assert!(!result.has_errors(), "kask_simops should validate clean: {:#?}", result.errors());
+        assert!(
+            !result.has_errors(),
+            "kask_simops should validate clean: {:#?}",
+            result.errors()
+        );
     }
 }

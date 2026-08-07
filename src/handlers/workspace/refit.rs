@@ -168,8 +168,14 @@ pub async fn refit_workspace(
     workspace_id: Uuid,
     triggered_by: TriggerReason,
 ) -> Result<RefitOutcome, RefitError> {
-    refit_workspace_with_visited(pool, registry, workspace_id, &triggered_by, &mut HashSet::new())
-        .await
+    refit_workspace_with_visited(
+        pool,
+        registry,
+        workspace_id,
+        &triggered_by,
+        &mut HashSet::new(),
+    )
+    .await
 }
 
 async fn refit_workspace_with_visited(
@@ -364,8 +370,12 @@ async fn refit_one_driver(
         &serde_json::to_value(&fitted).map_err(|e| RefitError::Internal(e.to_string()))?,
     );
 
-    let (rate_before, rate_after) =
-        compute_impact(&linked.fpl_source, program, current_params, &proposed_params);
+    let (rate_before, rate_after) = compute_impact(
+        &linked.fpl_source,
+        program,
+        current_params,
+        &proposed_params,
+    );
     let delta_pp = match (rate_before, rate_after) {
         (Some(before), Some(after)) => (after - before).abs() * 100.0,
         _ => 0.0, // No scorable rate — skip the gate, default to AutoAccept
@@ -395,8 +405,7 @@ async fn refit_one_driver(
     // ── Step 5: act on the decision ──────────────────────────────────────
     match decision {
         DecisionKind::AutoAccept => {
-            write_fitted_params(pool, workspace_id, &driver.name, &fitted, &workspace.slug)
-                .await?;
+            write_fitted_params(pool, workspace_id, &driver.name, &fitted, &workspace.slug).await?;
 
             // Spec 23 R-3 Piece 1: write a fermi_forecast_updates row so the
             // forecast_spacetime trigger fires with revision_trigger =
@@ -598,7 +607,10 @@ struct LinkedForecast {
     current_probability: f64,
 }
 
-async fn load_forecast_fpl(pool: &PgPool, workspace_id: Uuid) -> Result<LinkedForecast, RefitError> {
+async fn load_forecast_fpl(
+    pool: &PgPool,
+    workspace_id: Uuid,
+) -> Result<LinkedForecast, RefitError> {
     let row = sqlx::query(
         "SELECT id, fpl_source, predicted_probability
          FROM fermi_forecasts
@@ -680,9 +692,7 @@ async fn collect_observations(
     // Source 1: explicit observations array on the workspace's outputs.
     // Lives at workspace_outputs[ws].observations.<driver_name> as a
     // JSON array of numbers.
-    if let Some(arr) =
-        read_observations_array(pool, workspace_id, &driver.name).await?
-    {
+    if let Some(arr) = read_observations_array(pool, workspace_id, &driver.name).await? {
         observations.extend(arr);
     }
 
@@ -870,15 +880,8 @@ fn run_with_params(
 
 /// Build a proposed params blob by merging `<driver_name>_fitted: fitted`
 /// into the current params object.
-fn merge_params(
-    current: &JsonValue,
-    driver_name: &str,
-    fitted_value: &JsonValue,
-) -> JsonValue {
-    let mut obj = current
-        .as_object()
-        .cloned()
-        .unwrap_or_default();
+fn merge_params(current: &JsonValue, driver_name: &str, fitted_value: &JsonValue) -> JsonValue {
+    let mut obj = current.as_object().cloned().unwrap_or_default();
     obj.insert(format!("{}_fitted", driver_name), fitted_value.clone());
     JsonValue::Object(obj)
 }
@@ -912,7 +915,8 @@ async fn write_fitted_params(
     // UPDATE — last writer wins on the merge, which is acceptable for the
     // demo (one writer per refit; refits are rare events).
     let current = load_params(pool, workspace_id).await?;
-    let fitted_json = serde_json::to_value(fitted).map_err(|e| RefitError::Internal(e.to_string()))?;
+    let fitted_json =
+        serde_json::to_value(fitted).map_err(|e| RefitError::Internal(e.to_string()))?;
     let merged = merge_params(&current, driver_name, &fitted_json);
 
     sqlx::query(
@@ -1069,7 +1073,8 @@ async fn write_snapshot(
     triggered_by: &TriggerReason,
 ) -> Result<Uuid, RefitError> {
     let snapshot_id = Uuid::new_v4();
-    let fitted_json = serde_json::to_value(fitted).map_err(|e| RefitError::Internal(e.to_string()))?;
+    let fitted_json =
+        serde_json::to_value(fitted).map_err(|e| RefitError::Internal(e.to_string()))?;
     let metadata_json =
         serde_json::to_value(metadata).map_err(|e| RefitError::Internal(e.to_string()))?;
     let quality = match metadata.quality {
@@ -1285,10 +1290,7 @@ mod tests {
             classify_decision(2.5, 3.0),
             DecisionKind::AutoAccept
         ));
-        assert!(matches!(
-            classify_decision(3.5, 3.0),
-            DecisionKind::Stage
-        ));
+        assert!(matches!(classify_decision(3.5, 3.0), DecisionKind::Stage));
     }
 
     #[test]

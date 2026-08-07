@@ -104,11 +104,18 @@ pub async fn execute_agent_handler(
         statements: vec![ast::Statement::Agent(agent_stmt.clone())],
     };
 
+    // SPEC_28 — resolve this execution's provider credentials from the
+    // agent's owning principal, once, before building the context. Every
+    // executor branch reads them from here, so funding no longer depends
+    // on whether the tool loop runs.
+    let credentials = crate::build_execution_credentials(&state, &db_agent, &card).await;
+
     let context = ExecutionContext {
         program,
         agent_card: card.clone(),
         creature_id: None,
         cognition_tier: None,
+        credentials: credentials.clone(),
     };
 
     // Resolve the agent's remote MCP tools before building the context.
@@ -158,6 +165,9 @@ pub async fn execute_agent_handler(
         // (platform funds). See resolve_agent_owner_secrets for the
         // full rationale.
         user_secrets: owner_secrets,
+        // Carried for delegation propagation only; executors read
+        // credentials from ExecutionContext.
+        credentials,
         eval_trigger: Some(Arc::new(crate::handlers::eval::EvalTriggerImpl {
             state: state.clone(),
         })),

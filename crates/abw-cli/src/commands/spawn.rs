@@ -40,7 +40,11 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<()> {
     }
 
     if !ctx.quiet {
-        eprintln!("  {} workspace from App '{}'…", "Spawning".bold(), args.slug.bold());
+        eprintln!(
+            "  {} workspace from App '{}'…",
+            "Spawning".bold(),
+            args.slug.bold()
+        );
     }
 
     let resp = http
@@ -55,11 +59,7 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<()> {
     let body_text = resp.text().await.unwrap_or_default();
 
     if !status.is_success() {
-        return Err(anyhow!(
-            "server returned {}: {}",
-            status,
-            body_text
-        ));
+        return Err(anyhow!("server returned {}: {}", status, body_text));
     }
 
     let value: serde_json::Value = serde_json::from_str(&body_text)
@@ -74,7 +74,11 @@ pub async fn run(ctx: &Ctx, args: Args) -> Result<()> {
 
     if !ctx.quiet {
         println!();
-        println!("  {} Workspace {} created", "✓".green().bold(), workspace_id.bold());
+        println!(
+            "  {} Workspace {} created",
+            "✓".green().bold(),
+            workspace_id.bold()
+        );
         println!("  {} {}", "URL:".bold(), workspace_url);
         println!();
     } else {

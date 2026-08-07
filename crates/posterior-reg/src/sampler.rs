@@ -119,9 +119,7 @@ impl NutsSampler {
 /// Perturb the init vector slightly per chain so chains start at different points.
 fn perturb_init(init: &[f64], chain_idx: u32, seed: u64) -> Vec<f64> {
     let mut rng = StdRng::seed_from_u64(seed.wrapping_add(0xC0FFEE).wrapping_add(chain_idx as u64));
-    init.iter()
-        .map(|x| x + rng.gen_range(-0.1..0.1))
-        .collect()
+    init.iter().map(|x| x + rng.gen_range(-0.1..0.1)).collect()
 }
 
 /// Single-chain HMC implementation.
@@ -202,23 +200,23 @@ fn run_single_chain<M: RegressionModel>(
         let init_h = -current_lp + init_kinetic;
 
         // Leapfrog integration
-        let (proposed, proposed_momentum) =
-            leapfrog(&current, &momentum, step_size, config.n_leapfrog, &grad_log_post);
+        let (proposed, proposed_momentum) = leapfrog(
+            &current,
+            &momentum,
+            step_size,
+            config.n_leapfrog,
+            &grad_log_post,
+        );
 
         let proposed_lp = log_post(&proposed);
-        let proposed_kinetic: f64 =
-            0.5 * proposed_momentum.iter().map(|m| m * m).sum::<f64>();
+        let proposed_kinetic: f64 = 0.5 * proposed_momentum.iter().map(|m| m * m).sum::<f64>();
         let proposed_h = -proposed_lp + proposed_kinetic;
 
         // Energy divergence check: catch unstable trajectories
         let dh = proposed_h - init_h;
         let diverged = !proposed_lp.is_finite() || dh.abs() > 1000.0;
 
-        let accept_prob = if diverged {
-            0.0
-        } else {
-            (-dh).exp().min(1.0)
-        };
+        let accept_prob = if diverged { 0.0 } else { (-dh).exp().min(1.0) };
 
         let accepted = !diverged && rng.gen::<f64>() < accept_prob;
 
@@ -237,7 +235,8 @@ fn run_single_chain<M: RegressionModel>(
         } else {
             // Dual-averaging step-size update during warmup
             let m = (iter + 1) as f64;
-            h_bar = (1.0 - 1.0 / (m + t0)) * h_bar + (1.0 / (m + t0)) * (target_accept - accept_prob);
+            h_bar =
+                (1.0 - 1.0 / (m + t0)) * h_bar + (1.0 / (m + t0)) * (target_accept - accept_prob);
             let log_step = mu - (m.sqrt() / gamma) * h_bar;
             let frac = m.powf(-kappa);
             log_step_avg = frac * log_step + (1.0 - frac) * log_step_avg;
@@ -346,10 +345,12 @@ mod tests {
     #[test]
     fn box_muller_produces_normal() {
         let mut rng = StdRng::seed_from_u64(7);
-        let samples: Vec<f64> = (0..10_000).map(|_| sample_standard_normal(&mut rng)).collect();
+        let samples: Vec<f64> = (0..10_000)
+            .map(|_| sample_standard_normal(&mut rng))
+            .collect();
         let mean: f64 = samples.iter().sum::<f64>() / samples.len() as f64;
-        let var: f64 = samples.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
-            / (samples.len() as f64 - 1.0);
+        let var: f64 =
+            samples.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (samples.len() as f64 - 1.0);
         assert!(mean.abs() < 0.05, "mean = {}", mean);
         assert!((var - 1.0).abs() < 0.1, "var = {}", var);
     }

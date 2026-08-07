@@ -37,12 +37,14 @@ pub fn load() -> Result<Credentials> {
     if !path.exists() {
         return Ok(Credentials::default());
     }
-    let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("reading {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let mut creds = Credentials::default();
     for line in text.lines() {
         let line = line.trim();
-        if line.is_empty() || line.starts_with('#') { continue; }
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
         if let Some((k, v)) = line.split_once('=') {
             let v = v.trim().trim_matches('"').to_string();
             match k.trim() {
@@ -70,8 +72,7 @@ pub fn save(creds: &Credentials) -> Result<()> {
     if let Some(v) = &creds.user {
         out.push_str(&format!("user = \"{}\"\n", v));
     }
-    std::fs::write(&path, out)
-        .with_context(|| format!("writing {}", path.display()))?;
+    std::fs::write(&path, out).with_context(|| format!("writing {}", path.display()))?;
 
     // Tighten permissions on Unix so a stray world-readable creds file
     // doesn't leak a long-lived API key.
@@ -88,8 +89,7 @@ pub fn save(creds: &Credentials) -> Result<()> {
 pub fn remove() -> Result<()> {
     let path = credentials_path()?;
     if path.exists() {
-        std::fs::remove_file(&path)
-            .with_context(|| format!("removing {}", path.display()))?;
+        std::fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
     }
     Ok(())
 }

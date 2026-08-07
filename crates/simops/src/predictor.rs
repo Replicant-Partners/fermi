@@ -59,8 +59,7 @@ impl Predictor {
         }
 
         // Determine feature order from the first sample (sorted for determinism)
-        let mut feature_names: Vec<String> =
-            observations[0].features.keys().cloned().collect();
+        let mut feature_names: Vec<String> = observations[0].features.keys().cloned().collect();
         feature_names.sort();
         let p = feature_names.len(); // number of features
         let n = observations.len(); // number of samples
@@ -72,9 +71,10 @@ impl Predictor {
         for (i, obs) in observations.iter().enumerate() {
             x[i * (p + 1)] = 1.0; // intercept column
             for (j, name) in feature_names.iter().enumerate() {
-                x[i * (p + 1) + j + 1] = *obs.features.get(name).ok_or_else(|| {
-                    SimOpsError::MissingFeature(name.clone())
-                })?;
+                x[i * (p + 1) + j + 1] = *obs
+                    .features
+                    .get(name)
+                    .ok_or_else(|| SimOpsError::MissingFeature(name.clone()))?;
             }
             y[i] = obs.target;
         }
@@ -101,8 +101,7 @@ impl Predictor {
         }
 
         // Solve (XᵀX) β = Xᵀy via Gaussian elimination with partial pivoting
-        let beta = gaussian_solve(&xtx, &xty, cols)
-            .ok_or(SimOpsError::SingularMatrix)?;
+        let beta = gaussian_solve(&xtx, &xty, cols).ok_or(SimOpsError::SingularMatrix)?;
 
         let intercept = beta[0];
         let coefficients = beta[1..].to_vec();
@@ -121,7 +120,11 @@ impl Predictor {
             })
             .sum();
         let ss_tot: f64 = y.iter().map(|yi| (yi - y_mean).powi(2)).sum();
-        let r_squared = if ss_tot > 0.0 { 1.0 - ss_res / ss_tot } else { 1.0 };
+        let r_squared = if ss_tot > 0.0 {
+            1.0 - ss_res / ss_tot
+        } else {
+            1.0
+        };
 
         Ok(Predictor {
             feature_names,
@@ -166,13 +169,12 @@ fn gaussian_solve(a: &[f64], b: &[f64], n: usize) -> Option<Vec<f64>> {
 
     for col in 0..n {
         // Find pivot
-        let pivot_row = (col..n)
-            .max_by(|&r1, &r2| {
-                mat[r1 * cols + col]
-                    .abs()
-                    .partial_cmp(&mat[r2 * cols + col].abs())
-                    .unwrap()
-            })?;
+        let pivot_row = (col..n).max_by(|&r1, &r2| {
+            mat[r1 * cols + col]
+                .abs()
+                .partial_cmp(&mat[r2 * cols + col].abs())
+                .unwrap()
+        })?;
 
         if mat[pivot_row * cols + col].abs() < 1e-12 {
             return None; // singular

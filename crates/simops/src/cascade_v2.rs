@@ -24,22 +24,22 @@
 //! mass-balance; their cost is still counted. Notes carry structured
 //! `kind` fields so the UI can surface them per-input with clear text.
 
-use std::collections::HashMap;
-use serde::Serialize;
 use chrono::Utc;
+use serde::Serialize;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::process_v2::{
-    CascadeRequestV2, CarbonIntensity, Input, InputRole, MassBalanceMode,
-    Output, OutputRole, PerBasis, ProcessConfigV2, ScaleRequest, ScalingRegime,
-    StageParallelism, StageV2, TwinManifest,
+    CarbonIntensity, CascadeRequestV2, Input, InputRole, MassBalanceMode, Output, OutputRole,
+    PerBasis, ProcessConfigV2, ScaleRequest, ScalingRegime, StageParallelism, StageV2,
+    TwinManifest,
 };
 
 // ─── Cascade note ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CascadeNote {
-    pub severity: &'static str,    // "info" | "warn"
+    pub severity: &'static str, // "info" | "warn"
     pub kind: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_name: Option<String>,
@@ -56,7 +56,7 @@ pub struct ResolvedInput {
     pub qty: f64,
     pub unit: String,
     pub kg: f64,
-    pub source: String,                      // "external" | "from_stage:<id>"
+    pub source: String, // "external" | "from_stage:<id>"
     pub role: String,
     pub mass_balance_contribution_kg: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -76,7 +76,7 @@ pub struct ResolvedOutput {
     pub unit: String,
     pub kg: f64,
     pub role: String,
-    pub qty_basis: String,           // "residual" | "declared_yield:0.xx"
+    pub qty_basis: String, // "residual" | "declared_yield:0.xx"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capture_fraction: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -268,7 +268,9 @@ pub struct CascadeProvenance {
 
 #[derive(Debug)]
 pub enum CascadeError {
-    SchemaVersion { got: u32 },
+    SchemaVersion {
+        got: u32,
+    },
     BackwardNotSupported,
     /// throughput.basis_stage or basis_input is null.
     /// Returns 422 with annotation_suggestions so kask can surface a bind action.
@@ -279,18 +281,57 @@ pub enum CascadeError {
     },
     StageNoInputs(String),
     StageNoOutputs(String),
-    UnknownFromStage { input: String, stage: String, target: String },
-    UnknownFromOutput { input: String, stage: String, target: String, available: Vec<String> },
-    ForwardReference { input: String, stage: String, target: String },
+    UnknownFromStage {
+        input: String,
+        stage: String,
+        target: String,
+    },
+    UnknownFromOutput {
+        input: String,
+        stage: String,
+        target: String,
+        available: Vec<String>,
+    },
+    ForwardReference {
+        input: String,
+        stage: String,
+        target: String,
+    },
     CyclicDependency(String),
-    AmbiguousResidual { stage: String, outputs: Vec<String> },
-    OutputsExceedMassBalance { stage: String, declared: f64, available: f64, efficiency: f64 },
-    NoDownstreamFeedForLinked { stage: String },
+    AmbiguousResidual {
+        stage: String,
+        outputs: Vec<String>,
+    },
+    OutputsExceedMassBalance {
+        stage: String,
+        declared: f64,
+        available: f64,
+        efficiency: f64,
+    },
+    NoDownstreamFeedForLinked {
+        stage: String,
+    },
     UnknownThroughputStage(String),
-    UnknownThroughputInput { stage: String, input: String },
-    ExternalInputMissingCost { stage: String, input: String },
-    PerUnitMismatch { stage: String, input: String, per_unit: String, principals: Vec<String> },
-    AmbiguousPerUnit { stage: String, input: String, per_unit: String, units: Vec<String> },
+    UnknownThroughputInput {
+        stage: String,
+        input: String,
+    },
+    ExternalInputMissingCost {
+        stage: String,
+        input: String,
+    },
+    PerUnitMismatch {
+        stage: String,
+        input: String,
+        per_unit: String,
+        principals: Vec<String>,
+    },
+    AmbiguousPerUnit {
+        stage: String,
+        input: String,
+        per_unit: String,
+        units: Vec<String>,
+    },
 }
 
 impl CascadeError {
@@ -306,7 +347,11 @@ impl CascadeError {
     /// for BasisUnresolved so kask can render an action chip.
     pub fn to_json(&self) -> serde_json::Value {
         match self {
-            Self::BasisUnresolved { field, suggested_stage, suggested_input } => {
+            Self::BasisUnresolved {
+                field,
+                suggested_stage,
+                suggested_input,
+            } => {
                 serde_json::json!({
                     "error": "BASIS_STAGE_UNRESOLVED",
                     "message": format!("throughput.{field} is null; cannot integrate without a basis target"),
@@ -384,7 +429,9 @@ pub fn cascade_v2(req: &CascadeRequestV2) -> Result<CascadeResponseV2, CascadeEr
 
     // Schema version gate
     if process.schema_version != 2 {
-        return Err(CascadeError::SchemaVersion { got: process.schema_version });
+        return Err(CascadeError::SchemaVersion {
+            got: process.schema_version,
+        });
     }
 
     // Backward cascade not yet supported for v2
@@ -399,7 +446,9 @@ pub fn cascade_v2(req: &CascadeRequestV2) -> Result<CascadeResponseV2, CascadeEr
     let basis_qty = resolve_basis_quantity(process, &req.scale)?;
 
     // Build a stage-index map for upstream lookups
-    let stage_index: HashMap<&str, usize> = process.stages.iter()
+    let stage_index: HashMap<&str, usize> = process
+        .stages
+        .iter()
         .enumerate()
         .map(|(i, s)| (s.id.as_str(), i))
         .collect();
@@ -417,8 +466,7 @@ pub fn cascade_v2(req: &CascadeRequestV2) -> Result<CascadeResponseV2, CascadeEr
 
     for (stage_idx, stage) in process.stages.iter().enumerate() {
         // Look up twin parallelism for this stage
-        let stage_parallelism = req.twin.as_ref()
-            .and_then(|t| t.parallelism.get(&stage.id));
+        let stage_parallelism = req.twin.as_ref().and_then(|t| t.parallelism.get(&stage.id));
 
         let resolved = resolve_stage(
             stage,
@@ -468,12 +516,18 @@ fn validate_process(process: &ProcessConfigV2) -> Result<(), CascadeError> {
     // Validate throughput references — null basis_stage/basis_input accepted
     // (spec 36a A.4.2). When null, cascade auto-selects + emits bind_suggestion note.
     if let Some(ref basis_stage_id) = process.throughput.basis_stage {
-        let basis_stage = process.stages.iter()
+        let basis_stage = process
+            .stages
+            .iter()
             .find(|s| &s.id == basis_stage_id)
             .ok_or_else(|| CascadeError::UnknownThroughputStage(basis_stage_id.clone()))?;
 
         if let Some(ref basis_input_name) = process.throughput.basis_input {
-            if !basis_stage.inputs.iter().any(|i| &i.name == basis_input_name) {
+            if !basis_stage
+                .inputs
+                .iter()
+                .any(|i| &i.name == basis_input_name)
+            {
                 return Err(CascadeError::UnknownThroughputInput {
                     stage: basis_stage_id.clone(),
                     input: basis_input_name.clone(),
@@ -495,7 +549,9 @@ fn validate_process(process: &ProcessConfigV2) -> Result<(), CascadeError> {
         for inp in &stage.inputs {
             if let Some(ref from_stage_id) = inp.from_stage {
                 // Must reference an existing stage
-                let from_idx = stage_ids.iter().position(|&id| id == from_stage_id)
+                let from_idx = stage_ids
+                    .iter()
+                    .position(|&id| id == from_stage_id)
                     .ok_or_else(|| CascadeError::UnknownFromStage {
                         input: inp.name.clone(),
                         stage: stage.id.clone(),
@@ -529,18 +585,26 @@ fn validate_process(process: &ProcessConfigV2) -> Result<(), CascadeError> {
         // Stages referenced by downstream stages must have a downstream_feed output
         // OR a product-roled output (spec 36a A.1.2: product is feed-equivalent when
         // consumed downstream — kask should stop promoting roles; ABW accepts this).
-        let is_referenced_downstream = process.stages.iter().skip(
-            stage_ids.iter().position(|&id| id == stage.id).unwrap() + 1
-        ).any(|later| later.inputs.iter().any(|i| {
-            i.from_stage.as_deref() == Some(&stage.id)
-        }));
+        let is_referenced_downstream = process
+            .stages
+            .iter()
+            .skip(stage_ids.iter().position(|&id| id == stage.id).unwrap() + 1)
+            .any(|later| {
+                later
+                    .inputs
+                    .iter()
+                    .any(|i| i.from_stage.as_deref() == Some(&stage.id))
+            });
 
         if is_referenced_downstream {
-            let has_feed_equivalent = stage.outputs.iter().any(|o|
-                o.role == OutputRole::DownstreamFeed || o.role == OutputRole::Product
-            );
+            let has_feed_equivalent = stage
+                .outputs
+                .iter()
+                .any(|o| o.role == OutputRole::DownstreamFeed || o.role == OutputRole::Product);
             if !has_feed_equivalent {
-                return Err(CascadeError::NoDownstreamFeedForLinked { stage: stage.id.clone() });
+                return Err(CascadeError::NoDownstreamFeedForLinked {
+                    stage: stage.id.clone(),
+                });
             }
         }
     }
@@ -562,10 +626,14 @@ fn resolve_basis_quantity(
         ScaleRequest::FromThroughput => {
             if process.throughput.basis_stage.is_none() {
                 // Find the best candidate to suggest
-                let suggested = process.stages.iter()
+                let suggested = process
+                    .stages
+                    .iter()
                     .find(|s| s.inputs.iter().any(|i| i.role == InputRole::Principal))
                     .and_then(|s| {
-                        s.inputs.iter().find(|i| i.role == InputRole::Principal)
+                        s.inputs
+                            .iter()
+                            .find(|i| i.role == InputRole::Principal)
                             .map(|i| (s.id.clone(), i.name.clone()))
                     });
                 return Err(CascadeError::BasisUnresolved {
@@ -576,7 +644,9 @@ fn resolve_basis_quantity(
             }
             if process.throughput.basis_input.is_none() {
                 let basis_stage_id = process.throughput.basis_stage.as_deref().unwrap();
-                let suggested_input = process.stages.iter()
+                let suggested_input = process
+                    .stages
+                    .iter()
                     .find(|s| s.id == basis_stage_id)
                     .and_then(|s| s.inputs.iter().find(|i| i.role == InputRole::Principal))
                     .map(|i| i.name.clone());
@@ -588,8 +658,16 @@ fn resolve_basis_quantity(
             }
             Ok(process.throughput.qty_per_run)
         }
-        ScaleRequest::Explicit { stage_id, input_name, qty, .. } => {
-            let stage = process.stages.iter().find(|s| &s.id == stage_id)
+        ScaleRequest::Explicit {
+            stage_id,
+            input_name,
+            qty,
+            ..
+        } => {
+            let stage = process
+                .stages
+                .iter()
+                .find(|s| &s.id == stage_id)
                 .ok_or_else(|| CascadeError::UnknownThroughputStage(stage_id.clone()))?;
             if !stage.inputs.iter().any(|i| &i.name == input_name) {
                 return Err(CascadeError::UnknownThroughputInput {
@@ -625,9 +703,19 @@ fn resolve_stage(
     let mut principal_pool: HashMap<String, f64> = HashMap::new(); // unit → total qty
     let mut principal_pool_kg: f64 = 0.0;
 
-    for inp in stage.inputs.iter().filter(|i| i.role == InputRole::Principal) {
+    for inp in stage
+        .inputs
+        .iter()
+        .filter(|i| i.role == InputRole::Principal)
+    {
         let (resolved, kg) = resolve_single_input(
-            inp, stage, basis_qty, throughput, upstream_outputs, &principal_pool, &mut notes,
+            inp,
+            stage,
+            basis_qty,
+            throughput,
+            upstream_outputs,
+            &principal_pool,
+            &mut notes,
         )?;
 
         // Accumulate principal pool by unit
@@ -640,10 +728,19 @@ fn resolve_stage(
     // ── Pass 2a: per_basis=batch (absolute, no scaling needed) ────────────────
     for inp in stage.inputs.iter().filter(|i| {
         i.role != InputRole::Principal
-            && i.per_basis.as_ref().map(|b| matches!(b, PerBasis::Batch)).unwrap_or(false)
+            && i.per_basis
+                .as_ref()
+                .map(|b| matches!(b, PerBasis::Batch))
+                .unwrap_or(false)
     }) {
         let (resolved, _) = resolve_single_input(
-            inp, stage, basis_qty, throughput, upstream_outputs, &principal_pool, &mut notes,
+            inp,
+            stage,
+            basis_qty,
+            throughput,
+            upstream_outputs,
+            &principal_pool,
+            &mut notes,
         )?;
         resolved_inputs.push(resolved);
     }
@@ -651,18 +748,25 @@ fn resolve_stage(
     // ── Pass 2b: per_basis=principal (scales against pass-1 pool) ─────────────
     for inp in stage.inputs.iter().filter(|i| {
         i.role != InputRole::Principal
-            && !i.per_basis.as_ref().map(|b| matches!(b, PerBasis::Batch)).unwrap_or(false)
+            && !i
+                .per_basis
+                .as_ref()
+                .map(|b| matches!(b, PerBasis::Batch))
+                .unwrap_or(false)
             && i.from_stage.is_none()
     }) {
         // Validate per_unit matches a principal's qty_unit
         if let Some(ref per_unit) = inp.per_unit {
-            let principal_units: Vec<String> = stage.inputs.iter()
+            let principal_units: Vec<String> = stage
+                .inputs
+                .iter()
                 .filter(|pi| pi.role == InputRole::Principal && pi.is_external())
                 .filter_map(|pi| pi.qty_unit.clone())
                 .collect();
 
             // Also include upstream-linked principal units (from resolved_inputs)
-            let all_principal_units: Vec<String> = resolved_inputs.iter()
+            let all_principal_units: Vec<String> = resolved_inputs
+                .iter()
                 .filter(|ri| ri.role == "principal")
                 .map(|ri| ri.unit.clone())
                 .collect();
@@ -688,14 +792,21 @@ fn resolve_stage(
         }
 
         let (resolved, _) = resolve_single_input(
-            inp, stage, basis_qty, throughput, upstream_outputs, &principal_pool, &mut notes,
+            inp,
+            stage,
+            basis_qty,
+            throughput,
+            upstream_outputs,
+            &principal_pool,
+            &mut notes,
         )?;
         resolved_inputs.push(resolved);
     }
 
     // ── Mass-balance ──────────────────────────────────────────────────────────
     let total_input_kg: f64 = resolved_inputs.iter().map(|r| r.kg).sum();
-    let total_mb_kg: f64 = resolved_inputs.iter()
+    let total_mb_kg: f64 = resolved_inputs
+        .iter()
         .map(|r| r.mass_balance_contribution_kg)
         .sum();
     let total_output_kg = total_mb_kg * stage.efficiency;
@@ -706,13 +817,20 @@ fn resolve_stage(
             kind: "low_efficiency_warning",
             input_name: None,
             output_name: None,
-            message: format!("Stage '{}' has efficiency {:.2} (<0.5). Check if this is intentional.", stage.id, stage.efficiency),
+            message: format!(
+                "Stage '{}' has efficiency {:.2} (<0.5). Check if this is intentional.",
+                stage.id, stage.efficiency
+            ),
         });
     }
 
     // ── Distribute output mass ─────────────────────────────────────────────────
     let resolved_outputs = distribute_output_mass(
-        &stage.outputs, total_output_kg, total_mb_kg, &stage.id, &mut notes,
+        &stage.outputs,
+        total_output_kg,
+        total_mb_kg,
+        &stage.id,
+        &mut notes,
     )?;
 
     // ── Economics ─────────────────────────────────────────────────────────────
@@ -728,17 +846,29 @@ fn resolve_stage(
     );
 
     // ── Residual tracking ─────────────────────────────────────────────────────
-    let residual_name = resolved_outputs.iter()
+    let residual_name = resolved_outputs
+        .iter()
         .find(|o| o.qty_basis == "residual")
         .map(|o| o.name.clone());
 
-    let declared_output_kg: f64 = resolved_outputs.iter()
+    let declared_output_kg: f64 = resolved_outputs
+        .iter()
         .filter(|o| o.qty_basis != "residual")
         .map(|o| o.kg)
         .sum();
-    let unaccounted = (total_output_kg - declared_output_kg - residual_name.as_ref().map(|_| {
-        resolved_outputs.iter().find(|o| o.qty_basis == "residual").map(|o| o.kg).unwrap_or(0.0)
-    }).unwrap_or(0.0)).max(0.0);
+    let unaccounted = (total_output_kg
+        - declared_output_kg
+        - residual_name
+            .as_ref()
+            .map(|_| {
+                resolved_outputs
+                    .iter()
+                    .find(|o| o.qty_basis == "residual")
+                    .map(|o| o.kg)
+                    .unwrap_or(0.0)
+            })
+            .unwrap_or(0.0))
+    .max(0.0);
 
     // ── Apply twin parallelism scaling (spec 36a A.2.3, spec 31 M5) ──────────
     let instance_count = stage_parallelism.map(|p| p.active_count()).unwrap_or(1);
@@ -776,10 +906,9 @@ fn resolve_single_input(
     basis_qty: f64,
     throughput: &crate::process_v2::Throughput,
     upstream_outputs: &HashMap<(String, String), ResolvedOutput>,
-    principal_pool: &HashMap<String, f64>,    // unit → qty
+    principal_pool: &HashMap<String, f64>, // unit → qty
     notes: &mut Vec<CascadeNote>,
 ) -> Result<(ResolvedInput, f64), CascadeError> {
-
     // For upstream-linked inputs, also carry the resolved kg from upstream
     // so we don't need to re-convert and risk missing density.
     let upstream_kg_override: Option<f64>;
@@ -788,18 +917,26 @@ fn resolve_single_input(
         // Upstream-linked: pull from resolved upstream output
         let output_name = inp.from_output.as_deref().unwrap_or(&inp.name);
         let key = (from_id.clone(), output_name.to_string());
-        let upstream = upstream_outputs.get(&key)
-            .ok_or_else(|| CascadeError::UnknownFromOutput {
-                input: inp.name.clone(),
-                stage: stage.id.clone(),
-                target: from_id.clone(),
-                available: upstream_outputs.keys()
-                    .filter(|(s, _)| s == from_id)
-                    .map(|(_, n)| n.clone())
-                    .collect(),
-            })?;
+        let upstream =
+            upstream_outputs
+                .get(&key)
+                .ok_or_else(|| CascadeError::UnknownFromOutput {
+                    input: inp.name.clone(),
+                    stage: stage.id.clone(),
+                    target: from_id.clone(),
+                    available: upstream_outputs
+                        .keys()
+                        .filter(|(s, _)| s == from_id)
+                        .map(|(_, n)| n.clone())
+                        .collect(),
+                })?;
         upstream_kg_override = Some(upstream.kg);
-        (upstream.qty, upstream.unit.clone(), format!("from_stage:{from_id}"), Some(upstream.value_eur.unwrap_or(0.0)))
+        (
+            upstream.qty,
+            upstream.unit.clone(),
+            format!("from_stage:{from_id}"),
+            Some(upstream.value_eur.unwrap_or(0.0)),
+        )
     } else {
         upstream_kg_override = None;
         // External: compute absolute qty
@@ -811,7 +948,8 @@ fn resolve_single_input(
                 // Ratio: qty per per_unit of principal (in native unit)
                 let per = inp.per.unwrap_or(1.0);
                 let per_unit = inp.per_unit.as_deref().unwrap_or(&qty_unit);
-                let principal_qty_in_per_unit = principal_pool.get(per_unit).copied().unwrap_or(0.0);
+                let principal_qty_in_per_unit =
+                    principal_pool.get(per_unit).copied().unwrap_or(0.0);
                 qty * (principal_qty_in_per_unit / per)
             }
             Some(PerBasis::Batch) => {
@@ -827,7 +965,12 @@ fn resolve_single_input(
             }
         };
 
-        ("external".to_string(), qty_unit, "external".to_string(), None)
+        (
+            "external".to_string(),
+            qty_unit,
+            "external".to_string(),
+            None,
+        )
             .pipe_with(absolute_qty)
     };
 
@@ -853,9 +996,11 @@ fn resolve_single_input(
                     kind: "density_missing_input_excluded",
                     input_name: Some(inp.name.clone()),
                     output_name: None,
-                    message: format!("'{}' (role={:?}) has no density_kg_per_unit and qty_unit='{}'; \
+                    message: format!(
+                        "'{}' (role={:?}) has no density_kg_per_unit and qty_unit='{}'; \
                         contributes 0 to mass-balance. Cost still counted.",
-                        inp.name, inp.role, unit),
+                        inp.name, inp.role, unit
+                    ),
                 });
                 (0.0, Some(reason))
             }
@@ -864,7 +1009,9 @@ fn resolve_single_input(
         let reason = if inp.role == InputRole::Catalyst {
             format!("role=catalyst (catalysts default to mass_balance=exclude)")
         } else {
-            inp.mass_balance.as_ref().map(|_| "mass_balance=exclude declared explicitly".to_string())
+            inp.mass_balance
+                .as_ref()
+                .map(|_| "mass_balance=exclude declared explicitly".to_string())
                 .unwrap_or_default()
         };
         notes.push(CascadeNote {
@@ -872,8 +1019,10 @@ fn resolve_single_input(
             kind: "catalyst_excluded_from_mass_balance",
             input_name: Some(inp.name.clone()),
             output_name: None,
-            message: format!("{} (role={:?}) excluded from mass-balance; cost still counted.",
-                inp.name, inp.role),
+            message: format!(
+                "{} (role={:?}) excluded from mass-balance; cost still counted.",
+                inp.name, inp.role
+            ),
         });
         (0.0, Some(reason))
     };
@@ -899,18 +1048,21 @@ fn resolve_single_input(
 
     let total_kg = kg.unwrap_or(0.0);
 
-    Ok((ResolvedInput {
-        name: inp.name.clone(),
-        qty: resolved_qty,
-        unit: unit.clone(),
-        kg: total_kg,
-        source,
-        role: role_str.to_string(),
-        mass_balance_contribution_kg: mb_kg,
-        mass_balance_excluded_reason: excluded_reason,
-        cost_eur,
-        upstream_cost_carried_eur: upstream_cost,
-    }, mb_kg))
+    Ok((
+        ResolvedInput {
+            name: inp.name.clone(),
+            qty: resolved_qty,
+            unit: unit.clone(),
+            kg: total_kg,
+            source,
+            role: role_str.to_string(),
+            mass_balance_contribution_kg: mb_kg,
+            mass_balance_excluded_reason: excluded_reason,
+            cost_eur,
+            upstream_cost_carried_eur: upstream_cost,
+        },
+        mb_kg,
+    ))
 }
 
 // Pipe helper to avoid restructuring the external branch
@@ -944,7 +1096,8 @@ fn distribute_output_mass(
     notes: &mut Vec<CascadeNote>,
 ) -> Result<Vec<ResolvedOutput>, CascadeError> {
     // Find residual candidates (downstream_feed with no qty_per_input_kg)
-    let residual_candidates: Vec<&Output> = outputs.iter()
+    let residual_candidates: Vec<&Output> = outputs
+        .iter()
         .filter(|o| o.role == OutputRole::DownstreamFeed && o.qty_per_input_kg.is_none())
         .collect();
 
@@ -956,7 +1109,8 @@ fn distribute_output_mass(
     }
 
     // Compute declared outputs kg
-    let declared_kg: f64 = outputs.iter()
+    let declared_kg: f64 = outputs
+        .iter()
         .filter(|o| o.qty_per_input_kg.is_some())
         .map(|o| o.qty_per_input_kg.unwrap() * total_mb_input_kg)
         .sum();
@@ -990,7 +1144,10 @@ fn distribute_output_mass(
     for output in outputs {
         let (out_kg, qty_basis) = if output.qty_per_input_kg.is_some() {
             let kg = output.qty_per_input_kg.unwrap() * total_mb_input_kg;
-            (kg, format!("declared_yield:{}", output.qty_per_input_kg.unwrap()))
+            (
+                kg,
+                format!("declared_yield:{}", output.qty_per_input_kg.unwrap()),
+            )
         } else {
             // Residual
             notes.push(CascadeNote {
@@ -998,21 +1155,30 @@ fn distribute_output_mass(
                 kind: "residual_assigned",
                 input_name: None,
                 output_name: Some(output.name.clone()),
-                message: format!("'{}' (downstream_feed) has no qty_per_input_kg; assigned residual {:.4}kg.",
-                    output.name, residual_kg.max(0.0)),
+                message: format!(
+                    "'{}' (downstream_feed) has no qty_per_input_kg; assigned residual {:.4}kg.",
+                    output.name,
+                    residual_kg.max(0.0)
+                ),
             });
             (residual_kg.max(0.0), "residual".to_string())
         };
 
         // Convert kg to output's native unit
-        let (out_qty, out_unit, unit_note) = kg_to_output_unit(out_kg, &output.qty_unit, output.density_kg_per_unit, notes, &output.name);
+        let (out_qty, out_unit, unit_note) = kg_to_output_unit(
+            out_kg,
+            &output.qty_unit,
+            output.density_kg_per_unit,
+            notes,
+            &output.name,
+        );
 
         // Economics: value and disposal
         let value_eur = match output.role {
             OutputRole::Product => output.value_per_unit_usd.map(|v| v * out_qty),
-            OutputRole::Sidestream => output.value_per_unit_usd.map(|v| {
-                v * out_qty * output.capture_fraction.unwrap_or(0.0)
-            }),
+            OutputRole::Sidestream => output
+                .value_per_unit_usd
+                .map(|v| v * out_qty * output.capture_fraction.unwrap_or(0.0)),
             _ => None,
         };
         let disposal_cost_eur = match output.role {
@@ -1025,7 +1191,9 @@ fn distribute_output_mass(
             qty: out_qty,
             unit: out_unit,
             kg: out_kg,
-            role: format!("{:?}", output.role).to_lowercase().replace("_", "_"),
+            role: format!("{:?}", output.role)
+                .to_lowercase()
+                .replace("_", "_"),
             qty_basis,
             capture_fraction: output.capture_fraction,
             value_eur,
@@ -1074,7 +1242,11 @@ fn compute_stage_economics(
     labor_cost: f64,
     carbon_price: f64,
 ) -> StageEconomics {
-    let scale = if total_mb_kg > 0.0 { 1.0 / total_mb_kg } else { 0.0 };
+    let scale = if total_mb_kg > 0.0 {
+        1.0 / total_mb_kg
+    } else {
+        0.0
+    };
     let mut diagnostics: Vec<StageDiagnostic> = Vec::new();
 
     // ── Materials: per-input breakdown rows ───────────────────────────────────
@@ -1096,13 +1268,16 @@ fn compute_stage_economics(
     }
 
     // Upstream cost carried from linked inputs
-    let upstream_eur: f64 = resolved_inputs.iter()
+    let upstream_eur: f64 = resolved_inputs
+        .iter()
         .filter(|r| r.source.starts_with("from_stage:"))
         .filter_map(|r| r.upstream_cost_carried_eur)
         .sum();
 
     // ── Energy: null when undeclared, diagnostic emitted ─────────────────────
-    let (energy_eur_opt, energy_rows, energy_diag) = if let Some(kwh_per_kg) = stage.power_kwh_per_input_kg {
+    let (energy_eur_opt, energy_rows, energy_diag) = if let Some(kwh_per_kg) =
+        stage.power_kwh_per_input_kg
+    {
         let kwh = kwh_per_kg * total_mb_kg;
         let eur = kwh * elec_price;
         let row = EnergyBreakdownRow {
@@ -1177,11 +1352,13 @@ fn compute_stage_economics(
     };
 
     // ── Sidestream credits + waste disposal ────────────────────────────────────
-    let sidestream_credit: f64 = resolved_outputs.iter()
+    let sidestream_credit: f64 = resolved_outputs
+        .iter()
         .filter(|o| o.role == "sidestream")
         .filter_map(|o| o.value_eur)
         .sum();
-    let waste_disposal: f64 = resolved_outputs.iter()
+    let waste_disposal: f64 = resolved_outputs
+        .iter()
         .filter(|o| o.role == "waste")
         .filter_map(|o| o.disposal_cost_eur)
         .sum();
@@ -1191,13 +1368,16 @@ fn compute_stage_economics(
     let labor_eur = labor_eur_opt.unwrap_or(0.0);
     let carbon_eur = carbon_eur_opt.unwrap_or(0.0);
 
-    let total_eur = upstream_eur + materials_eur + energy_eur + labor_eur + carbon_eur
-        + waste_disposal - sidestream_credit;
+    let total_eur =
+        upstream_eur + materials_eur + energy_eur + labor_eur + carbon_eur + waste_disposal
+            - sidestream_credit;
 
     // opex_per_kg_total_input is null when any required lens is missing
-    let opex_known = energy_eur_opt.is_some() && labor_eur_opt.is_some() && carbon_eur_opt.is_some();
+    let opex_known =
+        energy_eur_opt.is_some() && labor_eur_opt.is_some() && carbon_eur_opt.is_some();
 
-    let display = resolved_inputs.iter()
+    let display = resolved_inputs
+        .iter()
         .find(|r| r.role == "principal")
         .map(|r| DisplayUnit {
             value: if r.qty > 0.0 { total_eur / r.qty } else { 0.0 },
@@ -1206,16 +1386,25 @@ fn compute_stage_economics(
 
     StageEconomics {
         // materials null only when NO external inputs have unit_cost at all
-        materials_eur_per_kg: if resolved_inputs.iter().any(|r| r.source == "external" && r.cost_eur.is_some()) {
+        materials_eur_per_kg: if resolved_inputs
+            .iter()
+            .any(|r| r.source == "external" && r.cost_eur.is_some())
+        {
             Some(materials_eur * scale)
-        } else { None },
+        } else {
+            None
+        },
         upstream_cost_per_kg: upstream_eur * scale,
         energy_eur_per_kg: energy_eur_opt.map(|e| e * scale),
         labor_eur_per_kg: labor_eur_opt.map(|l| l * scale),
         carbon_eur_per_kg: carbon_eur_opt.map(|c| c * scale),
         sidestream_credit_eur: sidestream_credit,
         waste_disposal_cost_eur: waste_disposal,
-        opex_per_kg_total_input: if opex_known { Some(total_eur * scale) } else { None },
+        opex_per_kg_total_input: if opex_known {
+            Some(total_eur * scale)
+        } else {
+            None
+        },
         opex_per_unit_principal_input_display: display,
         cost_breakdown: Some(CostBreakdown {
             materials: materials_rows,
@@ -1228,7 +1417,10 @@ fn compute_stage_economics(
             diagnostic: energy_diag,
         }),
         carbon_breakdown: Some(CarbonBreakdown {
-            stage_kg_co2: stage.carbon_intensity.as_ref().map(|ci| ci.value_kg_per_kg() * total_output_kg),
+            stage_kg_co2: stage
+                .carbon_intensity
+                .as_ref()
+                .map(|ci| ci.value_kg_per_kg() * total_output_kg),
             diagnostic: carbon_diag,
         }),
         diagnostics,
@@ -1252,9 +1444,8 @@ fn scale_economics_for_parallelism(
     let labor_regime = scaling.labor.as_ref().unwrap_or(&linear);
     let carbon_regime = scaling.carbon.as_ref().unwrap_or(&linear);
 
-    let scale_opt = |v: Option<f64>, regime: &ScalingRegime| -> Option<f64> {
-        v.map(|x| regime.apply(x, n))
-    };
+    let scale_opt =
+        |v: Option<f64>, regime: &ScalingRegime| -> Option<f64> { v.map(|x| regime.apply(x, n)) };
     let scale_f = |v: f64, regime: &ScalingRegime| -> f64 { regime.apply(v, n) };
 
     let materials_total = scale_opt(per_instance.materials_eur_per_kg, mat_regime);
@@ -1272,42 +1463,61 @@ fn scale_economics_for_parallelism(
         let ss = scale_f(per_instance.sidestream_credit_eur, &linear);
         if per_instance.opex_per_kg_total_input.is_some() {
             Some(m + e + l + c + up + ws - ss)
-        } else { None }
+        } else {
+            None
+        }
     };
 
-    let cost_breakdown_total = per_instance.cost_breakdown.as_ref().map(|cb| {
-        CostBreakdown {
-            materials: cb.materials.iter().map(|row| CostBreakdownRow {
-                input_name: row.input_name.clone(),
-                eur_per_run: mat_regime.apply(row.eur_per_run, n),
-                eur_per_kg_input: mat_regime.apply(row.eur_per_kg_input, n),
-                qty_resolved: row.qty_resolved,
-                qty_unit: row.qty_unit.clone(),
-                unit_cost: row.unit_cost,
-            }).collect(),
-            energy: cb.energy.iter().map(|row| EnergyBreakdownRow {
-                kind: row.kind.clone(),
-                eur_per_run: energy_regime.apply(row.eur_per_run, n),
-                kwh: row.kwh.map(|k| energy_regime.apply(k, n)),
-                rate_eur_per_kwh: row.rate_eur_per_kwh,
-                diagnostic: row.diagnostic.clone(),
-            }).collect(),
-            labor: cb.labor.iter().map(|row| EnergyBreakdownRow {
-                kind: row.kind.clone(),
-                eur_per_run: labor_regime.apply(row.eur_per_run, n),
-                kwh: row.kwh.map(|k| labor_regime.apply(k, n)),
-                rate_eur_per_kwh: row.rate_eur_per_kwh,
-                diagnostic: row.diagnostic.clone(),
-            }).collect(),
-            carbon: cb.carbon.iter().map(|row| CarbonBreakdownRow {
-                kind: row.kind.clone(),
-                eur_per_run: carbon_regime.apply(row.eur_per_run, n),
-                kg_co2: row.kg_co2.map(|k| carbon_regime.apply(k, n)),
-                price_eur_per_tco2: row.price_eur_per_tco2,
-                diagnostic: row.diagnostic.clone(),
-            }).collect(),
-        }
-    });
+    let cost_breakdown_total = per_instance
+        .cost_breakdown
+        .as_ref()
+        .map(|cb| CostBreakdown {
+            materials: cb
+                .materials
+                .iter()
+                .map(|row| CostBreakdownRow {
+                    input_name: row.input_name.clone(),
+                    eur_per_run: mat_regime.apply(row.eur_per_run, n),
+                    eur_per_kg_input: mat_regime.apply(row.eur_per_kg_input, n),
+                    qty_resolved: row.qty_resolved,
+                    qty_unit: row.qty_unit.clone(),
+                    unit_cost: row.unit_cost,
+                })
+                .collect(),
+            energy: cb
+                .energy
+                .iter()
+                .map(|row| EnergyBreakdownRow {
+                    kind: row.kind.clone(),
+                    eur_per_run: energy_regime.apply(row.eur_per_run, n),
+                    kwh: row.kwh.map(|k| energy_regime.apply(k, n)),
+                    rate_eur_per_kwh: row.rate_eur_per_kwh,
+                    diagnostic: row.diagnostic.clone(),
+                })
+                .collect(),
+            labor: cb
+                .labor
+                .iter()
+                .map(|row| EnergyBreakdownRow {
+                    kind: row.kind.clone(),
+                    eur_per_run: labor_regime.apply(row.eur_per_run, n),
+                    kwh: row.kwh.map(|k| labor_regime.apply(k, n)),
+                    rate_eur_per_kwh: row.rate_eur_per_kwh,
+                    diagnostic: row.diagnostic.clone(),
+                })
+                .collect(),
+            carbon: cb
+                .carbon
+                .iter()
+                .map(|row| CarbonBreakdownRow {
+                    kind: row.kind.clone(),
+                    eur_per_run: carbon_regime.apply(row.eur_per_run, n),
+                    kg_co2: row.kg_co2.map(|k| carbon_regime.apply(k, n)),
+                    price_eur_per_tco2: row.price_eur_per_tco2,
+                    diagnostic: row.diagnostic.clone(),
+                })
+                .collect(),
+        });
 
     StageEconomics {
         materials_eur_per_kg: materials_total,
@@ -1318,16 +1528,24 @@ fn scale_economics_for_parallelism(
         sidestream_credit_eur: scale_f(per_instance.sidestream_credit_eur, &linear),
         waste_disposal_cost_eur: scale_f(per_instance.waste_disposal_cost_eur, &linear),
         opex_per_kg_total_input: opex_total,
-        opex_per_unit_principal_input_display: per_instance.opex_per_unit_principal_input_display.clone(),
+        opex_per_unit_principal_input_display: per_instance
+            .opex_per_unit_principal_input_display
+            .clone(),
         cost_breakdown: cost_breakdown_total,
-        energy_breakdown: per_instance.energy_breakdown.as_ref().map(|eb| EnergyBreakdown {
-            stage_kwh: eb.stage_kwh.map(|k| energy_regime.apply(k, n)),
-            diagnostic: eb.diagnostic.clone(),
-        }),
-        carbon_breakdown: per_instance.carbon_breakdown.as_ref().map(|cb| CarbonBreakdown {
-            stage_kg_co2: cb.stage_kg_co2.map(|k| carbon_regime.apply(k, n)),
-            diagnostic: cb.diagnostic.clone(),
-        }),
+        energy_breakdown: per_instance
+            .energy_breakdown
+            .as_ref()
+            .map(|eb| EnergyBreakdown {
+                stage_kwh: eb.stage_kwh.map(|k| energy_regime.apply(k, n)),
+                diagnostic: eb.diagnostic.clone(),
+            }),
+        carbon_breakdown: per_instance
+            .carbon_breakdown
+            .as_ref()
+            .map(|cb| CarbonBreakdown {
+                stage_kg_co2: cb.stage_kg_co2.map(|k| carbon_regime.apply(k, n)),
+                diagnostic: cb.diagnostic.clone(),
+            }),
         diagnostics: per_instance.diagnostics.clone(),
     }
 }
@@ -1336,27 +1554,38 @@ fn scale_economics_for_parallelism(
 
 fn compute_process_totals(stages: &[ResolvedStage]) -> ProcessTotals {
     // Use economics_total (parallelism-scaled) for process-level rollups
-    let total_opex: f64 = stages.iter().map(|s| {
-        s.economics_total.opex_per_kg_total_input.unwrap_or(0.0) * s.mass_balance.total_mass_balance_input_kg
-    }).sum();
+    let total_opex: f64 = stages
+        .iter()
+        .map(|s| {
+            s.economics_total.opex_per_kg_total_input.unwrap_or(0.0)
+                * s.mass_balance.total_mass_balance_input_kg
+        })
+        .sum();
 
-    let total_revenue: f64 = stages.iter().flat_map(|s| s.outputs_resolved.iter())
+    let total_revenue: f64 = stages
+        .iter()
+        .flat_map(|s| s.outputs_resolved.iter())
         .filter(|o| o.role == "product")
         .filter_map(|o| o.value_eur)
         .sum();
 
-    let total_sidestream: f64 = stages.iter().flat_map(|s| s.outputs_resolved.iter())
+    let total_sidestream: f64 = stages
+        .iter()
+        .flat_map(|s| s.outputs_resolved.iter())
         .filter(|o| o.role == "sidestream")
         .filter_map(|o| o.value_eur)
         .sum();
 
-    let total_waste: f64 = stages.iter().flat_map(|s| s.outputs_resolved.iter())
+    let total_waste: f64 = stages
+        .iter()
+        .flat_map(|s| s.outputs_resolved.iter())
         .filter(|o| o.role == "waste")
         .filter_map(|o| o.disposal_cost_eur)
         .sum();
 
     // Sum CO₂ from carbon_breakdown where available
-    let carbon_kg: f64 = stages.iter()
+    let carbon_kg: f64 = stages
+        .iter()
         .filter_map(|s| s.economics.carbon_breakdown.as_ref())
         .filter_map(|cb| cb.stage_kg_co2)
         .sum();
@@ -1450,7 +1679,10 @@ mod tests {
             twin: None,
         };
         let result = cascade_v2(&req);
-        assert!(matches!(result, Err(CascadeError::SchemaVersion { got: 1 })));
+        assert!(matches!(
+            result,
+            Err(CascadeError::SchemaVersion { got: 1 })
+        ));
     }
 
     #[test]
@@ -1461,7 +1693,10 @@ mod tests {
             scale: ScaleRequest::FromThroughput,
             twin: None,
         };
-        assert!(matches!(cascade_v2(&req), Err(CascadeError::BackwardNotSupported)));
+        assert!(matches!(
+            cascade_v2(&req),
+            Err(CascadeError::BackwardNotSupported)
+        ));
     }
 
     // ── AC 2: simple cascade mass-balance ───────────────────────────────────
@@ -1476,8 +1711,16 @@ mod tests {
         };
         let resp = cascade_v2(&req).unwrap();
         let mb = &resp.stages[0].mass_balance;
-        assert!((mb.total_input_kg - 100.0).abs() < 1e-9, "total_input_kg={}", mb.total_input_kg);
-        assert!((mb.total_output_kg - 90.0).abs() < 1e-9, "total_output_kg={}", mb.total_output_kg);
+        assert!(
+            (mb.total_input_kg - 100.0).abs() < 1e-9,
+            "total_input_kg={}",
+            mb.total_input_kg
+        );
+        assert!(
+            (mb.total_output_kg - 90.0).abs() < 1e-9,
+            "total_output_kg={}",
+            mb.total_output_kg
+        );
     }
 
     // ── AC 3: catalyst excluded from mass-balance ───────────────────────────
@@ -1487,30 +1730,53 @@ mod tests {
         let mut p = simple_process();
         // Add sugar (consumable) and yeast (catalyst)
         p.stages[0].inputs.push(Input {
-            name: "sugar".into(), role: InputRole::Consumable,
-            qty: Some(50.0), qty_unit: Some("g".into()),
-            per: Some(1.0), per_unit: Some("L".into()),
+            name: "sugar".into(),
+            role: InputRole::Consumable,
+            qty: Some(50.0),
+            qty_unit: Some("g".into()),
+            per: Some(1.0),
+            per_unit: Some("L".into()),
             per_basis: Some(PerBasis::Principal),
-            from_stage: None, from_output: None,
-            unit_cost: Some(0.001), cost_unit: Some("eur_per_g".into()),
-            cost_source: None, risk_flags: None,
-            density_kg_per_unit: Some(0.0016), mass_balance: None,
+            from_stage: None,
+            from_output: None,
+            unit_cost: Some(0.001),
+            cost_unit: Some("eur_per_g".into()),
+            cost_source: None,
+            risk_flags: None,
+            density_kg_per_unit: Some(0.0016),
+            mass_balance: None,
         });
         p.stages[0].inputs.push(Input {
-            name: "yeast".into(), role: InputRole::Catalyst,
-            qty: Some(0.5), qty_unit: Some("g".into()),
-            per: Some(1.0), per_unit: Some("L".into()),
+            name: "yeast".into(),
+            role: InputRole::Catalyst,
+            qty: Some(0.5),
+            qty_unit: Some("g".into()),
+            per: Some(1.0),
+            per_unit: Some("L".into()),
             per_basis: Some(PerBasis::Principal),
-            from_stage: None, from_output: None,
-            unit_cost: Some(0.05), cost_unit: Some("eur_per_g".into()),
-            cost_source: None, risk_flags: None,
-            density_kg_per_unit: None, mass_balance: None,
+            from_stage: None,
+            from_output: None,
+            unit_cost: Some(0.05),
+            cost_unit: Some("eur_per_g".into()),
+            cost_source: None,
+            risk_flags: None,
+            density_kg_per_unit: None,
+            mass_balance: None,
         });
 
-        let req = CascadeRequestV2 { process: p, direction: "forward".into(), scale: ScaleRequest::FromThroughput, twin: None };
+        let req = CascadeRequestV2 {
+            process: p,
+            direction: "forward".into(),
+            scale: ScaleRequest::FromThroughput,
+            twin: None,
+        };
         let resp = cascade_v2(&req).unwrap();
         let stage = &resp.stages[0];
-        let inputs: std::collections::HashMap<_, _> = stage.inputs_resolved.iter().map(|i| (i.name.as_str(), i)).collect();
+        let inputs: std::collections::HashMap<_, _> = stage
+            .inputs_resolved
+            .iter()
+            .map(|i| (i.name.as_str(), i))
+            .collect();
 
         // Water: 100 kg → 100 kg MB contribution
         assert!((inputs["w"].mass_balance_contribution_kg - 100.0).abs() < 1e-6);
@@ -1532,8 +1798,14 @@ mod tests {
         // For 5000g of sugar: 5000g × (1/1000) = 5 kg (trivial: 1g = 0.001 kg).
         // The spec density 0.0016 kg/g appears to be sugar density per mL, not per g.
         // For this test I'll just verify the sugar is included and yeast is excluded.
-        assert!(inputs["sugar"].mass_balance_contribution_kg > 0.0, "sugar must contribute to MB");
-        assert_eq!(inputs["yeast"].mass_balance_contribution_kg, 0.0, "yeast catalyst must be excluded");
+        assert!(
+            inputs["sugar"].mass_balance_contribution_kg > 0.0,
+            "sugar must contribute to MB"
+        );
+        assert_eq!(
+            inputs["yeast"].mass_balance_contribution_kg, 0.0,
+            "yeast catalyst must be excluded"
+        );
         assert!(inputs["yeast"].mass_balance_excluded_reason.is_some());
 
         // Note emitted for catalyst
@@ -1552,49 +1824,90 @@ mod tests {
             throughput: throughput("s1", "w", 100.0, "L"),
             stages: vec![
                 StageV2 {
-                    id: "s1".into(), name: None, description: None,
+                    id: "s1".into(),
+                    name: None,
+                    description: None,
                     inputs: vec![Input {
-                        name: "w".into(), role: InputRole::Principal,
-                        qty: Some(1.0), qty_unit: Some("L".into()),
-                        per: None, per_unit: None, per_basis: Some(PerBasis::Principal),
-                        from_stage: None, from_output: None,
-                        unit_cost: Some(0.001), cost_unit: Some("eur_per_L".into()),
-                        cost_source: None, risk_flags: None,
-                        density_kg_per_unit: Some(1.0), mass_balance: None,
+                        name: "w".into(),
+                        role: InputRole::Principal,
+                        qty: Some(1.0),
+                        qty_unit: Some("L".into()),
+                        per: None,
+                        per_unit: None,
+                        per_basis: Some(PerBasis::Principal),
+                        from_stage: None,
+                        from_output: None,
+                        unit_cost: Some(0.001),
+                        cost_unit: Some("eur_per_L".into()),
+                        cost_source: None,
+                        risk_flags: None,
+                        density_kg_per_unit: Some(1.0),
+                        mass_balance: None,
                     }],
                     outputs: vec![Output {
-                        name: "intermediate".into(), role: OutputRole::DownstreamFeed,
+                        name: "intermediate".into(),
+                        role: OutputRole::DownstreamFeed,
                         qty_per_input_kg: None,
-                        qty_unit: "L".into(), density_kg_per_unit: Some(1.0),
-                        capture_fraction: None, value_per_unit_usd: None, disposal_cost_per_unit_usd: None,
+                        qty_unit: "L".into(),
+                        density_kg_per_unit: Some(1.0),
+                        capture_fraction: None,
+                        value_per_unit_usd: None,
+                        disposal_cost_per_unit_usd: None,
                     }],
                     efficiency: 0.9,
-                    power_kwh_per_input_kg: None, labor_hours_per_input_kg: None,
-                    carbon_intensity: None, duration_hours: None,
+                    power_kwh_per_input_kg: None,
+                    labor_hours_per_input_kg: None,
+                    carbon_intensity: None,
+                    duration_hours: None,
                 },
                 StageV2 {
-                    id: "s2".into(), name: None, description: None,
+                    id: "s2".into(),
+                    name: None,
+                    description: None,
                     inputs: vec![Input {
-                        name: "intermediate".into(), role: InputRole::Principal,
-                        qty: None, qty_unit: None, per: None, per_unit: None, per_basis: None,
-                        from_stage: Some("s1".into()), from_output: None,
-                        unit_cost: None, cost_unit: None, cost_source: None, risk_flags: None,
-                        density_kg_per_unit: None, mass_balance: None,
+                        name: "intermediate".into(),
+                        role: InputRole::Principal,
+                        qty: None,
+                        qty_unit: None,
+                        per: None,
+                        per_unit: None,
+                        per_basis: None,
+                        from_stage: Some("s1".into()),
+                        from_output: None,
+                        unit_cost: None,
+                        cost_unit: None,
+                        cost_source: None,
+                        risk_flags: None,
+                        density_kg_per_unit: None,
+                        mass_balance: None,
                     }],
                     outputs: vec![Output {
-                        name: "final".into(), role: OutputRole::Product,
+                        name: "final".into(),
+                        role: OutputRole::Product,
                         qty_per_input_kg: None,
-                        qty_unit: "L".into(), density_kg_per_unit: Some(1.0),
-                        capture_fraction: None, value_per_unit_usd: Some(5.0), disposal_cost_per_unit_usd: None,
+                        qty_unit: "L".into(),
+                        density_kg_per_unit: Some(1.0),
+                        capture_fraction: None,
+                        value_per_unit_usd: Some(5.0),
+                        disposal_cost_per_unit_usd: None,
                     }],
                     efficiency: 0.95,
-                    power_kwh_per_input_kg: None, labor_hours_per_input_kg: None,
-                    carbon_intensity: None, duration_hours: None,
+                    power_kwh_per_input_kg: None,
+                    labor_hours_per_input_kg: None,
+                    carbon_intensity: None,
+                    duration_hours: None,
                 },
             ],
-            elec_price_per_kwh: None, labor_cost_per_hour: None, carbon_price_per_tonne: None,
+            elec_price_per_kwh: None,
+            labor_cost_per_hour: None,
+            carbon_price_per_tonne: None,
         };
-        let req = CascadeRequestV2 { process: p, direction: "forward".into(), scale: ScaleRequest::FromThroughput, twin: None };
+        let req = CascadeRequestV2 {
+            process: p,
+            direction: "forward".into(),
+            scale: ScaleRequest::FromThroughput,
+            twin: None,
+        };
         let resp = cascade_v2(&req).unwrap();
 
         // s1: 100 kg in × 0.9 = 90 kg out
@@ -1617,48 +1930,94 @@ mod tests {
             throughput: throughput("s1", "w", 100.0, "L"),
             stages: vec![
                 StageV2 {
-                    id: "s1".into(), name: None, description: None,
+                    id: "s1".into(),
+                    name: None,
+                    description: None,
                     inputs: vec![Input {
-                        name: "w".into(), role: InputRole::Principal,
-                        qty: Some(1.0), qty_unit: Some("L".into()),
-                        per: None, per_unit: None, per_basis: Some(PerBasis::Principal),
-                        from_stage: None, from_output: None,
-                        unit_cost: Some(0.001), cost_unit: Some("eur_per_L".into()),
-                        cost_source: None, risk_flags: None,
-                        density_kg_per_unit: Some(1.0), mass_balance: None,
+                        name: "w".into(),
+                        role: InputRole::Principal,
+                        qty: Some(1.0),
+                        qty_unit: Some("L".into()),
+                        per: None,
+                        per_unit: None,
+                        per_basis: Some(PerBasis::Principal),
+                        from_stage: None,
+                        from_output: None,
+                        unit_cost: Some(0.001),
+                        cost_unit: Some("eur_per_L".into()),
+                        cost_source: None,
+                        risk_flags: None,
+                        density_kg_per_unit: Some(1.0),
+                        mass_balance: None,
                     }],
                     outputs: vec![Output {
-                        name: "intermediate".into(), role: OutputRole::DownstreamFeed,
-                        qty_per_input_kg: None, qty_unit: "L".into(),
-                        density_kg_per_unit: Some(1.0), capture_fraction: None,
-                        value_per_unit_usd: None, disposal_cost_per_unit_usd: None,
+                        name: "intermediate".into(),
+                        role: OutputRole::DownstreamFeed,
+                        qty_per_input_kg: None,
+                        qty_unit: "L".into(),
+                        density_kg_per_unit: Some(1.0),
+                        capture_fraction: None,
+                        value_per_unit_usd: None,
+                        disposal_cost_per_unit_usd: None,
                     }],
-                    efficiency: 0.9, power_kwh_per_input_kg: None, labor_hours_per_input_kg: None,
-                    carbon_intensity: None, duration_hours: None,
+                    efficiency: 0.9,
+                    power_kwh_per_input_kg: None,
+                    labor_hours_per_input_kg: None,
+                    carbon_intensity: None,
+                    duration_hours: None,
                 },
                 StageV2 {
-                    id: "s2".into(), name: None, description: None,
+                    id: "s2".into(),
+                    name: None,
+                    description: None,
                     inputs: vec![Input {
-                        name: "wrong_name".into(), role: InputRole::Principal,
-                        qty: None, qty_unit: None, per: None, per_unit: None, per_basis: None,
-                        from_stage: Some("s1".into()), from_output: None,
-                        unit_cost: None, cost_unit: None, cost_source: None, risk_flags: None,
-                        density_kg_per_unit: None, mass_balance: None,
+                        name: "wrong_name".into(),
+                        role: InputRole::Principal,
+                        qty: None,
+                        qty_unit: None,
+                        per: None,
+                        per_unit: None,
+                        per_basis: None,
+                        from_stage: Some("s1".into()),
+                        from_output: None,
+                        unit_cost: None,
+                        cost_unit: None,
+                        cost_source: None,
+                        risk_flags: None,
+                        density_kg_per_unit: None,
+                        mass_balance: None,
                     }],
                     outputs: vec![Output {
-                        name: "final".into(), role: OutputRole::Product,
-                        qty_per_input_kg: None, qty_unit: "L".into(),
-                        density_kg_per_unit: Some(1.0), capture_fraction: None,
-                        value_per_unit_usd: Some(5.0), disposal_cost_per_unit_usd: None,
+                        name: "final".into(),
+                        role: OutputRole::Product,
+                        qty_per_input_kg: None,
+                        qty_unit: "L".into(),
+                        density_kg_per_unit: Some(1.0),
+                        capture_fraction: None,
+                        value_per_unit_usd: Some(5.0),
+                        disposal_cost_per_unit_usd: None,
                     }],
-                    efficiency: 0.95, power_kwh_per_input_kg: None, labor_hours_per_input_kg: None,
-                    carbon_intensity: None, duration_hours: None,
+                    efficiency: 0.95,
+                    power_kwh_per_input_kg: None,
+                    labor_hours_per_input_kg: None,
+                    carbon_intensity: None,
+                    duration_hours: None,
                 },
             ],
-            elec_price_per_kwh: None, labor_cost_per_hour: None, carbon_price_per_tonne: None,
+            elec_price_per_kwh: None,
+            labor_cost_per_hour: None,
+            carbon_price_per_tonne: None,
         };
-        let req = CascadeRequestV2 { process: p, direction: "forward".into(), scale: ScaleRequest::FromThroughput, twin: None };
-        assert!(matches!(cascade_v2(&req), Err(CascadeError::UnknownFromOutput { .. })));
+        let req = CascadeRequestV2 {
+            process: p,
+            direction: "forward".into(),
+            scale: ScaleRequest::FromThroughput,
+            twin: None,
+        };
+        assert!(matches!(
+            cascade_v2(&req),
+            Err(CascadeError::UnknownFromOutput { .. })
+        ));
     }
 
     // ── AC 6: missing density emits warn note ───────────────────────────────
@@ -1667,28 +2026,49 @@ mod tests {
     fn missing_density_emits_warn_note_and_contributes_zero() {
         let mut p = simple_process();
         p.stages[0].inputs.push(Input {
-            name: "mystery_powder".into(), role: InputRole::Consumable,
-            qty: Some(10.0), qty_unit: Some("g".into()),
-            per: Some(1.0), per_unit: Some("L".into()),
+            name: "mystery_powder".into(),
+            role: InputRole::Consumable,
+            qty: Some(10.0),
+            qty_unit: Some("g".into()),
+            per: Some(1.0),
+            per_unit: Some("L".into()),
             per_basis: Some(PerBasis::Principal),
-            from_stage: None, from_output: None,
-            unit_cost: Some(0.001), cost_unit: Some("eur_per_g".into()),
-            cost_source: None, risk_flags: None,
-            density_kg_per_unit: None,  // no density
+            from_stage: None,
+            from_output: None,
+            unit_cost: Some(0.001),
+            cost_unit: Some("eur_per_g".into()),
+            cost_source: None,
+            risk_flags: None,
+            density_kg_per_unit: None, // no density
             mass_balance: None,
         });
-        let req = CascadeRequestV2 { process: p, direction: "forward".into(), scale: ScaleRequest::FromThroughput, twin: None };
+        let req = CascadeRequestV2 {
+            process: p,
+            direction: "forward".into(),
+            scale: ScaleRequest::FromThroughput,
+            twin: None,
+        };
         let resp = cascade_v2(&req).unwrap();
         let stage = &resp.stages[0];
-        let powder = stage.inputs_resolved.iter().find(|i| i.name == "mystery_powder").unwrap();
+        let powder = stage
+            .inputs_resolved
+            .iter()
+            .find(|i| i.name == "mystery_powder")
+            .unwrap();
 
         assert_eq!(powder.mass_balance_contribution_kg, 0.0);
         assert!(powder.mass_balance_excluded_reason.is_some());
-        assert!(powder.cost_eur.unwrap_or(0.0) > 0.0, "cost must still be counted");
+        assert!(
+            powder.cost_eur.unwrap_or(0.0) > 0.0,
+            "cost must still be counted"
+        );
 
         let note_kinds: Vec<&str> = stage.cascade_notes.iter().map(|n| n.kind).collect();
-        assert!(note_kinds.contains(&"density_missing_input_excluded"),
-            "notes: {:?}", note_kinds);
+        assert!(
+            note_kinds.contains(&"density_missing_input_excluded"),
+            "notes: {:?}",
+            note_kinds
+        );
     }
 
     // ── Scaling regime unit tests ───────────────────────────────────────────
@@ -1707,7 +2087,12 @@ mod tests {
 
     #[test]
     fn scaling_power_applies_exponent() {
-        let r = ScalingRegime::Structured { kind: "power".into(), exponent: Some(0.6), base: None, per_instance: None };
+        let r = ScalingRegime::Structured {
+            kind: "power".into(),
+            exponent: Some(0.6),
+            base: None,
+            per_instance: None,
+        };
         // 10 * 4^0.6 = 10 * 2.297 ≈ 22.97
         let result = r.apply(10.0, 4);
         assert!((result - 10.0 * 4.0_f64.powf(0.6)).abs() < 1e-6);
@@ -1715,7 +2100,12 @@ mod tests {
 
     #[test]
     fn scaling_shared_adds_base_plus_per_instance() {
-        let r = ScalingRegime::Structured { kind: "shared".into(), exponent: None, base: Some(50.0), per_instance: Some(15.0) };
+        let r = ScalingRegime::Structured {
+            kind: "shared".into(),
+            exponent: None,
+            base: Some(50.0),
+            per_instance: Some(15.0),
+        };
         // base=50 + per_instance=15 * N=3 = 95
         assert!((r.apply(0.0, 3) - 95.0).abs() < 1e-9);
     }
@@ -1750,8 +2140,14 @@ mod tests {
                 StageParallelism {
                     kind: "parallel_instances".into(),
                     instances: vec![
-                        ParallelInstance { id: "v_a".into(), status: "running".into() },
-                        ParallelInstance { id: "v_b".into(), status: "running".into() },
+                        ParallelInstance {
+                            id: "v_a".into(),
+                            status: "running".into(),
+                        },
+                        ParallelInstance {
+                            id: "v_b".into(),
+                            status: "running".into(),
+                        },
                     ],
                     scaling: StageScaling::default(), // all linear
                 },
@@ -1773,8 +2169,11 @@ mod tests {
             stage.economics.materials_eur_per_kg,
             stage.economics_total.materials_eur_per_kg,
         ) {
-            assert!((total - per * 2.0).abs() < 1e-9,
-                "linear scaling: total={total}, per={per}, expected {}", per * 2.0);
+            assert!(
+                (total - per * 2.0).abs() < 1e-9,
+                "linear scaling: total={total}, per={per}, expected {}",
+                per * 2.0
+            );
         }
     }
 
@@ -1790,9 +2189,18 @@ mod tests {
                 StageParallelism {
                     kind: "parallel_instances".into(),
                     instances: vec![
-                        ParallelInstance { id: "v_a".into(), status: "running".into() },
-                        ParallelInstance { id: "v_b".into(), status: "failed".into() }, // excluded
-                        ParallelInstance { id: "v_c".into(), status: "running".into() },
+                        ParallelInstance {
+                            id: "v_a".into(),
+                            status: "running".into(),
+                        },
+                        ParallelInstance {
+                            id: "v_b".into(),
+                            status: "failed".into(),
+                        }, // excluded
+                        ParallelInstance {
+                            id: "v_c".into(),
+                            status: "running".into(),
+                        },
                     ],
                     scaling: StageScaling::default(),
                 },
@@ -1828,7 +2236,12 @@ mod tests {
             labor_cost_per_hour: None,
             carbon_price_per_tonne: None,
         };
-        let req = CascadeRequestV2 { process: p, direction: "forward".into(), scale: ScaleRequest::FromThroughput, twin: None };
+        let req = CascadeRequestV2 {
+            process: p,
+            direction: "forward".into(),
+            scale: ScaleRequest::FromThroughput,
+            twin: None,
+        };
         let result = cascade_v2(&req);
         assert!(matches!(result, Err(CascadeError::BasisUnresolved { .. })));
         if let Err(e) = result {

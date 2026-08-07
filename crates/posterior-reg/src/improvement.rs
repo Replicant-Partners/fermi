@@ -62,7 +62,12 @@ pub async fn improvement_loop(
     let nlpd = if held_out.is_empty() {
         None
     } else {
-        Some(compute_nlpd(&model, &samples, held_out, &config.feature_names)?)
+        Some(compute_nlpd(
+            &model,
+            &samples,
+            held_out,
+            &config.feature_names,
+        )?)
     };
 
     Ok((Box::new(model), samples, diagnostics, nlpd))
@@ -93,10 +98,10 @@ async fn fit_one<M: RegressionModel + Clone + Send + 'static>(
         chain_outputs.iter().map(|c| c.samples.clone()).collect();
 
     let total_divergences: u32 = chain_outputs.iter().map(|c| c.divergences).sum();
-    let mean_accept: f64 = chain_outputs.iter().map(|c| c.accept_rate).sum::<f64>()
-        / chain_outputs.len() as f64;
-    let mean_step: f64 = chain_outputs.iter().map(|c| c.final_step_size).sum::<f64>()
-        / chain_outputs.len() as f64;
+    let mean_accept: f64 =
+        chain_outputs.iter().map(|c| c.accept_rate).sum::<f64>() / chain_outputs.len() as f64;
+    let mean_step: f64 =
+        chain_outputs.iter().map(|c| c.final_step_size).sum::<f64>() / chain_outputs.len() as f64;
 
     let diagnostics = aggregate_diagnostics(
         &per_chain_samples,
@@ -150,9 +155,8 @@ fn compute_nlpd<M: RegressionModel>(
             }
             // log N(outcome; mean, std)
             let resid = s.outcome - mean;
-            let log_p = -0.5 * (2.0 * std::f64::consts::PI).ln()
-                - std.ln()
-                - 0.5 * (resid / std).powi(2);
+            let log_p =
+                -0.5 * (2.0 * std::f64::consts::PI).ln() - std.ln() - 0.5 * (resid / std).powi(2);
             log_terms.push(log_p);
         }
         if log_terms.is_empty() {

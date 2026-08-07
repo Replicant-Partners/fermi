@@ -97,7 +97,6 @@ pub fn detect_in_window_with_window(
 ) -> Vec<DetectedAnomaly> {
     let mut found = Vec::new();
     {
-
         // ─── Safety: any entry with a safety:* anomaly_flag ──
         for e in entries {
             if let Some(arr) = e.anomaly_flags.as_array() {
@@ -129,9 +128,9 @@ pub fn detect_in_window_with_window(
         // detail (drift_norm, threshold).
         for e in entries {
             if let Some(arr) = e.anomaly_flags.as_array() {
-                let drift_flag = arr.iter().any(|v| {
-                    v.as_str().map(|s| s == "drift:anomalous").unwrap_or(false)
-                });
+                let drift_flag = arr
+                    .iter()
+                    .any(|v| v.as_str().map(|s| s == "drift:anomalous").unwrap_or(false));
                 if drift_flag {
                     found.push(DetectedAnomaly {
                         kind: AnomalyKind::Drift,
@@ -234,10 +233,7 @@ pub fn detect_in_window_with_window(
 
 impl AnomalyDetector {
     /// Persist a detected anomaly. Returns the new event_id.
-    pub async fn persist(
-        &self,
-        anomaly: &DetectedAnomaly,
-    ) -> Result<Uuid, ObservabilityError> {
+    pub async fn persist(&self, anomaly: &DetectedAnomaly) -> Result<Uuid, ObservabilityError> {
         let event = AnomalyEvent {
             event_id: Uuid::new_v4(),
             agent_id: anomaly.agent_id,
@@ -297,7 +293,10 @@ mod tests {
         let entries = vec![
             entry(serde_json::json!(["conflict:rapport"])),
             entry(serde_json::json!(["conflict:rapport"])),
-            entry(serde_json::json!(["conflict:rapport", "conflict:retention"])),
+            entry(serde_json::json!([
+                "conflict:rapport",
+                "conflict:retention"
+            ])),
         ];
         let found = detect_in_window_with_window(agent_id, &entries, 3);
         let kinds: Vec<_> = found.iter().map(|a| a.kind).collect();
@@ -305,12 +304,7 @@ mod tests {
         let dims: Vec<String> = found
             .iter()
             .filter(|a| a.kind == AnomalyKind::RollingConflict)
-            .map(|a| {
-                a.payload["dimension"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string()
-            })
+            .map(|a| a.payload["dimension"].as_str().unwrap_or("").to_string())
             .collect();
         assert!(dims.contains(&"rapport".to_string()));
         assert!(!dims.contains(&"retention".to_string()));

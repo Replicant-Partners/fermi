@@ -189,9 +189,7 @@ fn scoby_kombucha_config() -> ProcessConfig {
 
 /// simops_cascade_forward
 /// Input: { process_name?, process_json?, input_quantity: f64 }
-pub async fn execute_simops_cascade_forward(
-    input: &serde_json::Value,
-) -> Result<String, String> {
+pub async fn execute_simops_cascade_forward(input: &serde_json::Value) -> Result<String, String> {
     let process = resolve_process(input)?;
     process.validate().map_err(|e| e.to_string())?;
 
@@ -206,9 +204,7 @@ pub async fn execute_simops_cascade_forward(
 
 /// simops_cascade_backward
 /// Input: { process_name?, process_json?, target_output: f64 }
-pub async fn execute_simops_cascade_backward(
-    input: &serde_json::Value,
-) -> Result<String, String> {
+pub async fn execute_simops_cascade_backward(input: &serde_json::Value) -> Result<String, String> {
     let process = resolve_process(input)?;
     process.validate().map_err(|e| e.to_string())?;
 
@@ -236,15 +232,15 @@ pub async fn execute_simops_kpi_compute(input: &serde_json::Value) -> Result<Str
     }
 
     let obs = BatchObservation {
-        primary_energy_kwh:       get_f64!("primary_energy_kwh"),
-        climate_energy_kwh:       get_f64!("climate_energy_kwh"),
-        delivery_energy_kwh:      get_f64!("delivery_energy_kwh"),
-        harvest_energy_kwh:       get_f64!("harvest_energy_kwh"),
-        output_mass_kg:           get_f64!("output_mass_kg"),
-        caloric_density_kcal_g:   get_f64!("caloric_density_kcal_g"),
-        elec_price_per_kwh:       get_f64!("elec_price_per_kwh"),
-        consumables_cost_usd:     get_f64!("consumables_cost_usd"),
-        capex_contribution_usd:   input
+        primary_energy_kwh: get_f64!("primary_energy_kwh"),
+        climate_energy_kwh: get_f64!("climate_energy_kwh"),
+        delivery_energy_kwh: get_f64!("delivery_energy_kwh"),
+        harvest_energy_kwh: get_f64!("harvest_energy_kwh"),
+        output_mass_kg: get_f64!("output_mass_kg"),
+        caloric_density_kcal_g: get_f64!("caloric_density_kcal_g"),
+        elec_price_per_kwh: get_f64!("elec_price_per_kwh"),
+        consumables_cost_usd: get_f64!("consumables_cost_usd"),
+        capex_contribution_usd: input
             .get("capex_contribution_usd")
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0),
@@ -256,9 +252,7 @@ pub async fn execute_simops_kpi_compute(input: &serde_json::Value) -> Result<Str
 
 /// simops_predictor_train
 /// Input: { observations: [ { features: {k:v,...}, target: f64 }, ... ] }
-pub async fn execute_simops_predictor_train(
-    input: &serde_json::Value,
-) -> Result<String, String> {
+pub async fn execute_simops_predictor_train(input: &serde_json::Value) -> Result<String, String> {
     let raw = input
         .get("observations")
         .and_then(|v| v.as_array())
@@ -338,9 +332,7 @@ pub async fn execute_simops_predictor_forecast(
 
 /// simops_optimize_scale
 /// Input: { model_json, reference: {k:v,...}, target_output: f64, max_scale?: f64 }
-pub async fn execute_simops_optimize_scale(
-    input: &serde_json::Value,
-) -> Result<String, String> {
+pub async fn execute_simops_optimize_scale(input: &serde_json::Value) -> Result<String, String> {
     let model: Predictor = serde_json::from_value(
         input
             .get("model_json")
@@ -367,8 +359,8 @@ pub async fn execute_simops_optimize_scale(
         .and_then(|v| v.as_f64())
         .unwrap_or(5.0);
 
-    let result = scale_from_reference(&model, &reference, target, max_scale)
-        .map_err(|e| e.to_string())?;
+    let result =
+        scale_from_reference(&model, &reference, target, max_scale).map_err(|e| e.to_string())?;
     serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
 }
 
@@ -404,15 +396,17 @@ pub async fn execute_simops_optimize_single_input(
         .and_then(|v| v.as_f64())
         .ok_or("Missing required parameter: target_output")?;
 
-    let min_val = input.get("min_value").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let min_val = input
+        .get("min_value")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
     let max_val = input
         .get("max_value")
         .and_then(|v| v.as_f64())
         .unwrap_or(1_000_000.0);
 
-    let result =
-        single_input_solve(&model, &fixed, free_feature, target, min_val, max_val)
-            .map_err(|e| e.to_string())?;
+    let result = single_input_solve(&model, &fixed, free_feature, target, min_val, max_val)
+        .map_err(|e| e.to_string())?;
     serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
 }
 
@@ -437,8 +431,8 @@ pub async fn execute_simops_load_process(
 ) -> Result<String, String> {
     // 1. Inline override
     if let Some(pj) = input.get("process_json") {
-        let config: ProcessConfig = serde_json::from_value(pj.clone())
-            .map_err(|e| format!("Invalid process_json: {e}"))?;
+        let config: ProcessConfig =
+            serde_json::from_value(pj.clone()).map_err(|e| format!("Invalid process_json: {e}"))?;
         config.validate().map_err(|e| e.to_string())?;
         let result = json!({
             "config": serde_json::to_value(&config).unwrap_or_default(),
@@ -524,7 +518,10 @@ pub async fn execute_simops_write_observation(
     input: &serde_json::Value,
     ctx: &ToolContext,
 ) -> Result<String, String> {
-    let pool = ctx.db.as_ref().ok_or("simops_write_observation requires database context")?;
+    let pool = ctx
+        .db
+        .as_ref()
+        .ok_or("simops_write_observation requires database context")?;
 
     let session_id: Uuid = input
         .get("session_id")
@@ -557,13 +554,16 @@ pub async fn execute_simops_write_observation(
     // observation with the projection that produced it, enabling the
     // ProjectionScoringEvaluator to find the prediction when real
     // measurements arrive later (spec 20).
-    let mut extra = input.get("extra")
+    let mut extra = input
+        .get("extra")
         .and_then(|v| v.as_object())
         .cloned()
         .map(serde_json::Value::Object)
         .unwrap_or_else(|| json!({}));
 
-    let extra_obj = extra.as_object_mut().expect("extra is always an object here");
+    let extra_obj = extra
+        .as_object_mut()
+        .expect("extra is always an object here");
 
     // Auto-inject projection_id if present in the tool input and not already in extra
     if !extra_obj.contains_key("projection_id") {
@@ -574,7 +574,10 @@ pub async fn execute_simops_write_observation(
     // Auto-inject source = "simops_simulation" for synthetic observations
     // (distinguishes them from real measurements in the scoring evaluator)
     if !extra_obj.contains_key("source") {
-        let procedure = input.get("procedure").and_then(|v| v.as_str()).unwrap_or("");
+        let procedure = input
+            .get("procedure")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         if procedure.contains("simulation") || procedure.is_empty() {
             extra_obj.insert("source".into(), json!("simops_simulation"));
         }
@@ -588,14 +591,13 @@ pub async fn execute_simops_write_observation(
     }
 
     // Verify session exists and get platform_id
-    let session_row = sqlx::query(
-        "SELECT platform_id FROM observation_sessions WHERE session_id = $1",
-    )
-    .bind(session_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| format!("DB error checking session: {e}"))?
-    .ok_or_else(|| format!("Session {} not found", session_id))?;
+    let session_row =
+        sqlx::query("SELECT platform_id FROM observation_sessions WHERE session_id = $1")
+            .bind(session_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("DB error checking session: {e}"))?
+            .ok_or_else(|| format!("Session {} not found", session_id))?;
 
     let platform_id: Uuid = session_row
         .try_get("platform_id")
@@ -617,15 +619,14 @@ pub async fn execute_simops_write_observation(
         Option<i32>,
     ) = match ctx.current_agent_id {
         Some(agent_uuid) => {
-            let name: Option<String> = sqlx::query(
-                "SELECT name FROM agents WHERE agent_id = $1 LIMIT 1",
-            )
-            .bind(agent_uuid)
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten()
-            .and_then(|row| row.try_get("name").ok());
+            let name: Option<String> =
+                sqlx::query("SELECT name FROM agents WHERE agent_id = $1 LIMIT 1")
+                    .bind(agent_uuid)
+                    .fetch_optional(pool)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|row| row.try_get("name").ok());
 
             // Resolve current version directly (no MemoryStore handle in this
             // tool context). Mirrors the body of
@@ -639,7 +640,12 @@ pub async fn execute_simops_write_observation(
             .await
             .ok()
             .flatten()
-            .map(|row| (row.try_get("version_id").ok(), row.try_get("version_number").ok()))
+            .map(|row| {
+                (
+                    row.try_get("version_id").ok(),
+                    row.try_get("version_number").ok(),
+                )
+            })
             .unwrap_or((None, None));
 
             (name, vid, vnum)
@@ -678,7 +684,8 @@ pub async fn execute_simops_write_observation(
     // Re-borrow as immutable: the prior `extra_obj = extra.as_object_mut()`
     // mutable borrow is no longer needed after the INSERT above.
     let extra_obj = extra.as_object().expect("extra is always an object here");
-    let is_synthetic = extra_obj.get("source")
+    let is_synthetic = extra_obj
+        .get("source")
         .and_then(|v| v.as_str())
         .map(|s| s == "simops_simulation")
         .unwrap_or(false);
@@ -689,9 +696,7 @@ pub async fn execute_simops_write_observation(
         let projection_id = extra_obj.get("projection_id").and_then(|v| v.as_str());
         let model_uri = extra_obj.get("model_uri").and_then(|v| v.as_str());
         let stage_id_val = extra_obj.get("stage_id").and_then(|v| v.as_str());
-        let process_ctx: Option<serde_json::Value> = extra_obj
-            .get("process_context")
-            .cloned();
+        let process_ctx: Option<serde_json::Value> = extra_obj.get("process_context").cloned();
 
         // Pre-existing in-progress hook (not part of Spec 22 work). Stub-out
         // gracefully if the handler module isn't wired yet — this is hooks
@@ -748,7 +753,10 @@ pub async fn execute_simops_fetch_training_data(
     input: &serde_json::Value,
     ctx: &ToolContext,
 ) -> Result<String, String> {
-    let pool = ctx.db.as_ref().ok_or("simops_fetch_training_data requires database context")?;
+    let pool = ctx
+        .db
+        .as_ref()
+        .ok_or("simops_fetch_training_data requires database context")?;
 
     let session_id: Uuid = input
         .get("session_id")
@@ -766,7 +774,9 @@ pub async fn execute_simops_fetch_training_data(
         .collect();
 
     if feature_properties.is_empty() {
-        return Err("feature_properties must be a non-empty array of observable_property names".into());
+        return Err(
+            "feature_properties must be a non-empty array of observable_property names".into(),
+        );
     }
 
     let target_property = input
@@ -866,7 +876,10 @@ pub async fn execute_get_observations(
     input: &serde_json::Value,
     ctx: &ToolContext,
 ) -> Result<String, String> {
-    let pool = ctx.db.as_ref().ok_or("get_observations requires database context")?;
+    let pool = ctx
+        .db
+        .as_ref()
+        .ok_or("get_observations requires database context")?;
 
     let session_id: Uuid = input
         .get("session_id")
@@ -891,19 +904,39 @@ pub async fn execute_get_observations(
     );
     let mut params_count = 1i32;
 
-    if property_filter.is_some() { params_count += 1; sql.push_str(&format!(" AND observable_property = ${}", params_count)); }
-    if from_ms.is_some() { params_count += 1; sql.push_str(&format!(" AND phenomenon_time >= ${}", params_count)); }
-    if to_ms.is_some() { params_count += 1; sql.push_str(&format!(" AND phenomenon_time <= ${}", params_count)); }
+    if property_filter.is_some() {
+        params_count += 1;
+        sql.push_str(&format!(" AND observable_property = ${}", params_count));
+    }
+    if from_ms.is_some() {
+        params_count += 1;
+        sql.push_str(&format!(" AND phenomenon_time >= ${}", params_count));
+    }
+    if to_ms.is_some() {
+        params_count += 1;
+        sql.push_str(&format!(" AND phenomenon_time <= ${}", params_count));
+    }
 
-    sql.push_str(&format!(" ORDER BY phenomenon_time DESC LIMIT ${}", params_count + 1));
+    sql.push_str(&format!(
+        " ORDER BY phenomenon_time DESC LIMIT ${}",
+        params_count + 1
+    ));
 
     let mut query = sqlx::query(&sql).bind(session_id);
-    if let Some(p) = property_filter { query = query.bind(p); }
-    if let Some(f) = from_ms { query = query.bind(f); }
-    if let Some(t) = to_ms { query = query.bind(t); }
+    if let Some(p) = property_filter {
+        query = query.bind(p);
+    }
+    if let Some(f) = from_ms {
+        query = query.bind(f);
+    }
+    if let Some(t) = to_ms {
+        query = query.bind(t);
+    }
     query = query.bind(limit);
 
-    let rows = query.fetch_all(pool).await
+    let rows = query
+        .fetch_all(pool)
+        .await
         .map_err(|e| format!("DB error: {e}"))?;
 
     let observations: Vec<serde_json::Value> = rows.iter().map(|r| json!({
@@ -923,14 +956,19 @@ pub async fn execute_get_observations(
             obs["result_value"].as_f64(),
         ) {
             let e = prop_stats.entry(prop.to_string()).or_insert((0.0, 0.0, 0));
-            e.0 += val; e.1 += val * val; e.2 += 1;
+            e.0 += val;
+            e.1 += val * val;
+            e.2 += 1;
         }
     }
-    let summaries: Vec<serde_json::Value> = prop_stats.iter().map(|(prop, (sum, sum_sq, n))| {
-        let mean = sum / *n as f64;
-        let variance = (sum_sq / *n as f64) - mean * mean;
-        json!({ "property": prop, "count": n, "mean": mean, "std_dev": variance.sqrt() })
-    }).collect();
+    let summaries: Vec<serde_json::Value> = prop_stats
+        .iter()
+        .map(|(prop, (sum, sum_sq, n))| {
+            let mean = sum / *n as f64;
+            let variance = (sum_sq / *n as f64) - mean * mean;
+            json!({ "property": prop, "count": n, "mean": mean, "std_dev": variance.sqrt() })
+        })
+        .collect();
 
     let result = json!({
         "session_id": session_id,
@@ -952,7 +990,10 @@ pub async fn execute_describe_session(
     input: &serde_json::Value,
     ctx: &ToolContext,
 ) -> Result<String, String> {
-    let pool = ctx.db.as_ref().ok_or("describe_session requires database context")?;
+    let pool = ctx
+        .db
+        .as_ref()
+        .ok_or("describe_session requires database context")?;
 
     let session_id: Uuid = input
         .get("session_id")
@@ -995,17 +1036,22 @@ pub async fn execute_describe_session(
     .await
     .map_err(|e| format!("DB error: {e}"))?;
 
-    let property_stats: Vec<serde_json::Value> = stat_rows.iter().map(|r| json!({
-        "property": r.try_get::<String,_>("observable_property").unwrap_or_default(),
-        "unit": r.try_get::<Option<String>,_>("result_unit").unwrap_or(None),
-        "count": r.try_get::<i64,_>("n").unwrap_or(0),
-        "min": r.try_get::<f64,_>("min_val").ok(),
-        "max": r.try_get::<f64,_>("max_val").ok(),
-        "mean": r.try_get::<f64,_>("mean_val").ok(),
-        "std_dev": r.try_get::<f64,_>("std_val").ok(),
-        "first_observation_ms": r.try_get::<i64,_>("first_t").unwrap_or(0),
-        "last_observation_ms": r.try_get::<i64,_>("last_t").unwrap_or(0),
-    })).collect();
+    let property_stats: Vec<serde_json::Value> = stat_rows
+        .iter()
+        .map(|r| {
+            json!({
+                "property": r.try_get::<String,_>("observable_property").unwrap_or_default(),
+                "unit": r.try_get::<Option<String>,_>("result_unit").unwrap_or(None),
+                "count": r.try_get::<i64,_>("n").unwrap_or(0),
+                "min": r.try_get::<f64,_>("min_val").ok(),
+                "max": r.try_get::<f64,_>("max_val").ok(),
+                "mean": r.try_get::<f64,_>("mean_val").ok(),
+                "std_dev": r.try_get::<f64,_>("std_val").ok(),
+                "first_observation_ms": r.try_get::<i64,_>("first_t").unwrap_or(0),
+                "last_observation_ms": r.try_get::<i64,_>("last_t").unwrap_or(0),
+            })
+        })
+        .collect();
 
     // Look for a process config snapshot in agent memory
     let process_config_snapshot = if let Some(agent_id) = ctx.current_agent_id {
@@ -1020,7 +1066,7 @@ pub async fn execute_describe_session(
         .await
         .ok()
         .flatten()
-        .and_then(|r| r.try_get::<serde_json::Value,_>("context").ok())
+        .and_then(|r| r.try_get::<serde_json::Value, _>("context").ok())
         .and_then(|ctx| ctx.get("process_config").cloned())
     } else {
         None
@@ -1115,9 +1161,7 @@ pub async fn execute_simops_check_constraints(
     // Check user-supplied constraints
     if let Some(constraints) = user_constraints {
         for (feature, bounds) in constraints {
-            let val = optimizer_result
-                .get(feature)
-                .and_then(|v| v.as_f64());
+            let val = optimizer_result.get(feature).and_then(|v| v.as_f64());
             if let Some(v) = val {
                 if let Some(min) = bounds.get("min").and_then(|b| b.as_f64()) {
                     if v < min {
@@ -1186,7 +1230,8 @@ pub async fn execute_simops_write_actuation_plan(
         .get("session_id")
         .and_then(|v| v.as_str())
         .ok_or("Missing required parameter: session_id")?;
-    let session_id: Uuid = session_id_str.parse()
+    let session_id: Uuid = session_id_str
+        .parse()
         .map_err(|e| format!("Invalid session_id: {e}"))?;
 
     let optimizer_result = input
@@ -1199,8 +1244,14 @@ pub async fn execute_simops_write_actuation_plan(
         .and_then(|v| v.as_str())
         .ok_or("Missing required parameter: rationale")?;
 
-    let decision = input.get("decision").and_then(|v| v.as_str()).unwrap_or("proposed");
-    let process_name = input.get("process_name").and_then(|v| v.as_str()).unwrap_or("unknown");
+    let decision = input
+        .get("decision")
+        .and_then(|v| v.as_str())
+        .unwrap_or("proposed");
+    let process_name = input
+        .get("process_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
     let target_output = input.get("target_output").and_then(|v| v.as_f64());
     let modifications = input.get("modifications").cloned();
 
@@ -1238,13 +1289,17 @@ pub async fn execute_simops_write_actuation_plan(
             cost_usd: None,
             embedding: None,
             consolidated: false,
-            tags: vec!["simops_actuation".into(), format!("process:{}", process_name), decision.into()],
+            tags: vec![
+                "simops_actuation".into(),
+                format!("process:{}", process_name),
+                decision.into(),
+            ],
             provenance: agent_bestiary_memory::Provenance::AutoPass,
             authority_weight: 0.5,
             dyad_id: None,
             persona_version_at_write: None,
-                provider_used: None,
-                model_used: None,
+            provider_used: None,
+            model_used: None,
         };
 
         // Synthetic actuation-plan episode — embedding intentionally NULL.

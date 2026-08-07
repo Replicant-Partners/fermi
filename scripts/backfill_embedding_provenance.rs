@@ -118,8 +118,7 @@ async fn main() -> Result<()> {
             target_table: "episodes",
             id_col: "episode_id",
             embed_col: "embedding",
-            source_text_expr:
-                "(query || ' ' || COALESCE(context->>'reasoning', ''))",
+            source_text_expr: "(query || ' ' || COALESCE(context->>'reasoning', ''))",
             source_ref_extra: "jsonb_build_object('original_query', query)",
             trusted: false,
             has_user_id: true,
@@ -140,8 +139,7 @@ async fn main() -> Result<()> {
             id_col: "entity_id",
             embed_col: "embedding",
             source_text_expr: "entity_name",
-            source_ref_extra:
-                "jsonb_build_object('source_episodes', source_episodes)",
+            source_ref_extra: "jsonb_build_object('source_episodes', source_episodes)",
             trusted: true,
             has_user_id: false,
         },
@@ -180,7 +178,11 @@ async fn main() -> Result<()> {
         "✅ Done. {} row{} {}.",
         grand_total_backfilled,
         if grand_total_backfilled == 1 { "" } else { "s" },
-        if args.dry_run { "WOULD be backfilled (dry-run)" } else { "backfilled" }
+        if args.dry_run {
+            "WOULD be backfilled (dry-run)"
+        } else {
+            "backfilled"
+        }
     );
     Ok(())
 }
@@ -239,7 +241,11 @@ async fn process_table(pool: &PgPool, args: &Args, job: &TableJob) -> Result<i64
     }
 
     // Loop until exhausted, in batches.
-    let user_id_select = if job.has_user_id { "user_id" } else { "NULL::text" };
+    let user_id_select = if job.has_user_id {
+        "user_id"
+    } else {
+        "NULL::text"
+    };
     let mut total_done = 0i64;
     loop {
         // Stamp a batch — update per-row provenance columns AND insert the
@@ -293,7 +299,11 @@ async fn process_table(pool: &PgPool, args: &Args, job: &TableJob) -> Result<i64
             source_text_expr = job.source_text_expr,
             source_ref_extra = job.source_ref_extra,
             tbl = job.target_table,
-            agent_filter = if args.agent_id.is_some() { "AND agent_id = $6" } else { "" },
+            agent_filter = if args.agent_id.is_some() {
+                "AND agent_id = $6"
+            } else {
+                ""
+            },
             batch = args.batch_size,
         );
 

@@ -33,7 +33,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 
 use agent_bestiary_evaluators::{
-    Dimension, EvalError, EvalModel, EvalResult, EvalTier, EpisodeBundle,
+    Dimension, EpisodeBundle, EvalError, EvalModel, EvalResult, EvalTier,
 };
 
 /// Pre-computed persona consistency signals from the memory store.
@@ -63,7 +63,9 @@ impl LifelongBenchEvaluator {
 
     /// With pre-computed consistency signal from the eval pipeline.
     pub fn with_signal(signal: PersonaConsistencySignal) -> Self {
-        Self { signal: Some(signal) }
+        Self {
+            signal: Some(signal),
+        }
     }
 }
 
@@ -189,7 +191,11 @@ mod tests {
     #[tokio::test]
     async fn no_signal_is_inapplicable() {
         let ev = LifelongBenchEvaluator::new();
-        assert!(ev.evaluate(&minimal_bundle()).await.unwrap_err().is_inapplicable());
+        assert!(ev
+            .evaluate(&minimal_bundle())
+            .await
+            .unwrap_err()
+            .is_inapplicable());
     }
 
     #[tokio::test]
@@ -198,7 +204,11 @@ mod tests {
             within_version_cosine: 0.9,
             n_prior_episodes: 3,
         });
-        assert!(ev.evaluate(&minimal_bundle()).await.unwrap_err().is_inapplicable());
+        assert!(ev
+            .evaluate(&minimal_bundle())
+            .await
+            .unwrap_err()
+            .is_inapplicable());
     }
 
     #[tokio::test]

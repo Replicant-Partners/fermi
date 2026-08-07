@@ -21,136 +21,94 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Instant;
 
-/// Provider configuration
-struct ProviderConfig {
-    /// API key — empty string for providers that don't require one (e.g. Ollama)
-    api_key: String,
-    base_url: String,
+/// Provider endpoint configuration.
+///
+/// Endpoint only — no credential. Base URLs are operator config (which
+/// endpoint this deployment talks to) and legitimately come from env;
+/// keys are per-agent and come from the credential store (SPEC_28).
+pub(crate) struct ProviderConfig {
+    /// API key for THIS execution, resolved from
+    /// `ExecutionContext.credentials`. Empty for providers needing none
+    /// (e.g. Ollama).
+    pub(crate) api_key: String,
+    pub(crate) base_url: String,
 }
 
-/// Multi-model executor that dispatches to the right provider
+/// Multi-model executor that dispatches to the right provider.
+///
+/// Credential-stateless (SPEC_28). Previously this captured one key per
+/// provider from env at boot, which meant every agent reaching it — all
+/// structured-output agents, since they bypass the tool loop — ran on the
+/// platform's key regardless of ownership.
 pub struct MultiModelExecutor {
     /// Anthropic executor (handles Claude natively)
     anthropic: LLMExecutor,
-    /// OpenAI-compatible providers keyed by name
-    providers: HashMap<String, ProviderConfig>,
+    /// Base URLs for OpenAI-compatible providers, keyed by provider name.
+    base_urls: HashMap<String, String>,
     client: reqwest::Client,
 }
 
+/// Base URL for an OpenAI-compatible provider. Operator config, so env is
+/// the right source; `None` for an unrecognised provider name.
+pub(crate) fn provider_base_url(provider: &str) -> Option<String> {
+    let url = match provider {
+        "mistral" => "https://api.mistral.ai/v1".to_string(),
+        "qwen" => std::env::var("QWEN_BASE_URL")
+            .unwrap_or_else(|_| "https://dashscope.aliyuncs.com/compatible-mode/v1".to_string()),
+        "openrouter" => "https://openrouter.ai/api/v1".to_string(),
+        "glm" => std::env::var("GLM_BASE_URL")
+            .unwrap_or_else(|_| "https://open.bigmodel.cn/api/paas/v4".to_string()),
+        "deepseek" => std::env::var("DEEPSEEK_BASE_URL")
+            .unwrap_or_else(|_| "https://api.deepseek.com/v1".to_string()),
+        "kimi" => std::env::var("KIMI_BASE_URL")
+            .unwrap_or_else(|_| "https://api.moonshot.cn/v1".to_string()),
+        "ollama" => std::env::var("OLLAMA_BASE_URL")
+            .unwrap_or_else(|_| "http://localhost:11434/v1".to_string()),
+        _ => return None,
+    };
+    Some(url)
+}
+
+/// Every OpenAI-compatible provider the executor can dispatch to.
+pub(crate) const OPENAI_COMPATIBLE_PROVIDERS: &[&str] = &[
+    "mistral",
+    "qwen",
+    "openrouter",
+    "glm",
+    "deepseek",
+    "kimi",
+    "ollama",
+];
+
 impl MultiModelExecutor {
-    /// Discover available providers from environment variables
+    /// Build the executor. Reads no credentials — only endpoint config.
+    ///
+    /// Provider *availability* is no longer a boot-time property (it used
+    /// to mean "the server has an env key for it"). It is now a per-agent
+    /// property: an agent can use any provider its owner has funded.
     pub fn from_env() -> Result<Self, ExecutionError> {
         let anthropic = LLMExecutor::from_env()?;
 
-        let mut providers = HashMap::new();
-
-        if let Ok(key) = std::env::var("MISTRAL_API_KEY") {
-            providers.insert(
-                "mistral".to_string(),
-                ProviderConfig {
-                    api_key: key,
-                    base_url: "https://api.mistral.ai/v1".to_string(),
-                },
-            );
-            println!("  Multi-model: Mistral provider available");
-        }
-
-        if let Ok(key) = std::env::var("QWEN_API_KEY") {
-            providers.insert(
-                "qwen".to_string(),
-                ProviderConfig {
-                    api_key: key,
-                    base_url: std::env::var("QWEN_BASE_URL").unwrap_or_else(|_| {
-                        "https://dashscope.aliyuncs.com/compatible-mode/v1".to_string()
-                    }),
-                },
-            );
-            println!("  Multi-model: Qwen provider available");
-        }
-
-        if let Ok(key) = std::env::var("OPENROUTER_API_KEY") {
-            providers.insert(
-                "openrouter".to_string(),
-                ProviderConfig {
-                    api_key: key,
-                    base_url: "https://openrouter.ai/api/v1".to_string(),
-                },
-            );
-            println!("  Multi-model: OpenRouter provider available");
-        }
-
-        if let Ok(key) = std::env::var("GLM_API_KEY") {
-            providers.insert(
-                "glm".to_string(),
-                ProviderConfig {
-                    api_key: key,
-                    base_url: std::env::var("GLM_BASE_URL").unwrap_or_else(|_| {
-                        "https://open.bigmodel.cn/api/paas/v4".to_string()
-                    }),
-                },
-            );
-            println!("  Multi-model: Zhipu AI GLM provider available");
-        }
-
-        if let Ok(key) = std::env::var("DEEPSEEK_API_KEY") {
-            providers.insert(
-                "deepseek".to_string(),
-                ProviderConfig {
-                    api_key: key,
-                    base_url: std::env::var("DEEPSEEK_BASE_URL").unwrap_or_else(|_| {
-                        "https://api.deepseek.com/v1".to_string()
-                    }),
-                },
-            );
-            println!("  Multi-model: DeepSeek provider available");
-        }
-
-        if let Ok(key) = std::env::var("KIMI_API_KEY") {
-            providers.insert(
-                "kimi".to_string(),
-                ProviderConfig {
-                    api_key: key,
-                    base_url: std::env::var("KIMI_BASE_URL").unwrap_or_else(|_| {
-                        "https://api.moonshot.cn/v1".to_string()
-                    }),
-                },
-            );
-            println!("  Multi-model: Kimi (Moonshot AI) provider available");
-        }
-
-        // Ollama — local or operator-hosted OpenAI-compatible endpoint.
-        // No API key required; presence of OLLAMA_BASE_URL is the activation signal.
-        // Default: http://localhost:11434/v1 (standard Ollama OpenAI-compat port).
-        if let Ok(base_url) = std::env::var("OLLAMA_BASE_URL") {
-            providers.insert(
-                "ollama".to_string(),
-                ProviderConfig {
-                    api_key: String::new(), // Ollama needs no auth
-                    base_url,
-                },
-            );
-            println!("  Multi-model: Ollama provider available (local/operator-hosted)");
-        } else if std::env::var("OLLAMA_ENABLE").as_deref() == Ok("true") {
-            // Opt-in with default localhost URL — useful for development
-            providers.insert(
-                "ollama".to_string(),
-                ProviderConfig {
-                    api_key: String::new(),
-                    base_url: "http://localhost:11434/v1".to_string(),
-                },
-            );
-            println!("  Multi-model: Ollama provider available (localhost default)");
+        let mut base_urls = HashMap::new();
+        for p in OPENAI_COMPATIBLE_PROVIDERS {
+            if let Some(url) = provider_base_url(p) {
+                base_urls.insert((*p).to_string(), url);
+            }
         }
 
         println!(
-            "  Multi-model: {} additional provider(s) configured",
-            providers.len()
+            "  Multi-model: {} OpenAI-compatible provider endpoint(s) known; \
+             keys resolved per-agent from the credential store",
+            base_urls.len()
         );
 
         Ok(Self {
             anthropic,
-            providers,
-            client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build().unwrap_or_default(),
+            base_urls,
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(90))
+                .build()
+                .unwrap_or_default(),
         })
     }
 
@@ -177,7 +135,10 @@ impl MultiModelExecutor {
             agent.query
         );
 
-        let sp = context.agent_card.capabilities.resolve_sampling_params(2048);
+        let sp = context
+            .agent_card
+            .capabilities
+            .resolve_sampling_params(2048);
 
         let request = OpenAIRequest {
             model: context.agent_card.capabilities.model.clone(),
@@ -196,6 +157,8 @@ impl MultiModelExecutor {
             tool_choice: None,
         };
 
+        let provider_name = context.agent_card.capabilities.provider.clone();
+        let funding = context.funding_provenance(&provider_name);
         let oai_response = self.send_openai_request(&request, config).await?;
 
         let text = oai_response
@@ -227,6 +190,9 @@ impl MultiModelExecutor {
                 model_used: Some(context.agent_card.capabilities.model.clone()),
                 temperature: sp.temperature,
                 reasoning,
+                provider: Some(provider_name),
+                funding_principal: funding.0,
+                credential_source: funding.1,
                 ..Default::default()
             },
             tool_invocations: vec![],
@@ -249,11 +215,10 @@ impl MultiModelExecutor {
         if !config.api_key.is_empty() {
             req = req.header("Authorization", format!("Bearer {}", config.api_key));
         }
-        let response = req
-            .json(request)
-            .send()
-            .await
-            .map_err(|e| ExecutionError::ExecutionFailed(format!("API request failed: {}", e)))?;
+        let response =
+            req.json(request).send().await.map_err(|e| {
+                ExecutionError::ExecutionFailed(format!("API request failed: {}", e))
+            })?;
 
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
@@ -292,15 +257,24 @@ impl AgentExecutor for MultiModelExecutor {
         match provider.as_str() {
             "anthropic" | "" => self.anthropic.execute(agent, effective_context).await,
             other => {
-                if let Some(config) = self.providers.get(other) {
-                    self.execute_openai_compatible(agent, effective_context, config).await
-                } else {
-                    Err(ExecutionError::ExecutionFailed(format!(
-                        "Provider '{}' not configured. Set {}_API_KEY env var.",
+                // Endpoint from operator config; key from THIS execution's
+                // credentials. An unfunded agent gets
+                // `ExecutionError::Unfunded` naming its owner's remedy,
+                // rather than the old message telling the owner to set a
+                // server env var they cannot reach.
+                let base_url = self.base_urls.get(other).cloned().ok_or_else(|| {
+                    ExecutionError::ExecutionFailed(format!(
+                        "Unknown provider '{}'. Supported: anthropic, {}.",
                         other,
-                        other.to_uppercase()
-                    )))
-                }
+                        OPENAI_COMPATIBLE_PROVIDERS.join(", ")
+                    ))
+                })?;
+                let config = ProviderConfig {
+                    api_key: effective_context.key_for(other)?.to_string(),
+                    base_url,
+                };
+                self.execute_openai_compatible(agent, effective_context, &config)
+                    .await
             }
         }
     }

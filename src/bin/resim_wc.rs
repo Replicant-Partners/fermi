@@ -72,7 +72,11 @@ async fn main() {
     println!(
         "Re-simulating {} unresolved WC forecasts{}\n",
         rows.len(),
-        if dry_run { " (DRY RUN — no writes)" } else { "" }
+        if dry_run {
+            " (DRY RUN — no writes)"
+        } else {
+            ""
+        }
     );
 
     let mut results: Vec<(String, f64, f64)> = Vec::new(); // (question, old, new)

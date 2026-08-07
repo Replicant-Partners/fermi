@@ -38,22 +38,18 @@ pub async fn get_forecast_groups_handler(
     State(state): State<AppState>,
     _principal: AuthPrincipal,
 ) -> Result<Json<JsonValue>, (StatusCode, String)> {
-    let row = sqlx::query(
-        "SELECT relationship_groups FROM public.fermi_forecasts WHERE id = $1",
-    )
-    .bind(&forecast_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let row = sqlx::query("SELECT relationship_groups FROM public.fermi_forecasts WHERE id = $1")
+        .bind(&forecast_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let row = match row {
         Some(r) => r,
         None => return Err((StatusCode::NOT_FOUND, "Forecast not found".into())),
     };
 
-    let groups: Vec<String> = row
-        .try_get("relationship_groups")
-        .unwrap_or_default();
+    let groups: Vec<String> = row.try_get("relationship_groups").unwrap_or_default();
 
     Ok(Json(json!({
         "forecast_id": forecast_id,
@@ -67,13 +63,12 @@ pub async fn set_forecast_groups_handler(
     _principal: AuthPrincipal,
     Json(req): Json<SetGroupsRequest>,
 ) -> Result<Json<JsonValue>, (StatusCode, String)> {
-    let exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM public.fermi_forecasts WHERE id = $1)",
-    )
-    .bind(&forecast_id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM public.fermi_forecasts WHERE id = $1)")
+            .bind(&forecast_id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if !exists {
         return Err((StatusCode::NOT_FOUND, "Forecast not found".into()));
@@ -101,13 +96,12 @@ pub async fn add_forecast_to_group_handler(
     State(state): State<AppState>,
     _principal: AuthPrincipal,
 ) -> Result<Json<JsonValue>, (StatusCode, String)> {
-    let exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM public.fermi_forecasts WHERE id = $1)",
-    )
-    .bind(&forecast_id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM public.fermi_forecasts WHERE id = $1)")
+            .bind(&forecast_id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if !exists {
         return Err((StatusCode::NOT_FOUND, "Forecast not found".into()));
@@ -126,13 +120,11 @@ pub async fn add_forecast_to_group_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let row = sqlx::query(
-        "SELECT relationship_groups FROM public.fermi_forecasts WHERE id = $1",
-    )
-    .bind(&forecast_id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let row = sqlx::query("SELECT relationship_groups FROM public.fermi_forecasts WHERE id = $1")
+        .bind(&forecast_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let groups: Vec<String> = row.try_get("relationship_groups").unwrap_or_default();
 
@@ -147,13 +139,12 @@ pub async fn remove_forecast_from_group_handler(
     State(state): State<AppState>,
     _principal: AuthPrincipal,
 ) -> Result<Json<JsonValue>, (StatusCode, String)> {
-    let exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM public.fermi_forecasts WHERE id = $1)",
-    )
-    .bind(&forecast_id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM public.fermi_forecasts WHERE id = $1)")
+            .bind(&forecast_id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if !exists {
         return Err((StatusCode::NOT_FOUND, "Forecast not found".into()));
@@ -171,13 +162,11 @@ pub async fn remove_forecast_from_group_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let row = sqlx::query(
-        "SELECT relationship_groups FROM public.fermi_forecasts WHERE id = $1",
-    )
-    .bind(&forecast_id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let row = sqlx::query("SELECT relationship_groups FROM public.fermi_forecasts WHERE id = $1")
+        .bind(&forecast_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let groups: Vec<String> = row.try_get("relationship_groups").unwrap_or_default();
 

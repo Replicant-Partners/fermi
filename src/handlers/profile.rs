@@ -230,7 +230,11 @@ pub async fn list_notifications_handler(
 
     let rows = {
         let base = "SELECT id, type, title, message, read, metadata, created_at, source FROM notifications WHERE user_id = $1";
-        let unread_clause = if params.unread.unwrap_or(false) { " AND read = FALSE" } else { "" };
+        let unread_clause = if params.unread.unwrap_or(false) {
+            " AND read = FALSE"
+        } else {
+            ""
+        };
         let source_clause = match source_filter {
             Some("all") => " AND TRUE",
             Some("rabble") => " AND source IN ('rabble', 'system')",

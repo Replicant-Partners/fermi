@@ -6,7 +6,7 @@
     <title>Install Fermi Console</title>
     <meta
       name="description"
-      content="One-line install for the Fermi Console — probabilistic forecasting on Linux."
+      content="One-line install for the Fermi Console — probabilistic forecasting on Linux and macOS."
     />
     <link rel="stylesheet" href="/static/css/variables.css" />
     <link rel="stylesheet" href="/static/css/common.css" />
@@ -242,10 +242,11 @@
         steps, about two minutes.
       </p>
 
-      <!-- Non-Linux users see this instead of the terminal command. -->
+      <!-- Shown to visitors we can tell are on neither Linux nor macOS. -->
       <div id="os-warn">
-        <strong>Heads-up:</strong> pre-built binaries are Linux only right now.
-        On macOS / Windows you'll need to build from source — see the
+        <strong>Heads-up:</strong> pre-built binaries cover Linux (x86_64) and
+        macOS (Apple Silicon and Intel). On Windows you'll need WSL or a build
+        from source — see the
         <a
           href="https://github.com/Replicant-Partners/fermi/blob/main/FERMI_CONSOLE.md"
           style="color: var(--yellow)"
@@ -259,16 +260,21 @@
           <p>
             On Ubuntu / Debian / Pop!_OS: press
             <code class="inline">Ctrl + Alt + T</code>. On other distros, launch
-            your usual terminal app.
+            your usual terminal app. On macOS: press
+            <code class="inline">⌘ + Space</code>, type
+            <code class="inline">Terminal</code>, hit Enter.
           </p>
         </li>
 
         <li>
           <h2>Paste this command and press Enter</h2>
           <p>
-            It installs system libraries, downloads the latest build, and puts
+            The same command works on <strong>Linux</strong> and
+            <strong>macOS</strong> — it detects your OS and CPU, downloads the
+            matching build, and puts
             <code class="inline">fermi-console</code> in
-            <code class="inline">~/.local/bin</code>.
+            <code class="inline">~/.local/bin</code>. On Linux it also installs
+            a few system graphics libraries first.
           </p>
           <div class="cmdbox" id="cmdbox">
             <span class="prompt">$ </span
@@ -289,10 +295,16 @@
             (you can
             <a href="/fermi-console/install.sh" style="color: var(--yellow)"
               >preview it here</a
-            >) that runs <code class="inline">apt-get install</code> for a few
-            graphics libraries, then downloads the binary from GitHub Releases.
-            It asks for your <em>sudo password</em> once, to install the
-            libraries.
+            >) and downloads the binary from GitHub Releases.<br /><br />
+            <strong>On Linux</strong> it first runs
+            <code class="inline">apt-get install</code> for a few graphics
+            libraries (Vulkan, XCB, fontconfig), so it asks for your
+            <em>sudo password</em> once.<br /><br />
+            <strong>On macOS</strong> there is no
+            <code class="inline">apt-get</code> step and
+            <em>no sudo prompt</em> — Metal and the system frameworks already
+            ship with the OS, so it only downloads the binary into
+            <code class="inline">~/.local/bin</code>.
           </div>
           <details>
             <summary>What if I don't want to pipe curl into bash?</summary>
@@ -303,6 +315,29 @@
                 https://__HOST__/fermi-console/install.sh -o install.sh
                 &amp;&amp; less install.sh &amp;&amp; bash install.sh
               </div>
+            </div>
+          </details>
+          <details>
+            <summary>macOS: I'd rather have a Dock icon</summary>
+            <div class="body">
+              Grab the <code class="inline">Fermi Console.app</code> zip for
+              your chip — <code class="inline">…-macos-aarch64.zip</code> for
+              Apple Silicon, <code class="inline">…-macos-x86_64.zip</code> for
+              Intel — from the
+              <a
+                href="https://github.com/Replicant-Partners/fermi/releases/latest"
+                style="color: var(--yellow)"
+                >latest GitHub release</a
+              >, unzip it, and drag the app into
+              <code class="inline">/Applications</code>.<br /><br />
+              The app is ad-hoc code-signed but <em>not</em> Apple-notarized, so
+              the very first launch needs
+              <strong>right-click → Open</strong> (then
+              <strong>Open</strong> again in the dialog). If macOS blocks it
+              anyway, go to
+              <strong>System Settings → Privacy &amp; Security</strong> and
+              click <strong>Open Anyway</strong>. Subsequent launches are normal
+              double-clicks.
             </div>
           </details>
         </li>
@@ -343,13 +378,19 @@
           box.innerHTML = box.innerHTML.replace(/__HOST__/g, host);
         });
 
-        // OS gate: if we can tell the visitor is not on Linux, show
-        // the banner (they still get the command in case they want it,
-        // but at least they're warned).
+        // OS gate: if we can tell the visitor is on neither Linux nor
+        // macOS, show the banner (they still get the command in case
+        // they want it, but at least they're warned).
         var ua = (navigator.userAgent || "").toLowerCase();
         var isLinux =
           ua.indexOf("linux") !== -1 && ua.indexOf("android") === -1;
-        if (!isLinux) {
+        // iPadOS reports a desktop-Mac UA in "Request Desktop Site" mode,
+        // so this can't be perfect — but the banner is only a hint.
+        var isMac =
+          ua.indexOf("mac os x") !== -1 &&
+          ua.indexOf("iphone") === -1 &&
+          ua.indexOf("ipad") === -1;
+        if (!isLinux && !isMac) {
           document.getElementById("os-warn").style.display = "block";
         }
       })();

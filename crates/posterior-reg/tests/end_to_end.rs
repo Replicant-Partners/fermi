@@ -9,9 +9,7 @@
 
 use std::collections::HashMap;
 
-use posterior_reg::{
-    fit_conditional, RegressionConfig, SamplerConfig, WeightedSample,
-};
+use posterior_reg::{fit_conditional, RegressionConfig, SamplerConfig, WeightedSample};
 
 /// Build a synthetic dataset:
 ///   y_i ~ N(intercept + β·x_i, σ) with known intercept/β/σ
@@ -31,8 +29,7 @@ fn synthetic_linear(
             // Box-Muller noise
             let u1: f64 = rng.gen_range(1e-12..1.0);
             let u2: f64 = rng.gen::<f64>();
-            let noise =
-                sigma * (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
+            let noise = sigma * (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
             let y = intercept + beta * x + noise;
             let mut features = HashMap::new();
             features.insert("x".to_string(), x);
@@ -283,7 +280,12 @@ async fn optimise_for_target_finds_higher_x() {
     // The curve should be monotonic-ish: P at high x > P at low x
     let p_low = result.sensitivity_curve[0].1;
     let p_high = result.sensitivity_curve.last().unwrap().1;
-    assert!(p_high > p_low, "p_high = {} should exceed p_low = {}", p_high, p_low);
+    assert!(
+        p_high > p_low,
+        "p_high = {} should exceed p_low = {}",
+        p_high,
+        p_low
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -302,8 +304,7 @@ async fn posterior_round_trips_through_serde() {
     let posterior = fit_conditional(&data, &cfg).await.unwrap();
 
     let v = serde_json::to_value(&posterior).expect("serialize");
-    let back: posterior_reg::ConditionalPosterior =
-        serde_json::from_value(v).expect("deserialize");
+    let back: posterior_reg::ConditionalPosterior = serde_json::from_value(v).expect("deserialize");
     assert_eq!(posterior.model_name, back.model_name);
     assert_eq!(posterior.param_names, back.param_names);
     assert_eq!(posterior.feature_names, back.feature_names);

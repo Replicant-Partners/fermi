@@ -23,8 +23,8 @@ use clap::{Args, Subcommand};
 use colored::*;
 use serde_json::{json, Value};
 
-use crate::config;
 use super::Ctx;
+use crate::config;
 
 // ─── Top-level workspace subcommand ─────────────────────────────────────────
 
@@ -43,7 +43,7 @@ pub enum WorkspaceCmd {
 pub async fn run(ctx: &Ctx, cmd: WorkspaceCmd) -> Result<()> {
     match cmd {
         WorkspaceCmd::Message(args) => message(ctx, args).await,
-        WorkspaceCmd::Files(sub)   => files(ctx, sub).await,
+        WorkspaceCmd::Files(sub) => files(ctx, sub).await,
         WorkspaceCmd::Actions(sub) => actions(ctx, sub).await,
     }
 }
@@ -74,7 +74,7 @@ async fn message(ctx: &Ctx, args: MessageArgs) -> Result<()> {
 
     let content = match &args.agent {
         Some(a) => format!("@{} {}", a, args.text),
-        None    => args.text.clone(),
+        None => args.text.clone(),
     };
 
     let body = json!({
@@ -83,11 +83,13 @@ async fn message(ctx: &Ctx, args: MessageArgs) -> Result<()> {
         "message_type": if args.agent.is_some() { "agent_invocation" } else { "chat" },
     });
 
-    let resp = ctx.http()
+    let resp = ctx
+        .http()
         .post(ctx.url(&format!("/api/workspaces/{}/messages", ws_id)))
         .bearer_auth(&api_key)
         .json(&body)
-        .send().await
+        .send()
+        .await
         .context("sending message")?;
 
     let status = resp.status();
@@ -124,8 +126,8 @@ pub enum FilesCmd {
 
 async fn files(ctx: &Ctx, cmd: FilesCmd) -> Result<()> {
     match cmd {
-        FilesCmd::Get(a)  => files_get(ctx, a).await,
-        FilesCmd::Put(a)  => files_put(ctx, a).await,
+        FilesCmd::Get(a) => files_get(ctx, a).await,
+        FilesCmd::Put(a) => files_put(ctx, a).await,
         FilesCmd::List(a) => files_list(ctx, a).await,
     }
 }
@@ -140,14 +142,16 @@ async fn files_get(ctx: &Ctx, args: FilesGetArgs) -> Result<()> {
     let api_key = config::resolve_api_key()?;
     let ws_id = resolve_workspace_id(&args.workspace);
 
-    let resp = ctx.http()
+    let resp = ctx
+        .http()
         .get(ctx.url(&format!(
             "/api/workspaces/{}/files/{}",
             ws_id,
             args.path.trim_start_matches('/')
         )))
         .bearer_auth(&api_key)
-        .send().await
+        .send()
+        .await
         .context("fetching file")?;
 
     if !resp.status().is_success() {
@@ -202,7 +206,8 @@ async fn files_put(ctx: &Ctx, args: FilesPutArgs) -> Result<()> {
         "message": args.message,
     });
 
-    let resp = ctx.http()
+    let resp = ctx
+        .http()
         .put(ctx.url(&format!(
             "/api/workspaces/{}/files/{}",
             ws_id,
@@ -210,7 +215,8 @@ async fn files_put(ctx: &Ctx, args: FilesPutArgs) -> Result<()> {
         )))
         .bearer_auth(&api_key)
         .json(&body)
-        .send().await
+        .send()
+        .await
         .context("writing file")?;
 
     let status = resp.status();
@@ -250,10 +256,12 @@ async fn files_list(ctx: &Ctx, args: FilesListArgs) -> Result<()> {
         ctx.url(&format!("/api/workspaces/{}/files/{}", ws_id, args.prefix))
     };
 
-    let resp = ctx.http()
+    let resp = ctx
+        .http()
         .get(&url)
         .bearer_auth(&api_key)
-        .send().await
+        .send()
+        .await
         .context("listing files")?;
 
     let status = resp.status();
@@ -263,7 +271,8 @@ async fn files_list(ctx: &Ctx, args: FilesListArgs) -> Result<()> {
         bail!("server returned {}: {}", status, data);
     }
 
-    let files = data.get("files")
+    let files = data
+        .get("files")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
@@ -305,13 +314,13 @@ pub enum ActionsCmd {
 
 async fn actions(ctx: &Ctx, cmd: ActionsCmd) -> Result<()> {
     match cmd {
-        ActionsCmd::List(a)     => actions_list(ctx, a).await,
-        ActionsCmd::Pending(a)  => actions_pending(ctx, a).await,
-        ActionsCmd::Accept(a)   => actions_accept(ctx, a).await,
-        ActionsCmd::Reject(a)   => actions_reject(ctx, a).await,
+        ActionsCmd::List(a) => actions_list(ctx, a).await,
+        ActionsCmd::Pending(a) => actions_pending(ctx, a).await,
+        ActionsCmd::Accept(a) => actions_accept(ctx, a).await,
+        ActionsCmd::Reject(a) => actions_reject(ctx, a).await,
         ActionsCmd::Annotate(a) => actions_annotate(ctx, a).await,
-        ActionsCmd::Mutate(a)   => actions_mutate(ctx, a).await,
-        ActionsCmd::Fork(a)     => actions_fork(ctx, a).await,
+        ActionsCmd::Mutate(a) => actions_mutate(ctx, a).await,
+        ActionsCmd::Fork(a) => actions_fork(ctx, a).await,
     }
 }
 
@@ -328,47 +337,69 @@ async fn actions_list(ctx: &Ctx, args: ActionsListArgs) -> Result<()> {
     let api_key = config::resolve_api_key()?;
     let ws_id = resolve_workspace_id(&args.workspace);
 
-    let resp = ctx.http()
+    let resp = ctx
+        .http()
         .get(ctx.url(&format!("/api/workspaces/{}/actions", ws_id)))
         .bearer_auth(&api_key)
-        .send().await?;
+        .send()
+        .await?;
 
     let status = resp.status();
     let data: Value = resp.json().await?;
-    if !status.is_success() { bail!("{}: {}", status, data); }
+    if !status.is_success() {
+        bail!("{}: {}", status, data);
+    }
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&data)?);
         return Ok(());
     }
 
-    let actions = data.get("actions").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let actions = data
+        .get("actions")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
     if actions.is_empty() {
         println!("{}", "No actions recorded yet.".dimmed());
         return Ok(());
     }
 
     for a in &actions {
-        let id      = a.get("action_id").and_then(|v| v.as_str()).unwrap_or("?");
-        let kind    = a.get("action_type").and_then(|v| v.as_str()).unwrap_or("?");
-        let conf    = a.get("confirmation").and_then(|v| v.as_str()).unwrap_or("?");
+        let id = a.get("action_id").and_then(|v| v.as_str()).unwrap_or("?");
+        let kind = a.get("action_type").and_then(|v| v.as_str()).unwrap_or("?");
+        let conf = a
+            .get("confirmation")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
         let applied = a.get("applied").and_then(|v| v.as_bool()).unwrap_or(false);
-        let ts      = a.get("created_at").and_then(|v| v.as_str()).unwrap_or("?");
+        let ts = a.get("created_at").and_then(|v| v.as_str()).unwrap_or("?");
 
         let status_label = match conf {
-            "pending"  => "pending".yellow().to_string(),
+            "pending" => "pending".yellow().to_string(),
             "accepted" => "accepted".green().to_string(),
             "rejected" => "rejected".red().to_string(),
-            "auto"     => if applied { "applied".green().to_string() } else { "auto".dimmed().to_string() },
-            other      => other.to_string(),
+            "auto" => {
+                if applied {
+                    "applied".green().to_string()
+                } else {
+                    "auto".dimmed().to_string()
+                }
+            }
+            other => other.to_string(),
         };
 
-        println!("  {} {} [{}] {} {}",
+        println!(
+            "  {} {} [{}] {} {}",
             &id[..8.min(id.len())],
             kind.cyan(),
             status_label,
             ts.get(..16).unwrap_or(ts),
-            if applied { "✓".green().to_string() } else { String::new() },
+            if applied {
+                "✓".green().to_string()
+            } else {
+                String::new()
+            },
         );
     }
     Ok(())
@@ -387,44 +418,75 @@ async fn actions_pending(ctx: &Ctx, args: ActionsPendingArgs) -> Result<()> {
     let api_key = config::resolve_api_key()?;
     let ws_id = resolve_workspace_id(&args.workspace);
 
-    let resp = ctx.http()
+    let resp = ctx
+        .http()
         .get(ctx.url(&format!("/api/workspaces/{}/actions/pending", ws_id)))
         .bearer_auth(&api_key)
-        .send().await?;
+        .send()
+        .await?;
 
     let status = resp.status();
     let data: Value = resp.json().await?;
-    if !status.is_success() { bail!("{}: {}", status, data); }
+    if !status.is_success() {
+        bail!("{}: {}", status, data);
+    }
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&data)?);
         return Ok(());
     }
 
-    let pending = data.get("pending").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let pending = data
+        .get("pending")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
     if pending.is_empty() {
         println!("{}", "No pending actions.".dimmed());
         return Ok(());
     }
 
-    println!("{} pending action(s) awaiting confirmation:\n", pending.len());
+    println!(
+        "{} pending action(s) awaiting confirmation:\n",
+        pending.len()
+    );
     for a in &pending {
-        let id    = a.get("action_id").and_then(|v| v.as_str()).unwrap_or("?");
-        let kind  = a.get("action_type").and_then(|v| v.as_str()).unwrap_or("?");
-        let ts    = a.get("created_at").and_then(|v| v.as_str()).unwrap_or("?");
-        let by    = a.get("emitted_by_id").and_then(|v| v.as_str()).unwrap_or("?");
+        let id = a.get("action_id").and_then(|v| v.as_str()).unwrap_or("?");
+        let kind = a.get("action_type").and_then(|v| v.as_str()).unwrap_or("?");
+        let ts = a.get("created_at").and_then(|v| v.as_str()).unwrap_or("?");
+        let by = a
+            .get("emitted_by_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
 
-        let payload_preview = a.get("payload")
+        let payload_preview = a
+            .get("payload")
             .map(|p| {
                 let s = serde_json::to_string(p).unwrap_or_default();
-                if s.len() > 80 { format!("{}…", &s[..80]) } else { s }
+                if s.len() > 80 {
+                    format!("{}…", &s[..80])
+                } else {
+                    s
+                }
             })
             .unwrap_or_default();
 
-        println!("  {} {} by {} @ {}", &id[..8.min(id.len())], kind.cyan(), by.dimmed(), ts.get(..16).unwrap_or(ts));
+        println!(
+            "  {} {} by {} @ {}",
+            &id[..8.min(id.len())],
+            kind.cyan(),
+            by.dimmed(),
+            ts.get(..16).unwrap_or(ts)
+        );
         println!("    {}", payload_preview.dimmed());
-        println!("  accept: abw workspace actions accept {} {}", args.workspace, id);
-        println!("  reject: abw workspace actions reject {} {}\n", args.workspace, id);
+        println!(
+            "  accept: abw workspace actions accept {} {}",
+            args.workspace, id
+        );
+        println!(
+            "  reject: abw workspace actions reject {} {}\n",
+            args.workspace, id
+        );
     }
     Ok(())
 }
@@ -446,24 +508,33 @@ async fn actions_accept(ctx: &Ctx, args: ActionsAcceptArgs) -> Result<()> {
     let api_key = config::resolve_api_key()?;
     let ws_id = resolve_workspace_id(&args.workspace);
 
-    let content = args.content.as_deref().map(|c| resolve_content(Some(c))).transpose()?;
+    let content = args
+        .content
+        .as_deref()
+        .map(|c| resolve_content(Some(c)))
+        .transpose()?;
 
     let body = json!({ "content": content });
 
-    let resp = ctx.http()
+    let resp = ctx
+        .http()
         .post(ctx.url(&format!(
             "/api/workspaces/{}/actions/{}/accept",
             ws_id, args.action_id
         )))
         .bearer_auth(&api_key)
         .json(&body)
-        .send().await?;
+        .send()
+        .await?;
 
     let status = resp.status();
     let data: Value = resp.json().await?;
-    if !status.is_success() { bail!("{}: {}", status, data); }
+    if !status.is_success() {
+        bail!("{}: {}", status, data);
+    }
 
-    let result = data.get("apply_result")
+    let result = data
+        .get("apply_result")
         .map(|v| serde_json::to_string(v).unwrap_or_default())
         .unwrap_or_default();
     println!("{} accepted — {}", "✓".green(), result);
@@ -487,18 +558,22 @@ async fn actions_reject(ctx: &Ctx, args: ActionsRejectArgs) -> Result<()> {
 
     let body = json!({ "note": args.note });
 
-    let resp = ctx.http()
+    let resp = ctx
+        .http()
         .post(ctx.url(&format!(
             "/api/workspaces/{}/actions/{}/reject",
             ws_id, args.action_id
         )))
         .bearer_auth(&api_key)
         .json(&body)
-        .send().await?;
+        .send()
+        .await?;
 
     let status = resp.status();
     let data: Value = resp.json().await?;
-    if !status.is_success() { bail!("{}: {}", status, data); }
+    if !status.is_success() {
+        bail!("{}: {}", status, data);
+    }
 
     println!("{} rejected", "✓".green());
     Ok(())
@@ -542,18 +617,31 @@ async fn actions_annotate(ctx: &Ctx, args: ActionsAnnotateArgs) -> Result<()> {
         "app_schema": args.app_schema,
     });
 
-    let resp = ctx.http()
+    let resp = ctx
+        .http()
         .post(ctx.url(&format!("/api/workspaces/{}/actions/annotate", ws_id)))
         .bearer_auth(&api_key)
         .json(&body)
-        .send().await?;
+        .send()
+        .await?;
 
     let status = resp.status();
     let data: Value = resp.json().await?;
-    if !status.is_success() { bail!("{}: {}", status, data); }
+    if !status.is_success() {
+        bail!("{}: {}", status, data);
+    }
 
-    let ann_id = data.get("annotation_id").and_then(|v| v.as_str()).unwrap_or("?");
-    println!("{} annotation recorded ({}) [{}] → {}", "✓".green(), &ann_id[..8.min(ann_id.len())], args.kind, args.target);
+    let ann_id = data
+        .get("annotation_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    println!(
+        "{} annotation recorded ({}) [{}] → {}",
+        "✓".green(),
+        &ann_id[..8.min(ann_id.len())],
+        args.kind,
+        args.target
+    );
     Ok(())
 }
 
@@ -599,30 +687,58 @@ async fn actions_mutate(ctx: &Ctx, args: ActionsMutateArgs) -> Result<()> {
         "app_schema":  args.app_schema,
     });
 
-    let resp = ctx.http()
-        .post(ctx.url(&format!("/api/workspaces/{}/actions/mutate_document", ws_id)))
+    let resp = ctx
+        .http()
+        .post(ctx.url(&format!(
+            "/api/workspaces/{}/actions/mutate_document",
+            ws_id
+        )))
         .bearer_auth(&api_key)
         .json(&body)
-        .send().await?;
+        .send()
+        .await?;
 
     let status = resp.status();
     let data: Value = resp.json().await?;
-    if !status.is_success() { bail!("{}: {}", status, data); }
+    if !status.is_success() {
+        bail!("{}: {}", status, data);
+    }
 
-    let action_id = data.get("action_id").and_then(|v| v.as_str()).unwrap_or("?");
-    let applied = data.get("applied").and_then(|v| v.as_bool()).unwrap_or(false);
-    let confirmation = data.get("confirmation").and_then(|v| v.as_str()).unwrap_or("?");
+    let action_id = data
+        .get("action_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let applied = data
+        .get("applied")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let confirmation = data
+        .get("confirmation")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
 
     if applied {
-        println!("{} {} applied ({})", "✓".green(), args.path, &action_id[..8.min(action_id.len())]);
+        println!(
+            "{} {} applied ({})",
+            "✓".green(),
+            args.path,
+            &action_id[..8.min(action_id.len())]
+        );
     } else {
-        println!("{} {} pending confirmation ({})",
+        println!(
+            "{} {} pending confirmation ({})",
             "⏳".yellow(),
             args.path,
             &action_id[..8.min(action_id.len())]
         );
-        println!("  accept: abw workspace actions accept {} {}", args.workspace, action_id);
-        println!("  reject: abw workspace actions reject {} {}", args.workspace, action_id);
+        println!(
+            "  accept: abw workspace actions accept {} {}",
+            args.workspace, action_id
+        );
+        println!(
+            "  reject: abw workspace actions reject {} {}",
+            args.workspace, action_id
+        );
         let _ = confirmation;
     }
     Ok(())
@@ -675,17 +791,24 @@ async fn actions_fork(ctx: &Ctx, args: ActionsForkArgs) -> Result<()> {
         "app_schema": args.app_schema,
     });
 
-    let resp = ctx.http()
+    let resp = ctx
+        .http()
         .post(ctx.url(&format!("/api/workspaces/{}/actions/fork_state", ws_id)))
         .bearer_auth(&api_key)
         .json(&body)
-        .send().await?;
+        .send()
+        .await?;
 
     let status = resp.status();
     let data: Value = resp.json().await?;
-    if !status.is_success() { bail!("{}: {}", status, data); }
+    if !status.is_success() {
+        bail!("{}: {}", status, data);
+    }
 
-    let slug = data.get("variant_slug").and_then(|v| v.as_str()).unwrap_or("?");
+    let slug = data
+        .get("variant_slug")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
     let path = data.get("path").and_then(|v| v.as_str()).unwrap_or("?");
     println!("{} forked '{}' → {}", "✓".green(), slug, path);
     Ok(())
@@ -697,7 +820,7 @@ async fn actions_fork(ctx: &Ctx, args: ActionsForkArgs) -> Result<()> {
 fn resolve_workspace_id(input: &str) -> String {
     // Accept full URLs like https://agent-bestiary.world/workspace/<uuid>
     if let Some(pos) = input.rfind('/') {
-        let tail = &input[pos+1..];
+        let tail = &input[pos + 1..];
         if tail.len() == 36 && tail.contains('-') {
             return tail.to_string();
         }
@@ -714,13 +837,13 @@ fn resolve_content(input: Option<&str>) -> Result<String> {
     match input {
         Some(s) if s.starts_with('@') => {
             let path = &s[1..];
-            std::fs::read_to_string(path)
-                .with_context(|| format!("reading file {}", path))
+            std::fs::read_to_string(path).with_context(|| format!("reading file {}", path))
         }
         Some("-") | None => {
             use std::io::Read;
             let mut buf = String::new();
-            std::io::stdin().read_to_string(&mut buf)
+            std::io::stdin()
+                .read_to_string(&mut buf)
                 .context("reading stdin")?;
             Ok(buf)
         }

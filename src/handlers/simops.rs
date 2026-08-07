@@ -16,24 +16,25 @@ use axum::{extract::State, http::StatusCode, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use dynamics::{
+    apply_dynamics_model,
+    coupled::{apply_coupled_dynamics_model, CoupledInput, CoupledParamsOverride},
+    list_rheology_manifests, registry as dynamics_registry, resolve_rheology, RheologyInput,
+    SkillInput as DynamicsInput,
+};
+use projections::{project_distribution, ExecutorRegistry, ProjectionRequest};
 use simops::{
     cascade::{cascade_backward, cascade_forward},
-    process::ProcessConfig,
     cascade_v2::cascade_v2,
-    process_v2::{CascadeRequestEnvelope, CascadeRequestV2, ProcessConfigV2, ScaleRequest, TwinManifest},
-};
-use projections::{
-    project_distribution, ExecutorRegistry, ProjectionRequest,
-};
-use dynamics::{
-    apply_dynamics_model, registry as dynamics_registry, SkillInput as DynamicsInput,
-    RheologyInput, resolve_rheology, list_rheology_manifests,
-    coupled::{apply_coupled_dynamics_model, CoupledInput, CoupledParamsOverride},
+    process::ProcessConfig,
+    process_v2::{
+        CascadeRequestEnvelope, CascadeRequestV2, ProcessConfigV2, ScaleRequest, TwinManifest,
+    },
 };
 
+use crate::AppState;
 use axum::extract::Path;
 use fermi_auth::AuthPrincipal;
-use crate::AppState;
 
 // ─── Request / response ──────────────────────────────────────────────────────
 
@@ -86,8 +87,12 @@ pub async fn cascade_handler(
 
     if is_v2 {
         // ── v2 path ──────────────────────────────────────────────────────────
-        let req: CascadeRequestV2 = serde_json::from_value(body)
-            .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid v2 cascade request: {e}")))?;
+        let req: CascadeRequestV2 = serde_json::from_value(body).map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Invalid v2 cascade request: {e}"),
+            )
+        })?;
 
         let response = cascade_v2(&req).map_err(|e| {
             use simops::cascade_v2::CascadeError;
@@ -119,13 +124,22 @@ pub async fn cascade_handler(
     // They are still supported for existing integrations but are deprecated.
     // Any v1 process that reaches here was not rejected above (no schema_version
     // and no inputs[] array). Parse directly.
-    let req: CascadeRequest = serde_json::from_value(body)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid cascade request: {e}. \
-            If this is a v2 process (inputs[]/outputs[]), ensure schema_version: 2 is set.")))?;
+    let req: CascadeRequest = serde_json::from_value(body).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Invalid cascade request: {e}. \
+            If this is a v2 process (inputs[]/outputs[]), ensure schema_version: 2 is set."
+            ),
+        )
+    })?;
 
     // Guard: empty stage list would panic in cascade_forward/backward.
     if req.process.stages.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "ProcessConfig must have at least one stage".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "ProcessConfig must have at least one stage".into(),
+        ));
     }
 
     if req.quantity < 0.0 {
@@ -226,15 +240,20 @@ pub async fn dynamics_handler(
     // Normalise: `model_uris` (plural array) OR `model_uri` (singular string).
     // Single-model path uses the original SkillInput → apply_dynamics_model (unchanged).
     // Multi-model path uses CoupledInput → apply_coupled_dynamics_model.
-    let has_plural = body.get("model_uris")
+    let has_plural = body
+        .get("model_uris")
         .and_then(|v| v.as_array())
         .map(|a| a.len() > 1)
         .unwrap_or(false);
 
     if has_plural {
         // Multi-model coupled path
-        let req: CoupledInput = serde_json::from_value(body)
-            .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid coupled request: {e}")))?;
+        let req: CoupledInput = serde_json::from_value(body).map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Invalid coupled request: {e}"),
+            )
+        })?;
         let output = apply_coupled_dynamics_model(req)
             .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
         Ok(Json(json!(output)))
@@ -242,13 +261,16 @@ pub async fn dynamics_handler(
         // Single-model path — normalise model_uris: ["X"] to model_uri: "X" if needed
         let body = if body.get("model_uri").is_none() {
             // model_uris: ["X"] → extract first as model_uri
-            if let Some(uri) = body.get("model_uris")
+            if let Some(uri) = body
+                .get("model_uris")
                 .and_then(|v| v.as_array())
                 .and_then(|a| a.first())
                 .and_then(|v| v.as_str())
             {
                 let mut b = body.clone();
-                b.as_object_mut().unwrap().insert("model_uri".into(), json!(uri));
+                b.as_object_mut()
+                    .unwrap()
+                    .insert("model_uri".into(), json!(uri));
                 b
             } else {
                 body
@@ -257,10 +279,13 @@ pub async fn dynamics_handler(
             body
         };
 
-        let req: DynamicsInput = serde_json::from_value(body)
-            .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid dynamics request: {e}")))?;
-        let output = apply_dynamics_model(req)
-            .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+        let req: DynamicsInput = serde_json::from_value(body).map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Invalid dynamics request: {e}"),
+            )
+        })?;
+        let output = apply_dynamics_model(req).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
         Ok(Json(json!(output)))
     }
 }
@@ -294,22 +319,27 @@ pub async fn rheology_handler(
     _principal: AuthPrincipal,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let model_uri = body.get("model_uri")
+    let model_uri = body
+        .get("model_uri")
         .and_then(|v| v.as_str())
         .unwrap_or("kask:rheology/algae_viscosity@v1");
 
-    let model = resolve_rheology(model_uri)
-        .ok_or_else(|| (
+    let model = resolve_rheology(model_uri).ok_or_else(|| {
+        (
             StatusCode::BAD_REQUEST,
-            format!("Unknown rheology model URI: '{}'. Known: {}",
+            format!(
+                "Unknown rheology model URI: '{}'. Known: {}",
                 model_uri,
-                dynamics::known_rheology_uris().join(", "))
-        ))?;
+                dynamics::known_rheology_uris().join(", ")
+            ),
+        )
+    })?;
 
     let input: RheologyInput = serde_json::from_value(body)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid request: {e}")))?;
 
-    let output = model.compute(&input)
+    let output = model
+        .compute(&input)
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
     Ok(Json(json!(output)))
@@ -365,9 +395,15 @@ pub struct WorkspaceCascadeRequest {
     pub process_path: String,
 }
 
-fn default_twin_id() -> Option<String> { Some("primary".into()) }
-fn default_direction() -> String { "forward".into() }
-fn default_process_path_wc() -> String { "simops/process.yaml".into() }
+fn default_twin_id() -> Option<String> {
+    Some("primary".into())
+}
+fn default_direction() -> String {
+    "forward".into()
+}
+fn default_process_path_wc() -> String {
+    "simops/process.yaml".into()
+}
 
 pub async fn workspace_cascade_handler(
     State(state): State<AppState>,
@@ -378,7 +414,8 @@ pub async fn workspace_cascade_handler(
     let user_id = principal.user_id();
 
     // Resolve workspace slug for git reads
-    let ws_uuid: uuid::Uuid = workspace_id.parse()
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".into()))?;
     let slug = crate::handlers::workspace::get_workspace_slug(&state.db, ws_uuid)
         .await
@@ -393,10 +430,19 @@ pub async fn workspace_cascade_handler(
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .map_err(|e| (StatusCode::NOT_FOUND, format!("Could not read {}: {}", req.process_path, e)))?;
+    .map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("Could not read {}: {}", req.process_path, e),
+        )
+    })?;
 
-    let process: ProcessConfigV2 = serde_yaml::from_str(&process_yaml)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Failed to parse process YAML: {e}")))?;
+    let process: ProcessConfigV2 = serde_yaml::from_str(&process_yaml).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Failed to parse process YAML: {e}"),
+        )
+    })?;
 
     // ── Optionally read twin YAML ──────────────────────────────────────────────
     let twin: Option<TwinManifest> = if let Some(ref twin_id) = req.twin_id {

@@ -1,7 +1,7 @@
+use crate::distribution::ProjectionOutput;
+use crate::sweep::SweepConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::sweep::SweepConfig;
-use crate::distribution::ProjectionOutput;
 
 /// Which model to run and its configuration.
 /// The `kind` string must match a registered [`ModelExecutor`].
@@ -30,7 +30,9 @@ pub struct ProjectionRequest {
     pub output_format: OutputFormat,
 }
 
-fn default_n_runs() -> usize { 100 }
+fn default_n_runs() -> usize {
+    100
+}
 
 /// What the projection engine returns.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

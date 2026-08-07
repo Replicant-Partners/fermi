@@ -258,7 +258,10 @@ mod tests {
     #[test]
     fn all_phase5_kinds_have_dot_separator() {
         for kind in SimOpsEventKind::phase5_kinds() {
-            assert!(kind.contains('.'), "Phase 5 event kind must use dot separator: {kind}");
+            assert!(
+                kind.contains('.'),
+                "Phase 5 event kind must use dot separator: {kind}"
+            );
         }
     }
 
@@ -266,7 +269,11 @@ mod tests {
     fn no_duplicate_kind_strings() {
         let all = SimOpsEventKind::all_kinds();
         let unique: std::collections::HashSet<_> = all.iter().collect();
-        assert_eq!(all.len(), unique.len(), "Duplicate event kind strings found");
+        assert_eq!(
+            all.len(),
+            unique.len(),
+            "Duplicate event kind strings found"
+        );
     }
 
     #[test]

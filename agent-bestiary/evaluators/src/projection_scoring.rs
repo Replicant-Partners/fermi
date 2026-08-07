@@ -90,42 +90,49 @@ impl ProjectionScoringEvaluator {
 
 #[async_trait]
 impl EvalModel for ProjectionScoringEvaluator {
-    fn name(&self) -> &'static str { "projection_scoring" }
-    fn version(&self) -> &'static str { "v1" }
-    fn tier(&self) -> EvalTier { EvalTier::Dimensional }
+    fn name(&self) -> &'static str {
+        "projection_scoring"
+    }
+    fn version(&self) -> &'static str {
+        "v1"
+    }
+    fn tier(&self) -> EvalTier {
+        EvalTier::Dimensional
+    }
     fn dimensions(&self) -> Vec<Dimension> {
         vec![Dimension::new("projection_accuracy")]
     }
 
     async fn evaluate(&self, bundle: &EpisodeBundle) -> Result<EvalResult, EvalError> {
         // Only applies to simops dynamics/cascade agents
-        let agent_name = bundle.agent_card.as_ref()
+        let agent_name = bundle
+            .agent_card
+            .as_ref()
             .map(|c| c.agent_name.as_str())
             .unwrap_or("");
         if !agent_name.contains("dynamics_runner") && !agent_name.contains("simops_cascade") {
             return Err(EvalError::Inapplicable(
-                "projection_scoring only applies to simops dynamics and cascade agents".into()
+                "projection_scoring only applies to simops dynamics and cascade agents".into(),
             ));
         }
 
         // Extract projection_id from episode context
-        let projection_id = bundle.context
-            .get("projection_id")
-            .and_then(|v| v.as_str());
+        let projection_id = bundle.context.get("projection_id").and_then(|v| v.as_str());
 
-        let obs = self.lookup
+        let obs = self
+            .lookup
             .find_projection_match(projection_id, bundle.agent_id)
             .await?;
 
         let Some(obs) = obs else {
             return Err(EvalError::Inapplicable(
-                "no matching real observation found for this projection".into()
+                "no matching real observation found for this projection".into(),
             ));
         };
 
         // Score: 1 - relative_error, clamped [0, 1]
-        let relative_error = (obs.predicted_value - obs.actual_value).abs()
-            / obs.actual_value.abs().max(1e-9);
+        let relative_error =
+            (obs.predicted_value - obs.actual_value).abs() / obs.actual_value.abs().max(1e-9);
         let score = (1.0 - relative_error.min(1.0)).clamp(0.0, 1.0);
 
         // Confidence: rises with prior observation count, saturates at n=10
@@ -156,20 +163,44 @@ impl EvalModel for ProjectionScoringEvaluator {
             .with_score(Dimension::new("projection_accuracy"), score)
             .with_confidence(confidence)
             .with_rationale(rationale)
-            .with_flag(EvalFlag { kind: "delta_direction".into(), value: delta_direction.into() })
-            .with_flag(EvalFlag { kind: "observable_property".into(), value: obs.observable_property.clone() })
-            .with_flag(EvalFlag { kind: "relative_error".into(), value: format!("{relative_error:.4}") })
-            .with_flag(EvalFlag { kind: "predicted".into(), value: format!("{:.4}", obs.predicted_value) })
-            .with_flag(EvalFlag { kind: "actual".into(), value: format!("{:.4}", obs.actual_value) });
+            .with_flag(EvalFlag {
+                kind: "delta_direction".into(),
+                value: delta_direction.into(),
+            })
+            .with_flag(EvalFlag {
+                kind: "observable_property".into(),
+                value: obs.observable_property.clone(),
+            })
+            .with_flag(EvalFlag {
+                kind: "relative_error".into(),
+                value: format!("{relative_error:.4}"),
+            })
+            .with_flag(EvalFlag {
+                kind: "predicted".into(),
+                value: format!("{:.4}", obs.predicted_value),
+            })
+            .with_flag(EvalFlag {
+                kind: "actual".into(),
+                value: format!("{:.4}", obs.actual_value),
+            });
 
         if let Some(ref mu) = obs.model_uri {
-            result = result.with_flag(EvalFlag { kind: "model_uri".into(), value: mu.clone() });
+            result = result.with_flag(EvalFlag {
+                kind: "model_uri".into(),
+                value: mu.clone(),
+            });
         }
         if let Some(ref sid) = obs.stage_id {
-            result = result.with_flag(EvalFlag { kind: "stage_id".into(), value: sid.clone() });
+            result = result.with_flag(EvalFlag {
+                kind: "stage_id".into(),
+                value: sid.clone(),
+            });
         }
         if let Some(pid) = projection_id {
-            result = result.with_flag(EvalFlag { kind: "projection_id".into(), value: pid.into() });
+            result = result.with_flag(EvalFlag {
+                kind: "projection_id".into(),
+                value: pid.into(),
+            });
         }
 
         Ok(result)
@@ -181,7 +212,7 @@ impl EvalModel for ProjectionScoringEvaluator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_bestiary_memory::{Episode, EpisodeBundle, Provenance, ExecutionStatus};
+    use agent_bestiary_memory::{Episode, EpisodeBundle, ExecutionStatus, Provenance};
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -254,47 +285,76 @@ mod tests {
     async fn perfect_prediction_scores_one() {
         let lookup = Arc::new(StubLookup(Some(obs(4.2, 4.2, 10))));
         let ev = ProjectionScoringEvaluator::new(lookup);
-        let r = ev.evaluate(&dynamics_bundle(Some("proj-abc"), 4.2)).await.unwrap();
+        let r = ev
+            .evaluate(&dynamics_bundle(Some("proj-abc"), 4.2))
+            .await
+            .unwrap();
         let s = r.dimension_scores[&Dimension::new("projection_accuracy")];
-        assert!((s - 1.0).abs() < 1e-9, "exact match should score 1.0, got {s}");
+        assert!(
+            (s - 1.0).abs() < 1e-9,
+            "exact match should score 1.0, got {s}"
+        );
     }
 
     #[tokio::test]
     async fn hundred_percent_error_scores_zero() {
         let lookup = Arc::new(StubLookup(Some(obs(8.4, 4.2, 10))));
         let ev = ProjectionScoringEvaluator::new(lookup);
-        let r = ev.evaluate(&dynamics_bundle(Some("proj-abc"), 8.4)).await.unwrap();
+        let r = ev
+            .evaluate(&dynamics_bundle(Some("proj-abc"), 8.4))
+            .await
+            .unwrap();
         let s = r.dimension_scores[&Dimension::new("projection_accuracy")];
-        assert!((s - 0.0).abs() < 1e-9, "100% error should score 0.0, got {s}");
+        assert!(
+            (s - 0.0).abs() < 1e-9,
+            "100% error should score 0.0, got {s}"
+        );
     }
 
     #[tokio::test]
     async fn ten_percent_error_scores_ninety() {
         let lookup = Arc::new(StubLookup(Some(obs(4.62, 4.2, 10)))); // 10% over
         let ev = ProjectionScoringEvaluator::new(lookup);
-        let r = ev.evaluate(&dynamics_bundle(Some("proj-abc"), 4.62)).await.unwrap();
+        let r = ev
+            .evaluate(&dynamics_bundle(Some("proj-abc"), 4.62))
+            .await
+            .unwrap();
         let s = r.dimension_scores[&Dimension::new("projection_accuracy")];
-        assert!((s - 0.9).abs() < 0.01, "10% error should score ~0.9, got {s}");
+        assert!(
+            (s - 0.9).abs() < 0.01,
+            "10% error should score ~0.9, got {s}"
+        );
     }
 
     #[tokio::test]
     async fn no_match_is_inapplicable() {
         let lookup = Arc::new(StubLookup(None));
         let ev = ProjectionScoringEvaluator::new(lookup);
-        let err = ev.evaluate(&dynamics_bundle(Some("proj-abc"), 4.2)).await.unwrap_err();
+        let err = ev
+            .evaluate(&dynamics_bundle(Some("proj-abc"), 4.2))
+            .await
+            .unwrap_err();
         assert!(err.is_inapplicable(), "no match should be Inapplicable");
     }
 
     #[tokio::test]
     async fn confidence_rises_with_n() {
-        let lookup_low  = Arc::new(StubLookup(Some(obs(4.2, 4.2, 2))));
+        let lookup_low = Arc::new(StubLookup(Some(obs(4.2, 4.2, 2))));
         let lookup_high = Arc::new(StubLookup(Some(obs(4.2, 4.2, 10))));
-        let ev_low  = ProjectionScoringEvaluator::new(lookup_low);
+        let ev_low = ProjectionScoringEvaluator::new(lookup_low);
         let ev_high = ProjectionScoringEvaluator::new(lookup_high);
-        let r_low  = ev_low.evaluate(&dynamics_bundle(Some("p"), 4.2)).await.unwrap();
-        let r_high = ev_high.evaluate(&dynamics_bundle(Some("p"), 4.2)).await.unwrap();
-        assert!(r_high.confidence > r_low.confidence,
-            "more observations should yield higher confidence");
+        let r_low = ev_low
+            .evaluate(&dynamics_bundle(Some("p"), 4.2))
+            .await
+            .unwrap();
+        let r_high = ev_high
+            .evaluate(&dynamics_bundle(Some("p"), 4.2))
+            .await
+            .unwrap();
+        assert!(
+            r_high.confidence > r_low.confidence,
+            "more observations should yield higher confidence"
+        );
     }
 
     #[tokio::test]
@@ -302,9 +362,15 @@ mod tests {
         let lookup = Arc::new(StubLookup(Some(obs(5.0, 4.0, 5)))); // 25% over
         let ev = ProjectionScoringEvaluator::new(lookup);
         let r = ev.evaluate(&dynamics_bundle(Some("p"), 5.0)).await.unwrap();
-        let direction_flag = r.flags.iter()
+        let direction_flag = r
+            .flags
+            .iter()
             .find(|f| f.kind == "delta_direction")
             .map(|f| f.value.as_str());
-        assert_eq!(direction_flag, Some("over"), "25% over-prediction should be flagged as 'over'");
+        assert_eq!(
+            direction_flag,
+            Some("over"),
+            "25% over-prediction should be flagged as 'over'"
+        );
     }
 }

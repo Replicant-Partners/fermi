@@ -49,14 +49,14 @@
 //! assert!(output.trajectories.contains_key("chem:brix_percent"));
 //! ```
 
-use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    ContributionMode, DerivedPoint, DerivedTrajectory, DynamicsModel, Horizon,
-    Note, SampleCadence, SkillInput, TrajectoryPoint,
     integrator, registry,
     rheology::{AlgaeViscosity, RheologyInput, RheologyModel},
+    ContributionMode, DerivedPoint, DerivedTrajectory, DynamicsModel, Horizon, Note, SampleCadence,
+    SkillInput, TrajectoryPoint,
 };
 
 // ─── Input ────────────────────────────────────────────────────────────────────
@@ -165,24 +165,49 @@ pub struct CoupledOutput {
 pub enum CoupledError {
     UnknownModel(String),
     DuplicateModel(String),
-    ReplacementConflict { variable: String, models: (String, String) },
+    ReplacementConflict {
+        variable: String,
+        models: (String, String),
+    },
     MissingState(Vec<String>),
-    IntegrationFailed { integrator: String, step: usize, message: String },
+    IntegrationFailed {
+        integrator: String,
+        step: usize,
+        message: String,
+    },
 }
 
 impl std::fmt::Display for CoupledError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnknownModel(uri) =>
-                write!(f, "Unknown model URI: '{uri}'. Known: {}", registry::known_uris().join(", ")),
-            Self::DuplicateModel(uri) =>
-                write!(f, "Model '{uri}' listed more than once — likely a mistake"),
-            Self::ReplacementConflict { variable, models: (a, b) } =>
-                write!(f, "Two models declare Replacement for '{variable}': '{a}' and '{b}'"),
-            Self::MissingState(keys) =>
-                write!(f, "Missing required initial_state keys: {}", keys.join(", ")),
-            Self::IntegrationFailed { integrator, step, message } =>
-                write!(f, "Integration failed (integrator={integrator}, step={step}): {message}"),
+            Self::UnknownModel(uri) => write!(
+                f,
+                "Unknown model URI: '{uri}'. Known: {}",
+                registry::known_uris().join(", ")
+            ),
+            Self::DuplicateModel(uri) => {
+                write!(f, "Model '{uri}' listed more than once — likely a mistake")
+            }
+            Self::ReplacementConflict {
+                variable,
+                models: (a, b),
+            } => write!(
+                f,
+                "Two models declare Replacement for '{variable}': '{a}' and '{b}'"
+            ),
+            Self::MissingState(keys) => write!(
+                f,
+                "Missing required initial_state keys: {}",
+                keys.join(", ")
+            ),
+            Self::IntegrationFailed {
+                integrator,
+                step,
+                message,
+            } => write!(
+                f,
+                "Integration failed (integrator={integrator}, step={step}): {message}"
+            ),
         }
     }
 }
@@ -191,7 +216,6 @@ impl std::fmt::Display for CoupledError {
 
 /// Integrate a set of models as one coupled ODE over their union state space.
 pub fn apply_coupled_dynamics_model(input: CoupledInput) -> Result<CoupledOutput, CoupledError> {
-
     // ── 1. Validate: no unknown URIs, no duplicates ───────────────────────────
     let mut seen_uris = BTreeSet::new();
     for uri in &input.model_uris {
@@ -202,7 +226,9 @@ pub fn apply_coupled_dynamics_model(input: CoupledInput) -> Result<CoupledOutput
 
     // ── 2. Resolve all models ─────────────────────────────────────────────────
     // Build a minimal SkillInput per model for the registry resolver
-    let models: Vec<Box<dyn DynamicsModel>> = input.model_uris.iter()
+    let models: Vec<Box<dyn DynamicsModel>> = input
+        .model_uris
+        .iter()
         .map(|uri| {
             let short = short_name(uri);
             let flat_params = input.params_override.for_model(&short);
@@ -251,7 +277,8 @@ pub fn apply_coupled_dynamics_model(input: CoupledInput) -> Result<CoupledOutput
     }
 
     // ── 5. Validate: required state variables are present ────────────────────
-    let missing: Vec<String> = union_order.iter()
+    let missing: Vec<String> = union_order
+        .iter()
         .filter(|uri| !input.initial_state.contains_key(*uri))
         .cloned()
         .collect();
@@ -261,13 +288,15 @@ pub fn apply_coupled_dynamics_model(input: CoupledInput) -> Result<CoupledOutput
 
     // ── 6. Build initial state vector in union order ──────────────────────────
     // All keys validated in step 5 — direct index is safe here.
-    let y0: Vec<f64> = union_order.iter()
+    let y0: Vec<f64> = union_order
+        .iter()
         .map(|uri| input.initial_state[uri])
         .collect();
 
     // ── 7. Determine step size (minimum across models) ────────────────────────
     let step_days = input.integrator_step_days.unwrap_or_else(|| {
-        models.iter()
+        models
+            .iter()
             .map(|m| m.manifest().default_step_days)
             .fold(f64::INFINITY, f64::min)
     });
@@ -277,7 +306,9 @@ pub fn apply_coupled_dynamics_model(input: CoupledInput) -> Result<CoupledOutput
         Horizon::UntilPropertyReaches { max_days, .. } => *max_days,
     };
 
-    let cadence_days = input.sample_cadence.as_ref()
+    let cadence_days = input
+        .sample_cadence
+        .as_ref()
         .map(|c| c.hours / 24.0)
         .unwrap_or(0.25);
 
@@ -287,26 +318,30 @@ pub fn apply_coupled_dynamics_model(input: CoupledInput) -> Result<CoupledOutput
         union_order: &union_order,
     };
 
-    let trajectory = integrator::integrate_coupled(
-        &coupled,
-        &y0,
-        horizon_days,
-        step_days,
-        cadence_days,
-    ).map_err(|msg| CoupledError::IntegrationFailed {
-        integrator: "rk4_coupled".into(),
-        step: 0,
-        message: msg,
-    })?;
+    let trajectory =
+        integrator::integrate_coupled(&coupled, &y0, horizon_days, step_days, cadence_days)
+            .map_err(|msg| CoupledError::IntegrationFailed {
+                integrator: "rk4_coupled".into(),
+                step: 0,
+                message: msg,
+            })?;
 
     // ── 9. Apply horizon termination ──────────────────────────────────────────
     let trajectory = match &input.horizon {
-        Horizon::UntilPropertyReaches { property, value, .. } => {
+        Horizon::UntilPropertyReaches {
+            property, value, ..
+        } => {
             let idx = union_order.iter().position(|u| u == property);
             if let Some(i) = idx {
                 let cut = trajectory.iter().position(|(_, y)| y[i] <= *value);
-                if let Some(end) = cut { trajectory[..=end].to_vec() } else { trajectory }
-            } else { trajectory }
+                if let Some(end) = cut {
+                    trajectory[..=end].to_vec()
+                } else {
+                    trajectory
+                }
+            } else {
+                trajectory
+            }
         }
         Horizon::Fixed { .. } => trajectory,
     };
@@ -340,7 +375,9 @@ pub fn apply_coupled_dynamics_model(input: CoupledInput) -> Result<CoupledOutput
         let manifest = model.manifest();
         let short = short_name(&manifest.uri).to_string();
         for var_uri in model.state_order() {
-            let mode = manifest.state_schema.get(&var_uri)
+            let mode = manifest
+                .state_schema
+                .get(&var_uri)
                 .map(|s| &s.contribution)
                 .unwrap_or(&ContributionMode::Additive);
             if *mode != ContributionMode::ReadOnly {
@@ -373,14 +410,23 @@ pub fn apply_coupled_dynamics_model(input: CoupledInput) -> Result<CoupledOutput
         step_size_days: step_days,
         generated_at: chrono::Utc::now().to_rfc3339(),
         projection_id: format!("proj-coupled-{}", uuid::Uuid::new_v4()),
-        generated_by: input.generated_by.clone().unwrap_or_else(|| "system".into()),
+        generated_by: input
+            .generated_by
+            .clone()
+            .unwrap_or_else(|| "system".into()),
         params_used: params_used_map,
         context_used: input.process_context.clone(),
         initial_state: serde_json::to_value(&input.initial_state).unwrap_or_default(),
         state_contributions,
     };
 
-    Ok(CoupledOutput { trajectories, derived_quantities, provenance, converged, notes })
+    Ok(CoupledOutput {
+        trajectories,
+        derived_quantities,
+        provenance,
+        converged,
+        notes,
+    })
 }
 
 // ─── Coupled system adapter ───────────────────────────────────────────────────
@@ -397,16 +443,21 @@ impl<'a> CoupledSystem<'a> {
     /// contributions from each model.
     pub fn system(&self, t: f64, y: &[f64], dy: &mut [f64]) {
         // Zero the derivative vector first
-        for d in dy.iter_mut() { *d = 0.0; }
+        for d in dy.iter_mut() {
+            *d = 0.0;
+        }
 
         for model in self.models {
             let model_order = model.state_order();
             let manifest = model.manifest();
 
             // Extract model-local state slice from union vector
-            let model_y: Vec<f64> = model_order.iter()
+            let model_y: Vec<f64> = model_order
+                .iter()
                 .map(|uri| {
-                    self.union_order.iter().position(|u| u == uri)
+                    self.union_order
+                        .iter()
+                        .position(|u| u == uri)
                         .map(|i| y[i])
                         .unwrap_or(0.0)
                 })
@@ -421,14 +472,16 @@ impl<'a> CoupledSystem<'a> {
                     Some(i) => i,
                     None => continue,
                 };
-                let mode = manifest.state_schema.get(var_uri)
+                let mode = manifest
+                    .state_schema
+                    .get(var_uri)
                     .map(|s| &s.contribution)
                     .unwrap_or(&ContributionMode::Additive);
 
                 match mode {
-                    ContributionMode::Additive    => dy[global_i] += model_dy[local_i],
+                    ContributionMode::Additive => dy[global_i] += model_dy[local_i],
                     ContributionMode::Replacement => dy[global_i] = model_dy[local_i],
-                    ContributionMode::ReadOnly    => { /* no contribution */ }
+                    ContributionMode::ReadOnly => { /* no contribution */ }
                 }
             }
         }
@@ -513,17 +566,26 @@ mod tests {
             params_override: CoupledParamsOverride::Empty,
             horizon: Horizon::Fixed { days: 7.0 },
             sample_cadence: Some(SampleCadence { hours: 24.0 }),
-            integrator: None, generated_by: None, integrator_step_days: None,
+            integrator: None,
+            generated_by: None,
+            integrator_step_days: None,
         };
         let single_out = apply_coupled_dynamics_model(single).unwrap();
 
-        let coupled_final_brix = coupled_out.trajectories["chem:brix_percent"].last().unwrap().value;
-        let single_final_brix  = single_out.trajectories["chem:brix_percent"].last().unwrap().value;
+        let coupled_final_brix = coupled_out.trajectories["chem:brix_percent"]
+            .last()
+            .unwrap()
+            .value;
+        let single_final_brix = single_out.trajectories["chem:brix_percent"]
+            .last()
+            .unwrap()
+            .value;
 
         assert!(
             coupled_final_brix < single_final_brix,
             "Coupled Brix must deplete faster. coupled={:.4}, single={:.4}",
-            coupled_final_brix, single_final_brix
+            coupled_final_brix,
+            single_final_brix
         );
     }
 
@@ -556,8 +618,14 @@ mod tests {
     fn provenance_has_model_uris_array() {
         let out = apply_coupled_dynamics_model(coupled_bc_input()).unwrap();
         assert_eq!(out.provenance.model_uris.len(), 2);
-        assert!(out.provenance.model_uris.contains(&"kask:dynamics/kombucha_fermentation@v1".to_string()));
-        assert!(out.provenance.model_uris.contains(&"kask:dynamics/bc_optimization@v1".to_string()));
+        assert!(out
+            .provenance
+            .model_uris
+            .contains(&"kask:dynamics/kombucha_fermentation@v1".to_string()));
+        assert!(out
+            .provenance
+            .model_uris
+            .contains(&"kask:dynamics/bc_optimization@v1".to_string()));
         assert_eq!(out.provenance.integrator, "rk4_coupled");
     }
 
@@ -565,7 +633,9 @@ mod tests {
     fn derived_viscosity_present_for_bc_model() {
         let out = apply_coupled_dynamics_model(coupled_bc_input()).unwrap();
         assert!(
-            out.derived_quantities.iter().any(|d| d.property_uri == "phys:dynamic_viscosity_pa_s"),
+            out.derived_quantities
+                .iter()
+                .any(|d| d.property_uri == "phys:dynamic_viscosity_pa_s"),
             "Coupled run with bc_optimization should produce viscosity derived quantity"
         );
     }
@@ -584,7 +654,9 @@ mod tests {
     #[test]
     fn duplicate_model_returns_error() {
         let mut input = coupled_bc_input();
-        input.model_uris.push("kask:dynamics/bc_optimization@v1".into());
+        input
+            .model_uris
+            .push("kask:dynamics/bc_optimization@v1".into());
         let result = apply_coupled_dynamics_model(input);
         assert!(matches!(result, Err(CoupledError::DuplicateModel(_))));
     }
@@ -601,9 +673,10 @@ mod tests {
     #[test]
     fn per_model_params_override_works() {
         let mut input = coupled_bc_input();
-        input.params_override = CoupledParamsOverride::PerModel(BTreeMap::from([
-            ("bc_optimization".into(), BTreeMap::from([("bc_max".into(), 12.0)])),
-        ]));
+        input.params_override = CoupledParamsOverride::PerModel(BTreeMap::from([(
+            "bc_optimization".into(),
+            BTreeMap::from([("bc_max".into(), 12.0)]),
+        )]));
         let out = apply_coupled_dynamics_model(input).unwrap();
         // bc_max=12 means BC yield can grow higher — just verify it ran without error
         assert!(out.trajectories.contains_key("bio:bc_yield_g_per_l"));
@@ -611,8 +684,14 @@ mod tests {
 
     #[test]
     fn short_name_extraction() {
-        assert_eq!(short_name("kask:dynamics/kombucha_fermentation@v1"), "kombucha_fermentation");
-        assert_eq!(short_name("kask:dynamics/bc_optimization@v2"), "bc_optimization");
+        assert_eq!(
+            short_name("kask:dynamics/kombucha_fermentation@v1"),
+            "kombucha_fermentation"
+        );
+        assert_eq!(
+            short_name("kask:dynamics/bc_optimization@v2"),
+            "bc_optimization"
+        );
         assert_eq!(short_name("linear_decay"), "linear_decay");
     }
 }
@@ -635,10 +714,12 @@ fn project_model_traj(
     trajectory: &[(f64, Vec<f64>)],
 ) -> Vec<(f64, Vec<f64>)> {
     let order = model.state_order();
-    let indices: Vec<usize> = order.iter()
+    let indices: Vec<usize> = order
+        .iter()
         .filter_map(|uri| union_order.iter().position(|u| u == uri))
         .collect();
-    trajectory.iter()
+    trajectory
+        .iter()
         .map(|(t, y)| (*t, indices.iter().map(|&i| y[i]).collect()))
         .collect()
 }
@@ -654,7 +735,10 @@ fn unpack_union(
     for (t_days, y) in trajectory {
         for (i, uri) in order.iter().enumerate() {
             if let Some(pts) = out.get_mut(uri) {
-                pts.push(TrajectoryPoint { t_hours: t_days * 24.0, value: y[i] });
+                pts.push(TrajectoryPoint {
+                    t_hours: t_days * 24.0,
+                    value: y[i],
+                });
             }
         }
     }
@@ -681,8 +765,16 @@ fn derive_coupled_rheology(
         _ => return vec![],
     };
 
-    let temp_c = input.process_context.get("temperature_c").and_then(|v| v.as_f64()).unwrap_or(26.0);
-    let agitation_rpm = input.process_context.get("agitation_rpm").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let temp_c = input
+        .process_context
+        .get("temperature_c")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(26.0);
+    let agitation_rpm = input
+        .process_context
+        .get("agitation_rpm")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
 
     // Use flat params from any model that provides rheology overrides
     let flat_params: BTreeMap<String, f64> = input.params_override.for_model("rheology");
@@ -691,15 +783,24 @@ fn derive_coupled_rheology(
     let shear_rate = if agitation_rpm > 0.0 {
         n_imp * agitation_rpm
     } else {
-        flat_params.get("rheology_static_shear").copied().unwrap_or(0.05)
+        flat_params
+            .get("rheology_static_shear")
+            .copied()
+            .unwrap_or(0.05)
     };
 
     let dummy_input = RheologyInput {
         temperature_c: temp_c,
         shear_rate_per_s: shear_rate,
         volume_fraction: 0.0,
-        params_override: flat_params.iter()
-            .filter(|(k, _)| matches!(k.as_str(), "k0"|"ea"|"c_n"|"n_min"|"density_kg_m3"|"t_ref_k"))
+        params_override: flat_params
+            .iter()
+            .filter(|(k, _)| {
+                matches!(
+                    k.as_str(),
+                    "k0" | "ea" | "c_n" | "n_min" | "density_kg_m3" | "t_ref_k"
+                )
+            })
             .map(|(k, v)| (k.clone(), *v))
             .collect(),
     };
@@ -719,22 +820,58 @@ fn derive_coupled_rheology(
         };
         match rheology.compute(&ri) {
             Ok(r) => {
-                viscosity_pts.push(crate::DerivedPoint { t_hours: pt.t_hours, value: r.viscosity_pa_s });
-                flow_index_pts.push(crate::DerivedPoint { t_hours: pt.t_hours, value: r.flow_index_n });
-                consistency_pts.push(crate::DerivedPoint { t_hours: pt.t_hours, value: r.consistency_index_k });
+                viscosity_pts.push(crate::DerivedPoint {
+                    t_hours: pt.t_hours,
+                    value: r.viscosity_pa_s,
+                });
+                flow_index_pts.push(crate::DerivedPoint {
+                    t_hours: pt.t_hours,
+                    value: r.flow_index_n,
+                });
+                consistency_pts.push(crate::DerivedPoint {
+                    t_hours: pt.t_hours,
+                    value: r.consistency_index_k,
+                });
             }
             Err(_) => {
-                viscosity_pts.push(crate::DerivedPoint { t_hours: pt.t_hours, value: f64::NAN });
-                flow_index_pts.push(crate::DerivedPoint { t_hours: pt.t_hours, value: f64::NAN });
-                consistency_pts.push(crate::DerivedPoint { t_hours: pt.t_hours, value: f64::NAN });
+                viscosity_pts.push(crate::DerivedPoint {
+                    t_hours: pt.t_hours,
+                    value: f64::NAN,
+                });
+                flow_index_pts.push(crate::DerivedPoint {
+                    t_hours: pt.t_hours,
+                    value: f64::NAN,
+                });
+                consistency_pts.push(crate::DerivedPoint {
+                    t_hours: pt.t_hours,
+                    value: f64::NAN,
+                });
             }
         }
     }
 
     let src = "kask:rheology/algae_viscosity@v1";
     vec![
-        DerivedTrajectory { property_uri: "phys:dynamic_viscosity_pa_s".into(), label: "Dynamic viscosity".into(), units: "Pa·s".into(), points: viscosity_pts, source_model_uri: src.into() },
-        DerivedTrajectory { property_uri: "phys:flow_index_n".into(), label: "Flow behaviour index (n)".into(), units: "dimensionless".into(), points: flow_index_pts, source_model_uri: src.into() },
-        DerivedTrajectory { property_uri: "phys:consistency_index_k".into(), label: "Consistency index K(T)".into(), units: "Pa·sⁿ".into(), points: consistency_pts, source_model_uri: src.into() },
+        DerivedTrajectory {
+            property_uri: "phys:dynamic_viscosity_pa_s".into(),
+            label: "Dynamic viscosity".into(),
+            units: "Pa·s".into(),
+            points: viscosity_pts,
+            source_model_uri: src.into(),
+        },
+        DerivedTrajectory {
+            property_uri: "phys:flow_index_n".into(),
+            label: "Flow behaviour index (n)".into(),
+            units: "dimensionless".into(),
+            points: flow_index_pts,
+            source_model_uri: src.into(),
+        },
+        DerivedTrajectory {
+            property_uri: "phys:consistency_index_k".into(),
+            label: "Consistency index K(T)".into(),
+            units: "Pa·sⁿ".into(),
+            points: consistency_pts,
+            source_model_uri: src.into(),
+        },
     ]
 }

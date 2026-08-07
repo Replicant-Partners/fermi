@@ -48,11 +48,11 @@
 //! dCs/dt = −k_deg(T) · Cs · (1 − Ct/Cs)⁺
 //! ```
 
-use std::collections::BTreeMap;
 use crate::{
-    DynamicsModel, ModelManifest, Note,
     manifest::{ContextSchema, ContextSource, ContributionMode, ParamSchema, StateFieldSchema},
+    DynamicsModel, ModelManifest, Note,
 };
+use std::collections::BTreeMap;
 
 const R: f64 = 8.314;
 
@@ -146,7 +146,13 @@ impl SolidLiquidExtraction {
         let cs_initial = cs_initial.unwrap_or_else(|| solvent.default_cs_at_ref());
         let degradation_onset = degradation_onset.unwrap_or(0.95);
 
-        Self { k, k_deg, cs_initial, degradation_onset, solvent }
+        Self {
+            k,
+            k_deg,
+            cs_initial,
+            degradation_onset,
+            solvent,
+        }
     }
 
     pub fn from_explicit(
@@ -156,7 +162,13 @@ impl SolidLiquidExtraction {
         degradation_onset: f64,
         solvent: SolventKind,
     ) -> Self {
-        Self { k, k_deg, cs_initial, degradation_onset, solvent }
+        Self {
+            k,
+            k_deg,
+            cs_initial,
+            degradation_onset,
+            solvent,
+        }
     }
 }
 
@@ -306,7 +318,10 @@ impl DynamicsModel for SolidLiquidExtraction {
         }
         let tail = &history[history.len() - 6..];
         let ct_range = tail.iter().map(|(_, y)| y[0]).fold(f64::INFINITY, f64::min)
-            ..=tail.iter().map(|(_, y)| y[0]).fold(f64::NEG_INFINITY, f64::max);
+            ..=tail
+                .iter()
+                .map(|(_, y)| y[0])
+                .fold(f64::NEG_INFINITY, f64::max);
         (ct_range.end() - ct_range.start()) < 0.01
     }
 
@@ -343,7 +358,9 @@ impl DynamicsModel for SolidLiquidExtraction {
             }
         }
 
-        if let (Some((_, y_initial)), Some((t_end, y_end))) = (trajectory.first(), trajectory.last()) {
+        if let (Some((_, y_initial)), Some((t_end, y_end))) =
+            (trajectory.first(), trajectory.last())
+        {
             let cs = y_initial[1];
             let ct_final = y_end[0];
             if cs > 0.0 && ct_final / cs > 0.98 {
@@ -368,7 +385,9 @@ impl DynamicsModel for SolidLiquidExtraction {
             severity: "info".into(),
             message: format!(
                 "Eₐ = {:.1} kJ/mol → extraction is {}-controlled (solvent: {}).",
-                ea_kj, mechanism, self.solvent.label()
+                ea_kj,
+                mechanism,
+                self.solvent.label()
             ),
             t_hours: None,
         });
@@ -384,7 +403,14 @@ mod tests {
 
     fn water_model_at_60c() -> SolidLiquidExtraction {
         SolidLiquidExtraction::from_context(
-            60.0, SolventKind::Water, None, None, None, None, None, None,
+            60.0,
+            SolventKind::Water,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )
     }
 
@@ -394,7 +420,11 @@ mod tests {
         let y = vec![0.0, model.cs_initial];
         let mut dy = vec![0.0; 2];
         model.system(0.0, &y, &mut dy);
-        assert!(dy[0] > 0.0, "Ct should increase at t=0, got dCt/dt = {}", dy[0]);
+        assert!(
+            dy[0] > 0.0,
+            "Ct should increase at t=0, got dCt/dt = {}",
+            dy[0]
+        );
     }
 
     #[test]
@@ -440,15 +470,56 @@ mod tests {
 
     #[test]
     fn arrhenius_higher_temp_faster_extraction() {
-        let m40 = SolidLiquidExtraction::from_context(40.0, SolventKind::Water, None, None, None, None, None, None);
-        let m85 = SolidLiquidExtraction::from_context(85.0, SolventKind::Water, None, None, None, None, None, None);
-        assert!(m85.k > m40.k, "Higher temperature should yield higher k: k40={}, k85={}", m40.k, m85.k);
+        let m40 = SolidLiquidExtraction::from_context(
+            40.0,
+            SolventKind::Water,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let m85 = SolidLiquidExtraction::from_context(
+            85.0,
+            SolventKind::Water,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(
+            m85.k > m40.k,
+            "Higher temperature should yield higher k: k40={}, k85={}",
+            m40.k,
+            m85.k
+        );
     }
 
     #[test]
     fn acetone_higher_degradation_at_high_temp() {
-        let m20 = SolidLiquidExtraction::from_context(20.0, SolventKind::AcetoneWater65, None, None, None, None, None, None);
-        let m60 = SolidLiquidExtraction::from_context(60.0, SolventKind::AcetoneWater65, None, None, None, None, None, None);
+        let m20 = SolidLiquidExtraction::from_context(
+            20.0,
+            SolventKind::AcetoneWater65,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let m60 = SolidLiquidExtraction::from_context(
+            60.0,
+            SolventKind::AcetoneWater65,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
         assert!(m60.k_deg > m20.k_deg,
             "Acetone: degradation rate should increase with temperature. k_deg20={:.4}, k_deg60={:.4}",
             m20.k_deg, m60.k_deg);
@@ -456,9 +527,30 @@ mod tests {
 
     #[test]
     fn ethanol_faster_than_water_at_same_temp() {
-        let mw = SolidLiquidExtraction::from_context(60.0, SolventKind::Water, None, None, None, None, None, None);
-        let me = SolidLiquidExtraction::from_context(60.0, SolventKind::EthanolWater50, None, None, None, None, None, None);
-        assert!(me.k > mw.k, "Ethanol should have higher k than water at 60°C");
+        let mw = SolidLiquidExtraction::from_context(
+            60.0,
+            SolventKind::Water,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let me = SolidLiquidExtraction::from_context(
+            60.0,
+            SolventKind::EthanolWater50,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(
+            me.k > mw.k,
+            "Ethanol should have higher k than water at 60°C"
+        );
     }
 
     #[test]
@@ -471,7 +563,10 @@ mod tests {
     #[test]
     fn manifest_uri() {
         let model = SolidLiquidExtraction::default();
-        assert_eq!(model.manifest().uri, "kask:dynamics/solid_liquid_extraction@v1");
+        assert_eq!(
+            model.manifest().uri,
+            "kask:dynamics/solid_liquid_extraction@v1"
+        );
     }
 
     #[test]
@@ -482,7 +577,14 @@ mod tests {
         // meaningfully > 0 and < Cs.
         use crate::integrator::integrate;
         let model = SolidLiquidExtraction::from_context(
-            60.0, SolventKind::Water, None, None, None, None, None, None,
+            60.0,
+            SolventKind::Water,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         );
         let cs = model.cs_initial;
         let y0 = vec![0.0, cs];
@@ -490,9 +592,17 @@ mod tests {
         let result = integrate(&model, &y0, 0.1, 0.0001, 0.01).unwrap();
         let ct_final = result.last().unwrap().1[0];
         // At 60°C water extraction, ~50–90% of Cs should be extracted in 2.4h
-        assert!(ct_final > cs * 0.3,
-            "After 2.4h, Ct should be >30% of Cs. Got Ct={:.3}, Cs={:.3}", ct_final, cs);
-        assert!(ct_final <= cs,
-            "Ct cannot exceed Cs. Got Ct={:.3}, Cs={:.3}", ct_final, cs);
+        assert!(
+            ct_final > cs * 0.3,
+            "After 2.4h, Ct should be >30% of Cs. Got Ct={:.3}, Cs={:.3}",
+            ct_final,
+            cs
+        );
+        assert!(
+            ct_final <= cs,
+            "Ct cannot exceed Cs. Got Ct={:.3}, Cs={:.3}",
+            ct_final,
+            cs
+        );
     }
 }

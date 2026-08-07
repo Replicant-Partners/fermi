@@ -243,16 +243,26 @@ pub async fn add_dependency_handler(
     let downstream_uuid: uuid::Uuid = workspace_id
         .parse()
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".into()))?;
-    let upstream_uuid: uuid::Uuid = req
-        .upstream_id
-        .parse()
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid upstream workspace ID".into()))?;
+    let upstream_uuid: uuid::Uuid = req.upstream_id.parse().map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            "Invalid upstream workspace ID".into(),
+        )
+    })?;
 
     // Verify caller is member of downstream workspace
     teams::get_member_role(&state.db, downstream_uuid, &user_id)
         .await
-        .map_err(|_| (StatusCode::FORBIDDEN, "Not a member of this workspace".into()))?
-        .ok_or((StatusCode::FORBIDDEN, "Not a member of this workspace".into()))?;
+        .map_err(|_| {
+            (
+                StatusCode::FORBIDDEN,
+                "Not a member of this workspace".into(),
+            )
+        })?
+        .ok_or((
+            StatusCode::FORBIDDEN,
+            "Not a member of this workspace".into(),
+        ))?;
 
     // Check for cycles: upstream must not transitively depend on downstream
     let would_cycle = sqlx::query_scalar::<_, bool>(
@@ -378,23 +388,24 @@ pub async fn remove_dependency_handler(
     let downstream_uuid: uuid::Uuid = workspace_id
         .parse()
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".into()))?;
-    let upstream_uuid: uuid::Uuid = upstream_id
-        .parse()
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid upstream workspace ID".into()))?;
+    let upstream_uuid: uuid::Uuid = upstream_id.parse().map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            "Invalid upstream workspace ID".into(),
+        )
+    })?;
 
     teams::get_member_role(&state.db, downstream_uuid, &user_id)
         .await
         .map_err(|_| (StatusCode::FORBIDDEN, "Not a workspace member".into()))?
         .ok_or((StatusCode::FORBIDDEN, "Not a workspace member".into()))?;
 
-    sqlx::query(
-        "DELETE FROM workspace_dependencies WHERE upstream_id = $1 AND downstream_id = $2",
-    )
-    .bind(upstream_uuid)
-    .bind(downstream_uuid)
-    .execute(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    sqlx::query("DELETE FROM workspace_dependencies WHERE upstream_id = $1 AND downstream_id = $2")
+        .bind(upstream_uuid)
+        .bind(downstream_uuid)
+        .execute(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(StatusCode::NO_CONTENT)
 }
