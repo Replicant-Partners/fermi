@@ -1,10 +1,42 @@
 name: Release Console
 
-# Builds and publishes a pre-built fermi-console binary.
+# Builds and publishes pre-built fermi-console binaries for every desktop
+# platform we support, from a single tag.
 #
 # Trigger options:
 #   git tag v0.x.y && git push origin v0.x.y   — full release
 #   workflow_dispatch (GitHub UI)               — manual release from any branch
+#
+# ── Shape ──────────────────────────────────────────────────────────────
+#
+# `create-release` runs first and alone. It resolves the tag, assembles
+# the release body, and creates (or updates) the GitHub Release. Only
+# then does the `build` matrix fan out and *upload assets to that
+# existing release*.
+#
+# The ordering is not cosmetic. Three concurrent jobs each asking
+# softprops/action-gh-release to create-or-update the same tag race on
+# the release body: whichever finishes last wins, and a macOS job that
+# doesn't know about RELEASE_NOTES_<tag>.md would clobber the notes the
+# Linux job wrote. Since the in-app updater renders that body verbatim as
+# the "what's new" modal, losing it is user-visible. One writer, many
+# uploaders.
+#
+# ── Assets published per tag ───────────────────────────────────────────
+#
+#   fermi-console-linux-x86_64                   plain ELF binary
+#   fermi-console-macos-aarch64                  plain Mach-O, Apple Silicon
+#   fermi-console-macos-x86_64                   plain Mach-O, Intel
+#   fermi-console-<tag>-linux-x86_64.tar.gz      archive + README
+#   fermi-console-<tag>-macos-aarch64.zip        "Fermi Console.app"
+#   fermi-console-<tag>-macos-x86_64.zip         "Fermi Console.app"
+#   checksums-<platform>.txt                     SHA256 of the above pair
+#
+# The plain-binary names are a hard contract with three consumers, all of
+# which must be changed together if you rename one:
+#   * crates/fermi-console/src/updater.rs  (BINARY_ASSET_NAME)
+#   * scripts/install-fermi-console.sh     (platform slug → asset)
+#   * src/handlers/pages.rs                (/fermi-console/download)
 
 on:
   push:
@@ -24,91 +56,47 @@ env:
   BINARY_NAME: fermi-console
 
 jobs:
-  build-linux:
-    name: Build (Linux x86_64)
+  # ───────────────────────────────────────────────────────────────────
+  # Single writer of the release itself. Fast (no build), so the matrix
+  # isn't meaningfully delayed by depending on it.
+  # ───────────────────────────────────────────────────────────────────
+  create-release:
+    name: Create release
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-
-      - name: Cache build target
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-console-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-console-release-
-
-      - name: Install GPUI system dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y \
-            libxcb1-dev \
-            libxkbcommon-dev \
-            libxkbcommon-x11-dev \
-            libfontconfig1-dev \
-            libfreetype-dev \
-            libwayland-dev \
-            libvulkan-dev \
-            wayland-protocols \
-            pkg-config
-
-      - name: Pin dependency versions
-        run: |
-          cargo update time --precise 0.3.36
-          cargo update home --precise 0.5.9
-
-      # The in-app updater compares the highest release TAG against the
-      # running binary's env!("CARGO_PKG_VERSION"). If they don't match,
-      # the client is told an update is available forever — it downloads a
-      # binary that STILL reports the old version, so it never converges.
-      # That happens whenever a tag ships without bumping
-      # crates/fermi-console/Cargo.toml (e.g. backend/CLI-only releases,
-      # which still trigger this workflow). Stamp the version FROM the tag
-      # so the published binary always reports exactly the tag it ships
-      # under. No manual Cargo.toml bump discipline required.
-      - name: Stamp console version to match the release tag
-        run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            TAG="${GITHUB_REF#refs/tags/}"
-          else
-            TAG="${{ inputs.tag }}"
-          fi
-          VER="${TAG#v}"
-          if echo "$VER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            sed -i -E "0,/^version = \"[^\"]*\"/s//version = \"$VER\"/" crates/fermi-console/Cargo.toml
-            echo "Stamped fermi-console version = $VER (from tag $TAG)"
-            grep -m1 '^version' crates/fermi-console/Cargo.toml
-          else
-            echo "Tag '$TAG' is not semver ('$VER'); leaving Cargo.toml as-is"
-          fi
-
-      - name: Build release binary
-        run: cargo build --release -p fermi-console
-
-      - name: Strip binary
-        run: strip target/release/fermi-console
 
       - name: Determine release tag
         id: tag
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
-            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+            TAG="${GITHUB_REF#refs/tags/}"
           elif [ -n "${{ inputs.tag }}" ]; then
-            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            TAG="${{ inputs.tag }}"
           else
-            echo "tag=latest" >> "$GITHUB_OUTPUT"
+            TAG="latest"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          # The version the binaries will be stamped with. Empty when the
+          # tag isn't semver (e.g. the 'latest' rolling prerelease), which
+          # the build job reads as "leave Cargo.toml alone".
+          VER="${TAG#v}"
+          if echo "$VER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "version=$VER" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$TAG" = "latest" ]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build release body
@@ -138,29 +126,32 @@ jobs:
             echo ""
             echo "Existing users: **Help → Check for Updates…** inside the app."
             echo ""
-            echo "New users:"
+            echo "New users, **Linux or macOS**:"
             echo ""
             echo '```bash'
             echo 'curl -fsSL https://raw.githubusercontent.com/Replicant-Partners/fermi/main/scripts/install-fermi-console.sh | bash'
             echo '```'
+            echo ""
+            echo "The installer detects your platform and drops \`fermi-console\` in \`~/.local/bin\`."
+            echo ""
+            echo "### macOS app bundle"
+            echo ""
+            echo "Prefer a Dock icon? Download the zip for your chip, unzip, and drag **Fermi Console.app** to \`/Applications\`:"
+            echo ""
+            echo "| Chip | Asset |"
+            echo "|------|-------|"
+            echo "| Apple Silicon (M1–M4) | \`fermi-console-${TAG}-macos-aarch64.zip\` |"
+            echo "| Intel | \`fermi-console-${TAG}-macos-x86_64.zip\` |"
+            echo ""
+            echo "The app is ad-hoc signed but **not** Apple-notarized, so the very first launch needs"
+            echo "a right-click → **Open** (or System Settings → Privacy & Security → **Open Anyway**)."
+            echo "Updates after that go through Help → Check for Updates and need no such dance."
           } >> "$BODY_FILE"
           {
             echo 'body<<EOF_NOTES'
             cat "$BODY_FILE"
             echo 'EOF_NOTES'
           } >> "$GITHUB_OUTPUT"
-
-      - name: Package binary
-        run: |
-          TAG=${{ steps.tag.outputs.tag }}
-          ARCHIVE=fermi-console-${TAG}-linux-x86_64.tar.gz
-          cp target/release/fermi-console fermi-console
-          tar -czf "$ARCHIVE" fermi-console crates/fermi-console/README.md
-          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
-          # Also keep a plain binary with a fixed name for the install script
-          cp fermi-console fermi-console-linux-x86_64
-          sha256sum "$ARCHIVE" fermi-console-linux-x86_64 > checksums.txt
-          cat checksums.txt
 
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2
@@ -173,10 +164,236 @@ jobs:
           # markdown as-is, so keep it user-facing.
           body: ${{ steps.notes.outputs.body }}
           draft: false
-          prerelease: ${{ steps.tag.outputs.tag == 'latest' }}
-          files: |
-            ${{ env.ARCHIVE }}
-            fermi-console-linux-x86_64
-            checksums.txt
+          prerelease: ${{ steps.tag.outputs.prerelease }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ───────────────────────────────────────────────────────────────────
+  # One job per shipped platform. Uploads assets to the release the
+  # previous job created; never touches its body.
+  # ───────────────────────────────────────────────────────────────────
+  build:
+    name: Build (${{ matrix.platform }})
+    needs: create-release
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      # A macOS toolchain hiccup must not cost us the Linux binary, which
+      # is what the overwhelming majority of testers install.
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - platform: macos-aarch64
+            target: aarch64-apple-darwin
+            runner: macos-latest
+          - platform: macos-x86_64
+            target: x86_64-apple-darwin
+            # macos-latest is Apple Silicon, so this arm cross-compiles.
+            # That's fine for us: gpui's build.rs invokes `xcrun metal`,
+            # and Metal shader bytecode is architecture-independent, so
+            # the only arch-specific step is the Rust link itself.
+            runner: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: Cache build target
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ matrix.target }}-console-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.target }}-console-release-
+
+      # GPUI on Linux renders through Vulkan/Blade and needs the X11,
+      # Wayland and font stacks at build time. On macOS it renders
+      # through Metal, and every framework it links against ships with
+      # the OS and Xcode — there is nothing to install.
+      - name: Install GPUI system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            libxcb1-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libfontconfig1-dev \
+            libfreetype-dev \
+            libwayland-dev \
+            libvulkan-dev \
+            wayland-protocols \
+            pkg-config
+
+      - name: Pin dependency versions
+        run: |
+          cargo update time --precise 0.3.36
+          cargo update home --precise 0.5.9
+
+      # The in-app updater compares the highest release TAG against the
+      # running binary's env!("CARGO_PKG_VERSION"). If they don't match,
+      # the client is told an update is available forever — it downloads a
+      # binary that STILL reports the old version, so it never converges.
+      # That happens whenever a tag ships without bumping
+      # crates/fermi-console/Cargo.toml (e.g. backend/CLI-only releases,
+      # which still trigger this workflow). Stamp the version FROM the tag
+      # so the published binary always reports exactly the tag it ships
+      # under. No manual Cargo.toml bump discipline required.
+      #
+      # `sed -i` is spelled differently on GNU and BSD/macOS sed, and
+      # getting it wrong on macOS silently creates a backup file instead
+      # of editing in place. Perl behaves identically on both.
+      - name: Stamp console version to match the release tag
+        shell: bash
+        run: |
+          VER="${{ needs.create-release.outputs.version }}"
+          if [ -z "$VER" ]; then
+            echo "Tag '${{ needs.create-release.outputs.tag }}' is not semver; leaving Cargo.toml as-is"
+            exit 0
+          fi
+          perl -0pi -e "s/^version = \"[^\"]*\"/version = \"$VER\"/m unless \$done++" \
+            crates/fermi-console/Cargo.toml
+          echo "Stamped fermi-console version = $VER"
+          grep -m1 '^version' crates/fermi-console/Cargo.toml
+
+      - name: Build release binary
+        run: cargo build --release -p fermi-console --target ${{ matrix.target }}
+
+      # `strip` rewrites the Mach-O, which invalidates the ad-hoc
+      # signature the linker applies. On Apple Silicon that is fatal, not
+      # cosmetic: the kernel refuses to exec a Mach-O whose signature
+      # doesn't validate, so an unsigned-after-strip binary dies with
+      # "Killed: 9" and no useful diagnostic. Re-sign immediately after.
+      - name: Strip and sign binary
+        shell: bash
+        run: |
+          BIN="target/${{ matrix.target }}/release/fermi-console"
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            strip -x "$BIN"
+            codesign --force --sign - --timestamp=none "$BIN"
+            codesign --verify --verbose=2 "$BIN"
+          else
+            strip "$BIN"
+          fi
+          ls -lh "$BIN"
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          TAG=${{ needs.create-release.outputs.tag }}
+          PLATFORM=${{ matrix.platform }}
+          ARCHIVE=fermi-console-${TAG}-${PLATFORM}.tar.gz
+          cp target/${{ matrix.target }}/release/fermi-console fermi-console
+          tar -czf "$ARCHIVE" fermi-console crates/fermi-console/README.md
+          # Plain binary with a fixed, platform-qualified name — this is
+          # what the install script and the in-app updater fetch.
+          cp fermi-console "fermi-console-${PLATFORM}"
+          sha256sum "$ARCHIVE" "fermi-console-${PLATFORM}" > "checksums-${PLATFORM}.txt"
+          cat "checksums-${PLATFORM}.txt"
+          {
+            echo "ARCHIVE=$ARCHIVE"
+            echo "PLAIN_BIN=fermi-console-${PLATFORM}"
+            echo "CHECKSUMS=checksums-${PLATFORM}.txt"
+          } >> "$GITHUB_ENV"
+
+      # macOS gets two shapes from the same binary:
+      #
+      #   * the plain Mach-O, for `~/.local/bin` installs and for the
+      #     self-updater to rename over an existing install;
+      #   * a "Fermi Console.app", because a bare binary launched from a
+      #     terminal has no bundle identity — no Dock icon, no app name in
+      #     the menu bar, and macOS treats it as a background process.
+      #
+      # `ditto -c -k --keepParent` rather than `zip -r`: it is the only
+      # archiver that reliably preserves bundle structure, symlinks and
+      # the code signature through a round trip.
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG=${{ needs.create-release.outputs.tag }}
+          PLATFORM=${{ matrix.platform }}
+          VER="${{ needs.create-release.outputs.version }}"
+          # CFBundleVersion must be a dotted number; 'latest' isn't one.
+          [ -n "$VER" ] || VER="0.0.0"
+          BIN="target/${{ matrix.target }}/release/fermi-console"
+
+          APP="Fermi Console.app"
+          rm -rf "$APP"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp "$BIN" "$APP/Contents/MacOS/fermi-console"
+          chmod +x "$APP/Contents/MacOS/fermi-console"
+
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDevelopmentRegion</key>       <string>en</string>
+            <key>CFBundleDisplayName</key>             <string>Fermi Console</string>
+            <key>CFBundleExecutable</key>              <string>fermi-console</string>
+            <key>CFBundleIdentifier</key>              <string>world.agent-bestiary.fermi-console</string>
+            <key>CFBundleInfoDictionaryVersion</key>   <string>6.0</string>
+            <key>CFBundleName</key>                    <string>Fermi Console</string>
+            <key>CFBundlePackageType</key>             <string>APPL</string>
+            <key>CFBundleShortVersionString</key>      <string>${VER}</string>
+            <key>CFBundleVersion</key>                 <string>${VER}</string>
+            <key>LSMinimumSystemVersion</key>          <string>11.0</string>
+            <key>NSHighResolutionCapable</key>         <true/>
+          </dict>
+          </plist>
+          PLIST
+
+          # Seal the bundle as a unit. Signing the inner binary alone
+          # leaves Contents/_CodeSignature absent, and LaunchServices
+          # then treats the .app as unsigned.
+          codesign --force --deep --sign - --timestamp=none "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+          ARCHIVE="fermi-console-${TAG}-${PLATFORM}.zip"
+          ditto -c -k --keepParent "$APP" "$ARCHIVE"
+
+          cp "$BIN" "fermi-console-${PLATFORM}"
+          shasum -a 256 "$ARCHIVE" "fermi-console-${PLATFORM}" > "checksums-${PLATFORM}.txt"
+          cat "checksums-${PLATFORM}.txt"
+          {
+            echo "ARCHIVE=$ARCHIVE"
+            echo "PLAIN_BIN=fermi-console-${PLATFORM}"
+            echo "CHECKSUMS=checksums-${PLATFORM}.txt"
+          } >> "$GITHUB_ENV"
+
+      # `gh release upload`, not a create-or-update action, precisely
+      # because it uploads assets and touches *nothing else*. An action
+      # that PATCHes the release is one omitted input away from blanking
+      # the body that create-release just wrote — and the in-app updater
+      # renders that body as its "what's new" modal, so blanking it is
+      # visible to every tester.
+      #
+      # --clobber makes a re-run idempotent instead of failing on "asset
+      # already exists", which is what you want when one matrix leg
+      # failed and you're retrying just that one.
+      - name: Upload assets to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ needs.create-release.outputs.tag }}" \
+            "$ARCHIVE" "$PLAIN_BIN" "$CHECKSUMS" \
+            --clobber --repo "$GITHUB_REPOSITORY"
+          echo "Uploaded for ${{ matrix.platform }}: $ARCHIVE $PLAIN_BIN $CHECKSUMS"

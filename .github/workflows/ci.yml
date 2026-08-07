@@ -142,6 +142,15 @@ jobs:
       - name: Run unit tests (non-DB crates)
         run: cargo test --lib --workspace --exclude agent-bestiary-memory
 
+      # `handlers` is a module of the api-server BINARY, not of the lib,
+      # so `--lib` above cannot see its tests. Without this line the
+      # /fermi-console/download platform allowlist — which guards an
+      # outbound redirect — would be tested only in principle. The binary
+      # is already compiled by `cargo check --bins --workspace`, so this
+      # costs a test-profile link, not a fresh build.
+      - name: Run api-server binary unit tests
+        run: cargo test --bin api-server
+
       - name: Run agent-bestiary-memory unit tests
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
@@ -177,6 +186,47 @@ jobs:
       # TODO: fermi-memory integration tests need rework — they insert episodes
       # without creating agents first, violating FK constraints added in migration 010.
       # Re-enable after updating tests to create agents before episodes.
+
+  # The console ships for Linux AND macOS from the same tag, but the test
+  # job above only ever compiles for Linux. Without this, a macOS-only
+  # build break (a `cfg`ed branch that doesn't compile, a gpui API that
+  # differs per platform, a system dep we assumed) stays invisible until
+  # someone cuts a release — at which point the Linux binary publishes and
+  # the macOS one silently doesn't, which is exactly the drift that made
+  # the console Linux-only in the first place.
+  #
+  # `cargo check`, not `cargo build`: we want the type/cfg errors, not a
+  # 20-minute optimised link on a paid runner.
+  console-macos:
+    name: Console builds on macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-console-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-console-cargo-
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-console-check-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-console-check-
+      - name: Pin dependency versions
+        run: |
+          cargo update time --precise 0.3.36
+          cargo update home --precise 0.5.9
+      - name: Check fermi-console compiles for macOS
+        run: cargo check -p fermi-console --bins
+      # Covers the updater's platform-asset contract and the .app bundle
+      # path arithmetic, which only *runs* on macOS.
+      - name: Run fermi-console unit tests
+        run: cargo test --lib -p fermi-console
 
   agent-card-lint:
     name: Agent Card Lint

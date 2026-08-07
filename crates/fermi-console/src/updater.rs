@@ -26,14 +26,18 @@
 //! # Non-goals for this iteration
 //!
 //! - **Signed updates** — we rely on TLS + GitHub's org auth for now.
-//!   The `checksums.txt` published alongside the release is available
-//!   for out-of-band verification but we don't gate installs on it.
-//!   When we ship to non-employee users the natural upgrade is a
+//!   The `checksums-<platform>.txt` published alongside each release is
+//!   available for out-of-band verification but we don't gate installs
+//!   on it. When we ship to non-employee users the natural upgrade is a
 //!   minisign or cosign signature over the tarball.
+//! - **Notarization** — macOS builds are ad-hoc signed (`codesign -s -`)
+//!   but not notarized, so a *browser*-downloaded `.app` needs one
+//!   right-click → Open. Binaries fetched by this updater and by the
+//!   install script never get the quarantine xattr in the first place,
+//!   so the self-update path is unaffected.
 //! - **Delta updates** — the binary is ~40 MB stripped; full download
 //!   is fine on the release cadence we're targeting (weekly-ish).
-//! - **Windows** — the workflow only builds Linux x86_64 today. macOS
-//!   would work with a build matrix change; Windows would additionally
+//! - **Windows** — no pre-built binary today. It would additionally
 //!   need `self_replace` since you can't `rename` over a running .exe.
 //!
 //! # Config
@@ -55,15 +59,38 @@ const DEFAULT_REPO: &str = "Replicant-Partners/fermi";
 
 /// Asset name uploaded by `.github/workflows/release-console.yml`. Kept
 /// in sync with the workflow's "Package binary" step — if you rename
-/// one, rename the other.
-#[cfg(target_os = "linux")]
+/// one, rename the other. Also kept in sync with the `platform` slugs
+/// accepted by `/fermi-console/download` (see `src/handlers/pages.rs`)
+/// and with `scripts/install-fermi-console.sh`.
+///
+/// Every supported target gets its *own* plain-binary asset rather than
+/// a fat/universal one: the download is the thing a tester waits on, and
+/// halving it matters more than saving a release asset.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const BINARY_ASSET_NAME: &str = "fermi-console-linux-x86_64";
 
-// Non-Linux platforms have no pre-built release today; the updater is a
-// no-op there (`check_latest` returns Ok(None)). Contributors on macOS
-// build from source.
-#[cfg(not(target_os = "linux"))]
-const BINARY_ASSET_NAME: &str = "unsupported";
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+const BINARY_ASSET_NAME: &str = "fermi-console-macos-aarch64";
+
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+const BINARY_ASSET_NAME: &str = "fermi-console-macos-x86_64";
+
+// Everything else (Windows, aarch64 Linux, …) has no pre-built release,
+// so the updater is inert there: `is_disabled()` returns true and
+// `check_latest` short-circuits to Ok(None) before this name is ever
+// compared against a real asset. Contributors on those hosts build from
+// source.
+#[cfg(not(any(
+    all(target_os = "linux", target_arch = "x86_64"),
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "macos", target_arch = "x86_64"),
+)))]
+const BINARY_ASSET_NAME: &str = UNSUPPORTED;
+
+/// Sentinel [`BINARY_ASSET_NAME`] for targets the release workflow does
+/// not build. Compared against rather than re-listing the `cfg` cascade
+/// in [`is_disabled`], so adding a platform is a one-place change.
+const UNSUPPORTED: &str = "unsupported";
 
 /// A GitHub release we've decided the user should upgrade to. Cheaply
 /// cloneable because the UI stashes it in a struct field and consumes
@@ -145,8 +172,10 @@ pub fn is_disabled() -> bool {
     if std::env::var("FERMI_DISABLE_UPDATE_CHECK").is_ok() {
         return true;
     }
-    // Only Linux has pre-built binaries in the workflow today.
-    !cfg!(target_os = "linux")
+    // Inert on targets the release workflow doesn't publish a binary
+    // for — offering an update we have nothing to download is worse
+    // than offering none.
+    BINARY_ASSET_NAME == UNSUPPORTED
 }
 
 /// How many releases to consider. GitHub returns newest-published
@@ -457,6 +486,9 @@ pub async fn download_and_install(
     std::fs::rename(&temp_path, &current_exe)
         .with_context(|| format!("failed to install new binary to {}", current_exe.display()))?;
 
+    #[cfg(target_os = "macos")]
+    reseal_macos_signature(&current_exe);
+
     log::info!(
         "[updater] installed {} at {}",
         release.tag,
@@ -473,6 +505,72 @@ fn file_name(p: &Path) -> String {
         .to_string()
 }
 
+/// If `exe` is the main executable of a `.app`, return the bundle root.
+///
+/// A macOS application bundle is exactly `<Name>.app/Contents/MacOS/<exe>`,
+/// so three `parent()` hops and a suffix check is the whole test. Returns
+/// `None` for a bare binary on `$PATH`, which is how the install script
+/// lays the console down.
+///
+/// Pure path arithmetic with no filesystem access, so it is unit-testable
+/// on any host — which is the point: this logic decides how self-update
+/// and restart behave on a platform CI cannot exercise.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn macos_bundle_root(exe: &Path) -> Option<PathBuf> {
+    let macos_dir = exe.parent()?;
+    if macos_dir.file_name()? != "MacOS" {
+        return None;
+    }
+    let contents_dir = macos_dir.parent()?;
+    if contents_dir.file_name()? != "Contents" {
+        return None;
+    }
+    let bundle = contents_dir.parent()?;
+    if bundle.extension()? != "app" {
+        return None;
+    }
+    Some(bundle.to_path_buf())
+}
+
+/// Re-apply an ad-hoc code signature after swapping the binary.
+///
+/// On Apple Silicon an unsigned or signature-invalidated Mach-O does not
+/// merely warn — the kernel refuses to exec it. The asset we download is
+/// already ad-hoc signed by CI, so a *bare binary* install is fine as-is.
+/// A `.app` install is not: the bundle's `_CodeSignature/CodeResources`
+/// seal covers the main executable we just replaced, so the bundle now
+/// fails validation as a unit. Re-sealing the whole bundle fixes that.
+///
+/// Best-effort by design. `/usr/bin/codesign` ships with macOS, but if it
+/// is missing or fails we still want the update to land: the binary's own
+/// signature is intact either way, and a warning the user can act on
+/// beats aborting an otherwise-successful install.
+#[cfg(target_os = "macos")]
+fn reseal_macos_signature(installed_exe: &Path) {
+    let target = macos_bundle_root(installed_exe).unwrap_or_else(|| installed_exe.to_path_buf());
+
+    match std::process::Command::new("/usr/bin/codesign")
+        .args(["--force", "--sign", "-"])
+        .arg(&target)
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            log::info!("[updater] re-signed {} ad-hoc", target.display());
+        }
+        Ok(out) => {
+            log::warn!(
+                "[updater] codesign on {} exited {}: {}",
+                target.display(),
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        Err(e) => {
+            log::warn!("[updater] could not run codesign ({e}); install left as downloaded");
+        }
+    }
+}
+
 /// Re-execute the just-installed binary and exit the current process.
 ///
 /// On Unix we spawn a detached child with the same CLI args and env,
@@ -481,11 +579,36 @@ fn file_name(p: &Path) -> String {
 /// that would leak into the new process image; a fresh process gets
 /// a clean GPU context.
 ///
+/// On macOS, when we're running out of a `.app`, we hand the relaunch to
+/// `open(1)` instead of spawning the inner executable directly. Spawning
+/// `Contents/MacOS/fermi-console` as a plain child produces a process
+/// LaunchServices has no bundle identity for: no Dock icon, no app menu
+/// title, and `cx.activate(true)` cannot bring it to the front. `open -n`
+/// launches it as a real application, which is what the user had a moment
+/// ago and expects to get back.
+///
 /// This function does not return on success.
 pub fn restart(new_exe: &Path) -> Result<()> {
     log::info!("[updater] restarting via {}", new_exe.display());
+
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    #[cfg(target_os = "macos")]
+    if let Some(bundle) = macos_bundle_root(new_exe) {
+        let mut cmd = std::process::Command::new("/usr/bin/open");
+        // -n: a new instance rather than reactivating this one, which is
+        // still alive for the microsecond until we exit below.
+        cmd.arg("-n").arg(&bundle);
+        if !args.is_empty() {
+            cmd.arg("--args").args(&args);
+        }
+        cmd.spawn()
+            .with_context(|| format!("failed to relaunch bundle {}", bundle.display()))?;
+        std::process::exit(0);
+    }
+
     let mut cmd = std::process::Command::new(new_exe);
-    cmd.args(std::env::args().skip(1));
+    cmd.args(&args);
 
     // We deliberately don't detach or fork here. The parent exits
     // immediately after spawn(), so the child is reparented to init
@@ -632,6 +755,78 @@ mod tests {
         // fabricate a candidate.
         let releases = vec![rel_without_asset("v0.10.18"), rel("v0.10.1")];
         assert!(pick_best_release(&releases, "0.10.17").is_none());
+    }
+
+    // ── macOS bundle detection ────────────────────────────
+    //
+    // These run on every host on purpose. The behaviour they pin — how
+    // self-update re-signs and how restart relaunches — only *executes*
+    // on macOS, which our CI has no runner for on the test job. Pure
+    // path arithmetic is the part we can still hold to account.
+
+    #[test]
+    fn recognises_an_app_bundle_executable() {
+        let exe = Path::new("/Applications/Fermi Console.app/Contents/MacOS/fermi-console");
+        assert_eq!(
+            macos_bundle_root(exe),
+            Some(PathBuf::from("/Applications/Fermi Console.app"))
+        );
+    }
+
+    #[test]
+    fn bare_binary_is_not_a_bundle() {
+        // How scripts/install-fermi-console.sh lays it down. Must take
+        // the plain spawn path, not `open -n`.
+        assert_eq!(
+            macos_bundle_root(Path::new("/home/u/.local/bin/fermi-console")),
+            None
+        );
+    }
+
+    #[test]
+    fn near_miss_layouts_are_rejected() {
+        // Each of these satisfies some but not all of the three
+        // structural conditions. Treating any of them as a bundle would
+        // make us `codesign` or `open` the wrong directory.
+        for path in [
+            "/Applications/Fermi Console.app/Contents/fermi-console", // no MacOS/
+            "/Applications/Fermi Console.app/MacOS/fermi-console",    // no Contents/
+            "/opt/fermi/Contents/MacOS/fermi-console",                // no .app
+            "/Applications/Fermi Console.appx/Contents/MacOS/fermi-console", // wrong ext
+            "fermi-console",                                          // no parent at all
+        ] {
+            assert_eq!(
+                macos_bundle_root(Path::new(path)),
+                None,
+                "{path} must not be read as a bundle"
+            );
+        }
+    }
+
+    #[test]
+    fn updater_is_live_on_every_platform_the_workflow_builds() {
+        // The asset name is the contract with
+        // .github/workflows/release-console.yml. If someone adds a cfg
+        // arm without a matching matrix entry (or vice versa), the
+        // updater silently offers an asset that doesn't exist — so
+        // assert the two known-good shapes explicitly.
+        if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+            assert_eq!(BINARY_ASSET_NAME, "fermi-console-linux-x86_64");
+        }
+        if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            assert_eq!(BINARY_ASSET_NAME, "fermi-console-macos-aarch64");
+        }
+        if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+            assert_eq!(BINARY_ASSET_NAME, "fermi-console-macos-x86_64");
+        }
+
+        // And the env kill-switch must still win over a supported host.
+        if BINARY_ASSET_NAME != UNSUPPORTED {
+            assert!(
+                !is_disabled() || std::env::var("FERMI_DISABLE_UPDATE_CHECK").is_ok(),
+                "a platform with a published asset must have the updater enabled"
+            );
+        }
     }
 
     #[test]

@@ -905,6 +905,23 @@ pub struct CockpitState {
     /// Guard so we don't kick off multiple autosave loops when the
     /// operator re-enters the composer.
     pub autosave_started: bool,
+
+    /// Path of the on-disk snapshot (`forecasts/<name>.fpl` and its
+    /// `.state.json` / `.evidence.md` siblings) **if one exists that
+    /// still reflects the current in-memory program**.
+    ///
+    /// Exists to stop a save failure from lying about where the
+    /// operator's work is. Only [`Self::save_forecast`] (Ctrl+S)
+    /// writes to disk, and it does so *before* attempting the
+    /// backend; the autosave loop calls [`Self::persist_backend_save`]
+    /// directly and writes nothing. So on the path that produces
+    /// nearly every save-failure event, there is no local copy at all
+    /// — while the error text claimed "Saved locally" unconditionally.
+    ///
+    /// Cleared by [`Self::mark_dirty`]: once the program has moved on,
+    /// the file on disk is a previous version, and reporting it as
+    /// "your work is safe" would be true about the wrong bytes.
+    pub local_snapshot_path: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1235,6 +1252,7 @@ impl CockpitState {
             last_edit_at: None,
             last_autosave_at: None,
             autosave_started: false,
+            local_snapshot_path: None,
             hovered_histogram_bin: None,
             hovered_index_version: None,
             hovered_trajectory_event: None,
@@ -1751,9 +1769,10 @@ impl CockpitState {
             node: "question".into(),
             kind: MessageKind::Info,
             text: format!(
-                "🔮 Linked Polymarket: \"{}\" · crowd {:.1}%. Press Ctrl+Enter to decompose.",
+                "🔮 Linked Polymarket: \"{}\" · crowd {:.1}%. Press {} to decompose.",
                 question,
-                market_price * 100.0
+                market_price * 100.0,
+                crate::keys::chord("Enter")
             ),
         });
         cx.notify();
@@ -1953,8 +1972,9 @@ impl CockpitState {
                         node: "question".into(),
                         kind: MessageKind::Info,
                         text: format!(
-                            "🗑 Deleted forecast {}. Composer reset — Ctrl+N to start a new one.",
-                            short_id(&fid)
+                            "🗑 Deleted forecast {}. Composer reset — {} to start a new one.",
+                            short_id(&fid),
+                            crate::keys::chord("N")
                         ),
                     });
                     // Reset the composer to a clean state. Same pattern
@@ -3712,7 +3732,7 @@ impl CockpitState {
                             state.messages.push(AssistantMessage {
                                 node: "question".into(),
                                 kind: MessageKind::Suggestion,
-                                text: "All agents complete. Review drivers and evidence, then Ctrl+R to simulate.".into(),
+                                text: format!("All agents complete. Review drivers and evidence, then {} to simulate.", crate::keys::chord("R")),
                             });
                         }
 
@@ -4500,7 +4520,10 @@ impl CockpitState {
             self.messages.push(AssistantMessage {
                 node: "schedule".into(),
                 kind: MessageKind::Warning,
-                text: "Publish this forecast first (Ctrl+P) before persisting schedules.".into(),
+                text: format!(
+                    "Publish this forecast first ({}) before persisting schedules.",
+                    crate::keys::chord("P")
+                ),
             });
             cx.notify();
             return;
@@ -4660,7 +4683,10 @@ impl CockpitState {
             self.messages.push(AssistantMessage {
                 node: "schedule".into(),
                 kind: MessageKind::Warning,
-                text: "Publish this forecast first (Ctrl+P) before persisting schedules.".into(),
+                text: format!(
+                    "Publish this forecast first ({}) before persisting schedules.",
+                    crate::keys::chord("P")
+                ),
             });
             cx.notify();
             return;
@@ -6756,9 +6782,11 @@ impl CockpitState {
             self.messages.push(AssistantMessage {
                 node: "question".into(),
                 kind: MessageKind::Warning,
-                text: "Base rate updated locally, but this forecast is a draft — \
-                       publish (Ctrl+P) to persist future edits."
-                    .into(),
+                text: format!(
+                    "Base rate updated locally, but this forecast is a draft — \
+                     publish ({}) to persist future edits.",
+                    crate::keys::chord("P")
+                ),
             });
             cx.notify();
             return;
@@ -8525,6 +8553,11 @@ impl CockpitState {
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
         self.last_edit_at = Some(std::time::Instant::now());
+        // Any on-disk snapshot is now a previous version. Keeping the
+        // path would let a save failure report "your work is in
+        // forecasts/x.fpl" about a file that predates the edit being
+        // reported on.
+        self.local_snapshot_path = None;
     }
 
     /// Kick off the autosave background loop. Fires once per cockpit
@@ -8719,7 +8752,7 @@ impl CockpitState {
                 "save",
                 MessageKind::Warning,
                 LogEvent::new(Severity::Warn, LogSource::Save, summary)
-                    .with_detail(
+                    .with_detail(format!(
                         "The server stores `predicted_probability` as a value in [0,1] and \
                          rejects anything else with HTTP 400 — so without this clamp the \
                          save would fail outright and your work would not persist.\n\n\
@@ -8727,12 +8760,13 @@ impl CockpitState {
                          rather than a probability. The default decomposition emits \
                          drivers centred on 1.0, so their product sits near 1.0 and \
                          drifts above it.\n\n\
-                         Fix: anchor the question with a base rate (Ctrl+Enter to \
+                         Fix: anchor the question with a base rate ({} to \
                          research one) so the model reads `base_rate * driver * driver`, \
                          or edit the model expression directly on the FPL tab.\n\n\
                          The unclamped mean is preserved in simulation_results and on \
                          the Trajectory tab.",
-                    )
+                        crate::keys::chord("Enter")
+                    ))
                     .with_context("raw_model_output", format!("{:.6}", raw_prob))
                     .with_context("saved_as", format!("{:.6}", prob))
                     .with_context(
@@ -8909,8 +8943,9 @@ impl CockpitState {
                                 node: "save".into(),
                                 kind: MessageKind::Info,
                                 text: format!(
-                                    "💾 Saved as draft to server (ID: {}). Ctrl+P to publish.",
-                                    fid
+                                    "💾 Saved as draft to server (ID: {}). {} to publish.",
+                                    fid,
+                                    crate::keys::chord("P")
                                 ),
                             });
                         } else {
@@ -8978,12 +9013,54 @@ impl CockpitState {
                         // banner rendered each one as its own line.
                         // `summary` deliberately excludes the raw error
                         // so repeats collapse onto one row.
-                        let diagnosis = classify_backend_save_error(&raw);
+                        let diagnosis = classify_backend_save_error(&raw, http_status);
                         let mut detail = diagnosis.detail.clone();
                         if let Some(hint) = diagnosis_hint.as_deref() {
                             detail.push_str("\n\n→ Server self-check: ");
                             detail.push_str(hint);
                         }
+
+                        // Where the operator's work actually is.
+                        //
+                        // This was the hardcoded string "retained
+                        // locally", and the catch-all summary opened
+                        // with "Saved locally, but…". Both were false
+                        // on the autosave path: `save_forecast`
+                        // (Ctrl+S) writes forecasts/<name>.fpl and its
+                        // siblings BEFORE calling this function, but
+                        // autosave calls it directly and writes
+                        // nothing to disk — and autosave is where
+                        // essentially all of these events come from.
+                        //
+                        // Being wrong in the reassuring direction is
+                        // the worst option available here: it tells
+                        // someone whose work is only in a window that
+                        // it is safe on disk.
+                        let local_draft = match state.local_snapshot_path.as_deref() {
+                            Some(path) => {
+                                detail.push_str(&format!(
+                                    "\n\n✓ A local snapshot of this version exists at {} \
+                                     (plus its .state.json). It can be reopened with {} \
+                                     even if the backend never accepts the write.",
+                                    path,
+                                    crate::keys::chord("O"),
+                                ));
+                                format!("yes — {}", path)
+                            }
+                            None => {
+                                detail.push_str(&format!(
+                                    "\n\n⚠ There is NO local copy of this work. Autosave \
+                                     writes only to the server; the on-disk snapshot is \
+                                     written by {}. If the composer closes now, this \
+                                     version is gone. Press {} to force a disk snapshot \
+                                     — it is written before the backend attempt, so it \
+                                     succeeds even while the server keeps refusing.",
+                                    crate::keys::chord("S"),
+                                    crate::keys::chord("S"),
+                                ));
+                                "none — this version exists only in the open composer".to_string()
+                            }
+                        };
 
                         let mut event = LogEvent::new(
                             Severity::Error,
@@ -9027,7 +9104,7 @@ impl CockpitState {
                                 "no"
                             },
                         )
-                        .with_context("local_draft", "retained locally")
+                        .with_context("local_draft", local_draft)
                         .with_payload(serde_json::json!({ "raw_error": raw }));
 
                         // Prefer the taxonomy when it recognised the
@@ -9139,6 +9216,10 @@ impl CockpitState {
                     self.program.evidence_items().len(),
                     self.program.drivers().len()
                 );
+                // Record the snapshot so a subsequent backend failure
+                // can tell the operator truthfully that a recoverable
+                // copy exists, and where. See `local_snapshot_path`.
+                self.local_snapshot_path = Some(path.clone());
                 self.messages.push(AssistantMessage {
                     node: "save".into(),
                     kind: MessageKind::Info,
@@ -9435,7 +9516,10 @@ impl CockpitState {
             self.messages.push(AssistantMessage {
                 node: "portfolio".into(),
                 kind: MessageKind::Warning,
-                text: "Publish the forecast first (Ctrl+P) before adding it to portfolios.".into(),
+                text: format!(
+                    "Publish the forecast first ({}) before adding it to portfolios.",
+                    crate::keys::chord("P")
+                ),
             });
             cx.notify();
             return;
@@ -10186,7 +10270,10 @@ impl CockpitState {
     /// re-clicking a team upgrades/downgrades its role.
     pub fn share_with_team(&mut self, team_id: String, cx: &mut Context<Self>) {
         let Some(fid) = self.forecast_id.clone() else {
-            self.share_error = Some("Publish the forecast first (Ctrl+P).".into());
+            self.share_error = Some(format!(
+                "Publish the forecast first ({}).",
+                crate::keys::chord("P")
+            ));
             cx.notify();
             return;
         };
@@ -10262,7 +10349,10 @@ impl CockpitState {
     /// `user_id` and shared directly.
     pub fn add_share_from_input(&mut self, cx: &mut Context<Self>) {
         let Some(fid) = self.forecast_id.clone() else {
-            self.share_error = Some("Publish the forecast first (Ctrl+P).".into());
+            self.share_error = Some(format!(
+                "Publish the forecast first ({}).",
+                crate::keys::chord("P")
+            ));
             cx.notify();
             return;
         };
@@ -11014,7 +11104,7 @@ impl Render for CockpitState {
                                             div()
                                                 .text_size(px(10.0))
                                                 .text_color(rgb(theme::FG_DIM))
-                                                .child("Review drivers and evidence above, then press Ctrl+R to run Monte Carlo simulation."),
+                                                .child(format!("Review drivers and evidence above, then press {} to run Monte Carlo simulation.", crate::keys::chord("R"))),
                                         ),
                                 ),
                         )
@@ -11785,7 +11875,11 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(research_label.to_string()),
         )
-        .child(div().text_color(rgb(theme::FG_DIM)).child("Ctrl+↵"));
+        .child(
+            div()
+                .text_color(rgb(theme::FG_DIM))
+                .child(crate::keys::chord("↵")),
+        );
 
     let simulate_chip = div()
         .id(SharedString::from("action-chip-simulate"))
@@ -11820,7 +11914,11 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(sim_label.to_string()),
         )
-        .child(div().text_color(rgb(theme::FG_DIM)).child("Ctrl+R"));
+        .child(
+            div()
+                .text_color(rgb(theme::FG_DIM))
+                .child(crate::keys::chord("R")),
+        );
 
     let save_chip = div()
         .id(SharedString::from("action-chip-save"))
@@ -11852,7 +11950,11 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(save_label.clone()),
         )
-        .child(div().text_color(rgb(theme::FG_DIM)).child("Ctrl+S"));
+        .child(
+            div()
+                .text_color(rgb(theme::FG_DIM))
+                .child(crate::keys::chord("S")),
+        );
 
     let publish_chip = div()
         .id(SharedString::from("action-chip-publish"))
@@ -11894,7 +11996,11 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(pub_label.to_string()),
         )
-        .child(div().text_color(rgb(theme::FG_DIM)).child("Ctrl+P"));
+        .child(
+            div()
+                .text_color(rgb(theme::FG_DIM))
+                .child(crate::keys::chord("P")),
+        );
 
     // v0.8.13: little inline hint that follows the Publish chip when it
     // is disabled, explaining *why* the operator can't click it. This
@@ -11942,21 +12048,21 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
             "new",
             "➕",
             "New",
-            "Ctrl+N",
+            &crate::keys::chord("N"),
             theme::FG_FAINT,
         ))
         .child(action_chip_static(
             "import",
             "⬇",
             "Import",
-            "Ctrl+O",
+            &crate::keys::chord("O"),
             theme::FG_FAINT,
         ))
         .child(action_chip_static(
             "tabs",
             "⇆",
             "Tabs",
-            "Ctrl+E",
+            &crate::keys::chord("E"),
             theme::FG_FAINT,
         ));
     chip_row
@@ -12937,9 +13043,12 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                     .text_size(px(11.0))
                     .text_color(rgb(theme::FG_DIM))
                     .child(if state.orchestration_running {
-                        "Searching for reference class…"
+                        "Searching for reference class…".to_string()
                     } else {
-                        "No base rate yet — Ctrl+Enter to research"
+                        format!(
+                            "No base rate yet — {} to research",
+                            crate::keys::chord("Enter")
+                        )
                     }),
             )
         })
@@ -15505,7 +15614,10 @@ fn render_driver_editor_and_evidence(
             div()
                 .text_size(px(10.0))
                 .text_color(rgb(theme::FG_FAINT))
-                .child("Values save when you close, switch drivers, or simulate (Ctrl+R)."),
+                .child(format!(
+                    "Values save when you close, switch drivers, or simulate ({}).",
+                    crate::keys::chord("R")
+                )),
         )
         // ── Scheduled research for this driver ────────────────────
         // Every agent attached to this driver — auto-assigned by Fermi
@@ -16109,7 +16221,10 @@ fn render_editor_panel(
                     div()
                         .text_size(px(10.0))
                         .text_color(rgb(theme::FG_FAINT))
-                        .child("Values save when you close, switch drivers, or simulate (Ctrl+R)."),
+                        .child(format!(
+                            "Values save when you close, switch drivers, or simulate ({}).",
+                            crate::keys::chord("R")
+                        )),
                 )
                 .into_any_element()
         }
@@ -16611,7 +16726,11 @@ fn render_forecast_index(state: &CockpitState, cx: &mut Context<CockpitState>) -
                     .py(px(8.0))
                     .text_size(px(11.0))
                     .text_color(rgb(theme::FG_FAINT))
-                    .child("Ctrl+Enter to research · Ctrl+R to simulate"),
+                    .child(format!(
+                        "{} to research · {} to simulate",
+                        crate::keys::chord("Enter"),
+                        crate::keys::chord("R")
+                    )),
             )
         })
         // ── Inside vs Outside divergence bar ──────────────────────
@@ -16860,7 +16979,7 @@ fn render_forecast_index(state: &CockpitState, cx: &mut Context<CockpitState>) -
                         .py(px(2.0))
                         .text_size(px(9.0))
                         .text_color(rgb(theme::FG_FAINT))
-                        .child("Ctrl+R to simulate"),
+                        .child(format!("{} to simulate", crate::keys::chord("R"))),
                 )
             },
         )
@@ -18413,9 +18532,12 @@ fn render_portfolio_membership_strip(
         // Hint changes based on whether the operator has already
         // pre-selected anything, so they know clicks are doing work.
         let hint = if state.pending_publish_portfolios.is_empty() {
-            "• selections apply on publish (Ctrl+P)"
+            format!(
+                "• selections apply on publish ({})",
+                crate::keys::chord("P")
+            )
         } else {
-            "• applied on publish (Ctrl+P)"
+            format!("• applied on publish ({})", crate::keys::chord("P"))
         };
         row = row.child(
             div()
@@ -18972,7 +19094,10 @@ fn render_access_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> im
                 .p(px(8.0))
                 .text_size(px(11.0))
                 .text_color(rgb(theme::FG_DIM))
-                .child("Publish this forecast first (Ctrl+P) to share it with people or teams."),
+                .child(format!(
+                    "Publish this forecast first ({}) to share it with people or teams.",
+                    crate::keys::chord("P")
+                )),
         );
     }
 
@@ -19909,10 +20034,11 @@ fn render_assumptions_tab(
                 .p(px(8.0))
                 .text_size(px(11.0))
                 .text_color(rgb(theme::FG_DIM))
-                .child(
-                    "Publish this forecast first (Ctrl+P). Assumptions can be challenged \
+                .child(format!(
+                    "Publish this forecast first ({}). Assumptions can be challenged \
                      once there's something for the challenge to point at.",
-                ),
+                    crate::keys::chord("P")
+                )),
         );
     }
 
@@ -20537,9 +20663,10 @@ fn render_history_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> i
                 .p(px(8.0))
                 .text_size(px(11.0))
                 .text_color(rgb(theme::FG_DIM))
-                .child(
-                    "Publish this forecast first (Ctrl+P). Its history starts at the first save.",
-                ),
+                .child(format!(
+                    "Publish this forecast first ({}). Its history starts at the first save.",
+                    crate::keys::chord("P")
+                )),
         );
     }
 
@@ -21463,11 +21590,12 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
             .p(px(20.0))
             .text_size(px(11.0))
             .text_color(rgb(theme::FG_DIM))
-            .child(
-                "Publish this forecast first (Ctrl+P) to enable scheduled auto-research.\n\
+            .child(format!(
+                "Publish this forecast first ({}) to enable scheduled auto-research.\n\
                  Once published, the 📅 Daily and 📅 Weekly buttons in each driver's research panel \
                  will persist schedules to the cloud.",
-            )
+                crate::keys::chord("P")
+            ))
             .into_any_element()
     } else if schedules.is_empty() {
         // Pre-populate from FPL-declared agent×driver pairs so the
@@ -22052,9 +22180,10 @@ fn render_trajectory_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -
                 div()
                     .text_size(px(11.0))
                     .text_color(rgb(theme::FG_FAINT))
-                    .child(
-                    "Publish this forecast (Ctrl+P) to start recording its rate + market history.",
-                ),
+                    .child(format!(
+                        "Publish this forecast ({}) to start recording its rate + market history.",
+                        crate::keys::chord("P")
+                    )),
             )
             .into_any_element()
     } else {
@@ -23718,7 +23847,14 @@ pub struct SaveErrorDiagnosis {
 /// The categorisation is intentionally cautious: only well-known
 /// wire-format phrases get rewritten. Everything else falls through
 /// with the raw text so we don't accidentally hide a novel failure.
-pub fn classify_backend_save_error(raw: &str) -> SaveErrorDiagnosis {
+///
+/// `http_status` is the response status when the failure came from a
+/// response rather than the transport. It's passed separately rather
+/// than sniffed out of `raw` because status is the reliable signal and
+/// prose is not — the permission branch below keys off 403 and only
+/// falls back to phrase-matching for callers that have already
+/// flattened the error to a string.
+pub fn classify_backend_save_error(raw: &str, http_status: Option<u16>) -> SaveErrorDiagnosis {
     let lower = raw.to_lowercase();
 
     // v0.9.1: email UNIQUE conflict that the self-heal deliberately
@@ -23877,9 +24013,10 @@ pub fn classify_backend_save_error(raw: &str) -> SaveErrorDiagnosis {
             summary: "Backend save failed: a referenced row is missing on the server".to_string(),
             detail: format!(
                 "A foreign key the save depends on didn't resolve. Refreshing \
-                 (Ctrl+R) and retrying often clears this when the referenced row \
+                 ({}) and retrying often clears this when the referenced row \
                  was created concurrently.\n\n\
                  Raw error: {}",
+                crate::keys::chord("R"),
                 raw
             ),
             remedy: Some(Remedy::Retry),
@@ -23888,16 +24025,56 @@ pub fn classify_backend_save_error(raw: &str) -> SaveErrorDiagnosis {
         };
     }
 
+    // 403 — the server understood the request perfectly and refused it
+    // on permission grounds. This was falling through to the catch-all,
+    // which told the operator the failure "didn't match any known
+    // pattern" when it is in fact the most precisely-diagnosed failure
+    // the server can return: it named the reason in the response body.
+    //
+    // It also matters that this is classified as PERMANENT. Unrecognised
+    // failures fall back to the transport heuristic, and while a 403 is
+    // correctly non-transient there, the operator was being handed
+    // "retryable: no" with no explanation of what to do instead.
+    if http_status == Some(403) || lower.contains("forbidden") || lower.contains("access denied") {
+        return SaveErrorDiagnosis {
+            summary: "Backend save refused: you don't have edit access to this forecast"
+                .to_string(),
+            detail: format!(
+                "The server understood the request and refused it: this forecast \
+                 is shared with you at `view`, not `edit`. Nothing about the \
+                 request is malformed and retrying cannot help.\n\n\
+                 The composer is supposed to catch this before you do any work \
+                 — Save disables and a read-only banner names the owner to ask. \
+                 If you got here instead, the access summary hadn't loaded yet \
+                 when you started editing. Open the Access tab to see who owns \
+                 the forecast and who can grant you edit.\n\n\
+                 Raw error: {}",
+                raw
+            ),
+            remedy: Some(Remedy::CopyDiagnostics),
+            recognised: true,
+            retryable: false,
+        };
+    }
+
     // Unknown — fall through with the raw text so we can still
     // diagnose. This is the last-resort branch. The raw error goes in
     // the summary here (and only here) because without a
     // classification it's the only signal we have; the Activity panel
     // renders summaries in full, so nothing is lost.
+    //
+    // This summary used to open with "Saved locally, but…" and the
+    // detail used to assert "Your work is in the local draft". Both
+    // were unconditional and both were false on the autosave path,
+    // which is where nearly every one of these events comes from —
+    // only Ctrl+S writes to disk. Whether a local copy exists is a
+    // fact about cockpit state, not about the error string, so the
+    // caller reports it (see `local_draft` in `persist_backend_save`).
     SaveErrorDiagnosis {
-        summary: format!("Saved locally, but backend save failed: {}", raw),
-        detail: "This failure didn't match any known pattern. Your work is in the \
-                 local draft but will not survive closing the composer — copy the \
-                 diagnostics and re-save before navigating away."
+        summary: format!("Backend save failed: {}", raw),
+        detail: "This failure didn't match any known pattern, so there's no specific \
+                 remediation to offer. Copy the diagnostics — the raw error and \
+                 request context are the whole signal for classifying it."
             .to_string(),
         remedy: Some(Remedy::CopyDiagnostics),
         // Catch-all: we have no idea what this is, so the caller
@@ -23928,7 +24105,10 @@ fn extract_quoted_constraint(raw: &str) -> Option<String> {
 /// has no room for structure. New call sites should prefer
 /// [`classify_backend_save_error`].
 fn friendly_backend_save_error(raw: &str) -> String {
-    classify_backend_save_error(raw).summary
+    // No status available on this path — the publish handler has
+    // already flattened its `ApiError` to a String. The classifier's
+    // phrase fallbacks still catch the permission case.
+    classify_backend_save_error(raw, None).summary
 }
 
 /// Trim an RFC-3339 timestamp to the minute for compact display. If the

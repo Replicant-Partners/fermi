@@ -237,9 +237,12 @@ case ":$PATH:" in
   *) NEEDS_PATH_HINT=1 ;;
 esac
 
-# macOS has defaulted to zsh since Catalina, so when $SHELL is unset
-# (cron, some CI containers, `env -i`) guessing bash would write a
-# .bashrc that nothing ever sources.
+# macOS has defaulted to zsh since Catalina, so the "I don't recognise
+# this shell" fallback must not be .bashrc on a Mac — that file exists
+# but nothing ever sources it, and the user would be left with a broken
+# PATH and no clue why. (bash pre-populates $SHELL from /etc/passwd when
+# the environment doesn't carry it, so in practice it's the catch-all
+# branch below — SHELL=/bin/sh, nushell, etc. — that this protects.)
 if [ "$IS_MACOS" = "1" ]; then
   DEFAULT_SHELL="/bin/zsh"
   FALLBACK_RC="$HOME/.zshrc"

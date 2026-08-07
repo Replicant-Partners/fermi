@@ -52,6 +52,39 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 /// `FermiConsole::start_background_refresh`.
 const BACKGROUND_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
+// ─── Keyboard-chord labels ──────────────────────────────────────────────────────────
+
+/// How we *spell* the shortcuts we bind.
+///
+/// Every binding in `main()` uses GPUI's `secondary-` modifier, which
+/// resolves to Command on macOS and Control everywhere else. Printing a
+/// hardcoded "Ctrl+" therefore tells a Mac user to press a key that does
+/// nothing — the menu bar and the shortcuts panel are precisely the two
+/// surfaces people consult when they don't already know the answer, so a
+/// wrong label there is worse than no label.
+mod keys {
+    /// Rendered form of the `secondary-` modifier. `⌘` carries no
+    /// trailing `+` — "⌘R" is how macOS writes it, and "⌘+R" reads as a
+    /// typo to anyone who uses a Mac.
+    pub const MOD: &str = if cfg!(target_os = "macos") {
+        "⌘"
+    } else {
+        "Ctrl+"
+    };
+
+    /// A `secondary-`-modified chord, e.g. `chord("R")` → `Ctrl+R` / `⌘R`.
+    pub fn chord(key: &str) -> String {
+        format!("{MOD}{key}")
+    }
+
+    /// A menu-bar row: label left-aligned in a fixed column, chord after.
+    /// GPUI menu items are plain strings with no key-equivalent field, so
+    /// the column alignment is ours to maintain.
+    pub fn menu_row(label: &str, key: &str) -> String {
+        format!("{:<22}{}", label, chord(key))
+    }
+}
+
 // ─── Menu builder ───────────────────────────────────────────────────────────────────
 
 fn build_menus() -> Vec<Menu> {
@@ -62,32 +95,32 @@ fn build_menus() -> Vec<Menu> {
             items: vec![
                 MenuItem::action("About Fermi Console", ShowDashboard),
                 MenuItem::separator(),
-                MenuItem::action("New Forecast          Ctrl+N", NewForecast),
+                MenuItem::action(keys::menu_row("New Forecast", "N"), NewForecast),
                 MenuItem::separator(),
-                MenuItem::action("Quit Fermi Console    Ctrl+Q", Quit),
+                MenuItem::action(keys::menu_row("Quit Fermi Console", "Q"), Quit),
             ],
         },
         // ── File menu ─────────────────────────────────────────────
         Menu {
             name: "File".into(),
             items: vec![
-                MenuItem::action("New Forecast          Ctrl+N", NewForecast),
+                MenuItem::action(keys::menu_row("New Forecast", "N"), NewForecast),
                 MenuItem::separator(),
-                MenuItem::action("Publish Forecast      Ctrl+P", PublishForecast),
+                MenuItem::action(keys::menu_row("Publish Forecast", "P"), PublishForecast),
             ],
         },
         // ── View menu ─────────────────────────────────────────────
         Menu {
             name: "View".into(),
             items: vec![
-                MenuItem::action("Dashboard             Ctrl+1", ShowDashboard),
-                MenuItem::action("Portfolio             Ctrl+2", ShowPortfolio),
-                MenuItem::action("Agent Fleet           Ctrl+3", ShowAgentFleet),
-                MenuItem::action("Composer              Ctrl+4", ShowComposer),
-                MenuItem::action("Leaderboard           Ctrl+5", ShowLeaderboard),
-                MenuItem::action("Teams                 Ctrl+6", ShowTeams),
+                MenuItem::action(keys::menu_row("Dashboard", "1"), ShowDashboard),
+                MenuItem::action(keys::menu_row("Portfolio", "2"), ShowPortfolio),
+                MenuItem::action(keys::menu_row("Agent Fleet", "3"), ShowAgentFleet),
+                MenuItem::action(keys::menu_row("Composer", "4"), ShowComposer),
+                MenuItem::action(keys::menu_row("Leaderboard", "5"), ShowLeaderboard),
+                MenuItem::action(keys::menu_row("Teams", "6"), ShowTeams),
                 MenuItem::separator(),
-                MenuItem::action("Toggle FPL Source     Ctrl+E", ToggleFplSource),
+                MenuItem::action(keys::menu_row("Toggle FPL Source", "E"), ToggleFplSource),
             ],
         },
         // ── Forecast menu ─────────────────────────────────────────
@@ -95,11 +128,11 @@ fn build_menus() -> Vec<Menu> {
             name: "Forecast".into(),
             items: vec![
                 MenuItem::action(
-                    "Research Question     Ctrl+Enter",
+                    keys::menu_row("Research Question", "Enter"),
                     TriggerQuestionOrchestration,
                 ),
-                MenuItem::action("Run Simulation        Ctrl+R", RunSimulation),
-                MenuItem::action("Publish               Ctrl+P", PublishForecast),
+                MenuItem::action(keys::menu_row("Run Simulation", "R"), RunSimulation),
+                MenuItem::action(keys::menu_row("Publish", "P"), PublishForecast),
                 MenuItem::separator(),
                 MenuItem::action("Reset Cockpit", ResetCockpit),
             ],
@@ -108,16 +141,22 @@ fn build_menus() -> Vec<Menu> {
         Menu {
             name: "Window".into(),
             items: vec![
-                MenuItem::action("Minimize              Ctrl+M", MinimizeWindow),
+                MenuItem::action(keys::menu_row("Minimize", "M"), MinimizeWindow),
                 MenuItem::action("Zoom", ZoomWindow),
-                MenuItem::action("Toggle Fullscreen     Ctrl+Shift+F", ToggleFullscreen),
+                // Deliberately NOT a `secondary-` chord: this one is
+                // bound as literal `ctrl-shift-f` in `main()`, so Ctrl
+                // is the correct label on macOS too.
+                MenuItem::action(
+                    format!("{:<22}{}", "Toggle Fullscreen", "Ctrl+Shift+F"),
+                    ToggleFullscreen,
+                ),
             ],
         },
         // ── Help menu ──────────────────────────────────────────────
         Menu {
             name: "Help".into(),
             items: vec![
-                MenuItem::action("Keyboard Shortcuts    Ctrl+/", ShowShortcuts),
+                MenuItem::action(keys::menu_row("Keyboard Shortcuts", "/"), ShowShortcuts),
                 MenuItem::separator(),
                 MenuItem::action("Check for Updates…", CheckForUpdates),
                 MenuItem::action("Release Notes…", ShowUpdateModal),
@@ -401,15 +440,22 @@ impl Panel {
         }
     }
 
-    fn shortcut_hint(&self) -> &'static str {
-        match self {
-            Panel::Dashboard => "Ctrl+1",
-            Panel::Portfolio => "Ctrl+2",
-            Panel::AgentFleet => "Ctrl+3",
-            Panel::Composer => "Ctrl+4",
-            Panel::Leaderboard => "Ctrl+5",
-            Panel::Teams => "Ctrl+6",
-        }
+    /// The chord shown against this panel in the sidebar.
+    ///
+    /// Built through `keys::chord` rather than written out: the bindings
+    /// are `secondary-1`…`secondary-6`, so on macOS these read ⌘1…⌘6.
+    /// This is the most-seen chord surface in the app — it's on screen
+    /// permanently — so a hardcoded "Ctrl+" here would be the console's
+    /// single most repeated lie to a Mac user.
+    fn shortcut_hint(&self) -> String {
+        keys::chord(match self {
+            Panel::Dashboard => "1",
+            Panel::Portfolio => "2",
+            Panel::AgentFleet => "3",
+            Panel::Composer => "4",
+            Panel::Leaderboard => "5",
+            Panel::Teams => "6",
+        })
     }
 
     fn all() -> &'static [Panel] {
@@ -1983,7 +2029,10 @@ impl FermiConsole {
             Remedy::RunSelfCheck => self.run_rbac_self_check(cx),
             Remedy::ResetComposer => {
                 self.show_toast(
-                    "Press Ctrl+N for a clean composer, then paste your work in",
+                    format!(
+                        "Press {} for a clean composer, then paste your work in",
+                        keys::chord("N")
+                    ),
                     "⌫",
                     theme::GOLD,
                     cx,
@@ -2585,7 +2634,7 @@ impl FermiConsole {
                                 div()
                                     .text_size(px(9.0))
                                     .text_color(theme::fg_faint())
-                                    .child("Ctrl+; · Ctrl+'"),
+                                    .child(format!("{} · {}", keys::chord(";"), keys::chord("'"))),
                             ),
                     )
                     .child(
@@ -2631,9 +2680,9 @@ impl FermiConsole {
                                         .text_size(px(9.0))
                                         .text_color(theme::fg_faint())
                                         .child(if is_loading {
-                                            "Waiting for Fermi…"
+                                            "Waiting for Fermi…".to_string()
                                         } else {
-                                            "Click Send · Ctrl+; to close"
+                                            format!("Click Send · {} to close", keys::chord(";"))
                                         }),
                                 )
                                 .child(
@@ -7827,7 +7876,7 @@ impl FermiConsole {
                                 this.shortcuts_modal_showing = true;
                                 cx.notify();
                             }))
-                            .child("⌨ Shortcuts · Ctrl+/"),
+                            .child(format!("⌨ Shortcuts · {}", keys::chord("/"))),
                     )
                     // Fermi Chat chip (v0.10.0 Slice 1). Toggles the
                     // right-edge Fermi drawer. Purple accent when the
@@ -7877,7 +7926,7 @@ impl FermiConsole {
                                     }
                                     cx.notify();
                                 }))
-                                .child("💬 Fermi · Ctrl+;")
+                                .child(format!("💬 Fermi · {}", keys::chord(";")))
                                 .when(unseen > 0, |el| {
                                     el.child(
                                         div()
@@ -9705,7 +9754,10 @@ impl FermiConsole {
                 div()
                     .text_size(px(10.0))
                     .text_color(theme::fg_faint())
-                    .child("You can also use the app offline — Ctrl+4 to open the Composer and create local forecasts."),
+                    .child(format!(
+                        "You can also use the app offline — {} to open the Composer and create local forecasts.",
+                        keys::chord("4")
+                    )),
             )
     }
 
@@ -10301,6 +10353,15 @@ impl FermiConsole {
             // the moment the composer lands, not after they open the
             // Provenance tab.
             cockpit.load_forecast_cascade_groups(cx);
+            // Pre-warm the access summary. `can_edit_forecast` fails
+            // OPEN on a missing summary (a false negative would block
+            // legitimate work), so without this fetch the read-only
+            // gate has no data at the one moment it matters: a
+            // view-shared forecast opens fully editable, the operator
+            // does real work, and the first autosave 403s. The gate
+            // was only ever fed by the Access / Assumptions / History
+            // tabs, which most operators never open.
+            cockpit.load_access_summary(cx);
 
             // Set question and data from workspace params
             if let Some(ref wf) = wf {
@@ -10334,10 +10395,12 @@ impl FermiConsole {
                 node: "workspace".into(),
                 kind: crate::cockpit::MessageKind::Info,
                 text: format!(
-                    "Workspace: {}. Press Ctrl+Enter to decompose, or Ctrl+R to simulate.",
+                    "Workspace: {}. Press {} to decompose, or {} to simulate.",
                     wf.as_ref()
                         .map(|w| w.workspace_name.as_str())
                         .unwrap_or(&ws_id),
+                    keys::chord("Enter"),
+                    keys::chord("R"),
                 ),
             });
             cx.notify();
@@ -10589,6 +10652,12 @@ impl FermiConsole {
                             cockpit.load_timeline(cx);
                             // Chip strip prewarm — see open_workspace_forecast.
                             cockpit.load_forecast_cascade_groups(cx);
+                            // Access summary prewarm — see
+                            // open_workspace_forecast. This is the path
+                            // the Portfolio drill-in takes, so it's the
+                            // one that was handing operators an editable
+                            // composer for a forecast they can only view.
+                            cockpit.load_access_summary(cx);
                         }
                         // Populate the composer's inline portfolio chips.
                         // These come from the operator's portfolios list;
@@ -10948,9 +11017,10 @@ impl FermiConsole {
                     node: "question".into(),
                     kind: crate::cockpit::MessageKind::Info,
                     text: format!(
-                        "🔮 Imported from Polymarket: \"{}\". Crowd price: {:.1}%. Press Ctrl+Enter to run Fermi decomposition.",
+                        "🔮 Imported from Polymarket: \"{}\". Crowd price: {:.1}%. Press {} to run Fermi decomposition.",
                         q,
-                        price * 100.0
+                        price * 100.0,
+                        keys::chord("Enter")
                     ),
                 });
 
@@ -13146,22 +13216,27 @@ impl FermiConsole {
                             VirtualPortfolio::SharedWithMe => {
                                 "Nothing shared with you yet. When a teammate \
                                  shares a forecast or portfolio, it will show up here."
+                                    .to_string()
                             }
                             VirtualPortfolio::Unassigned => {
                                 "No unassigned forecasts. Every forecast you own \
                                  is already in a portfolio — nice."
+                                    .to_string()
                             }
-                            VirtualPortfolio::Live => {
-                                "No live forecasts yet. Publish a draft (Ctrl+P) \
-                                 and it will appear here."
-                            }
-                            VirtualPortfolio::Drafts => {
+                            VirtualPortfolio::Live => format!(
+                                "No live forecasts yet. Publish a draft ({}) \
+                                 and it will appear here.",
+                                keys::chord("P")
+                            ),
+                            VirtualPortfolio::Drafts => format!(
                                 "No drafts. Start a new forecast from the \
-                                 Dashboard hero or Ctrl+N."
-                            }
+                                 Dashboard hero or {}.",
+                                keys::chord("N")
+                            ),
                             VirtualPortfolio::RecentlyResolved => {
                                 "No resolutions yet. Once a forecast reaches its \
                                  resolution date, it will appear here with its Brier score."
+                                    .to_string()
                             }
                         }),
                 )
@@ -15630,15 +15705,14 @@ impl FermiConsole {
                                 .gap(px(1.0))
                                 .mt(px(2.0))
                                 .children(rollup.iter().take(ROLLUP_VISIBLE).map(|it| {
-                                    div()
-                                        .text_size(px(10.0))
-                                        .text_color(theme::fg_dim())
-                                        .child(format!(
+                                    div().text_size(px(10.0)).text_color(theme::fg_dim()).child(
+                                        format!(
                                             "· {} — {:.0}%, {}d",
                                             truncate(&it.question, 52),
                                             it.probability_pct,
                                             it.age_days
-                                        ))
+                                        ),
+                                    )
                                 }))
                                 .when(rollup.len() > ROLLUP_VISIBLE, |el| {
                                     el.child(
@@ -17225,52 +17299,60 @@ impl FermiConsole {
         // ((section label, [(keys, description)])) tuples.
         // Ordered top-to-bottom by frequency-of-use so the shortcuts
         // an operator hits every session are at the top of the modal.
-        type Row = (&'static str, &'static str);
+        //
+        // Chords go through `keys::chord` rather than being written out,
+        // so this panel says ⌘R on macOS and Ctrl+R on Linux — matching
+        // the `secondary-` modifier the bindings actually use. A literal
+        // string here would be a lie on exactly one of the two platforms.
+        let c = keys::chord;
+        type Row = (String, &'static str);
         let sections: Vec<(&'static str, Vec<Row>)> = vec![
             (
                 "Forecast workflow",
                 vec![
-                    ("Ctrl+Enter", "Research question → draft forecast"),
-                    ("Ctrl+R", "Run Monte Carlo simulation"),
-                    ("Ctrl+P", "Publish forecast"),
-                    ("Ctrl+S", "Save forecast (local draft)"),
-                    ("Ctrl+O", "Import forecast from file"),
-                    ("Ctrl+E", "Toggle FPL source view"),
+                    (c("Enter"), "Research question → draft forecast"),
+                    (c("R"), "Run Monte Carlo simulation"),
+                    (c("P"), "Publish forecast"),
+                    (c("S"), "Save forecast (local draft)"),
+                    (c("O"), "Import forecast from file"),
+                    (c("E"), "Toggle FPL source view"),
                 ],
             ),
             (
                 "Navigation",
                 vec![
-                    ("Ctrl+1", "Dashboard"),
-                    ("Ctrl+2", "Portfolio"),
-                    ("Ctrl+3", "Agent Fleet"),
-                    ("Ctrl+4", "Composer"),
-                    ("Ctrl+5", "Leaderboard"),
-                    ("Ctrl+6", "Teams"),
-                    ("Ctrl+N", "New forecast"),
-                    ("↑ / ↓", "Cycle drivers (in Composer)"),
+                    (c("1"), "Dashboard"),
+                    (c("2"), "Portfolio"),
+                    (c("3"), "Agent Fleet"),
+                    (c("4"), "Composer"),
+                    (c("5"), "Leaderboard"),
+                    (c("6"), "Teams"),
+                    (c("N"), "New forecast"),
+                    ("↑ / ↓".to_string(), "Cycle drivers (in Composer)"),
                 ],
             ),
             (
                 "Window",
                 vec![
-                    ("Ctrl+M", "Minimize"),
-                    ("Ctrl+Shift+F", "Toggle fullscreen"),
-                    ("Ctrl+Q", "Quit Fermi Console"),
+                    (c("M"), "Minimize"),
+                    // Bound as literal `ctrl-shift-f`, not `secondary-`,
+                    // so Ctrl is right on every platform.
+                    ("Ctrl+Shift+F".to_string(), "Toggle fullscreen"),
+                    (c("Q"), "Quit Fermi Console"),
                 ],
             ),
             (
                 "Help",
                 vec![
-                    ("Ctrl+/", "Show this shortcuts panel"),
-                    ("Ctrl+;", "Toggle Fermi panel"),
-                    ("Ctrl+'", "Open Fermi panel → Activity log"),
-                    ("Esc", "Dismiss any modal / overlay"),
+                    (c("/"), "Show this shortcuts panel"),
+                    (c(";"), "Toggle Fermi panel"),
+                    (c("'"), "Open Fermi panel → Activity log"),
+                    ("Esc".to_string(), "Dismiss any modal / overlay"),
                 ],
             ),
         ];
 
-        let render_row = |keys: &'static str, desc: &'static str| {
+        let render_row = |keys: String, desc: &'static str| {
             div()
                 .flex()
                 .items_center()
@@ -17369,7 +17451,14 @@ impl FermiConsole {
                 div()
                     .text_size(px(11.0))
                     .text_color(theme::fg_dim())
-                    .child("Ctrl maps to ⌘ on macOS. Press Ctrl+/ any time to reopen this panel."),
+                    // The rows above now render the platform's real
+                    // modifier, so the old "Ctrl maps to ⌘ on macOS"
+                    // footnote would be both redundant and, on a Mac,
+                    // describing a translation the panel already did.
+                    .child(format!(
+                        "Press {} any time to reopen this panel.",
+                        keys::chord("/")
+                    )),
             )
             // Scrollable body so a growing shortcut list never blows
             // past the modal height.
@@ -22803,24 +22892,55 @@ fn main() {
             }
         }
         if !found {
-            // Last resort: try relative to the executable's own location
+            // Last resort: search relative to the executable's own
+            // location, which is the only anchor that survives being
+            // launched with an arbitrary working directory.
+            //
+            // That case is the norm, not the exception, on macOS: a
+            // double-clicked `.app` starts with CWD `/`, so every
+            // relative candidate above misses and this is the only path
+            // that can find anything. The depths below cover both
+            // shipping layouts:
+            //
+            //   target/<profile>/fermi-console        → ../../
+            //   <dist>/fermi-console                  → ../
+            //   <dist>/Fermi Console.app/Contents/MacOS/fermi-console
+            //                                          → ../../../
+            //
+            // (scripts/package-console.sh stages `agents/curated` beside
+            // the .app, not inside it, so the bundle needs three hops.)
+            let exe_relative = [
+                "../../agents/curated",    // target/<profile>/fermi-console
+                "../agents/curated",       // <dist>/bin/fermi-console
+                "agents/curated",          // <dist>/fermi-console
+                "../../../agents/curated", // <dist>/X.app/Contents/MacOS/…
+            ];
             if let Ok(exe) = std::env::current_exe() {
                 if let Some(exe_dir) = exe.parent() {
-                    let from_exe = exe_dir.join("../../agents/curated");
-                    if from_exe.is_dir() {
+                    let mut loaded = false;
+                    for rel in &exe_relative {
+                        let from_exe = exe_dir.join(rel);
+                        if !from_exe.is_dir() {
+                            continue;
+                        }
                         match registry.load_from_directory(&from_exe) {
                             Ok(count) => {
                                 log::info!("Loaded {} agents from {:?}", count, from_exe);
+                                loaded = true;
+                                break;
                             }
                             Err(e) => {
                                 log::warn!("Failed to load agents from {:?}: {}", from_exe, e);
                             }
                         }
-                    } else {
+                    }
+                    if !loaded {
                         log::warn!(
-                            "No agents directory found. Set AGENTS_DIR or run from repo root. Searched: {:?} and {:?}",
+                            "No agents directory found. Set AGENTS_DIR or run from repo root. \
+                             Searched CWD-relative {:?} and exe-relative {:?} under {:?}",
                             candidates,
-                            from_exe
+                            exe_relative,
+                            exe_dir
                         );
                     }
                 }

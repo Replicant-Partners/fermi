@@ -157,49 +157,216 @@ pub async fn install_script() -> Response {
 //   * pin a version cohort by env var without redeploying binaries.
 //
 // Configuration: `FERMI_CONSOLE_DOWNLOAD_URL` env var, defaults to the
-// GitHub Releases "latest" URL. Query param `?v=vX.Y.Z` is honoured
-// when set (in-app updater uses it to fetch a specific version).
+// GitHub Releases "latest" URL. Query params:
+//
+//   ?v=vX.Y.Z          version pin (in-app updater uses this)
+//   ?platform=<slug>   which platform's binary to serve
+
+/// Platform slugs the release workflow actually publishes a binary for.
+///
+/// This is a closed allowlist, not a passthrough, for two reasons. The
+/// slug is interpolated into an outbound URL we then 302 to, so an
+/// unvalidated value is an open-redirect primitive. And a typo'd slug
+/// would otherwise redirect to a 404 asset, which surfaces to the tester
+/// as a corrupt download rather than "you asked for something that
+/// doesn't exist".
+///
+/// Kept in sync with `.github/workflows/release-console.yml` (matrix
+/// `platform`), `crates/fermi-console/src/updater.rs`
+/// (`BINARY_ASSET_NAME`) and `scripts/install-fermi-console.sh`.
+const PLATFORMS: [&str; 3] = ["linux-x86_64", "macos-aarch64", "macos-x86_64"];
+
+/// What an omitted `?platform=` means.
+///
+/// Every fermi-console built before macOS support existed calls this
+/// endpoint with no `platform` at all, and there is no way to reach back
+/// and upgrade them. Defaulting to Linux is what keeps those installs
+/// updating instead of silently breaking.
+const DEFAULT_PLATFORM: &str = "linux-x86_64";
 
 #[derive(Debug, Deserialize)]
 pub struct DownloadQuery {
     /// Optional version pin (e.g. "v0.8.0"). Falls back to "latest".
     #[serde(default)]
     pub v: Option<String>,
+    /// Optional platform slug (e.g. "macos-aarch64"). Falls back to
+    /// [`DEFAULT_PLATFORM`]; see the note there on why.
+    #[serde(default)]
+    pub platform: Option<String>,
 }
 
-pub async fn fermi_console_download(Query(q): Query<DownloadQuery>) -> Response {
-    // Priority order for resolving the download URL:
-    //   1. Explicit env override (staging, R2 bucket, whatever).
-    //   2. GitHub Releases with the requested version.
-    //   3. GitHub Releases latest.
-    //
-    // The env var is a URL *template* — we substitute `{version}` if
-    // it's present so a single env var can serve both `latest` and
-    // version-pinned requests. If the template omits the placeholder
-    // we ignore the ?v= param and always serve the same URL.
-    let version = q.v.as_deref().unwrap_or("latest");
+/// Validate a requested platform slug against [`PLATFORMS`].
+///
+/// Returns the *allowlisted* `&'static str`, never the caller's string,
+/// so nothing attacker-controlled can reach the outbound URL.
+fn resolve_platform(requested: Option<&str>) -> Result<&'static str, String> {
+    let Some(p) = requested else {
+        return Ok(DEFAULT_PLATFORM);
+    };
+    PLATFORMS
+        .iter()
+        .find(|known| **known == p)
+        .copied()
+        // A 400 rather than a silent fallback: a client asking for
+        // "macos-arm64" (the plausible near-miss for "macos-aarch64")
+        // wants to be told it guessed wrong, not handed a Linux ELF that
+        // dies on exec with no diagnostic a tester could act on.
+        .ok_or_else(|| {
+            format!(
+                "unknown platform '{}'; expected one of: {}",
+                p,
+                PLATFORMS.join(", ")
+            )
+        })
+}
 
-    let url = match std::env::var("FERMI_CONSOLE_DOWNLOAD_URL") {
-        Ok(template) if template.contains("{version}") => template.replace("{version}", version),
-        Ok(template) => template,
-        Err(_) => {
+/// Resolve the URL we redirect to, given an already-validated platform.
+///
+/// Priority order:
+///   1. Explicit env override (staging, R2 bucket, whatever).
+///   2. GitHub Releases with the requested version.
+///   3. GitHub Releases latest.
+///
+/// The env var is a URL *template* — we substitute `{version}` and
+/// `{platform}` when present, so a single env var can serve every
+/// combination. A template with neither placeholder is treated as a
+/// fixed URL, which is how a single-artifact staging host is pointed at.
+fn resolve_download_url(version: &str, platform: &'static str, template: Option<String>) -> String {
+    let asset = format!("fermi-console-{}", platform);
+
+    match template {
+        Some(t) if t.contains("{version}") || t.contains("{platform}") => t
+            .replace("{version}", version)
+            .replace("{platform}", platform),
+        Some(t) => t,
+        None => {
             // Default: GitHub Releases. Note this returns 404 if the
             // repo is private; the readable error is preferable to
             // exposing that fact via our redirect.
             if version == "latest" {
-                "https://github.com/Replicant-Partners/fermi/releases/latest/download/fermi-console-linux-x86_64".to_string()
+                format!(
+                    "https://github.com/Replicant-Partners/fermi/releases/latest/download/{}",
+                    asset
+                )
             } else {
                 format!(
-                    "https://github.com/Replicant-Partners/fermi/releases/download/{}/fermi-console-linux-x86_64",
-                    version
+                    "https://github.com/Replicant-Partners/fermi/releases/download/{}/{}",
+                    version, asset
                 )
             }
         }
+    }
+}
+
+pub async fn fermi_console_download(Query(q): Query<DownloadQuery>) -> Response {
+    let version = q.v.as_deref().unwrap_or("latest");
+
+    let platform = match resolve_platform(q.platform.as_deref()) {
+        Ok(p) => p,
+        Err(msg) => return (StatusCode::BAD_REQUEST, msg).into_response(),
     };
+
+    let url = resolve_download_url(
+        version,
+        platform,
+        std::env::var("FERMI_CONSOLE_DOWNLOAD_URL").ok(),
+    );
 
     // 302 (Found) rather than 301 (Moved Permanently) so we can rotate
     // the target later without cache poisoning.
     Redirect::temporary(&url).into_response()
+}
+
+#[cfg(test)]
+mod download_tests {
+    use super::*;
+
+    #[test]
+    fn omitted_platform_still_serves_linux() {
+        // Every console built before macOS support existed sends no
+        // `platform` at all. If this ever stops resolving to the Linux
+        // asset, that entire installed base stops self-updating.
+        assert_eq!(resolve_platform(None).unwrap(), "linux-x86_64");
+    }
+
+    #[test]
+    fn every_published_platform_is_accepted() {
+        for p in PLATFORMS {
+            assert_eq!(resolve_platform(Some(p)).unwrap(), p);
+        }
+    }
+
+    #[test]
+    fn unknown_platform_is_rejected_not_defaulted() {
+        // "macos-arm64" is the near-miss a human will actually type.
+        let err = resolve_platform(Some("macos-arm64")).unwrap_err();
+        assert!(err.contains("macos-arm64"), "error should echo the input");
+        assert!(
+            err.contains("macos-aarch64"),
+            "error should list valid slugs"
+        );
+    }
+
+    #[test]
+    fn platform_slug_cannot_be_injected_into_the_redirect() {
+        // The redirect target is built by interpolating the platform into
+        // a github.com URL. Anything that escapes the path segment is an
+        // open redirect, so the allowlist must reject these outright
+        // rather than sanitising them.
+        for hostile in [
+            "../../../../evil.example/payload",
+            "linux-x86_64/../../..",
+            "@evil.example",
+            "",
+        ] {
+            assert!(
+                resolve_platform(Some(hostile)).is_err(),
+                "{hostile:?} must not be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn default_urls_point_at_the_per_platform_asset() {
+        assert_eq!(
+            resolve_download_url("latest", "macos-aarch64", None),
+            "https://github.com/Replicant-Partners/fermi/releases/latest/download/fermi-console-macos-aarch64"
+        );
+        assert_eq!(
+            resolve_download_url("v0.11.13", "linux-x86_64", None),
+            "https://github.com/Replicant-Partners/fermi/releases/download/v0.11.13/fermi-console-linux-x86_64"
+        );
+    }
+
+    #[test]
+    fn env_template_substitutes_both_placeholders() {
+        let t = "https://cdn.example/{version}/{platform}.bin".to_string();
+        assert_eq!(
+            resolve_download_url("v1.2.3", "macos-x86_64", Some(t)),
+            "https://cdn.example/v1.2.3/macos-x86_64.bin"
+        );
+    }
+
+    #[test]
+    fn placeholderless_env_template_is_served_verbatim() {
+        // Pre-existing behaviour: a fixed staging URL ignores both params
+        // rather than having them appended.
+        let t = "https://staging.example/console".to_string();
+        assert_eq!(
+            resolve_download_url("v1.2.3", "macos-aarch64", Some(t.clone())),
+            t
+        );
+    }
+
+    #[test]
+    fn version_only_template_still_honours_platform_free_hosts() {
+        // A template that pins the platform itself but varies by version.
+        let t = "https://cdn.example/{version}/fermi-console".to_string();
+        assert_eq!(
+            resolve_download_url("v2.0.0", "linux-x86_64", Some(t)),
+            "https://cdn.example/v2.0.0/fermi-console"
+        );
+    }
 }
 
 pub async fn agent_detail() -> Html<String> {

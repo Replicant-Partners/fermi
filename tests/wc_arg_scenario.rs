@@ -6,17 +6,39 @@
 //!   - Current production rate (~1-3% — too pessimistic)
 //!   - The hand-authored expectation of 6-10% for ARG
 //!
-//! Runs the SAME normalization the cockpit's run_simulation applies:
-//!   P = base_rate × (sim_mean / baseline_mean)
-//! where baseline_mean is computed by fixing every driver at its p50.
+//! Contract under test ("Option 2", per the TEAM_PRIOR header):
+//! the `model:` expression IS the forecast quantity. The base rate
+//! (0.0208 ≈ 1/48) lives inside the model, so the Monte Carlo mean is
+//! taken directly — no normalization, no rescaling, no second
+//! base_rate multiply.
 
 use fermi::executor::Executor;
 use fermi::lexer::Lexer;
 use fermi::parser::Parser;
 
-// Use a build-time env var so we can point at /tmp without needing a
-// stable repo path. Falls back to the test fixture if FERMI_TEST_FPL is unset.
-const ARG_SCENARIO: &str = include_str!("/tmp/arg_scenario.fpl");
+// The real production template, not a frozen copy. A snapshot would
+// keep passing after the template it is supposed to be guarding had
+// drifted, which is the opposite of what this test is for.
+const ARG_SCENARIO: &str =
+    include_str!("../forecasts/will_argentina_win_the_2026_fifa_world_cup_.fpl");
+
+/// The uniform prior baked into the template's `model:` line — 1/48,
+/// one of 48 teams. Kept here so the neutral-team assertion below
+/// states the number it is checking rather than hiding it in a literal.
+const BASE_RATE: f64 = 0.0208;
+
+/// The six drivers and ARG's p50 for each, in template order. Single
+/// source of truth for both fixed-driver runs below — they used to
+/// carry independent copies of these names, so a rename in the FPL
+/// could desync them silently.
+const DRIVERS: [(&str, f64); 6] = [
+    ("socio_capital", 1.43),
+    ("institutional_capacity", 1.05),
+    ("dynamic_performance", 1.27),
+    ("squad_quality", 1.30),
+    ("tactical_efficiency", 1.25),
+    ("fixture_context", 1.05),
+];
 
 #[test]
 fn arg_scenario_produces_realistic_rate() {
@@ -66,59 +88,85 @@ fn arg_scenario_produces_realistic_rate() {
     let results = sim.execute(&program).expect("sim execute");
     let sim_mean = results.mean;
 
-    // ── Run the baseline (drivers fixed at p50) ───────────────────────
+    // ── Deterministic p50 evaluation ──────────────────────────────────
     //
-    // The cockpit computes baseline by fixing each driver at its p50.
-    // We mirror that here. Params still need to be bound because the
+    // Every driver pinned to its own p50 instead of sampled. This is
+    // not a normalization denominator (see the contract note up top) —
+    // it's a check that the triangular spreads don't bias the mean away
+    // from the central estimate. Params still need binding because the
     // distribution expressions reference them at parse time and the
-    // baseline executor still walks the program (it just substitutes
-    // fixed values for the driver samples).
-    let mut fixed = std::collections::HashMap::new();
-    fixed.insert("socio_capital".into(), 1.43);
-    fixed.insert("institutional_capacity".into(), 1.05);
-    fixed.insert("dynamic_performance".into(), 1.27);
-    fixed.insert("squad_quality".into(), 1.30);
-    fixed.insert("tactical_efficiency".into(), 1.25);
-    fixed.insert("fixture_context".into(), 1.05);
+    // executor still walks the program; it just substitutes fixed
+    // values for the driver samples.
+    let fixed = DRIVERS
+        .iter()
+        .map(|(name, p50)| ((*name).to_string(), *p50))
+        .collect();
     let mut baseline_exec = Executor::with_fixed_drivers(1, fixed);
     for (name, value) in triples {
         baseline_exec.set_param(*name, *value);
     }
     let baseline_results = baseline_exec.execute(&program).expect("baseline execute");
-    let baseline_mean = baseline_results.mean;
+    let p50_point = baseline_results.mean;
 
-    // ── Cockpit normalization ─────────────────────────────────────────
-    let base_rate = 0.0208_f64;
-    let ratio = if baseline_mean.abs() > 0.001 {
-        sim_mean / baseline_mean
-    } else {
-        1.0
-    };
-    let normalized = (base_rate * ratio).clamp(0.01, 0.99);
+    // ── Neutral team: every driver at 1.0 ─────────────────────────────
+    //
+    // The Cobb-Douglas exponents sum to ≈ 6 with a 1/6 normalizer, so a
+    // team that is average on every factor must fall back to the
+    // uniform prior. This is the assertion that would have caught the
+    // bug this test itself used to have: if anything ever multiplies by
+    // base_rate a second time, `neutral` collapses to 0.0208² and this
+    // fails loudly instead of the range check below quietly drifting.
+    let neutral_drivers = DRIVERS
+        .iter()
+        .map(|(name, _)| ((*name).to_string(), 1.0))
+        .collect();
+    let mut neutral_exec = Executor::with_fixed_drivers(1, neutral_drivers);
+    for (name, value) in triples {
+        neutral_exec.set_param(*name, *value);
+    }
+    let neutral = neutral_exec
+        .execute(&program)
+        .expect("neutral execute")
+        .mean;
 
     // ── Diagnostic output ─────────────────────────────────────────────
     eprintln!();
     eprintln!("─── ARG scenario results ────────────────────────────────");
     eprintln!(
-        "  Raw simulation:   mean={:.3}  p5={:.3}  p50={:.3}  p95={:.3}",
+        "  Simulation:       mean={:.4}  p5={:.4}  p50={:.4}  p95={:.4}",
         sim_mean, results.p5, results.median, results.p95
     );
-    eprintln!("  Baseline (p50):   {:.3}", baseline_mean);
-    eprintln!("  Ratio:            {:.3}x", ratio);
-    eprintln!("  Normalized rate:  {:.2}%", normalized * 100.0);
+    eprintln!("  p50 point est.:   {:.4}", p50_point);
+    eprintln!(
+        "  Neutral team:     {:.4}  (uniform prior = {:.4})",
+        neutral, BASE_RATE
+    );
     eprintln!();
     eprintln!("  Comparison:");
+    eprintln!("    Simulated:                  {:.1}%", sim_mean * 100.0);
     eprintln!("    Polymarket crowd:           ~11.6%");
     eprintln!("    Hand-authored expectation:  6-10%");
-    eprintln!("    Old production (today):     ~3.7% (still pessimistic)");
-    eprintln!("    Old broken (yesterday):     ~1% (zeroed socio params)");
     eprintln!("─────────────────────────────────────────────────────────");
     eprintln!();
 
+    assert!(
+        (BASE_RATE * 0.9..BASE_RATE * 1.1).contains(&neutral),
+        "A team average on every driver produced {neutral:.4}, not the \
+         uniform prior {BASE_RATE:.4}. Either the Cobb-Douglas exponents \
+         no longer sum to ~6, or base_rate is being applied twice."
+    );
+
+    assert!(
+        (sim_mean - p50_point).abs() < 0.15 * p50_point,
+        "Monte Carlo mean {sim_mean:.4} is >15% away from the p50 point \
+         estimate {p50_point:.4} — the triangular spreads are skewing the \
+         answer rather than expressing uncertainty around it."
+    );
+
     // Sanity: must be in a plausible range for a top-3 team.
     assert!(
-        (0.04..0.18).contains(&normalized),
-        "Normalized rate {:.2}% outside [4%, 18%] — recalibrate the seed triples",
-        normalized * 100.0
+        (0.04..0.18).contains(&sim_mean),
+        "Forecast {:.2}% outside [4%, 18%] — recalibrate the seed triples",
+        sim_mean * 100.0
     );
 }
