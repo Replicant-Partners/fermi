@@ -1624,7 +1624,9 @@ impl Op {
         match self.kind.as_str() {
             "cascade_review" => "⚡",
             "contested" => "⚔",
+            "contested_assumption" => "⚖",
             "unreviewed" => "👁",
+            "ungrounded" => "◌",
             "resolution_due" => "⏱",
             _ => "◈",
         }
@@ -1635,11 +1637,41 @@ impl Op {
         match self.kind.as_str() {
             "cascade_review" => "cascade",
             "contested" => "contested",
+            "contested_assumption" => "challenged",
             "unreviewed" => "unreviewed",
+            "ungrounded" => "ungrounded",
             "resolution_due" => "due",
             _ => "op",
         }
     }
+
+    /// The members of a rolled-up condition, if this op is one.
+    ///
+    /// `unreviewed` and `ungrounded` describe a property of the whole
+    /// surface, so they emit ONE op naming a count rather than one op per
+    /// forecast — six rows of the same sentence was a lint list, not
+    /// coordination. The members ride along in `detail.items` so the row
+    /// can still show *which* forecasts it means, which is the thing the
+    /// count alone doesn't tell you.
+    pub fn rollup_items(&self) -> Vec<RollupItem> {
+        self.detail
+            .get("items")
+            .and_then(|v| serde_json::from_value::<Vec<RollupItem>>(v.clone()).ok())
+            .unwrap_or_default()
+    }
+}
+
+/// One forecast inside a rolled-up op.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RollupItem {
+    #[serde(default)]
+    pub forecast_id: String,
+    #[serde(default)]
+    pub question: String,
+    #[serde(default)]
+    pub age_days: i64,
+    #[serde(default)]
+    pub probability_pct: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

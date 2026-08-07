@@ -862,5 +862,74 @@ DEALLOCATE c1;
 DELETE FROM public.driver_annotations WHERE forecast_id = 'fc-det';
 DELETE FROM public.fermi_forecasts WHERE id = 'fc-det';
 
+-- ─── Roll-up detectors: unreviewed + ungrounded ──────────────────────
+--
+-- These two report CONDITIONS of the surface, so each must produce ONE
+-- op no matter how many forecasts satisfy it. The per-artifact version
+-- turned a six-forecast surface into six rows of the same sentence.
+-- Asserted here as "the query returns a set the handler folds to one",
+-- plus the predicates themselves, which are the part that can silently
+-- drift (the jsonb_typeof guards especially — this column holds '{}' and
+-- bare strings as well as arrays).
+
+\echo '=== roll-up detectors: predicates and grouping ==='
+
+INSERT INTO public.fermi_forecasts
+    (id, owner_id, question_text, predicted_probability, status, created_at, evidence, agents_used)
+VALUES
+    -- stale AND ungrounded: must appear in BOTH conditions
+    ('fc-r1', 'u-owner', 'no research, no revisions', 0.30, 'active', NOW() - INTERVAL '40 days', '[]'::jsonb, '[]'::jsonb),
+    -- grounded but never revised: unreviewed only
+    ('fc-r2', 'u-owner', 'researched, never revised', 0.40, 'active', NOW() - INTERVAL '20 days', '[{"src":"x"}]'::jsonb, '[]'::jsonb),
+    -- revised but ungrounded: ungrounded only
+    ('fc-r3', 'u-owner', 'revised, no research',      0.50, 'active', NOW() - INTERVAL '20 days', '[]'::jsonb, '[]'::jsonb),
+    -- too new: neither (the 7-day grace period)
+    ('fc-r4', 'u-owner', 'published yesterday',       0.60, 'active', NOW() - INTERVAL '1 day',  '[]'::jsonb, '[]'::jsonb),
+    -- resolved: neither, whatever its state
+    ('fc-r5', 'u-owner', 'already resolved',          0.70, 'resolved', NOW() - INTERVAL '90 days', '[]'::jsonb, '[]'::jsonb),
+    -- the column is not always an array. '{}' and a bare string both occur
+    -- in production; jsonb_array_length would ERROR on them, taking the
+    -- whole detector down rather than the row.
+    ('fc-r6', 'u-owner', 'evidence is an object',     0.80, 'active', NOW() - INTERVAL '30 days', '{}'::jsonb, '[]'::jsonb);
+
+INSERT INTO public.fermi_forecast_updates
+    (id, forecast_id, previous_probability, new_probability, created_at)
+VALUES ('upd-r3', 'fc-r3', 0.45, 0.50, NOW() - INTERVAL '2 days');
+
+DO $$
+DECLARE ids TEXT[] := ARRAY['fc-r1','fc-r2','fc-r3','fc-r4','fc-r5','fc-r6'];
+        got TEXT[];
+BEGIN
+  SELECT ARRAY_AGG(ff.id ORDER BY ff.id) INTO got
+    FROM public.fermi_forecasts ff
+   WHERE ff.id = ANY(ids)
+     AND ff.status = 'active'
+     AND ff.created_at < NOW() - INTERVAL '7 days'
+     AND NOT EXISTS (SELECT 1 FROM public.fermi_forecast_updates u WHERE u.forecast_id = ff.id);
+  IF got IS DISTINCT FROM ARRAY['fc-r1','fc-r2','fc-r6'] THEN
+    RAISE EXCEPTION 'unreviewed predicate wrong: %', got;
+  END IF;
+
+  SELECT ARRAY_AGG(ff.id ORDER BY ff.id) INTO got
+    FROM public.fermi_forecasts ff
+   WHERE ff.id = ANY(ids)
+     AND ff.status = 'active'
+     AND ff.created_at < NOW() - INTERVAL '7 days'
+     AND COALESCE(jsonb_array_length(
+             CASE WHEN jsonb_typeof(ff.evidence) = 'array'
+                  THEN ff.evidence ELSE '[]'::jsonb END), 0) = 0
+     AND COALESCE(jsonb_array_length(
+             CASE WHEN jsonb_typeof(ff.agents_used) = 'array'
+                  THEN ff.agents_used ELSE '[]'::jsonb END), 0) = 0;
+  -- fc-r2 excluded (has evidence); fc-r6 included (an object is not
+  -- evidence, and must not raise).
+  IF got IS DISTINCT FROM ARRAY['fc-r1','fc-r3','fc-r6'] THEN
+    RAISE EXCEPTION 'ungrounded predicate wrong: %', got;
+  END IF;
+END $$;
+
+DELETE FROM public.fermi_forecast_updates WHERE forecast_id LIKE 'fc-r%';
+DELETE FROM public.fermi_forecasts WHERE id LIKE 'fc-r%';
+
 \echo ''
 \echo '=== PART C complete ==='

@@ -100,6 +100,14 @@ CREATE TABLE fermi_forecasts (
     team_id                  UUID,
     tags                     TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
     metadata                 JSONB NOT NULL DEFAULT '{}'::jsonb,
+    -- Mirrors production's real types, which is the point of this fixture.
+    -- These are JSONB with no array constraint, and production holds '{}'
+    -- and bare strings in them as well as arrays — which is why the
+    -- `ungrounded` detector guards every read with jsonb_typeof rather
+    -- than calling jsonb_array_length directly.
+    evidence                 JSONB NOT NULL DEFAULT '[]'::jsonb,
+    agents_used              JSONB NOT NULL DEFAULT '[]'::jsonb,
+    fpl_source               TEXT,
     created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

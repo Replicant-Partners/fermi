@@ -49,7 +49,16 @@
 //! | 80–100 | `cascade_review` — coherence is broken now |
 //! | 45–90  | `resolution_due` — overdue climbs, upcoming sits low |
 //! | 50–79  | `contested`, `contested_assumption` — disagreement |
+//! | 25–49  | `ungrounded` — a number with no research behind it |
 //! | 20–44  | `unreviewed` — background maintenance      |
+//!
+//! ## Events vs conditions
+//!
+//! An op's GRANULARITY follows from which of the two it is. A cascade
+//! landing or a challenge being written is an EVENT: one artifact, one
+//! response, one op. "Nothing has research behind it" is a CONDITION of the
+//! surface, and gets exactly one op naming the count — see the note above
+//! detector 4 for why the per-artifact version made the board unusable.
 //!
 //! `contested` and `contested_assumption` deliberately share a band: one
 //! infers disagreement from opposing revisions, the other reads it stated
@@ -183,6 +192,7 @@ pub async fn team_ops_handler(
         ops.extend(detect_resolution_due(pool, &forecast_ids).await);
         ops.extend(detect_unreviewed(pool, &forecast_ids).await);
         ops.extend(detect_contested_assumption(pool, &forecast_ids).await);
+        ops.extend(detect_ungrounded(pool, &forecast_ids).await);
     }
 
     // Rank across kinds. Ties break on the older condition first: work
@@ -637,8 +647,93 @@ async fn detect_resolution_due(pool: &PgPool, forecast_ids: &[String]) -> Vec<Op
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Detector 4 — unreviewed
+// Detectors 4 & 6 — surface conditions, rolled up
 // ═══════════════════════════════════════════════════════════════════════
+//
+// EVENTS vs CONDITIONS — the rule that decides an op's granularity.
+//
+// A cascade landing, a target date arriving, someone writing a challenge:
+// those are EVENTS. Each names one artifact and one distinct response, so
+// each is its own op.
+//
+// "Nothing has been reviewed" and "nothing has research behind it" are
+// CONDITIONS of the surface as a whole. Emitting one op per artifact turned
+// the board into six rows of the same sentence with a different question in
+// it — a lint list, not coordination. Nobody picks those up one at a time,
+// and the repetition buried the events that actually needed a response.
+//
+// So conditions roll up: one op per condition, naming the count, carrying
+// the members in `detail.items` for the console to expand. The unit of
+// coordination is the condition, because that is the unit of the decision
+// ("we need to get research onto the EPL book"), not the artifact.
+
+/// How many members of a rolled-up condition are listed in `detail.items`.
+///
+/// The count in the objective is the true total; this only bounds what the
+/// expander renders. A surface with 200 unreviewed forecasts is one
+/// decision, not 200 rows to scroll.
+const ROLLUP_SAMPLE: usize = 25;
+
+/// One member of a rolled-up condition.
+struct SurfaceItem {
+    forecast_id: String,
+    question: String,
+    owner: Option<String>,
+    since: Option<chrono::DateTime<chrono::Utc>>,
+    probability: f32,
+    age_days: i64,
+}
+
+impl SurfaceItem {
+    fn to_json(&self) -> JsonValue {
+        json!({
+            "forecast_id":     self.forecast_id,
+            "question":        self.question,
+            "age_days":        self.age_days,
+            "probability_pct": (self.probability * 100.0).round(),
+        })
+    }
+}
+
+/// Shared shape for the two roll-ups: same columns, different predicate.
+async fn surface_items(pool: &PgPool, sql: &str, forecast_ids: &[String]) -> Vec<SurfaceItem> {
+    let rows = match sqlx::query(sql).bind(forecast_ids).fetch_all(pool).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "[ops] surface condition query failed");
+            return Vec::new();
+        }
+    };
+    rows.iter()
+        .filter_map(|r| {
+            let created: Option<chrono::DateTime<chrono::Utc>> = r.try_get("created_at").ok();
+            Some(SurfaceItem {
+                forecast_id: r.try_get("id").ok()?,
+                question: r
+                    .try_get::<String, _>("question_text")
+                    .unwrap_or_else(|_| "—".into()),
+                owner: r.try_get::<String, _>("owner_id").ok(),
+                since: created,
+                probability: r.try_get("predicted_probability").unwrap_or(0.0),
+                age_days: days_since(created),
+            })
+        })
+        .collect()
+}
+
+/// Participants for a roll-up: the distinct owners of its members.
+///
+/// Deduplicated, because one person owning nine unreviewed forecasts is one
+/// person to talk to, not nine avatars.
+fn rollup_participants(items: &[SurfaceItem]) -> Vec<(String, &'static str)> {
+    let mut seen = HashSet::new();
+    items
+        .iter()
+        .filter_map(|i| i.owner.clone())
+        .filter(|o| seen.insert(o.clone()))
+        .map(|o| (o, "owner"))
+        .collect()
+}
 
 /// Live forecasts on the shared surface that nobody has ever revised.
 ///
@@ -649,14 +744,18 @@ async fn detect_resolution_due(pool: &PgPool, forecast_ids: &[String]) -> Vec<Op
 ///
 /// Deliberately keyed on "zero revisions" rather than "no revision by a
 /// second actor", because the latter needs `actor_user_id` and would
-/// therefore be blind to everything published before v0.11.7. This
-/// version fires correctly on legacy data.
+/// therefore be blind to everything published before v0.11.7. This version
+/// fires correctly on legacy data.
 ///
 /// **Urgency 20–44 (low).** Real, but it should never crowd out a broken
 /// cascade or an active disagreement. This is the background maintenance
-/// tier of the board.
+/// tier of the board. Scales with the oldest member, not the count: a
+/// hundred forecasts stale for a week is less urgent than one stale for a
+/// year, and counting instead would let a big book shout down a real
+/// problem.
 async fn detect_unreviewed(pool: &PgPool, forecast_ids: &[String]) -> Vec<Op> {
-    let rows = match sqlx::query(
+    let items = surface_items(
+        pool,
         "SELECT ff.id,
                 ff.question_text,
                 ff.owner_id::text AS owner_id,
@@ -668,54 +767,146 @@ async fn detect_unreviewed(pool: &PgPool, forecast_ids: &[String]) -> Vec<Op> {
             AND ff.created_at < NOW() - INTERVAL '7 days'
             AND NOT EXISTS (SELECT 1 FROM public.fermi_forecast_updates u
                             WHERE u.forecast_id = ff.id)
-          ORDER BY ff.created_at
-          LIMIT 25",
+          ORDER BY ff.created_at",
+        forecast_ids,
     )
-    .bind(forecast_ids)
-    .fetch_all(pool)
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!(error = %e, "[ops] unreviewed detector failed");
-            return Vec::new();
-        }
-    };
+    .await;
 
-    rows.iter()
-        .filter_map(|r| {
-            let fid: String = r.try_get("id").ok()?;
-            let question: String = r
-                .try_get::<String, _>("question_text")
-                .unwrap_or_else(|_| "—".into());
-            let owner: Option<String> = r.try_get::<String, _>("owner_id").ok();
-            let created: Option<chrono::DateTime<chrono::Utc>> = r.try_get("created_at").ok();
-            let prob: f32 = r.try_get("predicted_probability").unwrap_or(0.0);
-            let age = days_since(created);
+    if items.is_empty() {
+        return Vec::new();
+    }
 
-            Some(Op {
-                id: format!("unreviewed:{}", fid),
-                kind: "unreviewed",
-                // Slow climb — a month untouched is worth noticing, a week
-                // is not yet a problem.
-                urgency: banded(20, (age / 7) as i32 * 4, 44),
-                objective: format!(
-                    "Stress-test ‹{}› — live at {:.0}% for {} days, never revised",
-                    truncate_q(&question, 50),
-                    prob * 100.0,
-                    age
-                ),
-                done_when: "anyone records a revision — including one that confirms the number",
-                since: created,
-                primary: Some(("forecast", fid.clone(), Some(question))),
-                forecast_ids: vec![fid],
-                portfolio_ids: Vec::new(),
-                participants: owner.into_iter().map(|o| (o, "owner")).collect(),
-                metrics: json!({ "age_days": age, "probability_pct": (prob * 100.0).round() }),
-                detail: json!({}),
-            })
-        })
-        .collect()
+    let oldest = items.iter().map(|i| i.age_days).max().unwrap_or(0);
+    let n = items.len();
+
+    vec![Op {
+        // Stable across polls, and stable as members come and go — the
+        // condition is the thing, so its identity can't depend on which
+        // forecasts currently satisfy it.
+        id: "unreviewed:surface".to_string(),
+        kind: "unreviewed",
+        urgency: banded(20, (oldest / 7) as i32 * 4, 44),
+        objective: if n == 1 {
+            format!(
+                "Stress-test ‹{}› — live at {:.0}% for {} days, never revised",
+                truncate_q(&items[0].question, 50),
+                items[0].probability * 100.0,
+                items[0].age_days
+            )
+        } else {
+            format!(
+                "Stress-test {} forecasts nobody has ever revised — oldest is {} days old",
+                n, oldest
+            )
+        },
+        done_when: "anyone records a revision — including one that confirms the number",
+        since: items.iter().filter_map(|i| i.since).min(),
+        // A roll-up points at its worst member so the row still has
+        // somewhere to click. The objective states the aggregate; the
+        // primary is where to start.
+        primary: items
+            .iter()
+            .max_by_key(|i| i.age_days)
+            .map(|i| ("forecast", i.forecast_id.clone(), Some(i.question.clone()))),
+        forecast_ids: items.iter().map(|i| i.forecast_id.clone()).collect(),
+        portfolio_ids: Vec::new(),
+        participants: rollup_participants(&items),
+        metrics: json!({ "count": n, "oldest_age_days": oldest }),
+        detail: json!({
+            "items": items.iter().take(ROLLUP_SAMPLE).map(|i| i.to_json())
+                          .collect::<Vec<_>>(),
+            "truncated": n > ROLLUP_SAMPLE,
+        }),
+    }]
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Detector 6 — ungrounded
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Live forecasts carrying a number with no research behind it at all —
+/// no evidence, no agent.
+///
+/// This is the condition `unreviewed` was accidentally reporting. On the
+/// surface that prompted it, every active forecast had zero evidence and
+/// zero agents, while the team's *resolved* work carried four agents and
+/// four to six evidence items apiece. "Never revised" was the symptom;
+/// "there is nothing here to revise from" is the cause — and you cannot
+/// meaningfully stress-test a number you have no evidence for, so the old
+/// board was asking for the second-order thing first.
+///
+/// The composer already says this per driver ("No agents — assign one to
+/// research this driver"). The board didn't, so the one person who could
+/// act on it had to open each forecast to find out.
+///
+/// **Urgency 25–49.** Slightly above `unreviewed` and overlapping it,
+/// because an ungrounded forecast is strictly worse than a merely stale
+/// one — it is stale *and* unsupported — but it is still maintenance, and
+/// must stay below a disagreement (floor 50).
+async fn detect_ungrounded(pool: &PgPool, forecast_ids: &[String]) -> Vec<Op> {
+    let items = surface_items(
+        pool,
+        // jsonb_typeof guards the column being '{}' or a string rather than
+        // an array — both occur in this table's history.
+        "SELECT ff.id,
+                ff.question_text,
+                ff.owner_id::text AS owner_id,
+                ff.created_at,
+                ff.predicted_probability
+           FROM public.fermi_forecasts ff
+          WHERE ff.id = ANY($1)
+            AND ff.status = 'active'
+            AND ff.created_at < NOW() - INTERVAL '7 days'
+            AND COALESCE(jsonb_array_length(
+                    CASE WHEN jsonb_typeof(ff.evidence) = 'array'
+                         THEN ff.evidence ELSE '[]'::jsonb END), 0) = 0
+            AND COALESCE(jsonb_array_length(
+                    CASE WHEN jsonb_typeof(ff.agents_used) = 'array'
+                         THEN ff.agents_used ELSE '[]'::jsonb END), 0) = 0
+          ORDER BY ff.created_at",
+        forecast_ids,
+    )
+    .await;
+
+    if items.is_empty() {
+        return Vec::new();
+    }
+
+    let oldest = items.iter().map(|i| i.age_days).max().unwrap_or(0);
+    let n = items.len();
+
+    vec![Op {
+        id: "ungrounded:surface".to_string(),
+        kind: "ungrounded",
+        urgency: banded(25, (oldest / 7) as i32 * 4, 49),
+        objective: if n == 1 {
+            format!(
+                "Research ‹{}› — live at {:.0}% with no evidence and no agent",
+                truncate_q(&items[0].question, 46),
+                items[0].probability * 100.0
+            )
+        } else {
+            format!(
+                "Ground {} live forecasts that have no evidence and no agent behind them",
+                n
+            )
+        },
+        done_when: "each one has at least one evidence item or an assigned agent",
+        since: items.iter().filter_map(|i| i.since).min(),
+        primary: items
+            .iter()
+            .max_by_key(|i| i.age_days)
+            .map(|i| ("forecast", i.forecast_id.clone(), Some(i.question.clone()))),
+        forecast_ids: items.iter().map(|i| i.forecast_id.clone()).collect(),
+        portfolio_ids: Vec::new(),
+        participants: rollup_participants(&items),
+        metrics: json!({ "count": n, "oldest_age_days": oldest }),
+        detail: json!({
+            "items": items.iter().take(ROLLUP_SAMPLE).map(|i| i.to_json())
+                          .collect::<Vec<_>>(),
+            "truncated": n > ROLLUP_SAMPLE,
+        }),
+    }]
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -958,6 +1149,54 @@ mod tests {
         assert_eq!(urgency_label(one_challenge(8)), "high", "over a week: high");
         assert_eq!(one_challenge(15), 79, "a fortnight: band ceiling");
         assert_eq!(one_challenge(400), 79, "and it stops there");
+    }
+
+    /// `ungrounded` outranks `unreviewed` (an unsupported number is worse
+    /// than a merely stale one) but still loses to any disagreement. The
+    /// two maintenance bands overlap on purpose — they are the same tier —
+    /// while the floor of disagreement stays above both.
+    #[test]
+    fn research_gaps_outrank_staleness_but_lose_to_disagreement() {
+        let unreviewed_floor = banded(20, 0, 44);
+        let unreviewed_ceiling = banded(20, i32::MAX / 2, 44);
+        let ungrounded_floor = banded(25, 0, 49);
+        let ungrounded_ceiling = banded(25, i32::MAX / 2, 49);
+
+        assert!(
+            ungrounded_floor > unreviewed_floor,
+            "ungrounded starts higher"
+        );
+        assert!(ungrounded_ceiling > unreviewed_ceiling, "and ends higher");
+        assert!(
+            ungrounded_ceiling < banded(50, 0, 79),
+            "maintenance must never reach the disagreement floor"
+        );
+        assert_eq!(urgency_label(ungrounded_ceiling), "normal");
+    }
+
+    /// Roll-ups scale with their OLDEST member, never their count.
+    ///
+    /// If count drove urgency, importing a book of 200 fresh forecasts
+    /// would immediately outrank a single forecast that has been ignored
+    /// for a year — the board would reward volume over neglect. Size
+    /// belongs in the objective text, not the ranking.
+    #[test]
+    fn rollup_urgency_tracks_age_not_count() {
+        let by_age = |oldest_days: i64| banded(20, (oldest_days / 7) as i32 * 4, 44);
+
+        assert_eq!(by_age(0), 20, "fresh sits at the floor");
+        assert_eq!(by_age(7), 24, "+4 per week");
+        assert_eq!(by_age(41), 40);
+        // Saturates at six weeks. Past that the board stops distinguishing
+        // "badly neglected" from "even more badly neglected", which is
+        // correct — both are the same conversation, and the band exists so
+        // maintenance can never shout over a broken cascade.
+        assert_eq!(by_age(42), 44, "ceiling reached at six weeks");
+        assert_eq!(by_age(365), 44, "and stays there");
+
+        // The ranking argument: one long-neglected forecast beats two
+        // hundred fresh ones, because urgency never reads the count at all.
+        assert!(by_age(60) > by_age(7));
     }
 
     #[test]
