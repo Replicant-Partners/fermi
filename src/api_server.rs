@@ -50,8 +50,12 @@ mod handlers;
 
 // v0.11.0: schema trust contract — boot-time drift check against the DB.
 // See src/schema_trust.rs for the manifest and the check logic.
-#[path = "schema_trust.rs"]
-pub(crate) mod schema_trust;
+//
+// Re-exported from the library rather than `#[path]`-included, so the
+// contract and the binary share one compiled copy and `cargo test` can
+// reach the module. The `pub(crate) use` keeps existing `crate::schema_trust`
+// paths (e.g. in handlers/admin.rs) working unchanged.
+pub(crate) use fermi::schema_trust;
 
 #[derive(Clone)]
 struct RateLimiter {
@@ -597,6 +601,17 @@ async fn run_migrations(db: &PgPool) {
         // workspace_annotations tables. Foundation for isomorphic App actions
         // across companion, CLI, and MCP callers.
         "migrations/125_workspace_action_protocol.sql",
+        // agent_versions gains the rest of the capability config (model_ladder,
+        // capability_gates, min_tier, output_contract, version_string) so a
+        // version snapshot describes behaviour, not just the prompt.
+        //
+        // NOTE: this file was on disk from v0.10.x but absent from this list
+        // until v0.11.9 — CI's `for f in migrations/*.sql` glob applied it while
+        // production never did, so the two schemas silently differed by five
+        // columns. That divergence is exactly what the migration ledger (Phase 2
+        // of docs/SCHEMA_AND_RULE_INTEGRITY_RECONCILIATION.md) exists to make
+        // impossible; this hardcoded list is the proximate cause.
+        "migrations/126_agent_version_full_config.sql",
         // Expand xaman_sessions.session_type CHECK to include 'app_design'
         // (new conversational mode for building Apps on ABW via xaman_ek).
         // Originally numbered 124; renumbered to 127 after the topology Phase-2
@@ -624,6 +639,11 @@ async fn run_migrations(db: &PgPool) {
         // columns on the five vector tables + append-only embedding_provenance
         // sidecar log. Pure additive; safe to re-run.
         "migrations/135_embedding_provenance.sql",
+        // NOTE: migrations/136_embedding_provenance_not_null.sql is
+        // deliberately absent. Its invariant is correct but its form is not
+        // boot-safe (bare ADD CONSTRAINT re-run every boot; 12 top-level
+        // statements through PgBouncer). Superseded by migration 184, which
+        // applies the same constraints idempotently in one DO block.
         // NOTE: migration 136 (NOT NULL enforcement) intentionally NOT in the
         // boot sequence. It validates "embedding => full provenance" via
         // ALTER TABLE ADD CONSTRAINT, which fails on unstamped pre-Spec-22
@@ -888,12 +908,44 @@ async fn run_migrations(db: &PgPool) {
         // decision to the whole team. Backfills 'resolve' to owners and
         // admins only; the tightening on members is the point.
         "migrations/179_team_capabilities.sql",
+        // SPEC_29 (v0.11.10): orchestra membership as governed state.
+        // mig-172 kept the predicate `fermi_contract IS NOT NULL`, so
+        // approval was a side effect that *produced* membership rather
+        // than the state it derives from — any other writer of that
+        // column (notably the unguarded import path) was indistinguishable
+        // from an admin approval, and the request/approve audit trail was
+        // write-only. Splits capability (the contract, owner-editable)
+        // from membership (a grant in orchestra_members, with honest
+        // provenance: approved / curated_seed / admin_grant). Backfill is
+        // behaviour-preserving and classifies rather than blanket-approves;
+        // verified to apply repeatedly without downgrading a real approval.
+        "migrations/180_orchestra_members.sql",
+        // Integrity reconciliation for the 2026-08-06 production audit
+        // (scripts/integrity_audit.sql). Seeds the abw-system principal,
+        // declares users.id so a rebuild is faithful, supplies
+        // ar_beacons.location_name so migration 163 can finally create the
+        // rbac_orphans view, and reconstructs one credit_ledger row lost to
+        // a swallowed write. Idempotent; verified to apply twice cleanly.
+        "migrations/181_integrity_reconciliation.sql",
+        // Stripe checkout idempotency as a database claim rather than a
+        // read-then-write race. billing.rs previously treated a DB error as
+        // "not yet processed" and wrote its idempotency marker after the
+        // deposit, in a swallowed UPDATE — two independent double-credit
+        // paths. Backfills processed sessions from credit_ledger history.
+        "migrations/182_stripe_session_idempotency.sql",
         // Spec 32 (v0.11.13): driver_annotations. Objections anchored to a
         // specific driver — "your base rate is wrong" — rather than to the
         // forecast, because that is what teams actually argue about. The
         // CHECK enforces that any resolution records who and when, so
         // "accepted" can never be unattributable.
         "migrations/183_driver_annotations.sql",
+        // Spec 22 §1c embedding-provenance invariant, in a boot-safe form.
+        // Supersedes migration 136 (correct invariant, unusable shape — see
+        // the note next to 135). Safe to enable because the 2026-08-06
+        // integrity audit measured zero violating rows across all five
+        // constrained tables; the migration re-measures before adding each
+        // constraint and warns rather than aborting if that ever changes.
+        "migrations/184_embedding_provenance_invariant.sql",
     ];
 
     for file in &migration_files {
@@ -1552,8 +1604,57 @@ async fn ensure_critical_schema(db: &PgPool) {
     }
 }
 
+/// Install a `tracing` subscriber.
+///
+/// ## Why this needed adding at all
+///
+/// Until v0.11.9 the `api-server` binary never initialised one. Every
+/// `tracing::info!` / `warn!` / `error!` in the handler tree — including the
+/// credit-flow royalty logs in `gas.rs`, the `pg_notify` failure paths, and
+/// the embedding-provenance events — emitted into a no-op dispatcher and
+/// was silently discarded. Roughly 100 structured log statements produced
+/// nothing, which is why diagnosis has leaned entirely on `println!`.
+///
+/// This is also a hard prerequisite for rule-execution tracing (Phase 6 of
+/// `docs/SCHEMA_AND_RULE_INTEGRITY_RECONCILIATION.md`): instrumentation
+/// built on `tracing` writes to `/dev/null` without a subscriber.
+///
+/// ## Default level
+///
+/// `RUST_LOG` wins if set. Otherwise `info` for our own crates and `warn`
+/// globally — deliberately conservative, because turning on ~100 previously
+/// silent statements at `debug` would bury the boot diagnostics that
+/// operators currently rely on. Raise per-target via e.g.
+/// `RUST_LOG=fermi::handlers::billing=debug`.
+fn init_tracing() {
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new("warn,fermi=info,fermi_auth=info,agent_bestiary_memory=info")
+    });
+
+    let registry = tracing_subscriber::registry().with(filter);
+
+    // Structured JSON in production (Railway ships stdout to its log
+    // aggregator); human-readable elsewhere.
+    if std::env::var("LOG_FORMAT").as_deref() == Ok("json") {
+        registry
+            .with(fmt::layer().json().with_current_span(true))
+            .init();
+    } else {
+        registry.with(fmt::layer().with_target(true)).init();
+    }
+
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        "tracing subscriber installed"
+    );
+}
+
 #[tokio::main]
 async fn main() {
+    init_tracing();
+
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
 
     println!("Connecting to database...");
@@ -1846,9 +1947,20 @@ async fn main() {
     // only seeds the (abw-system, provider, '*') default when it's absent.
     // See docs/specs/AGENT_CREDENTIAL_MODEL.md.
     if let Some(encryptor) = state.secret_encryptor.as_ref() {
+        // SPEC_28: seed EVERY provider the executor can dispatch to, not
+        // just openai/anthropic. The executor no longer reads env at
+        // runtime, so a platform-service agent on (say) deepseek is funded
+        // only if its key reached the abw-system store here.
         for (env_var, provider) in [
             ("OPENAI_API_KEY", "openai"),
             ("ANTHROPIC_API_KEY", "anthropic"),
+            ("MISTRAL_API_KEY", "mistral"),
+            ("QWEN_API_KEY", "qwen"),
+            ("OPENROUTER_API_KEY", "openrouter"),
+            ("GLM_API_KEY", "glm"),
+            ("DEEPSEEK_API_KEY", "deepseek"),
+            ("KIMI_API_KEY", "kimi"),
+            ("GEMINI_API_KEY", "gemini"),
         ] {
             if let Ok(key) = std::env::var(env_var) {
                 match fermi_auth::bootstrap_agent_credential_if_absent(
@@ -3565,6 +3677,12 @@ async fn main() {
             "/api/orchestras/:name/members",
             get(handlers::orchestras::list_orchestra_members_handler),
         )
+        // SPEC_29 — revoking a grant is a first-class governance action
+        // now that membership is stated rather than inferred from a column.
+        .route(
+            "/api/orchestras/:name/members/:agent_id",
+            axum::routing::delete(handlers::orchestras::revoke_orchestra_member_handler),
+        )
         .route(
             "/api/orchestras/:name/requests",
             get(handlers::orchestras::list_orchestra_requests_handler)
@@ -4505,6 +4623,40 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
                     if !fc.seed_facts.is_empty() {
                         seed_cep_entities(memory_store, id, &card.agent_id, fc).await;
                     }
+
+                    // SPEC_29 / mig-180 — grant Fermi orchestra membership
+                    // for platform-seeded specialists.
+                    //
+                    // Membership is now stated in `orchestra_members`, not
+                    // inferred from `fermi_contract IS NOT NULL`. Without
+                    // this the curated specialists (macro_forecaster,
+                    // equity_analyst, …) would silently drop off the
+                    // roster — and out of Fermi's own injected roster
+                    // block, degrading the strategist.
+                    //
+                    // `source='curated_seed'`, never 'approved': these have
+                    // not been through review, and recording them as if
+                    // they had would launder exactly the provenance this
+                    // table exists to make honest.
+                    //
+                    // DO NOTHING on conflict so a later real approval
+                    // (which upgrades the row to 'approved') is never
+                    // downgraded back to 'curated_seed' on the next boot.
+                    if let Err(e) = sqlx::query(
+                        "INSERT INTO public.orchestra_members \
+                         (orchestra_name, agent_id, source) \
+                         VALUES ('fermi', $1, 'curated_seed') \
+                         ON CONFLICT (orchestra_name, agent_id) DO NOTHING",
+                    )
+                    .bind(id)
+                    .execute(memory_store.pool())
+                    .await
+                    {
+                        eprintln!(
+                            "Warning: failed to grant fermi membership for {}: {}",
+                            card.agent_id, e
+                        );
+                    }
                 }
             }
             Err(e) => eprintln!("Warning: failed to seed {}: {}", card.agent_id, e),
@@ -4832,6 +4984,71 @@ pub(crate) async fn resolve_credential(
     None
 }
 
+/// SPEC_28 — resolve every provider credential this execution could need,
+/// once, up front.
+///
+/// Pre-resolves the card's declared provider **and** every `model_ladder`
+/// rung's provider, so ladder-driven provider switching (and P4 graceful
+/// degradation) needs no async credential work mid-execution.
+///
+/// This is the single entry point every execution path must call. Paths
+/// that don't get `ExecutionContext.credentials` populated inherit
+/// `unfunded`, which fails loudly rather than quietly billing the
+/// platform — the failure mode SPEC_28 exists to eliminate.
+pub(crate) async fn build_execution_credentials(
+    state: &AppState,
+    agent: &Agent,
+    card: &fermi::agent_backend::agent_card::AgentCard,
+) -> std::sync::Arc<fermi::agent_backend::credentials::ResolvedCredentials> {
+    use fermi::agent_backend::credentials::{
+        provider_needs_no_key, CredentialSource, ResolvedCredentials,
+    };
+
+    // Distinct provider set: declared provider ∪ ladder rung providers.
+    let mut providers: Vec<String> = Vec::new();
+    let declared = card.capabilities.provider.trim();
+    // An empty provider means "anthropic" throughout the executor layer.
+    providers.push(if declared.is_empty() {
+        "anthropic".to_string()
+    } else {
+        declared.to_string()
+    });
+    for rung in &card.capabilities.model_ladder {
+        let p = rung.provider.trim();
+        if !p.is_empty() && !providers.iter().any(|x| x == p) {
+            providers.push(p.to_string());
+        }
+    }
+
+    let mut builder = ResolvedCredentials::builder();
+    // Funding principal: `abw-system` for platform-service agents, the
+    // owner otherwise. Mirrors resolve_credential's own branch so the two
+    // cannot disagree about who pays.
+    let principal = if agent.tier.eq_ignore_ascii_case("system") {
+        Some("abw-system".to_string())
+    } else {
+        agent.owner_id.clone()
+    };
+    if let Some(ref p) = principal {
+        builder = builder.funding_principal(p.clone());
+    }
+
+    for provider in providers {
+        if provider_needs_no_key(&provider) {
+            continue;
+        }
+        if let Some(key) = resolve_credential(state, agent, &provider).await {
+            // `resolve_credential` tries agent-scope, then the principal
+            // default, then legacy user_secrets. It doesn't report which
+            // matched; attribute to PrincipalDefault as the common case.
+            // Distinguishing the three is a P5.5 telemetry refinement.
+            builder = builder.key(provider, key, CredentialSource::PrincipalDefault);
+        }
+    }
+
+    builder.build_arc()
+}
+
 pub(crate) async fn resolve_agent_owner_secrets(
     state: &AppState,
     agent: &Agent,
@@ -5150,6 +5367,13 @@ pub(crate) fn agent_output_to_episode(
             })).collect::<Vec<_>>(),
             "sources_consulted": output.sources_consulted,
             "model_used": output.metadata.model_used,
+            // SPEC_28 — funding audit trail. Which principal's key paid for
+            // this run, and how it was resolved. Persisted per episode so
+            // "who paid for this?" is answerable from data rather than
+            // reconstructed from deploy-time env.
+            "provider": output.metadata.provider,
+            "funding_principal": output.metadata.funding_principal,
+            "credential_source": output.metadata.credential_source,
             "reasoning": output.metadata.reasoning,
             "loop_iterations": output.loop_iterations,
             "tool_invocations": output.tool_invocations.iter().map(|t| json!({

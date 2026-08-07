@@ -338,17 +338,38 @@ pub async fn charge_execution_with_royalty(
     Ok((execution_fee, royalty))
 }
 
-/// Check wallet balance and return true if low
+/// Check wallet balance and return true if low.
+///
+/// Fails TOWARD warning. The previous implementation chained
+/// `.ok().flatten().and_then(…ok()).unwrap_or(false)` — three swallows that
+/// all resolved to "balance is fine". A dead database, a missing wallet, or a
+/// type mismatch each produced a confident "no problem", which is the worst
+/// possible answer for a balance warning: the user finds out when execution
+/// starts failing instead.
+///
+/// An unnecessary low-balance banner is cheap; a suppressed one is not.
 pub async fn check_low_balance(pool: &PgPool, wallet_id: Uuid) -> bool {
-    sqlx::query("SELECT balance FROM wallets WHERE wallet_id = $1")
+    match sqlx::query("SELECT balance FROM wallets WHERE wallet_id = $1")
         .bind(wallet_id)
         .fetch_optional(pool)
         .await
-        .ok()
-        .flatten()
-        .and_then(|row| sqlx::Row::try_get::<i32, _>(&row, "balance").ok())
-        .map(|b| b < LOW_BALANCE_THRESHOLD)
-        .unwrap_or(false)
+    {
+        Ok(Some(row)) => match sqlx::Row::try_get::<i32, _>(&row, "balance") {
+            Ok(b) => b < LOW_BALANCE_THRESHOLD,
+            Err(e) => {
+                tracing::error!(%wallet_id, error = %e, "could not decode wallet balance");
+                true
+            }
+        },
+        Ok(None) => {
+            tracing::warn!(%wallet_id, "low-balance check: wallet does not exist");
+            true
+        }
+        Err(e) => {
+            tracing::error!(%wallet_id, error = %e, "low-balance check failed");
+            true
+        }
+    }
 }
 
 /// Charge a user and distribute the fee among workspace agents.
@@ -408,70 +429,158 @@ pub async fn charge_and_distribute(
             continue;
         }
 
-        // Get or create agent wallet
+        // Get or create agent wallet.
+        //
+        // NOTE ON THIS WHOLE BLOCK: the caller has ALREADY been debited by
+        // charge_gas() above. Every failure from here on means money left the
+        // payer and did not arrive at the payee. None of it can be rolled back
+        // (there is no enclosing transaction — only 12 exist in the codebase),
+        // so the minimum bar is that every failure is LOUD and carries enough
+        // identifiers to reconcile by hand. Previously every one was `let _ =`.
         let agent_id_str = agent_id.to_string();
-        if let Ok(agent_wallet) = get_or_create_wallet(pool, "agent", &agent_id_str).await {
-            let _ = credit_deposit(
+        let agent_wallet = match get_or_create_wallet(pool, "agent", &agent_id_str).await {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::error!(
+                    agent_id = %agent_id_str, payout, error = ?e,
+                    "ROYALTY LOST: payer was charged but the agent wallet could not be resolved"
+                );
+                continue;
+            }
+        };
+
+        if let Err(e) = credit_deposit(
+            pool,
+            agent_wallet.wallet_id,
+            payout,
+            &format!("Royalty: {}", description),
+        )
+        .await
+        {
+            tracing::error!(
+                agent_id = %agent_id_str, wallet_id = %agent_wallet.wallet_id, payout,
+                error = ?e,
+                "ROYALTY LOST: payer was charged but the agent deposit failed"
+            );
+            // Do not run the audit row or auto-collect for a payout that
+            // never landed — auto-collect would debit a wallet that was
+            // never credited.
+            continue;
+        }
+
+        // Record payout for audit
+        let ep_id = episode_id.and_then(|e| Uuid::parse_str(e).ok());
+        if let Err(e) = sqlx::query(
+            "INSERT INTO agent_episode_payouts (episode_id, agent_id, workspace_id, amount, contribution_tier)
+                 VALUES ($1, $2, $3, $4, 'equal')"
+        )
+        .bind(ep_id.unwrap_or_else(Uuid::nil))
+        .bind(agent_id)
+        .bind(workspace_id)
+        .bind(payout)
+        .execute(pool)
+        .await
+        {
+            tracing::error!(
+                agent_id = %agent_id_str, payout, error = %e,
+                "royalty paid but the audit row failed — payout is real but unattributed"
+            );
+        }
+
+        // Auto-collect: forward auto_collect_pct of the payout to the
+        // agent's owner.
+        //
+        // This is a two-legged transfer with no transaction around it. The
+        // original code debited the agent and then did `let _ =` on the owner
+        // credit, so a failed second leg DESTROYED credits outright: gone from
+        // the agent, never arrived at the owner, no record either way.
+        //
+        // We cannot make it atomic here, so we COMPENSATE: if the credit leg
+        // fails, refund the debit leg. Credits are only genuinely lost when
+        // both the credit and the refund fail, and that case says so.
+        let row =
+            match sqlx::query("SELECT auto_collect_pct, user_id FROM agents WHERE agent_id = $1")
+                .bind(agent_id)
+                .fetch_optional(pool)
+                .await
+            {
+                Ok(Some(r)) => r,
+                Ok(None) => continue,
+                Err(e) => {
+                    // Previously `if let Ok(Some(row))`: a read failure silently
+                    // disabled auto-collect and the owner simply never got paid.
+                    tracing::error!(
+                        agent_id = %agent_id_str, error = %e,
+                        "auto-collect config read failed; owner payout skipped"
+                    );
+                    continue;
+                }
+            };
+
+        let auto_pct: i32 = row.try_get("auto_collect_pct").unwrap_or(0);
+        let owner_id: Option<String> = row.try_get("user_id").unwrap_or(None);
+
+        if auto_pct <= 0 {
+            continue;
+        }
+        let oid = match owner_id {
+            Some(o) => o,
+            None => continue,
+        };
+        let auto_amount = std::cmp::max(1, payout * auto_pct / 100);
+
+        // Leg 1: debit the agent.
+        if let Err(e) = credit_charge(
+            pool,
+            agent_wallet.wallet_id,
+            auto_amount,
+            "agent_collect_out",
+            "Auto-collect",
+            None,
+        )
+        .await
+        {
+            tracing::warn!(
+                agent_id = %agent_id_str, auto_amount, error = ?e,
+                "auto-collect debit failed; nothing moved"
+            );
+            continue;
+        }
+
+        // Leg 2: credit the owner, refunding leg 1 on any failure.
+        let credited = match get_or_create_wallet(pool, "user", &oid).await {
+            Ok(owner_wallet) => credit_deposit_typed(
+                pool,
+                owner_wallet.wallet_id,
+                auto_amount,
+                "agent_collect_in",
+                &format!("Auto-collect from {}", agent_id_str),
+            )
+            .await
+            .map_err(|e| format!("{:?}", e)),
+            Err(e) => Err(format!("owner wallet unavailable: {:?}", e)),
+        };
+
+        if let Err(reason) = credited {
+            tracing::error!(
+                agent_id = %agent_id_str, owner_id = %oid, auto_amount,
+                reason = %reason,
+                "auto-collect credit leg failed; refunding the agent"
+            );
+            if let Err(re) = credit_deposit_typed(
                 pool,
                 agent_wallet.wallet_id,
-                payout,
-                &format!("Royalty: {}", description),
+                auto_amount,
+                "agent_collect_refund",
+                &format!("Refund: auto-collect to {} failed", oid),
             )
-            .await;
-
-            // Record payout for audit
-            let ep_id = episode_id.and_then(|e| Uuid::parse_str(e).ok());
-            let _ = sqlx::query(
-                "INSERT INTO agent_episode_payouts (episode_id, agent_id, workspace_id, amount, contribution_tier)
-                 VALUES ($1, $2, $3, $4, 'equal')"
-            )
-            .bind(ep_id.unwrap_or_else(Uuid::nil))
-            .bind(agent_id)
-            .bind(workspace_id)
-            .bind(payout)
-            .execute(pool)
-            .await;
-
-            // Auto-collect: if agent has auto_collect_pct > 0, forward that % to owner
-            if let Ok(Some(row)) =
-                sqlx::query("SELECT auto_collect_pct, user_id FROM agents WHERE agent_id = $1")
-                    .bind(agent_id)
-                    .fetch_optional(pool)
-                    .await
+            .await
             {
-                let auto_pct: i32 = row.try_get("auto_collect_pct").unwrap_or(0);
-                let owner_id: Option<String> = row.try_get("user_id").unwrap_or(None);
-
-                if auto_pct > 0 {
-                    let auto_amount = std::cmp::max(1, payout * auto_pct / 100);
-                    if let Some(oid) = owner_id {
-                        // Debit agent wallet
-                        if credit_charge(
-                            pool,
-                            agent_wallet.wallet_id,
-                            auto_amount,
-                            "agent_collect_out",
-                            "Auto-collect",
-                            None,
-                        )
-                        .await
-                        .is_ok()
-                        {
-                            // Credit owner wallet
-                            if let Ok(owner_wallet) = get_or_create_wallet(pool, "user", &oid).await
-                            {
-                                let _ = credit_deposit_typed(
-                                    pool,
-                                    owner_wallet.wallet_id,
-                                    auto_amount,
-                                    "agent_collect_in",
-                                    &format!("Auto-collect from {}", agent_id_str),
-                                )
-                                .await;
-                            }
-                        }
-                    }
-                }
+                tracing::error!(
+                    agent_id = %agent_id_str, wallet_id = %agent_wallet.wallet_id,
+                    auto_amount, error = ?re,
+                    "CREDITS DESTROYED: agent debited, owner not credited, refund also failed"
+                );
             }
         }
     }

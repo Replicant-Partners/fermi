@@ -75,13 +75,66 @@ jobs:
           psql -h localhost -U postgres -d fermi_test -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";'
           psql -h localhost -U postgres -d fermi_test -c 'CREATE EXTENSION IF NOT EXISTS "vector";'
 
-          # Run all migrations in order (same as api_server::run_migrations)
-          for f in $(ls migrations/*.sql | grep -v rollback | sort); do
-            echo "Running migration: $f"
-            psql -h localhost -U postgres -d fermi_test -f "$f" 2>&1 || true
-          done
+          # Apply migrations in api_server::run_migrations() order.
+          #
+          # This loop used to be `ls migrations/*.sql | sort`, which is NOT the
+          # runner's order and is not the set the runner applies. Two concrete
+          # consequences we hit: CI applied migrations/126 while production
+          # never did (it was missing from the hardcoded list), and CI built a
+          # schema in an order production never uses. Parse the real list.
+          grep -oE '"migrations/[^"]+\.sql"' src/api_server.rs | tr -d '"' > /tmp/migration_order.txt
+          echo "Applying $(wc -l < /tmp/migration_order.txt) migrations in runner order"
 
-          echo "All migrations complete"
+          FAILED=0
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            if ! psql -h localhost -U postgres -d fermi_test -v ON_ERROR_STOP=1 -f "$f" >/tmp/mig.out 2>&1; then
+              echo "::warning file=$f::migration failed to apply on a fresh database"
+              grep -E 'ERROR|FATAL' /tmp/mig.out | head -2 | sed 's/^/    /'
+              FAILED=$((FAILED + 1))
+            fi
+          done < /tmp/migration_order.txt
+
+          echo "Migrations applied with $FAILED failure(s)"
+
+          # RATCHET, not a gate.
+          #
+          # 26 migrations currently fail against an empty database — the set
+          # cannot rebuild the schema from scratch, because migrations have been
+          # edited in place after having been applied (e.g. nothing in the repo
+          # creates users.id, yet fermi-auth JOINs on it). Fixing that is Phase 2
+          # of docs/SCHEMA_AND_RULE_INTEGRITY_RECONCILIATION.md.
+          #
+          # Until then: freeze the number so it cannot grow. Previously this loop
+          # ended in `|| true`, so newly-broken migrations were invisible in CI
+          # exactly as they are in production's runner.
+          #
+          # When you fix migrations, LOWER this number. Never raise it.
+          BASELINE=26
+          if [ "$FAILED" -gt "$BASELINE" ]; then
+            echo "::error::$FAILED migrations fail to apply, baseline is $BASELINE."
+            echo "A migration that previously applied cleanly now does not."
+            exit 1
+          fi
+          if [ "$FAILED" -lt "$BASELINE" ]; then
+            echo "::notice::Only $FAILED migrations fail (baseline $BASELINE)."
+            echo "Please lower BASELINE in .github/workflows/ci.yml to $FAILED."
+          fi
+
+      # SPEC_28 — an LLM provider key read from env in execution code
+      # silently bills the platform for a user's agent. Cheap grep-level
+      # guard; runs before the build so a regression fails fast.
+      - name: Lint — no env-sourced LLM provider credentials
+        run: ./scripts/lint-no-env-credentials.sh
+
+      # These two ran only in a local pre-commit hook, so they were bypassable
+      # with --no-verify and absent from any clone that never ran
+      # install-git-hooks.sh. Both pass cleanly today, so they are blocking.
+      - name: Lint — SQL column refs resolve to a migration
+        run: python3 scripts/lint-schema-consistency.py $(git ls-files '*.rs')
+
+      - name: Lint — user-reference columns FK to users(user_id)
+        run: ./scripts/lint-owner-columns.sh
 
       - name: Check all binaries compile
         run: cargo check --bins --workspace
@@ -99,6 +152,27 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
           TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
         run: cargo test --test api_tests -- --test-threads=1
+
+      # Contract hygiene tier: no DATABASE_URL, so the live checks self-skip.
+      # Asserts the schema_trust contract is internally coherent — the class of
+      # defect that made it unsatisfiable from v0.11.0 to v0.11.8 unnoticed.
+      # Blocking.
+      - name: Schema trust contract — hygiene
+        run: cargo test --test schema_trust_contract
+
+      # Live tier: does the contract actually hold against a built schema?
+      # ADVISORY FOR NOW — CI's schema is built by the same migration set that
+      # cannot rebuild from empty (see the ratchet above), so failures here are
+      # currently downstream of that, not of the contract.
+      #
+      # Flip to blocking (drop continue-on-error) once the migration baseline
+      # reaches 0. That is the point at which SCHEMA_STRICT=1 becomes safe to
+      # enable in production.
+      - name: Schema trust contract — live verification (advisory)
+        continue-on-error: true
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
+        run: cargo test --test schema_trust_contract -- --nocapture
 
       # TODO: fermi-memory integration tests need rework — they insert episodes
       # without creating agents first, violating FK constraints added in migration 010.
@@ -131,7 +205,30 @@ jobs:
     name: Migration Lint
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 so the changed-migrations diff below has a base commit.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # scripts/lint-migrations.sh checks three PgBouncer-safety rules;
+      # the inline check below reimplements only the first. Run the real
+      # script on migrations touched by this change — scoping to changed
+      # files is what keeps the older, grandfathered migrations out of it.
+      - name: Lint changed migrations (PgBouncer safety)
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$BASE" ]; then BASE="${{ github.event.before }}"; fi
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE" 2>/dev/null; then
+            echo "No usable base ref; skipping changed-file migration lint."
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only --diff-filter=d "$BASE" HEAD -- 'migrations/*.sql' | grep -v rollback || true)
+          if [ -z "$CHANGED" ]; then
+            echo "No migrations changed."
+            exit 0
+          fi
+          echo "Linting: $CHANGED"
+          ./scripts/lint-migrations.sh $CHANGED
 
       - name: Check for BEGIN/COMMIT in migrations (banned with PgBouncer)
         run: |

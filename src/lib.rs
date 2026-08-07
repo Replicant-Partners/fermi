@@ -44,6 +44,15 @@ pub mod voice;
 // Outbound transactional email (Resend). No-ops when unconfigured.
 pub mod email;
 
+// Schema trust contract (v0.11.0) — the hand-declared manifest of every
+// schema object the Rust code assumes exists, plus the boot-time probe
+// that verifies it against the live DB.
+//
+// Declared here, not `#[path]`-included into `api_server.rs`, so that
+// `cargo test` can see it. It previously lived in the binary only, which
+// is why an unsatisfiable contract survived eight releases unnoticed.
+pub mod schema_trust;
+
 // Re-export main types
 pub use ast::*;
 pub use evaluator::{evaluate, EvalError, EvaluationContext};

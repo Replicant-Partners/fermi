@@ -348,6 +348,23 @@ pub async fn get_member_role(
 
 // ─── Object Sharing ────────────────────────────────────────────────
 
+/// Grant access to an object.
+///
+/// ## Share targets are validated here, deliberately
+///
+/// `object_shares.share_target` is an unconstrained TEXT column — there is no
+/// foreign key, because the column holds either a `users.user_id` or a
+/// `teams.id` depending on `share_type`, and a single FK cannot express that.
+///
+/// Nothing validated it. The 2026-08-06 integrity audit found a share granted
+/// to the user `'a'`, created that same morning: a target that does not exist
+/// and never will, sitting permanently in the ACL ladder.
+///
+/// A share pointing at a non-existent principal is not merely inert. It is a
+/// silent failure of intent — the granter believes they shared something, and
+/// no error ever told them otherwise. Validating at this choke point is what
+/// keeps SHARE-001/SHARE-002 at zero instead of accumulating drift that has
+/// to be cleaned up later.
 pub async fn share_object(
     pool: &PgPool,
     object_type: ObjectType,
@@ -357,6 +374,53 @@ pub async fn share_object(
     permission: Permission,
     granted_by: &str,
 ) -> Result<ObjectShare, AuthError> {
+    // ── Validate the target exists ────────────────────────────────
+    let target = share_target.trim();
+    if target.is_empty() {
+        return Err(AuthError::InvalidInput(
+            "share target cannot be empty".to_string(),
+        ));
+    }
+
+    match share_type {
+        ShareType::User => {
+            let exists: bool =
+                sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM users WHERE user_id = $1)")
+                    .bind(target)
+                    .fetch_one(pool)
+                    .await
+                    .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
+            if !exists {
+                return Err(AuthError::InvalidInput(format!(
+                    "cannot share with '{}': no such user",
+                    target
+                )));
+            }
+        }
+        ShareType::Team => {
+            // teams.id is a UUID; a non-UUID target can never match, so reject
+            // it as input rather than letting the comparison silently fail.
+            let team_id = Uuid::parse_str(target).map_err(|_| {
+                AuthError::InvalidInput(format!(
+                    "cannot share with team '{}': not a team id",
+                    target
+                ))
+            })?;
+            let exists: bool =
+                sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM teams WHERE id = $1)")
+                    .bind(team_id)
+                    .fetch_one(pool)
+                    .await
+                    .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
+            if !exists {
+                return Err(AuthError::InvalidInput(format!(
+                    "cannot share with team '{}': no such team",
+                    target
+                )));
+            }
+        }
+    }
+
     let row = sqlx::query_as::<_, (Uuid,)>(
         r#"
         INSERT INTO object_shares (object_type, object_id, share_type, share_target, permission, granted_by)
@@ -369,7 +433,7 @@ pub async fn share_object(
     .bind(object_type.as_str())
     .bind(object_id)
     .bind(share_type.as_str())
-    .bind(share_target)
+    .bind(target)
     .bind(permission.as_str())
     .bind(granted_by)
     .fetch_one(pool)
@@ -381,7 +445,7 @@ pub async fn share_object(
         object_type,
         object_id: object_id.to_string(),
         share_type,
-        share_target: share_target.to_string(),
+        share_target: target.to_string(),
         permission,
         granted_by: granted_by.to_string(),
     })

@@ -79,3 +79,6 @@ docs/**/*.pdf
 # stray local-override files.
 .abw/credentials
 crates/abw-cli/.env
+
+# Integrity audit transcripts (may contain sample row ids)
+integrity-audit-*.txt

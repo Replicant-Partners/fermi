@@ -53,6 +53,14 @@ ALLOWED = {
     ("forecast_invites", "invitee_user_id"): "back-fill on sign-in; nullable",
     # secrets access log — history that survives user deletion
     ("secret_access_log", "user_id"): "audit — access log",
+    # Stripe idempotency claims (mig 182). Deliberately NOT FK'd: the claim
+    # is what prevents a paid session being credited twice, so it must
+    # outlive the account. With ON DELETE CASCADE, deleting a user would
+    # make their completed sessions claimable again; with a plain FK, the
+    # webhook could not claim at all if the user were removed mid-flight,
+    # and billing.rs fails closed — silently halting purchases. A money-
+    # safety mechanism must not inherit another table's lifecycle.
+    ("stripe_sessions_processed", "user_id"): "audit — idempotency claim outlives the account",
     # Spec 32: an annotation is a claim someone MADE. Deleting the person
     # must not delete the objection or the answer to it — the whole reason
     # resolutions are recorded rather than erased is that the reasoning

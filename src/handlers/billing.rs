@@ -250,20 +250,68 @@ pub async fn handle_checkout_completed(state: &AppState, session: stripe::Checko
         }
     };
 
-    // Idempotency: check if this session was already processed
+    // ── Idempotency: CLAIM the session before crediting ───────────────
+    //
+    // The previous implementation did `if let Ok(Some(_)) = existing`, which
+    // treats a database error as "not yet processed" and credits again, and
+    // wrote the marker AFTER the deposit via a swallowed `let _ = UPDATE`.
+    // Read-then-write is not idempotency; it is a race with money in it.
+    //
+    // Now the database decides. INSERT … ON CONFLICT DO NOTHING RETURNING
+    // yields a row only for the caller that actually won the claim, so
+    // concurrent webhook deliveries cannot both proceed. See migration 182.
     let session_id_str = session.id.as_str().to_string();
-    let existing =
-        sqlx::query("SELECT tx_id FROM credit_ledger WHERE stripe_session_id = $1 LIMIT 1")
-            .bind(&session_id_str)
-            .fetch_optional(&state.db)
-            .await;
 
-    if let Ok(Some(_)) = existing {
-        println!(
-            "Stripe checkout: session {} already processed, skipping",
-            session_id_str
-        );
-        return;
+    let claim = sqlx::query(
+        "INSERT INTO stripe_sessions_processed (session_id, user_id, credits) \
+         VALUES ($1, $2, $3) \
+         ON CONFLICT (session_id) DO NOTHING \
+         RETURNING session_id",
+    )
+    .bind(&session_id_str)
+    .bind(&user_id)
+    .bind(credits)
+    .fetch_optional(&state.db)
+    .await;
+
+    match claim {
+        Ok(Some(_)) => { /* we own this session — proceed to credit */ }
+        Ok(None) => {
+            println!(
+                "Stripe checkout: session {} already claimed, skipping",
+                session_id_str
+            );
+            return;
+        }
+        Err(e) => {
+            // FAIL CLOSED. We cannot prove this session is unprocessed, so we
+            // must not credit. Stripe retries failed webhooks, so declining
+            // here loses nothing; guessing could double-credit real money.
+            eprintln!(
+                "Stripe checkout: CANNOT VERIFY idempotency for session {} ({}). \
+                 Refusing to credit — Stripe will retry. If this persists, check \
+                 that migration 182 applied.",
+                session_id_str, e
+            );
+            return;
+        }
+    }
+
+    // Release the claim so a Stripe retry can legitimately re-attempt.
+    // Without this, a transient failure below would strand the session as
+    // permanently "claimed" and the user would never receive their credits.
+    async fn release_claim(db: &sqlx::PgPool, session_id: &str) {
+        if let Err(e) = sqlx::query("DELETE FROM stripe_sessions_processed WHERE session_id = $1")
+            .bind(session_id)
+            .execute(db)
+            .await
+        {
+            eprintln!(
+                "Stripe checkout: FAILED TO RELEASE claim for session {} ({}). \
+                 This session will not be retried automatically — credits may be owed.",
+                session_id, e
+            );
+        }
     }
 
     // Credit the user's wallet
@@ -278,14 +326,42 @@ pub async fn handle_checkout_completed(state: &AppState, session: stripe::Checko
             .await
             {
                 Ok(tx) => {
-                    // Record stripe_session_id on the ledger entry
-                    let _ = sqlx::query(
+                    // Record stripe_session_id on the ledger entry. Still
+                    // best-effort, but no longer load-bearing for idempotency
+                    // — the claim above is. A failure here is now a
+                    // reporting gap, not a double-credit.
+                    if let Err(e) = sqlx::query(
                         "UPDATE credit_ledger SET stripe_session_id = $1 WHERE tx_id = $2",
                     )
                     .bind(&session_id_str)
                     .bind(tx.tx_id)
                     .execute(&state.db)
-                    .await;
+                    .await
+                    {
+                        eprintln!(
+                            "Stripe checkout: credited session {} but failed to stamp the \
+                             ledger row ({}). Credits ARE applied; the ledger link is missing.",
+                            session_id_str, e
+                        );
+                    }
+
+                    // Settle the claim: records that the deposit completed, so
+                    // a NULL settled_at is a reliable "claimed but never
+                    // credited" signal for the integrity audit.
+                    if let Err(e) = sqlx::query(
+                        "UPDATE stripe_sessions_processed \
+                            SET settled_at = NOW(), tx_id = $2 WHERE session_id = $1",
+                    )
+                    .bind(&session_id_str)
+                    .bind(tx.tx_id)
+                    .execute(&state.db)
+                    .await
+                    {
+                        eprintln!(
+                            "Stripe checkout: could not settle claim for session {} ({})",
+                            session_id_str, e
+                        );
+                    }
 
                     println!(
                         "Stripe checkout: credited {} credits to user {} (session {})",
@@ -297,6 +373,7 @@ pub async fn handle_checkout_completed(state: &AppState, session: stripe::Checko
                         "Stripe checkout: failed to deposit credits for user {}: {}",
                         user_id, e
                     );
+                    release_claim(&state.db, &session_id_str).await;
                 }
             }
         }
@@ -305,6 +382,7 @@ pub async fn handle_checkout_completed(state: &AppState, session: stripe::Checko
                 "Stripe checkout: failed to get/create wallet for user {}: {}",
                 user_id, e
             );
+            release_claim(&state.db, &session_id_str).await;
         }
     }
 }

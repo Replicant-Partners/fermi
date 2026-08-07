@@ -10,13 +10,35 @@
 //! At boot, after `run_migrations()` and `ensure_critical_schema()`, we
 //! probe the DB for every schema object the Rust code assumes exists:
 //!
-//!   * Every table in [`SCHEMA_TABLES`] is present.
-//!   * Every column in [`SCHEMA_COLUMNS`] is present on its table.
+//!   * Every table in [`SCHEMA_TABLES`] is present *and is a table*.
+//!   * Every materialized view in [`SCHEMA_MATVIEWS`] is present *and is
+//!     a materialized view*.
+//!   * Every column in [`SCHEMA_COLUMNS`] is present on its relation.
 //!   * Every function in [`SCHEMA_FUNCTIONS`] is present AND has the
 //!     declared argument-type signature AND the declared return type.
 //!     (Return type catches the v0.10.19 REAL-vs-FLOAT8 class.)
 //!
 //! Any missing/mismatched object is logged LOUDLY to stderr.
+//!
+//! ## Why `pg_catalog` and not `information_schema`
+//!
+//! This is load-bearing, not stylistic. **`information_schema` omits
+//! materialized views entirely** — they appear in neither
+//! `information_schema.tables` nor `information_schema.columns`.
+//!
+//! v0.11.0 shipped with `fermi_leaderboard` (a MATERIALIZED VIEW, see
+//! `migrations/094_fermi_forecasting.sql`) declared in [`SCHEMA_TABLES`]
+//! and probed via `information_schema.tables`. The consequence: the
+//! contract reported that table permanently missing, [`verify`] could
+//! *never* return healthy, and `SCHEMA_STRICT=1` would have aborted
+//! every boot — so it was never enabled anywhere. The drift detector
+//! was itself an always-failing guard, and because the verdict was only
+//! ever written to stderr, nothing ever noticed.
+//!
+//! Probing `pg_catalog.pg_class` / `pg_catalog.pg_attribute` covers every
+//! relation kind uniformly. Relation *kind* is now part of the contract
+//! too, so "matview silently replaced by a table" is detectable drift
+//! rather than an invisible pass.
 //!
 //! ## Behaviour
 //!
@@ -64,7 +86,9 @@ use std::collections::HashSet;
 // The contract
 // ═══════════════════════════════════════════════════════════════════
 
-/// Tables the Rust code assumes exist.
+/// Ordinary (or partitioned) tables the Rust code assumes exist.
+///
+/// Materialized views do **not** belong here — see [`SCHEMA_MATVIEWS`].
 pub const SCHEMA_TABLES: &[&str] = &[
     // Core identity
     "users",
@@ -81,7 +105,6 @@ pub const SCHEMA_TABLES: &[&str] = &[
     "fermi_portfolios",
     "fermi_portfolio_forecasts",
     "fermi_notebooks",
-    "fermi_leaderboard",
     // Relationships and pending cascades
     "forecast_relationships",
     "forecast_relationship_groups",
@@ -121,7 +144,49 @@ pub const SCHEMA_TABLES: &[&str] = &[
     "harness_snapshots",
     // v0.11.2 — orchestra registry
     "orchestra_membership_requests",
+    // v0.11.9 — Stripe idempotency claims (mig 182). Load-bearing for money:
+    // billing.rs FAILS CLOSED if this table is unreachable, so its absence
+    // silently stops all credit purchases rather than double-crediting.
+    // Exactly the kind of object that belongs in the contract.
+    "stripe_sessions_processed",
 ];
+
+/// Materialized views the Rust code assumes exist.
+///
+/// Declared separately from [`SCHEMA_TABLES`] because `pg_class.relkind`
+/// distinguishes them (`'m'` vs `'r'`/`'p'`), and because conflating the
+/// two is exactly the bug that made the v0.11.0 contract unsatisfiable.
+/// See the module header.
+pub const SCHEMA_MATVIEWS: &[&str] = &[
+    // migrations/094_fermi_forecasting.sql:178, rebuilt by
+    // migrations/167_fermi_leaderboard_float8_minmax.sql:77.
+    // Refreshed via refresh_fermi_leaderboard() — see SCHEMA_FUNCTIONS.
+    "fermi_leaderboard",
+];
+
+/// `pg_class.relkind` values acceptable for a [`SCHEMA_TABLES`] entry:
+/// ordinary table or partitioned table.
+pub const TABLE_KINDS: &[&str] = &["r", "p"];
+
+/// `pg_class.relkind` values acceptable for a [`SCHEMA_MATVIEWS`] entry.
+pub const MATVIEW_KINDS: &[&str] = &["m"];
+
+/// Human-readable rendering of a `pg_class.relkind` code, for drift
+/// reports that an operator has to read at 3am.
+pub fn describe_relkind(k: &str) -> &'static str {
+    match k {
+        "r" => "ordinary table",
+        "p" => "partitioned table",
+        "m" => "materialized view",
+        "v" => "view",
+        "f" => "foreign table",
+        "i" => "index",
+        "S" => "sequence",
+        "c" => "composite type",
+        "t" => "TOAST table",
+        _ => "unknown relkind",
+    }
+}
 
 /// Columns the Rust code depends on. Rule of thumb: any column whose
 /// absence would 500 a user-facing request. Grouped by table for
@@ -237,9 +302,16 @@ pub const SCHEMA_COLUMNS: &[(&str, &str)] = &[
 /// catch signature drift on both directions (v0.10.19 was
 /// `resolve_forecast()` returning REAL where code assumed FLOAT8).
 ///
-/// Signature format matches
-/// `pg_get_function_identity_arguments(oid)` — space-normalised
-/// lowercase. Return type matches `pg_catalog.format_type(prorettype)`.
+/// Signature format is the **comma-separated input argument type list**,
+/// space-normalised and lowercased — e.g. `"text, boolean"`, or `""` for a
+/// zero-argument function. Return type matches
+/// `pg_catalog.format_type(prorettype)`.
+///
+/// Do **not** switch the probe to `pg_get_function_identity_arguments()`:
+/// it includes parameter *names* (`"p_forecast_id text, ..."`), which can
+/// never match a type-only declaration. That mistake made
+/// `resolve_forecast` report permanent signature drift — the same
+/// always-fails-guard class as the matview bug. See [`verify`].
 pub const SCHEMA_FUNCTIONS: &[(&str, &str, &str)] = &[
     // (name, args, return_type)
     ("compute_brier_score", "real, boolean", "real"),
@@ -262,6 +334,12 @@ pub const SCHEMA_FUNCTIONS: &[(&str, &str, &str)] = &[
 #[derive(Debug, Default)]
 pub struct SchemaVerdict {
     pub missing_tables: Vec<&'static str>,
+    /// Materialized views that don't exist at all.
+    pub missing_matviews: Vec<&'static str>,
+    /// Relations that exist under the contracted name but with the wrong
+    /// `relkind` — e.g. a materialized view replaced by a plain table.
+    /// `(name, expected_kind, found_kind(s))`.
+    pub relation_kind_mismatches: Vec<(&'static str, &'static str, String)>,
     pub missing_columns: Vec<(&'static str, &'static str)>,
     /// Functions that don't exist at all (name not found).
     pub missing_functions: Vec<(&'static str, &'static str, &'static str)>,
@@ -277,6 +355,8 @@ impl SchemaVerdict {
     /// True if every check passed.
     pub fn is_healthy(&self) -> bool {
         self.missing_tables.is_empty()
+            && self.missing_matviews.is_empty()
+            && self.relation_kind_mismatches.is_empty()
             && self.missing_columns.is_empty()
             && self.missing_functions.is_empty()
             && self.function_sig_mismatches.is_empty()
@@ -285,6 +365,8 @@ impl SchemaVerdict {
 
     pub fn total_issues(&self) -> usize {
         self.missing_tables.len()
+            + self.missing_matviews.len()
+            + self.relation_kind_mismatches.len()
             + self.missing_columns.len()
             + self.missing_functions.len()
             + self.function_sig_mismatches.len()
@@ -295,12 +377,31 @@ impl SchemaVerdict {
     /// endpoint returns. Preserves backwards compatibility with the
     /// pre-v0.11.0 response body.
     pub fn to_health_json(&self) -> Value {
+        let kind_drift = |name: &&'static str| -> Option<String> {
+            self.relation_kind_mismatches
+                .iter()
+                .find(|(n, _, _)| n == name)
+                .map(|(_, _, found)| found.clone())
+        };
+
         let tables: Vec<Value> = SCHEMA_TABLES
             .iter()
             .map(|name| {
                 json!({
                     "name": name,
                     "present": !self.missing_tables.contains(name),
+                    "kind_drift": kind_drift(name),
+                })
+            })
+            .collect();
+
+        let matviews: Vec<Value> = SCHEMA_MATVIEWS
+            .iter()
+            .map(|name| {
+                json!({
+                    "name": name,
+                    "present": !self.missing_matviews.contains(name),
+                    "kind_drift": kind_drift(name),
                 })
             })
             .collect();
@@ -352,10 +453,13 @@ impl SchemaVerdict {
             "status":     status,
             "checked_at": chrono::Utc::now().to_rfc3339(),
             "tables":     tables,
+            "matviews":   matviews,
             "columns":    columns,
             "functions":  functions,
             "summary": {
                 "tables":    { "total": SCHEMA_TABLES.len(),    "missing": self.missing_tables.len() },
+                "matviews":  { "total": SCHEMA_MATVIEWS.len(),  "missing": self.missing_matviews.len() },
+                "relation_kind_drift": self.relation_kind_mismatches.len(),
                 "columns":   { "total": SCHEMA_COLUMNS.len(),   "missing": self.missing_columns.len() },
                 "functions": {
                     "total":               SCHEMA_FUNCTIONS.len(),
@@ -380,33 +484,92 @@ impl SchemaVerdict {
 pub async fn verify(db: &PgPool) -> Result<SchemaVerdict, sqlx::Error> {
     let mut verdict = SchemaVerdict::default();
 
-    // ── Tables ────────────────────────────────────────────────────
-    let present_tables: HashSet<String> = sqlx::query(
-        "SELECT table_name FROM information_schema.tables \
-          WHERE table_schema = 'public' AND table_name = ANY($1)",
+    // ── Relations: tables + materialized views ────────────────────
+    //
+    // `pg_class`, NOT `information_schema.tables` — the latter omits
+    // materialized views, which made the v0.11.0 contract permanently
+    // unsatisfiable. See the module header.
+    let all_relations: Vec<&str> = SCHEMA_TABLES
+        .iter()
+        .chain(SCHEMA_MATVIEWS.iter())
+        .copied()
+        .collect();
+
+    let present_relations: Vec<(String, String)> = sqlx::query(
+        "SELECT c.relname, c.relkind::text AS relkind \
+           FROM pg_catalog.pg_class c \
+           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+          WHERE n.nspname = 'public' \
+            AND c.relname = ANY($1)",
     )
-    .bind(SCHEMA_TABLES)
+    .bind(all_relations.as_slice())
     .fetch_all(db)
     .await?
     .into_iter()
-    .filter_map(|r| r.try_get::<String, _>("table_name").ok())
+    .filter_map(|r| {
+        Some((
+            r.try_get::<String, _>("relname").ok()?,
+            r.try_get::<String, _>("relkind").ok()?,
+        ))
+    })
     .collect();
 
-    for &t in SCHEMA_TABLES {
-        if !present_tables.contains(t) {
-            verdict.missing_tables.push(t);
+    let found_kinds = |name: &str| -> Vec<&str> {
+        present_relations
+            .iter()
+            .filter(|(n, _)| n == name)
+            .map(|(_, k)| k.as_str())
+            .collect()
+    };
+
+    for (contract, want_kinds, want_label, is_matview) in [
+        (SCHEMA_TABLES, TABLE_KINDS, "table", false),
+        (SCHEMA_MATVIEWS, MATVIEW_KINDS, "materialized view", true),
+    ] {
+        for &name in contract {
+            let found = found_kinds(name);
+
+            if found.is_empty() {
+                if is_matview {
+                    verdict.missing_matviews.push(name);
+                } else {
+                    verdict.missing_tables.push(name);
+                }
+            } else if !found.iter().any(|k| want_kinds.contains(k)) {
+                // Present under the contracted name, wrong kind. This is
+                // drift, not absence — report it as such so the operator
+                // isn't sent looking for a missing migration.
+                let found_desc = found
+                    .iter()
+                    .map(|k| describe_relkind(k))
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                verdict
+                    .relation_kind_mismatches
+                    .push((name, want_label, found_desc));
+            }
         }
     }
 
     // ── Columns ───────────────────────────────────────────────────
+    //
+    // `pg_attribute` rather than `information_schema.columns`, for the
+    // same reason as above: matview columns are absent from
+    // `information_schema`. `attnum > 0` skips system columns;
+    // `attisdropped` skips logically-dropped ones.
     let table_names: Vec<String> = SCHEMA_COLUMNS.iter().map(|(t, _)| t.to_string()).collect();
     let col_names: Vec<String> = SCHEMA_COLUMNS.iter().map(|(_, c)| c.to_string()).collect();
 
     let present_columns: HashSet<(String, String)> = sqlx::query(
-        "SELECT table_name, column_name FROM information_schema.columns \
-          WHERE table_schema = 'public' \
-            AND table_name  = ANY($1) \
-            AND column_name = ANY($2)",
+        "SELECT c.relname AS table_name, a.attname AS column_name \
+           FROM pg_catalog.pg_attribute a \
+           JOIN pg_catalog.pg_class c     ON c.oid = a.attrelid \
+           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+          WHERE n.nspname = 'public' \
+            AND a.attnum > 0 \
+            AND NOT a.attisdropped \
+            AND c.relname = ANY($1) \
+            AND a.attname = ANY($2)",
     )
     .bind(&table_names)
     .bind(&col_names)
@@ -437,9 +600,20 @@ pub async fn verify(db: &PgPool) -> Result<SchemaVerdict, sqlx::Error> {
         .map(|(n, _, _)| n.to_string())
         .collect();
 
+    // `args` is built from `proargtypes` rather than
+    // `pg_get_function_identity_arguments(oid)` because the latter includes
+    // parameter NAMES, so a type-only contract entry could never match it.
+    // v0.11.0 used it and `resolve_forecast` reported permanent signature
+    // drift as a result. `proargtypes` covers IN arguments in declaration
+    // order and yields '' for a zero-arg function — exactly the contract's
+    // format.
     let present_functions: Vec<(String, String, String)> = sqlx::query(
         "SELECT p.proname, \
-                pg_get_function_identity_arguments(p.oid) AS args, \
+                COALESCE(( \
+                    SELECT string_agg(pg_catalog.format_type(t.oid, NULL), ', ' \
+                                      ORDER BY t.ord) \
+                      FROM unnest(p.proargtypes) WITH ORDINALITY AS t(oid, ord) \
+                ), '') AS args, \
                 pg_catalog.format_type(p.prorettype, NULL) AS ret \
            FROM pg_catalog.pg_proc p \
            JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
@@ -538,8 +712,9 @@ pub enum BootDecision {
 pub fn emit_boot_report(verdict: &SchemaVerdict, strict: bool) -> BootDecision {
     if verdict.is_healthy() {
         eprintln!(
-            "[schema_trust] ✓ contract verified — {} tables, {} columns, {} functions all present",
+            "[schema_trust] ✓ contract verified — {} tables, {} matviews, {} columns, {} functions all present",
             SCHEMA_TABLES.len(),
+            SCHEMA_MATVIEWS.len(),
             SCHEMA_COLUMNS.len(),
             SCHEMA_FUNCTIONS.len()
         );
@@ -557,6 +732,15 @@ pub fn emit_boot_report(verdict: &SchemaVerdict, strict: bool) -> BootDecision {
 
     for t in &verdict.missing_tables {
         eprintln!("[schema_trust]   ✗ missing table:  public.{}", t);
+    }
+    for m in &verdict.missing_matviews {
+        eprintln!("[schema_trust]   ✗ missing matview: public.{}", m);
+    }
+    for (name, want, found) in &verdict.relation_kind_mismatches {
+        eprintln!(
+            "[schema_trust]   ✗ relation kind drift: public.{} — want {}, found {}",
+            name, want, found
+        );
     }
     for (t, c) in &verdict.missing_columns {
         eprintln!("[schema_trust]   ✗ missing column: public.{}.{}", t, c);
@@ -594,10 +778,21 @@ pub fn emit_boot_report(verdict: &SchemaVerdict, strict: bool) -> BootDecision {
 }
 
 /// Convenience: verify against the DB and log the verdict in one call.
-/// Returns the decision for `main()`. Never panics; DB errors are
-/// logged as a distinct WARNING and treated as `DriftContinueBoot`
-/// (we don't refuse boot because *the check itself* couldn't run —
-/// only because the check ran and found drift).
+/// Returns the decision for `main()`. Never panics.
+///
+/// ## Probe failure is fail-closed under strict mode
+///
+/// v0.11.0 treated "the probe itself errored" as `DriftContinueBoot`
+/// unconditionally, on the reasoning that we shouldn't refuse boot
+/// because the *check* couldn't run. That reasoning is wrong under
+/// `SCHEMA_STRICT=1`: a revoked `pg_catalog` grant, a connection
+/// failure, or a statement timeout would silently disable the contract
+/// while the operator believed it was being enforced. A guard that can
+/// be turned off by an error is not a guard.
+///
+/// So: non-strict mode still continues (warn-only is warn-only), but
+/// strict mode refuses to serve if it cannot *prove* the schema is
+/// sound.
 pub async fn verify_and_report(db: &PgPool) -> BootDecision {
     let strict = std::env::var("SCHEMA_STRICT")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -606,11 +801,19 @@ pub async fn verify_and_report(db: &PgPool) -> BootDecision {
     match verify(db).await {
         Ok(verdict) => emit_boot_report(&verdict, strict),
         Err(e) => {
-            eprintln!(
-                "[schema_trust] ⚠ probe itself failed: {} — continuing boot without contract check",
-                e
-            );
-            BootDecision::DriftContinueBoot
+            eprintln!("[schema_trust] ⚠ probe itself failed: {}", e);
+            if strict {
+                eprintln!(
+                    "[schema_trust] SCHEMA_STRICT=1 and the contract could not be verified — \
+                     refusing to serve traffic rather than assuming the schema is sound."
+                );
+                BootDecision::DriftAbortBoot
+            } else {
+                eprintln!(
+                    "[schema_trust] continuing boot without contract check (warn-only mode)."
+                );
+                BootDecision::DriftContinueBoot
+            }
         }
     }
 }
