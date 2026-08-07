@@ -617,18 +617,27 @@ pub async fn forecast_diff_handler(
         .ok_or((StatusCode::NOT_FOUND, "No history for this forecast".into()))?;
 
     // Default comparison is against the parent, which is what "what did
-    // this commit do" means. `git` spells the parent `<sha>^`; resolving it
-    // here keeps that syntax out of the client.
-    let from = params
-        .get("against")
-        .cloned()
-        .unwrap_or_else(|| format!("{}^", sha));
+    // this commit do" means.
+    //
+    // This used to synthesise `format!("{}^", sha)` and hand it to
+    // `diff_commits`, which parsed its arguments with `Oid::from_str` — a
+    // full-hex-sha-only parser. So EVERY diff request failed with "unable
+    // to parse OID - too long" and the History pane showed "No diff
+    // available for this revision" for every commit since v0.11.11. Two
+    // separate faults: the parser (fixed in `diff_commits`, which now uses
+    // revparse) and the root commit, which has no parent for `^` to name.
+    // Every forecast repo is seeded with an `initial structure` commit, so
+    // the root is a revision users can click — `diff_commit_with_parent`
+    // renders it against the empty tree instead of erroring.
+    let against = params.get("against").cloned();
+    let git = &state.workspace_git;
+    let diff = match against.clone() {
+        Some(from) => git.diff_commits_async(slug, from, sha.clone()).await,
+        None => git.diff_commit_with_parent_async(slug, sha.clone()).await,
+    }
+    .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
-    let diff = state
-        .workspace_git
-        .diff_commits_async(slug, from.clone(), sha.clone())
-        .await
-        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let from = against.unwrap_or_else(|| format!("{}^", sha));
 
     Ok(Json(json!({
         "forecast_id": forecast_id,

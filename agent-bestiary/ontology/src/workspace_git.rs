@@ -501,7 +501,15 @@ impl WorkspaceGitManager {
 
         let mut revwalk = repo.revwalk()?;
         revwalk.push(oid)?;
-        revwalk.set_sorting(git2::Sort::TIME)?;
+        // TOPOLOGICAL as well as TIME. Git timestamps have one-second
+        // resolution, and these commits are written milliseconds apart — a
+        // save followed by a cascade, or a repo's seeded `initial
+        // structure` commit followed immediately by the first real one. On
+        // a tie, TIME alone leaves the order undefined, so the History pane
+        // that promises "newest first" could and did render a parent above
+        // its own child. TOPOLOGICAL makes ancestry the tie-breaker, which
+        // is what `git log` does by default.
+        revwalk.set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL)?;
 
         let mut commits = Vec::new();
         for (i, rev) in revwalk.enumerate() {
@@ -524,22 +532,60 @@ impl WorkspaceGitManager {
         Ok(commits)
     }
 
-    /// Get a diff between two commits as a string.
-    pub fn diff_commits(&self, slug: &str, from_sha: &str, to_sha: &str) -> Result<String> {
+    /// Get a diff between two revisions as a string.
+    ///
+    /// Both sides accept anything `git rev-parse` accepts — a full sha, an
+    /// abbreviated one, `HEAD~2`, a branch name, or `<sha>^` for a parent.
+    ///
+    /// This used to be `Oid::from_str`, which parses *only* a full hex sha
+    /// and rejects everything else. The forecast history UI asks for
+    /// `<sha>^` (the natural spelling of "what did this commit change"),
+    /// so every diff request it ever made failed with `unable to parse OID
+    /// - too long`, and the pane rendered "No diff available" for every
+    /// revision. Nothing was wrong with the history itself.
+    pub fn diff_commits(&self, slug: &str, from_rev: &str, to_rev: &str) -> Result<String> {
         let repo = self.init_or_open(slug)?;
+        let from_commit = Self::resolve_commit(&repo, from_rev)?;
+        let to_commit = Self::resolve_commit(&repo, to_rev)?;
+        Self::render_diff(&repo, Some(&from_commit), &to_commit)
+    }
 
-        let from_oid = git2::Oid::from_str(from_sha)
-            .map_err(|e| OntologyError::RepoNotFound(format!("Invalid SHA {}: {}", from_sha, e)))?;
-        let to_oid = git2::Oid::from_str(to_sha)
-            .map_err(|e| OntologyError::RepoNotFound(format!("Invalid SHA {}: {}", to_sha, e)))?;
+    /// Diff one commit against its parent — "what did this change?".
+    ///
+    /// Distinct from `diff_commits(slug, "<sha>^", "<sha>")` because the
+    /// **root commit has no parent**, and asking for `^` on it is an error
+    /// rather than an empty answer. Every forecast repo is seeded with an
+    /// `initial structure` commit, so the root is a revision users can and
+    /// do click on. Against no parent, the whole tree reads as added, which
+    /// is exactly what that commit did.
+    pub fn diff_commit_with_parent(&self, slug: &str, rev: &str) -> Result<String> {
+        let repo = self.init_or_open(slug)?;
+        let commit = Self::resolve_commit(&repo, rev)?;
+        let parent = commit.parent(0).ok();
+        Self::render_diff(&repo, parent.as_ref(), &commit)
+    }
 
-        let from_commit = repo.find_commit(from_oid)?;
-        let to_commit = repo.find_commit(to_oid)?;
+    /// Resolve any revision string to a commit.
+    fn resolve_commit<'r>(repo: &'r Repository, rev: &str) -> Result<git2::Commit<'r>> {
+        repo.revparse_single(rev)
+            .and_then(|obj| obj.peel_to_commit())
+            .map_err(|e| OntologyError::RepoNotFound(format!("Invalid revision {}: {}", rev, e)))
+    }
 
-        let from_tree = from_commit.tree()?;
-        let to_tree = to_commit.tree()?;
+    /// Render `from → to` as a unified diff. `from = None` diffs against
+    /// the empty tree, which is how a root commit is shown.
+    fn render_diff(
+        repo: &Repository,
+        from: Option<&git2::Commit<'_>>,
+        to: &git2::Commit<'_>,
+    ) -> Result<String> {
+        let from_tree = match from {
+            Some(c) => Some(c.tree()?),
+            None => None,
+        };
+        let to_tree = to.tree()?;
 
-        let diff = repo.diff_tree_to_tree(Some(&from_tree), Some(&to_tree), None)?;
+        let diff = repo.diff_tree_to_tree(from_tree.as_ref(), Some(&to_tree), None)?;
 
         let mut output = String::new();
         diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
@@ -752,6 +798,14 @@ impl WorkspaceGitManager {
     ) -> Result<String> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.diff_commits(&slug, &from_sha, &to_sha))
+            .await
+            .map_err(|e| OntologyError::ConfigError(format!("spawn_blocking failed: {}", e)))?
+    }
+
+    /// Async [`Self::diff_commit_with_parent`].
+    pub async fn diff_commit_with_parent_async(&self, slug: String, rev: String) -> Result<String> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.diff_commit_with_parent(&slug, &rev))
             .await
             .map_err(|e| OntologyError::ConfigError(format!("spawn_blocking failed: {}", e)))?
     }
