@@ -15530,6 +15530,7 @@ impl FermiConsole {
             ));
         }
         meta.extend(format_op_metrics(&op.metrics));
+        let rollup = op.rollup_items();
         if !op.participants.is_empty() {
             meta.push(format!("🧑 {}", format_op_participants(&op.participants)));
         }
@@ -15615,6 +15616,41 @@ impl FermiConsole {
                                 .text_size(px(10.0))
                                 .text_color(theme::fg_dim())
                                 .child(format!("done when: {}", op.done_when)),
+                        )
+                    })
+                    // A rolled-up condition names a count; this says WHICH.
+                    // Without it "9 forecasts have no research" is a number
+                    // you have to go hunting to act on. Capped, because the
+                    // roll-up exists to stop the board being a list.
+                    .when(!rollup.is_empty(), |el| {
+                        el.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(1.0))
+                                .mt(px(2.0))
+                                .children(rollup.iter().take(ROLLUP_VISIBLE).map(|it| {
+                                    div()
+                                        .text_size(px(10.0))
+                                        .text_color(theme::fg_dim())
+                                        .child(format!(
+                                            "· {} — {:.0}%, {}d",
+                                            truncate(&it.question, 52),
+                                            it.probability_pct,
+                                            it.age_days
+                                        ))
+                                }))
+                                .when(rollup.len() > ROLLUP_VISIBLE, |el| {
+                                    el.child(
+                                        div()
+                                            .text_size(px(9.5))
+                                            .text_color(theme::fg_faint())
+                                            .child(format!(
+                                                "+{} more",
+                                                rollup.len() - ROLLUP_VISIBLE
+                                            )),
+                                    )
+                                }),
                         )
                     })
                     .when(!meta_line.is_empty(), |el| {
@@ -20309,12 +20345,24 @@ fn humanise_day(day: &str) -> String {
 /// of kinds the `&'static str` filter can hold. Deliberately NOT a
 /// vocabulary duplicate — glyphs and labels stay on `Op`, which the
 /// server's wire contract owns.
-const OP_KIND_ORDER: [&str; 4] = [
+const OP_KIND_ORDER: [&str; 6] = [
     "cascade_review",
     "contested",
+    // Spec 32. Added late: shipping the detector without touching this
+    // left challenged forecasts with no filter chip, so the one kind the
+    // board exists to surface was the one you couldn't isolate.
+    "contested_assumption",
+    "ungrounded",
     "unreviewed",
     "resolution_due",
 ];
+
+/// How many members of a rolled-up op are listed under its row.
+///
+/// The server sends up to 25; this is what fits before the row stops being
+/// a row. `+N more` covers the rest — the roll-up exists so the board isn't
+/// a list, and re-expanding it into one here would undo the point.
+const ROLLUP_VISIBLE: usize = 4;
 
 /// Accent for an op's urgency bucket.
 ///
