@@ -90,11 +90,11 @@ pub async fn get_agent_funding_handler(
     // Report funded=true unconditionally. Owners of system agents (the
     // platform account itself) get the same response as non-owners —
     // no ABW profile URL because the platform env var is the source.
-    if agent.tier.eq_ignore_ascii_case("system") {
+    if crate::is_platform_funded(&agent.tier) {
         return Ok(Json(if is_privileged {
             json!({
                 "agent_id": agent.agent_name,
-                "tier": "system",
+                "tier": agent.tier,
                 "funded": true,
                 "funding_source": "platform",
                 "providers": ["platform"],

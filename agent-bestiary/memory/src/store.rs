@@ -54,6 +54,26 @@ async fn insert_provenance_row(
     Ok(())
 }
 
+/// Excludes integration-test cruft from agent enumeration.
+///
+/// Tests have been inserting `test_agent_<uuid>` rows into the shared
+/// database for a long time (v0.10.20's audit found 565). The policy is
+/// **hide, don't delete** — deleting is destructive and the rows are
+/// harmless where they sit; they just must never appear in a human-facing
+/// list.
+///
+/// Applied here, at the single point every enumeration passes through,
+/// rather than at each call site. The call-site approach is what we had,
+/// and it drifted: `list_agents` filtered, the Observatory's fleet
+/// endpoints did not, so the clinical view opened on a wall of
+/// `test_agent_*` entries. One predicate, no drift.
+///
+/// Deliberately NOT applied to single-agent lookups (`get_agent`,
+/// `resolve_agent`): a test fixture must still be addressable by the
+/// tests that created it, and by the admin cleanup tool, which uses raw
+/// SQL and bypasses this entirely.
+pub const NOT_TEST_CRUFT: &str = "agent_name NOT LIKE 'test\\_agent\\_%'";
+
 /// Common SELECT columns for agent queries
 const AGENT_COLUMNS: &str = r#"
     agent_id, agent_name, agent_type, version, tier,
@@ -500,7 +520,10 @@ impl MemoryStore {
 
     /// List all agents
     pub async fn list_agents(&self) -> Result<Vec<Agent>> {
-        let query = format!("SELECT {} FROM agents ORDER BY agent_name", AGENT_COLUMNS);
+        let query = format!(
+            "SELECT {} FROM agents WHERE {} ORDER BY agent_name",
+            AGENT_COLUMNS, NOT_TEST_CRUFT
+        );
         let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
 
         let mut agents = Vec::new();
@@ -514,8 +537,8 @@ impl MemoryStore {
     /// List public agents (for anonymous catalogue)
     pub async fn list_public_agents(&self) -> Result<Vec<Agent>> {
         let query = format!(
-            "SELECT {} FROM agents WHERE visibility = 'public' ORDER BY agent_name",
-            AGENT_COLUMNS
+            "SELECT {} FROM agents WHERE visibility = 'public' AND {} ORDER BY agent_name",
+            AGENT_COLUMNS, NOT_TEST_CRUFT
         );
         let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
 
@@ -530,8 +553,8 @@ impl MemoryStore {
     /// List agents owned by a specific user
     pub async fn list_agents_for_owner(&self, owner_id: &str) -> Result<Vec<Agent>> {
         let query = format!(
-            "SELECT {} FROM agents WHERE user_id = $1 ORDER BY agent_name",
-            AGENT_COLUMNS
+            "SELECT {} FROM agents WHERE user_id = $1 AND {} ORDER BY agent_name",
+            AGENT_COLUMNS, NOT_TEST_CRUFT
         );
         let rows = sqlx::query(&query)
             .bind(owner_id)

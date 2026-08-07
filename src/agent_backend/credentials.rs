@@ -159,6 +159,27 @@ pub fn provider_needs_no_key(provider: &str) -> bool {
     provider == "ollama"
 }
 
+/// Is this agent tier funded by the platform (`abw-system`) rather than
+/// by the account in its `owner_id`?
+///
+/// **`system` is not the only platform tier.** `curated` agents are
+/// platform-authored, platform-operated, and have always been
+/// platform-funded; they merely carry a human admin account in `owner_id`
+/// because AGENT_CREDENTIAL_MODEL P5 ("migrate platform-service agents to
+/// the abw-system owner") has not run yet.
+///
+/// Getting this wrong is not a subtle failure. When SPEC_28 removed the
+/// executor's env fallback, the credential resolver mapped only
+/// `tier == "system"` to `abw-system`; `curated` fell through to its
+/// nominal owner — an account with zero stored credentials — and all 78
+/// curated agents, the entire Fermi orchestra, began hard-failing
+/// `Unfunded` the moment it deployed.
+///
+/// Lives in the lib rather than the binary so it is reachable from tests.
+pub fn is_platform_funded(tier: &str) -> bool {
+    tier.eq_ignore_ascii_case("system") || tier.eq_ignore_ascii_case("curated")
+}
+
 /// Public base URL for owner-facing remediation messages. `ABW_BASE_URL`
 /// is operator config (which deployment this is), not a credential, so
 /// reading it from env here does not violate SPEC_28.

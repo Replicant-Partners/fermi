@@ -639,11 +639,14 @@ pub async fn fleet_summary_handler(
     principal: AuthPrincipal,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
-    let agents = state
+    let agents: Vec<_> = state
         .memory_store
         .list_agents_for_owner(&user_id)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .into_iter()
+        .filter(|a| !crate::handlers::is_test_cruft(&a.agent_name))
+        .collect();
     let agent_ids: Vec<Uuid> = agents.iter().map(|a| a.agent_id).collect();
 
     let run_counts: std::collections::HashMap<Uuid, i64> = if !agent_ids.is_empty() {
@@ -790,11 +793,14 @@ pub async fn fleet_agents_handler(
     principal: AuthPrincipal,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
-    let agents = state
+    let agents: Vec<_> = state
         .memory_store
         .list_agents_for_owner(&user_id)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .into_iter()
+        .filter(|a| !crate::handlers::is_test_cruft(&a.agent_name))
+        .collect();
     let agent_ids: Vec<Uuid> = agents.iter().map(|a| a.agent_id).collect();
     if agent_ids.is_empty() {
         return Ok(Json(serde_json::json!({"agents":[]})));

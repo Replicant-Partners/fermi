@@ -946,6 +946,14 @@ async fn run_migrations(db: &PgPool) {
         // constrained tables; the migration re-measures before adding each
         // constraint and warns rather than aborting if that ever changes.
         "migrations/184_embedding_provenance_invariant.sql",
+        // Hide integration-test cruft (`test_agent_<uuid>`) from the
+        // orchestra roster views. Policy is hide-not-delete: the rows are
+        // harmless where they sit, they just must never appear in a
+        // human-facing list. Rust enumeration is filtered at source by
+        // NOT_TEST_CRUFT in the memory store; these views are read
+        // directly, so they need the predicate too. Acute for
+        // xaman_ek, whose rule is literally "every published agent".
+        "migrations/185_hide_test_cruft_from_rosters.sql",
     ];
 
     for file in &migration_files {
@@ -4942,17 +4950,29 @@ pub(crate) async fn resolve_agent(
 /// back to the legacy `user_secrets` (`<PROVIDER>_API_KEY`) so already-funded
 /// agents keep working until P5. Deliberately does NOT read env vars — env is
 /// a one-time bootstrap seed into the store, not a runtime source of truth.
+/// One predicate for the platform-funding decision, defined in the lib
+/// (`agent_backend::credentials`) so it is testable and so the several
+/// places that ask "is this ours?" cannot drift apart again.
+pub(crate) use fermi::agent_backend::credentials::is_platform_funded;
+
+/// The principal whose keys pay for this agent: `abw-system` for
+/// platform-service agents, the owner otherwise.
+pub(crate) fn funding_principal_for(agent: &Agent) -> Option<String> {
+    if is_platform_funded(&agent.tier) {
+        Some("abw-system".to_string())
+    } else {
+        agent.owner_id.clone()
+    }
+}
+
 pub(crate) async fn resolve_credential(
     state: &AppState,
     agent: &Agent,
     provider: &str,
 ) -> Option<String> {
     let encryptor = state.secret_encryptor.as_ref()?;
-    let principal_id: &str = if agent.tier.eq_ignore_ascii_case("system") {
-        "abw-system"
-    } else {
-        agent.owner_id.as_deref()?
-    };
+    let principal_owned = funding_principal_for(agent)?;
+    let principal_id: &str = principal_owned.as_str();
 
     // Primary: the (principal, provider, scope) store.
     if let Ok(Some(key)) = fermi_auth::resolve_agent_credential(
@@ -4968,7 +4988,7 @@ pub(crate) async fn resolve_credential(
     }
 
     // Legacy fallback (owner-owned only): user_secrets named <PROVIDER>_API_KEY.
-    if !agent.tier.eq_ignore_ascii_case("system") {
+    if !is_platform_funded(&agent.tier) {
         if let Some(owner_id) = agent.owner_id.as_deref() {
             let secret_name = format!("{}_API_KEY", provider.to_uppercase());
             if let Ok(secrets) =
@@ -5021,14 +5041,9 @@ pub(crate) async fn build_execution_credentials(
     }
 
     let mut builder = ResolvedCredentials::builder();
-    // Funding principal: `abw-system` for platform-service agents, the
-    // owner otherwise. Mirrors resolve_credential's own branch so the two
-    // cannot disagree about who pays.
-    let principal = if agent.tier.eq_ignore_ascii_case("system") {
-        Some("abw-system".to_string())
-    } else {
-        agent.owner_id.clone()
-    };
+    // Funding principal — same helper `resolve_credential` uses, so the
+    // recorded payer and the actually-charged key cannot disagree.
+    let principal = funding_principal_for(agent);
     if let Some(ref p) = principal {
         builder = builder.funding_principal(p.clone());
     }
@@ -5053,9 +5068,13 @@ pub(crate) async fn resolve_agent_owner_secrets(
     state: &AppState,
     agent: &Agent,
 ) -> Option<std::collections::HashMap<String, String>> {
-    // System-tier: platform funds via env var. Return None so the
-    // executor uses its env fallback. Fermi, xaman_ek, other infra.
-    if agent.tier.eq_ignore_ascii_case("system") {
+    // Platform-service agents (system + curated) don't have per-owner
+    // tool secrets — they're operated by the platform. Same predicate as
+    // the credential path so the two views of "is this ours?" agree.
+    //
+    // Note this map is now only third-party MCP/tool credentials; LLM
+    // provider keys travel on ExecutionContext.credentials (SPEC_28).
+    if is_platform_funded(&agent.tier) {
         return None;
     }
     // Encryptor / owner_id absence is a config / data issue, not a

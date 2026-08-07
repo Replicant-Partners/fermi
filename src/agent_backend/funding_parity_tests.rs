@@ -229,6 +229,38 @@ fn every_supported_provider_resolves_from_the_store() {
     }
 }
 
+/// Platform tiers must be funded by the platform principal, not by the
+/// human account that happens to sit in `owner_id`.
+///
+/// This pins a real production incident. SPEC_28 removed the executor's
+/// env fallback, and `resolve_credential` mapped only `tier == "system"`
+/// to `abw-system`. `curated` is a *different tier value*, so all 78
+/// curated agents — the entire Fermi orchestra — fell through to their
+/// nominal owner, an account with zero stored credentials, and began
+/// hard-failing `Unfunded` the moment the fix deployed.
+///
+/// The tier list is the thing under test. If a new platform tier is
+/// introduced and not added to `is_platform_funded`, every agent on it
+/// silently loses funding.
+#[test]
+fn platform_tiers_are_funded_by_the_platform_principal() {
+    for tier in ["system", "System", "SYSTEM", "curated", "Curated"] {
+        assert!(
+            crate::agent_backend::credentials::is_platform_funded(tier),
+            "tier {tier:?} must resolve to the abw-system credential store; \
+             if it doesn't, every agent on that tier hard-fails Unfunded"
+        );
+    }
+    for tier in ["community", "Community", "private", ""] {
+        assert!(
+            !crate::agent_backend::credentials::is_platform_funded(tier),
+            "tier {tier:?} is owner-funded — treating it as platform-funded \
+             would let a user's agent spend the platform's budget, which is \
+             the leak SPEC_28 closed"
+        );
+    }
+}
+
 /// Ollama authenticates by network locality, so it must remain usable
 /// with no credential — without that exception becoming a general
 /// "empty key is fine" hole for paid providers.

@@ -554,7 +554,7 @@ pub async fn admin_list_agents_handler(
 
     let mut filtered: Vec<_> = agents
         .into_iter()
-        .filter(|a| !a.agent_name.starts_with("test_agent_"))
+        .filter(|a| !crate::handlers::is_test_cruft(&a.agent_name))
         .collect();
 
     if let Some(ref search) = params.search {

@@ -4,6 +4,24 @@
 //! Shared helpers (resolve_agent, resolve_agent_card, create_notification)
 //! live in api_server.rs as pub(crate) functions.
 
+/// Is this row test cruft rather than a real agent?
+///
+/// Integration tests have been inserting `test_agent_<uuid>` rows into the
+/// shared database for a long time (v0.10.20's audit found 565). Several
+/// surfaces filtered them out with an inline
+/// `!name.starts_with("test_agent_")`, and several — notably the
+/// Observatory fleet endpoints — did not, which is why the clinical view
+/// opens on a wall of `test_agent_*` entries instead of the operator's
+/// actual agents.
+///
+/// One definition, so the next surface can't drift. Note this only hides
+/// them; deleting them is `/api/admin/agents/cleanup-test-cruft`, which is
+/// safety-gated (zero executions, past a grace period, never curated or
+/// system tier).
+pub fn is_test_cruft(agent_name: &str) -> bool {
+    agent_name.starts_with("test_agent_")
+}
+
 pub mod admin;
 pub mod admin_rbac;
 pub mod agent_funding;

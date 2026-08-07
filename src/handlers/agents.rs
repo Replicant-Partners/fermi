@@ -213,7 +213,7 @@ pub async fn list_agents(
     if let Ok(db_agents) = state.memory_store.list_agents().await {
         let real_agents: Vec<_> = db_agents
             .into_iter()
-            .filter(|a| !a.agent_name.starts_with("test_agent_"))
+            .filter(|a| !crate::handlers::is_test_cruft(&a.agent_name))
             .filter(|a| agent_visible_to_caller(a, caller_ref))
             .collect();
 
@@ -1873,7 +1873,7 @@ pub async fn list_my_agents_handler(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
 
-    let agents = state
+    let agents: Vec<_> = state
         .memory_store
         .list_agents_for_owner(&user_id)
         .await
@@ -1882,7 +1882,10 @@ pub async fn list_my_agents_handler(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Failed to list agents: {}", e),
             )
-        })?;
+        })?
+        .into_iter()
+        .filter(|a| !crate::handlers::is_test_cruft(&a.agent_name))
+        .collect();
 
     // Batch-load workspace memberships, segmented by origin so the
     // harness Collection UI shows ABW workspaces as pills and rolls
