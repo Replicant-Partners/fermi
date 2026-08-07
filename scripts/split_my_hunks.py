@@ -48,6 +48,8 @@ MINE = [
     "Events vs conditions",
     "EVENT",
     "CONDITION",
+    "history_refetch_pending",
+    "invalidate_history",
 ]
 
 # The other agent's active specs (28 credentials, 29 orchestra) plus the
@@ -77,6 +79,8 @@ THEIRS = [
     "agents/curated",
     "package-console",
     "exe_relative",
+    "local_snapshot_path",
+    "Saved locally",
     "keys::",
     "mod keys",
     "menu_row",

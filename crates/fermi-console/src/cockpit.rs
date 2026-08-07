@@ -517,6 +517,15 @@ pub struct CockpitState {
     /// where nobody asks the question.
     pub forecast_history: Option<ForecastHistoryResponse>,
     pub history_loading: bool,
+    /// A commit landed while a log fetch was already in flight.
+    ///
+    /// `load_forecast_history` early-returns when one is running, so
+    /// without this the second save's invalidation is swallowed: the
+    /// in-flight fetch completes with pre-save data and marks the latch
+    /// fresh, leaving a stale log that only a tab exit would fix — which
+    /// is the exact bug the auto-refresh exists to remove, just narrower.
+    /// Autosave firing on a ~15s cadence makes the overlap reachable.
+    pub history_refetch_pending: bool,
     /// Which forecast `forecast_history` describes. Doubles as the
     /// lazy-load latch and the staleness check, exactly as
     /// `shares_loaded_for` does for the Access tab.
@@ -1151,6 +1160,7 @@ impl CockpitState {
             expanded_team_shares: HashSet::new(),
             forecast_history: None,
             history_loading: false,
+            history_refetch_pending: false,
             history_loaded_for: None,
             history_error: None,
             annotations: None,
@@ -8910,6 +8920,15 @@ impl CockpitState {
                                 prob
                             );
                         }
+
+                        // Every save writes a commit server-side (Spec 31),
+                        // so the log on screen is now stale. Invalidating
+                        // here rather than only on tab-entry is the whole
+                        // difference between a live record and one that
+                        // silently lags until you leave the tab and come
+                        // back — and "is my change in the history?" is
+                        // exactly the question you ask right after saving.
+                        state.invalidate_history(cx);
                         cx.notify();
                     })
                     .ok();
@@ -9767,6 +9786,63 @@ impl CockpitState {
 
     // ── Version history (Spec 31) ──────────────────────────────────
 
+    /// A commit was just written server-side — make the History tab
+    /// reflect it.
+    ///
+    /// Called from every path that mutates the forecast, because with Spec
+    /// 31 every one of those writes a commit. Before this the log was only
+    /// fetched on tab-entry, so saving while the tab was open left a stale
+    /// list on screen and the only way to see your own change was to leave
+    /// and come back — and "did my change land?" is precisely the question
+    /// people ask right after saving.
+    ///
+    /// Two behaviours worth stating:
+    ///
+    /// * **Only refetches when the tab is actually open.** The log is a git
+    ///   walk server-side and autosave fires every few seconds; paying for
+    ///   that on a tab nobody is looking at would be a background cost with
+    ///   no reader. The latch is cleared either way, so the next open is
+    ///   guaranteed fresh.
+    /// * **Follows the tail, but only if you were already on it.** If the
+    ///   selected commit is the current HEAD, the selection moves to the
+    ///   new HEAD — you were watching the newest, and the newest is now
+    ///   your save. If you had navigated back to an older revision, the
+    ///   selection is left alone; yanking someone off a commit they are
+    ///   reading because an autosave fired would be worse than stale.
+    pub fn invalidate_history(&mut self, cx: &mut Context<Self>) {
+        if self.forecast_id.is_none() {
+            return;
+        }
+
+        let was_on_head = match (&self.selected_commit, &self.forecast_history) {
+            (Some(sel), Some(h)) => h.commits.first().is_some_and(|c| &c.sha == sel),
+            // Nothing selected yet: the loader picks HEAD on its own.
+            (None, _) => true,
+            _ => false,
+        };
+        if was_on_head {
+            self.selected_commit = None;
+            self.commit_diff = None;
+        }
+        // An armed Revert belongs to the revision that was on screen when
+        // it was armed. The list is about to change under it, so disarm —
+        // a confirm button that survives the thing it was pointing at is
+        // how you revert the wrong commit.
+        self.revert_confirm_sha = None;
+
+        self.history_loaded_for = None;
+        if self.right_tab != RightTab::History {
+            return;
+        }
+        if self.history_loading {
+            // Queue it: the in-flight fetch predates this commit, so its
+            // result is already wrong. The completion handler re-runs.
+            self.history_refetch_pending = true;
+            return;
+        }
+        self.load_forecast_history(cx);
+    }
+
     /// Fetch the commit log into `forecast_history`.
     ///
     /// Unlike `load_access_summary`, a failure here is surfaced rather
@@ -9788,6 +9864,10 @@ impl CockpitState {
             self.selected_commit = None;
             self.commit_diff = None;
             self.revert_confirm_sha = None;
+            // A queued refetch belongs to the forecast that queued it.
+            // Carrying it across would spend an extra git walk on the
+            // wrong repo.
+            self.history_refetch_pending = false;
         }
         self.history_loading = true;
         self.history_error = None;
@@ -9806,6 +9886,16 @@ impl CockpitState {
                 // adopting the response then would attribute one
                 // forecast's commits to another.
                 if state.forecast_id.as_deref() != Some(fid.as_str()) {
+                    return;
+                }
+                // A commit landed while this was in flight, so what just
+                // came back is already out of date. Discard it and go
+                // again. Safe from looping: only `invalidate_history` sets
+                // the flag, and it is cleared before the refetch starts.
+                if state.history_refetch_pending {
+                    state.history_refetch_pending = false;
+                    state.history_loaded_for = None;
+                    state.load_forecast_history(cx);
                     return;
                 }
                 match result {
@@ -10683,6 +10773,12 @@ impl CockpitState {
                                 state.toggle_portfolio_membership(pid, cx);
                             }
                         }
+                        // Publish commits too — and on first publish it
+                        // is the commit that STARTS the history, so a
+                        // History tab left open on "not versioned yet"
+                        // would keep saying that about a forecast that
+                        // now has a log.
+                        state.invalidate_history(cx);
                         cx.notify();
                     })
                     .ok();
