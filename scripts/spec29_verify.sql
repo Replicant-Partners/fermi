@@ -108,3 +108,21 @@ SELECT count(*) AS roster_after_publish FROM orchestra_fermi_members WHERE agent
 DELETE FROM agents WHERE agent_name='draft_agent';
 SELECT count(*) AS orphan_grants FROM orchestra_members
  WHERE agent_id='44444444-4444-4444-4444-444444444444';
+
+\echo ''
+\echo '════ TEST 10 — a REVOCATION SURVIVES A REBOOT ════'
+\echo 'The migration re-runs on every boot. An unguarded backfill would'
+\echo 're-grant anything an admin revoked, making revocation impossible and'
+\echo 'leaving fermi_contract as the de-facto membership rule forever.'
+\echo 'This actually happened: nine agents were delisted and the next'
+\echo 'restart restored all nine. ON CONFLICT DO NOTHING protects rows that'
+\echo 'exist; it does nothing about rows someone meant to delete.'
+\echo ''
+\echo '-- revoke self_minted, then re-run mig-180 as a boot would:'
+DELETE FROM orchestra_members
+ WHERE orchestra_name='fermi' AND agent_id='22222222-2222-2222-2222-222222222222';
+\i migrations/180_orchestra_members.sql
+\echo ''
+\echo '-- expect: self_minted absent. If it is back, the guard is broken.'
+SELECT count(*) AS self_minted_resurrected
+  FROM orchestra_fermi_members WHERE agent_name='self_minted';

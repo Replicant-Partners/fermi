@@ -123,7 +123,33 @@ DO $$
 DECLARE
     n_backfilled INTEGER;
     n_suspect    INTEGER;
+    n_existing   INTEGER;
 BEGIN
+    -- ONE-TIME ONLY. This is the guard, and it is load-bearing.
+    --
+    -- `run_migrations` executes every migration file on every boot, so an
+    -- unguarded backfill is not a backfill — it is a permanent sync from
+    -- the OLD predicate (`fermi_contract IS NOT NULL AND published`) into
+    -- the new grant table. That silently undoes the entire point of
+    -- SPEC_29: an admin revokes a membership, the next deploy re-grants
+    -- it, and `fermi_contract` remains the real membership rule forever.
+    --
+    -- This was not hypothetical. Nine unreviewed agents were deliberately
+    -- delisted on 2026-08-07 and the next restart restored all nine, with
+    -- the backfill's characteristic `COALESCE(reviewed_at, created_at)`
+    -- timestamps. `ON CONFLICT DO NOTHING` protects rows that exist; it
+    -- does nothing about rows someone meant to delete.
+    --
+    -- After first application the grant table is authoritative and this
+    -- block must never write again.
+    SELECT COUNT(*) INTO n_existing
+      FROM public.orchestra_members WHERE orchestra_name = 'fermi';
+    IF n_existing > 0 THEN
+        RAISE NOTICE '[mig 180] backfill SKIPPED — % fermi grant(s) already present; '
+                     'the grant table is authoritative from here on', n_existing;
+        RETURN;
+    END IF;
+
     INSERT INTO public.orchestra_members
         (orchestra_name, agent_id, source, request_id, granted_by, granted_at)
     SELECT 'fermi',
@@ -202,11 +228,18 @@ COMMENT ON VIEW public.orchestra_fermi_members IS
     'orchestra_members, NOT the presence of agents.fermi_contract. '
     'Declaring a contract is a capability; being admitted is a decision.';
 
--- ── Post-migration validation ─────────────────────────────────────
+-- ── Post-migration report ───────────────────────────────────
 --
--- The count must not change: this migration re-expresses existing
--- membership, it does not grant or revoke any. A mismatch means the
--- backfill missed rows — investigate before shipping.
+-- Reports, does not judge. On FIRST application the roster should equal
+-- the number of published contract-carrying agents, because that is what
+-- was backfilled. On every subsequent boot the two SHOULD diverge — that
+-- divergence is the entire point of SPEC_29: declaring a contract is a
+-- capability, being admitted is a decision, and an admin revoking a
+-- membership leaves a contract behind without a grant.
+--
+-- An earlier version raised a WARNING on divergence, which was the old
+-- predicate smuggled back in as an assertion: it would fire on exactly
+-- the intentional revocations the model exists to make possible.
 DO $$
 DECLARE
     v_members    INTEGER;
@@ -225,10 +258,9 @@ BEGIN
     RAISE NOTICE '[mig 180] roster: % member(s) (% approved, % curated_seed); % published agent(s) carry a contract',
         v_members, v_approved, v_seeded, v_contracts;
 
-    IF v_members <> v_contracts THEN
-        RAISE WARNING '[mig 180] MEMBERSHIP COUNT CHANGED (% -> %). This migration should be behaviour-preserving; investigate the backfill.',
-            v_contracts, v_members;
-    ELSE
-        RAISE NOTICE '[mig 180] membership preserved exactly (% agents)', v_members;
+    IF v_contracts > v_members THEN
+        RAISE NOTICE '[mig 180] % agent(s) declare a Fermi contract without holding a grant — '
+                     'expected: capability is not membership (revoked, or never admitted)',
+            v_contracts - v_members;
     END IF;
 END $$;
