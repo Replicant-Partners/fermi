@@ -85,3 +85,20 @@ integrity-audit-*.txt
 
 # local commit-message drafts
 .gitmsg-*
+
+# Operator-initiated wiki exports (Composer → Export wiki). These are
+# artifacts of using the app, not source.
+#
+# Until v0.12.1 the console also wrote .fpl/.state.json here on every
+# Ctrl+S and then ran `git add` + `git commit` on whatever repo the CWD
+# belonged to — which, run from a checkout, meant this one. That is how
+# 806 "v3: 42.1% (+2pp) — Will …" commits and 205 tracked files under
+# forecasts/ got here. The write is gone; this keeps the remaining
+# deliberate exports from drifting back in.
+#
+# The already-tracked files under forecasts/ are left alone — they are
+# real historical forecasts and deleting them is a separate decision.
+# .gitignore does not affect tracked paths, so this only governs new ones.
+forecasts/*.fpl
+forecasts/*.state.json
+forecasts/*.evidence.md

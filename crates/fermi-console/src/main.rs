@@ -472,30 +472,6 @@ impl Panel {
 
 // ─── Root Application View ────────────────────────────────────────────────────
 
-#[derive(Clone)]
-struct LocalForecast {
-    filename: String,
-    question: String,
-    timestamp: String,
-    probability: f64,
-    base_rate: f64,
-    version: u32,
-    driver_count: usize,
-    evidence_count: usize,
-    agent_count: usize,
-    confidence: f64,
-    version_probs: Vec<f64>,
-    /// Tags for grouping into portfolios (e.g., "nba", "tech", "biotech")
-    tags: Vec<String>,
-    /// Forecast lifecycle status: draft, active, resolved, archived
-    status: String,
-    /// Auto-detected domain (e.g., "finance", "sports", "technology")
-    domain: String,
-    /// If resolved: the actual outcome (true/false) and Brier score
-    resolved_outcome: Option<bool>,
-    brier_score: Option<f64>,
-}
-
 /// Modal state for the "just-created invite" affordance. Populated
 /// when an invite POST returns; cleared when the operator dismisses.
 ///
@@ -653,9 +629,6 @@ struct FermiConsole {
     // Leaderboard data (from /api/leaderboard)
     leaderboard: Vec<LeaderboardEntry>,
     leaderboard_loading: bool,
-
-    // Local forecasts (from forecasts/ directory)
-    local_forecasts: Vec<LocalForecast>,
 
     // Workspace forecasts (from ABW fermi_forecast app)
     workspace_forecasts: Vec<WorkspaceForecast>,
@@ -1251,7 +1224,7 @@ impl FermiConsole {
             hire_modal: None,
             leaderboard: Vec::new(),
             leaderboard_loading: false,
-            local_forecasts: Vec::new(),
+
             workspace_forecasts: Vec::new(),
             workspace_forecasts_loading: false,
             workspace_section_collapsed: false,
@@ -3292,7 +3265,6 @@ impl FermiConsole {
         self.fetch_portfolios(cx);
         self.fetch_agents(cx);
         self.fetch_leaderboard(cx);
-        self.load_local_forecasts();
         self.fetch_workspace_forecasts(cx);
         // Pending cascades queue — the operator's inbox of probability-
         // mutating actions awaiting human approval.
@@ -5802,214 +5774,6 @@ impl FermiConsole {
             .into_any_element()
     }
 
-    fn load_local_forecasts(&mut self) {
-        self.local_forecasts.clear();
-        if let Ok(entries) = std::fs::read_dir("forecasts") {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().map(|e| e == "fpl").unwrap_or(false) {
-                    if let Ok(content) = std::fs::read_to_string(&path) {
-                        let filename = path
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("unknown")
-                            .to_string();
-                        let question = content
-                            .lines()
-                            .find(|l| l.starts_with("question"))
-                            .and_then(|l| l.split('"').nth(1))
-                            .unwrap_or(&filename)
-                            .to_string();
-                        let timestamp = entry
-                            .metadata()
-                            .and_then(|m| m.modified())
-                            .map(|t| {
-                                let dt: chrono::DateTime<chrono::Utc> = t.into();
-                                dt.format("%Y-%m-%d %H:%M").to_string()
-                            })
-                            .unwrap_or_else(|_| "unknown".into());
-                        let driver_count =
-                            content.lines().filter(|l| l.starts_with("driver ")).count();
-
-                        // Load state.json for probability and version
-                        let state_path = path.with_extension("state.json");
-                        let (
-                            probability,
-                            base_rate,
-                            version,
-                            evidence_count,
-                            agent_count,
-                            confidence,
-                            version_probs,
-                            tags,
-                            status,
-                            resolved_outcome,
-                            brier_score,
-                        ) = if let Ok(state_text) = std::fs::read_to_string(&state_path) {
-                            if let Ok(sj) = serde_json::from_str::<serde_json::Value>(&state_text) {
-                                (
-                                    sj.get("predicted_probability")
-                                        .and_then(|v| v.as_f64())
-                                        .unwrap_or(0.5),
-                                    sj.get("base_rate")
-                                        .and_then(|b| b.get("historical_frequency"))
-                                        .and_then(|v| v.as_f64())
-                                        .unwrap_or(0.0),
-                                    sj.get("current_version")
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(0) as u32,
-                                    sj.get("evidence")
-                                        .and_then(|v| v.as_array())
-                                        .map(|a| a.len())
-                                        .unwrap_or(0),
-                                    sj.get("agents")
-                                        .and_then(|v| v.as_array())
-                                        .map(|a| a.len())
-                                        .unwrap_or(0),
-                                    sj.get("forecast_confidence")
-                                        .and_then(|v| v.as_f64())
-                                        .unwrap_or(0.0),
-                                    sj.get("versions")
-                                        .and_then(|v| v.as_array())
-                                        .map(|arr| {
-                                            arr.iter()
-                                                .filter_map(|v| {
-                                                    v.get("probability").and_then(|p| p.as_f64())
-                                                })
-                                                .collect()
-                                        })
-                                        .unwrap_or_default(),
-                                    sj.get("tags")
-                                        .and_then(|v| v.as_array())
-                                        .map(|arr| {
-                                            arr.iter()
-                                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                                .collect()
-                                        })
-                                        .unwrap_or_default(),
-                                    sj.get("status")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("active")
-                                        .to_string(),
-                                    sj.get("resolved_outcome").and_then(|v| v.as_bool()),
-                                    sj.get("brier_score").and_then(|v| v.as_f64()),
-                                )
-                            } else {
-                                (
-                                    0.5,
-                                    0.0,
-                                    0,
-                                    0,
-                                    0,
-                                    0.0,
-                                    vec![],
-                                    vec![],
-                                    "draft".into(),
-                                    None,
-                                    None,
-                                )
-                            }
-                        } else {
-                            (
-                                0.5,
-                                0.0,
-                                0,
-                                0,
-                                0,
-                                0.0,
-                                vec![],
-                                vec![],
-                                "draft".into(),
-                                None,
-                                None,
-                            )
-                        };
-
-                        // Auto-detect domain from question keywords
-                        let q_lower = question.to_lowercase();
-                        let domain = if q_lower.contains("nba")
-                            || q_lower.contains("lakers")
-                            || q_lower.contains("knicks")
-                            || q_lower.contains("celtics")
-                            || q_lower.contains("basketball")
-                        {
-                            "sports_nba"
-                        } else if q_lower.contains("nfl")
-                            || q_lower.contains("football") && !q_lower.contains("soccer")
-                        {
-                            "sports_nfl"
-                        } else if q_lower.contains("world cup")
-                            || q_lower.contains("euro")
-                            || q_lower.contains("premier league")
-                            || q_lower.contains("soccer")
-                            || q_lower.contains("uefa")
-                        {
-                            "sports_football"
-                        } else if q_lower.contains("stock")
-                            || q_lower.contains("share price")
-                            || q_lower.contains("revenue")
-                            || q_lower.contains("ipo")
-                            || q_lower.contains("nasdaq")
-                            || q_lower.contains("earnings")
-                        {
-                            "finance"
-                        } else if q_lower.contains("fda")
-                            || q_lower.contains("trial")
-                            || q_lower.contains("drug")
-                            || q_lower.contains("biotech")
-                            || q_lower.contains("pharma")
-                        {
-                            "biotech"
-                        } else if q_lower.contains("ai")
-                            || q_lower.contains("technology")
-                            || q_lower.contains("software")
-                            || q_lower.contains("chip")
-                            || q_lower.contains("semiconductor")
-                        {
-                            "technology"
-                        } else if q_lower.contains("election")
-                            || q_lower.contains("president")
-                            || q_lower.contains("congress")
-                            || q_lower.contains("vote")
-                        {
-                            "politics"
-                        } else if q_lower.contains("war")
-                            || q_lower.contains("conflict")
-                            || q_lower.contains("treaty")
-                            || q_lower.contains("nato")
-                        {
-                            "geopolitics"
-                        } else {
-                            "general"
-                        }
-                        .to_string();
-
-                        self.local_forecasts.push(LocalForecast {
-                            filename,
-                            question,
-                            timestamp,
-                            probability,
-                            base_rate,
-                            version,
-                            driver_count,
-                            evidence_count,
-                            agent_count,
-                            confidence,
-                            version_probs,
-                            tags,
-                            status,
-                            domain,
-                            resolved_outcome,
-                            brier_score,
-                        });
-                    }
-                }
-            }
-        }
-        self.local_forecasts
-            .sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-    }
-
     fn fetch_workspace_forecasts(&mut self, cx: &mut Context<Self>) {
         if !self.connected {
             return; // Don't fetch if not signed in
@@ -7144,7 +6908,6 @@ impl FermiConsole {
                 Panel::Dashboard => self.fetch_stats(cx),
                 Panel::Portfolio => {
                     self.fetch_forecasts(cx);
-                    self.load_local_forecasts();
                     self.fetch_workspace_forecasts(cx);
                     self.check_pm_resolutions(cx);
                 }

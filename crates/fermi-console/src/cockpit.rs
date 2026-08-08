@@ -905,23 +905,6 @@ pub struct CockpitState {
     /// Guard so we don't kick off multiple autosave loops when the
     /// operator re-enters the composer.
     pub autosave_started: bool,
-
-    /// Path of the on-disk snapshot (`forecasts/<name>.fpl` and its
-    /// `.state.json` / `.evidence.md` siblings) **if one exists that
-    /// still reflects the current in-memory program**.
-    ///
-    /// Exists to stop a save failure from lying about where the
-    /// operator's work is. Only [`Self::save_forecast`] (Ctrl+S)
-    /// writes to disk, and it does so *before* attempting the
-    /// backend; the autosave loop calls [`Self::persist_backend_save`]
-    /// directly and writes nothing. So on the path that produces
-    /// nearly every save-failure event, there is no local copy at all
-    /// — while the error text claimed "Saved locally" unconditionally.
-    ///
-    /// Cleared by [`Self::mark_dirty`]: once the program has moved on,
-    /// the file on disk is a previous version, and reporting it as
-    /// "your work is safe" would be true about the wrong bytes.
-    pub local_snapshot_path: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1252,7 +1235,6 @@ impl CockpitState {
             last_edit_at: None,
             last_autosave_at: None,
             autosave_started: false,
-            local_snapshot_path: None,
             hovered_histogram_bin: None,
             hovered_index_version: None,
             hovered_trajectory_event: None,
@@ -4061,10 +4043,23 @@ impl CockpitState {
     /// after every successful agent completion (in `process_agent_evidence`)
     /// so reopening the forecast restores the work, not just the FPL skeleton.
     fn push_research_state_to_server(&self) {
+        // Same gate as every other write — this is a PUT on the same
+        // row. Silent, like the autosave leg: it is a background
+        // consequence of agent research rather than an action the
+        // operator asked for by name, and the read-only banner is
+        // already on screen explaining why nothing is persisting.
+        if self.refuse_write().is_some() {
+            return;
+        }
         let Some(ref fid) = self.forecast_id else {
-            // No forecast_id yet — operator hasn't published. The legacy
-            // local-disk save path (Ctrl+S) covers this case via
-            // forecasts/<name>.state.json.
+            // No forecast_id yet — the operator hasn't saved once, so
+            // there is no row to PUT to. `persist_backend_save` POSTs
+            // one on the first save and research state goes up on the
+            // next push.
+            //
+            // This used to say the local-disk save path covered the
+            // gap. It never really did (nothing read those files back)
+            // and that path no longer exists.
             return;
         };
 
@@ -6777,6 +6772,18 @@ impl CockpitState {
     /// silent "log-only" version made it easy to think the persist
     /// worked when it hadn't.
     pub fn persist_base_rate(&mut self, cx: &mut Context<Self>) {
+        // Same gate as every other write. This is a PUT /api/forecasts/:id
+        // like the main save, so it 403s under exactly the same
+        // conditions — it was just doing so from a different call site.
+        if let Some(reason) = self.refuse_write() {
+            self.messages.push(AssistantMessage {
+                node: "question".into(),
+                kind: MessageKind::Warning,
+                text: format!("Base rate not saved — {}", reason),
+            });
+            cx.notify();
+            return;
+        }
         let Some(fid) = self.forecast_id.clone() else {
             log::warn!("[base-rate-persist] no forecast_id — draft, cannot persist");
             self.messages.push(AssistantMessage {
@@ -8553,11 +8560,6 @@ impl CockpitState {
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
         self.last_edit_at = Some(std::time::Instant::now());
-        // Any on-disk snapshot is now a previous version. Keeping the
-        // path would let a save failure report "your work is in
-        // forecasts/x.fpl" about a file that predates the edit being
-        // reported on.
-        self.local_snapshot_path = None;
     }
 
     /// Kick off the autosave background loop. Fires once per cockpit
@@ -8595,19 +8597,14 @@ impl CockpitState {
                         if !idle_ok {
                             return true;
                         }
-                        // Skip if the forecast is locked (resolved/void)
-                        // — persist_backend_save also guards, but
-                        // short-circuiting here saves the spawn.
-                        if state.is_locked() {
-                            return true;
-                        }
-                        // Same for a forecast the operator can only read.
-                        // Without this the loop retries a guaranteed 403
-                        // every five seconds and buries the composer in
-                        // "save failed" warnings, which reads as a broken
-                        // client rather than a permission the banner has
-                        // already explained.
-                        if !state.can_edit_forecast() {
+                        // Settled, or not ours to edit. `persist_backend_save`
+                        // enforces the same gate at the boundary; checking it
+                        // here as well saves the spawn on every tick of a
+                        // forecast that can never be written. Silent by
+                        // design — a background loop narrating a permission
+                        // the banner already explains, once per five seconds,
+                        // is what made this look like a broken client.
+                        if state.refuse_write().is_some() {
                             return true;
                         }
                         // No question yet — nothing to persist.
@@ -8706,10 +8703,15 @@ impl CockpitState {
             return;
         }
 
-        // Reconcile-derived lock: server has settled this forecast.
-        // A backend write would 409; skip it silently. The local disk
-        // snapshot in save_forecast still succeeds.
-        if self.is_locked() {
+        // The gate, at the boundary. Silent because this function is
+        // called by the autosave loop every few seconds and by
+        // `save_forecast`; the operator-facing explanation belongs to
+        // whoever initiated the write (see `save_forecast` and
+        // `publish_forecast`), and both refusal reasons already have a
+        // permanent banner on screen. Emitting here is what buried the
+        // composer in duplicate warnings before the Activity log
+        // learned to coalesce.
+        if self.refuse_write().is_some() {
             return;
         }
 
@@ -9020,47 +9022,28 @@ impl CockpitState {
                             detail.push_str(hint);
                         }
 
-                        // Where the operator's work actually is.
+                        // Where the operator's work is. This field was
+                        // the hardcoded string "retained locally", and
+                        // the catch-all summary opened with "Saved
+                        // locally, but…" — both describing a local save
+                        // that, on the autosave path, had never
+                        // happened. There is now no local save on any
+                        // path, so the honest answer is fixed and there
+                        // is nothing to branch on: the version being
+                        // reported exists in this window and nowhere
+                        // else.
                         //
-                        // This was the hardcoded string "retained
-                        // locally", and the catch-all summary opened
-                        // with "Saved locally, but…". Both were false
-                        // on the autosave path: `save_forecast`
-                        // (Ctrl+S) writes forecasts/<name>.fpl and its
-                        // siblings BEFORE calling this function, but
-                        // autosave calls it directly and writes
-                        // nothing to disk — and autosave is where
-                        // essentially all of these events come from.
-                        //
-                        // Being wrong in the reassuring direction is
-                        // the worst option available here: it tells
-                        // someone whose work is only in a window that
-                        // it is safe on disk.
-                        let local_draft = match state.local_snapshot_path.as_deref() {
-                            Some(path) => {
-                                detail.push_str(&format!(
-                                    "\n\n✓ A local snapshot of this version exists at {} \
-                                     (plus its .state.json). It can be reopened with {} \
-                                     even if the backend never accepts the write.",
-                                    path,
-                                    crate::keys::chord("O"),
-                                ));
-                                format!("yes — {}", path)
-                            }
-                            None => {
-                                detail.push_str(&format!(
-                                    "\n\n⚠ There is NO local copy of this work. Autosave \
-                                     writes only to the server; the on-disk snapshot is \
-                                     written by {}. If the composer closes now, this \
-                                     version is gone. Press {} to force a disk snapshot \
-                                     — it is written before the backend attempt, so it \
-                                     succeeds even while the server keeps refusing.",
-                                    crate::keys::chord("S"),
-                                    crate::keys::chord("S"),
-                                ));
-                                "none — this version exists only in the open composer".to_string()
-                            }
-                        };
+                        // Said plainly rather than softened. The
+                        // failure mode this replaces was reassurance,
+                        // and an operator who believes their work is
+                        // safe on disk closes the composer.
+                        detail.push_str(
+                            "\n\n⚠ This version exists only in the open composer. The \
+                             server is the only store — there is no local draft file \
+                             — so closing or navigating away from the composer \
+                             discards it. Keep it open until a save succeeds.",
+                        );
+                        let local_draft = "none — in-memory only; server is the only store";
 
                         let mut event = LogEvent::new(
                             Severity::Error,
@@ -9131,7 +9114,45 @@ impl CockpitState {
         .detach();
     }
 
+    /// Explicit operator save (the Save chip and its keybinding).
+    ///
+    /// This is now purely "bump the version and push it to the server".
+    /// It used to also write `forecasts/<question>.fpl`, an
+    /// `.evidence.md`, and a `.state.json`, then shell out to
+    /// `git add` + `git commit --allow-empty` — in whatever directory
+    /// the console happened to be launched from. See the commit that
+    /// removed it for why that had to go; the short version is that it
+    /// authored 806 commits in the Fermi source tree, and the
+    /// server-side history added in v0.11.11 does the same job
+    /// correctly (per-forecast repo, real authorship, revertible).
     pub fn save_forecast(&mut self, cx: &mut Context<Self>) {
+        // Gate before doing anything observable. Previously this ran
+        // the whole version-bookkeeping + disk + git sequence and only
+        // discovered at the very end that the backend would refuse the
+        // write — so a read-only operator got a version number, a
+        // "Saved v5" chip, a git commit, and then a 403.
+        if let Some(reason) = self.refuse_write() {
+            self.publish_status = Some(reason.clone());
+            self.push_rich(
+                "save",
+                MessageKind::Warning,
+                LogEvent::new(
+                    Severity::Warn,
+                    LogSource::Save,
+                    format!("Save refused — {}", reason),
+                )
+                .with_detail(
+                    "Nothing was sent to the server and no version was recorded. \
+                         This is the same check the Save chip and the autosave loop \
+                         use; it runs here too so the keybinding can't bypass it.",
+                )
+                .with_context("locked", self.is_locked().to_string())
+                .with_context("can_edit", self.can_edit_forecast().to_string()),
+            );
+            cx.notify();
+            return;
+        }
+
         self.save_focused_driver(cx);
         self.regenerate_cached_fpl_if_safe();
 
@@ -9197,203 +9218,30 @@ impl CockpitState {
             change_summary,
         });
 
-        // Save to disk
-        let filename = self
-            .program
-            .question()
-            .map(|q| sanitize_name(&q.text))
-            .unwrap_or_else(|| "forecast".into());
-        let path = format!("forecasts/{}.fpl", filename);
+        // The local disk + git leg used to live here. Removed: it
+        // wrote forecasts/<question>.fpl, .evidence.md and
+        // .state.json relative to the process CWD, then ran
+        // `git add` + `git commit --allow-empty` on whatever
+        // repository that CWD belonged to. Run from a source checkout
+        // — which is how it is run in development — every Ctrl+S
+        // authored a commit in the Fermi tree; 806 of them accumulated
+        // before this was noticed.
+        //
+        // Nothing read the result back, either: `load_local_forecasts`
+        // populated a `local_forecasts` vector that no renderer ever
+        // touched, so the files were invisible in the UI. Meanwhile
+        // v0.11.11 gave every forecast a real server-side repo with
+        // per-forecast scope, actual authorship, and revert.
+        //
+        // The deliberate export path (`export_wiki_markdown`) still
+        // writes a Markdown file when the operator asks for one. That
+        // is an export, initiated and named by the operator, and it
+        // does not commit anything.
 
-        // Ensure directory exists
-        let _ = std::fs::create_dir_all("forecasts");
-
-        match std::fs::write(&path, &self.cached_fpl) {
-            Ok(_) => {
-                log::info!("[composer] Saved FPL to {}", path);
-                log::info!(
-                    "[composer] Evidence in AST: {}, Drivers: {}",
-                    self.program.evidence_items().len(),
-                    self.program.drivers().len()
-                );
-                // Record the snapshot so a subsequent backend failure
-                // can tell the operator truthfully that a recoverable
-                // copy exists, and where. See `local_snapshot_path`.
-                self.local_snapshot_path = Some(path.clone());
-                self.messages.push(AssistantMessage {
-                    node: "save".into(),
-                    kind: MessageKind::Info,
-                    text: format!("Saved v{} to {}", self.current_version, path),
-                });
-                self.publish_status = Some(format!("Saved v{}", self.current_version));
-
-                // Also save evidence wiki
-                let wiki_path = format!("forecasts/{}.evidence.md", filename);
-                let wiki = generate_evidence_wiki(
-                    &self.program,
-                    self.current_version,
-                    self.predicted_probability,
-                    &self.inside_view_explanation,
-                    self.forecast_confidence,
-                    self.pm_market_price,
-                    self.pm_url.as_deref(),
-                    self.pm_volume_24h,
-                    self.pm_confidence.as_deref(),
-                    self.pm_price_change_1w,
-                    self.sim_results.as_ref(),
-                    &self.versions,
-                );
-                match std::fs::write(&wiki_path, &wiki) {
-                    Ok(_) => log::info!("[composer] Saved evidence wiki to {}", wiki_path),
-                    Err(e) => log::warn!("[composer] Failed to save evidence wiki: {}", e),
-                }
-
-                // Save state.json (versions, probability, sim results)
-                let state_path = format!("forecasts/{}.state.json", filename);
-                let state_json = serde_json::json!({
-                    "forecast_id": self.forecast_id,
-                    "current_version": self.current_version,
-                    "predicted_probability": self.predicted_probability,
-                    "inside_view_explanation": self.inside_view_explanation,
-                    "forecast_confidence": self.forecast_confidence,
-                    "versions": self.versions.iter().map(|v| serde_json::json!({
-                        "version": v.version,
-                        "timestamp": v.timestamp,
-                        "probability": v.probability,
-                        "change_summary": v.change_summary,
-                    })).collect::<Vec<_>>(),
-                    "sim_results": self.sim_results.as_ref().map(|s| serde_json::json!({
-                        "mean": s.mean,
-                        "median": s.median,
-                        "p5": s.p5,
-                        "p95": s.p95,
-                        "std_dev": s.std_dev,
-                        "iterations": s.iterations,
-                    })),
-                    "base_rate": self.program.question()
-                        .and_then(|q| q.base_rate.as_ref())
-                        .map(|br| serde_json::json!({
-                            "reference_class": br.reference_class,
-                            "historical_frequency": br.historical_frequency,
-                            "sample_size": br.sample_size,
-                            "source": br.source,
-                            "reasoning": br.reasoning,
-                        })),
-                    "evidence": self.program.evidence_items().iter().map(|e| serde_json::json!({
-                        "id": e.id,
-                        "source": e.source,
-                        "summary": e.summary,
-                        "relevance": e.relevance,
-                        "date": e.date,
-                        "key_findings": e.key_findings,
-                    })).collect::<Vec<_>>(),
-                    "agents": self.program.agents().iter().map(|a| serde_json::json!({
-                        "name": a.name,
-                        "agent_type": a.agent_type,
-                        "query": a.query,
-                        "schedule": format!("{:?}", a.schedule),
-                        "driver_refs": a.driver_refs,
-                    })).collect::<Vec<_>>(),
-                    "driver_confidence": self.driver_confidence.iter()
-                        .map(|(k, v)| (k.clone(), serde_json::json!(v)))
-                        .collect::<serde_json::Map<String, JsonValue>>(),
-                    "polymarket": serde_json::json!({
-                        "event_id": self.pm_event_id,
-                        "market_id": self.pm_market_id,
-                        "question": self.pm_question,
-                        "market_price": self.pm_market_price,
-                        "volume_24h": self.pm_volume_24h,
-                        "liquidity": self.pm_liquidity,
-                        "confidence": self.pm_confidence,
-                        "price_change_1w": self.pm_price_change_1w,
-                        "url": self.pm_url,
-                        "price_history": self.pm_price_history.iter()
-                            .map(|(ts, p)| serde_json::json!({"t": ts, "p": p}))
-                            .collect::<Vec<_>>(),
-                    }),
-                    "workspace_id": self.workspace_id,
-                });
-                match std::fs::write(
-                    &state_path,
-                    serde_json::to_string_pretty(&state_json).unwrap_or_default(),
-                ) {
-                    Ok(_) => log::info!("[composer] Saved state to {}", state_path),
-                    Err(e) => log::warn!("[composer] Failed to save state: {}", e),
-                }
-
-                // ── Git auto-commit: atomic version of all three artifacts ──
-                // The .fpl, .evidence.md, and .state.json are committed together
-                // as one version snapshot. The commit message includes the
-                // probability change so `git log` reads as a version history.
-                let prev_prob = if self.versions.len() >= 2 {
-                    self.versions[self.versions.len() - 2].probability
-                } else {
-                    self.predicted_probability
-                };
-                let delta = (self.predicted_probability - prev_prob) * 100.0;
-                let delta_str = if delta.abs() < 0.5 {
-                    "no change".to_string()
-                } else if delta > 0.0 {
-                    format!("+{:.0}pp", delta)
-                } else {
-                    format!("{:.0}pp", delta)
-                };
-                let commit_msg = format!(
-                    "v{}: {:.1}% ({}) — {}",
-                    self.current_version,
-                    self.predicted_probability * 100.0,
-                    delta_str,
-                    self.program
-                        .question()
-                        .map(|q| q.text.chars().take(60).collect::<String>())
-                        .unwrap_or_else(|| "forecast".into()),
-                );
-
-                // git add all three files + git commit
-                // Paths are already relative to repo root (e.g., "forecasts/name.fpl")
-                match std::process::Command::new("git")
-                    .args(&["add", &path, &wiki_path, &state_path])
-                    .output()
-                {
-                    Ok(_) => {
-                        match std::process::Command::new("git")
-                            .args(&["commit", "-m", &commit_msg, "--allow-empty"])
-                            .output()
-                        {
-                            Ok(output) => {
-                                if output.status.success() {
-                                    log::info!("[composer] Git committed: {}", commit_msg);
-                                    self.messages.push(AssistantMessage {
-                                        node: "save".into(),
-                                        kind: MessageKind::Info,
-                                        text: format!("📦 Committed: {}", commit_msg),
-                                    });
-                                } else {
-                                    let stderr = String::from_utf8_lossy(&output.stderr);
-                                    log::warn!("[composer] Git commit warning: {}", stderr);
-                                }
-                            }
-                            Err(e) => log::warn!("[composer] Git commit failed: {}", e),
-                        }
-                    }
-                    Err(e) => log::warn!("[composer] Git add failed: {}", e),
-                }
-            }
-            Err(e) => {
-                log::error!("[composer] Failed to save: {}", e);
-                self.messages.push(AssistantMessage {
-                    node: "save".into(),
-                    kind: MessageKind::Error,
-                    text: format!("Save failed: {}", e),
-                });
-            }
-        }
-
-        // Backend persistence. The local .fpl / .state.json / git leg
-        // above is a convenience snapshot, but the source of truth for
-        // "pick this forecast up on another device / after closing the
-        // composer" lives on the server. Without this call, Ctrl+S was
-        // orphaning work to disk-only — the exact bug reported.
+        // The server is the only store. It always was the only one that
+        // could answer "pick this forecast up on another device / after
+        // closing the composer"; now it is also the only one being
+        // written, so there is no second copy to disagree with it.
         self.persist_backend_save(cx);
 
         cx.notify();
@@ -9688,6 +9536,50 @@ impl CockpitState {
             Some(s) => matches!(s.my_permission.as_str(), "edit" | "admin"),
             None => true,
         }
+    }
+
+    /// The single gate every persistence path consults. `Some(reason)`
+    /// means the write must not be attempted, and the string is a
+    /// complete operator-facing sentence.
+    ///
+    /// There are two independent reasons a forecast can't be written,
+    /// and before this they were enforced at two different strengths:
+    ///
+    /// | reason | was enforced |
+    /// |---|---|
+    /// | lifecycle lock (`is_locked`) | at the persistence boundary — no caller could bypass it |
+    /// | edit permission (`can_edit_forecast`) | in the action bar, and in the autosave loop |
+    ///
+    /// So permission was a *decoration*: the Save chip greyed out and
+    /// autosave stood down, but `Ctrl+S` (whose keybinding never
+    /// consulted it), publish, and any future caller walked straight
+    /// past into a guaranteed 403. Enforcing both here — at the
+    /// boundary, where the lock already lived — is the same discipline
+    /// `clamp_wire_probability` applies to the `[0,1]` wire contract:
+    /// put it where no caller can reintroduce the gap.
+    ///
+    /// This deliberately does NOT collapse the two reasons in the UI.
+    /// "Settled" and "not yours to edit" get separate banners because
+    /// they call for different actions, and `is_locked` /
+    /// `can_edit_forecast` stay as the predicates those banners read.
+    /// Only enforcement is unified.
+    pub fn refuse_write(&self) -> Option<String> {
+        if self.is_locked() {
+            return Some(format!(
+                "Locked: {}. Saving is disabled.",
+                self.lock_reason()
+                    .unwrap_or_else(|| "forecast is resolved".into())
+            ));
+        }
+        if !self.can_edit_forecast() {
+            return Some(
+                "You have view access to this forecast, not edit — the server \
+                 would refuse the write. Ask the owner for edit access (see \
+                 the Access tab)."
+                    .to_string(),
+            );
+        }
+        None
     }
 
     // ── Driver annotations (Spec 32) ───────────────────────────────
@@ -10611,15 +10503,12 @@ impl CockpitState {
     }
 
     pub fn publish_forecast(&mut self, visibility: String, cx: &mut Context<Self>) {
-        // Reconcile-derived lock: the server has settled this forecast, so a
-        // new snapshot would be rejected (409) anyway. Block locally with the
-        // authoritative reason instead of letting the save silently fail.
-        if self.is_locked() {
-            self.publish_status = Some(format!(
-                "Locked: {}. Saving new snapshots is disabled.",
-                self.lock_reason()
-                    .unwrap_or_else(|| "forecast is resolved".into())
-            ));
+        // Same gate as Ctrl+S and autosave. This used to check only the
+        // lifecycle lock, so publishing a forecast shared with you at
+        // `view` sailed past the permission check that the Save chip
+        // right next to it was already enforcing.
+        if let Some(reason) = self.refuse_write() {
+            self.publish_status = Some(reason);
             cx.notify();
             return;
         }
