@@ -151,11 +151,35 @@ Two things to add while doing it:
   (`Ok(NoClaims) => {}`), so "no claims yet" and "claim recording is broken"
   are indistinguishable. That silence is why an entire mechanism sat at zero
   without anyone noticing. A counter or a periodic log line is enough.
-* **Backfill what can be backfilled.** The 48 already-composed forecasts
-  record `agents_used[].driver_refs`, so some historical claims may be
-  reconstructible. If they are not, say so — the attribution history starts
-  from the deploy, and that is a fact worth stating rather than discovering
-  later.
+* **Do not attempt a historical backfill.** Investigated and settled: it is
+  not reliably possible, and attempting it would corrupt the signal.
+
+  A claim needs `(agent, driver, multiplier)`. Measured against the 48
+  resolved composed forecasts:
+
+  | needed | available |
+  |---|---|
+  | driver definitions | `drivers` is **empty on all 48** |
+  | agent → driver map | ✅ `agents_used[].driver_refs` |
+  | the multiplier | only as prose in episode text |
+  | episode → forecast link | **none** — `episodes` has no forecast column |
+
+  665 episodes do contain `[MULTIPLIER]` lines, and the top emitters are
+  exactly the composed team. But they arrive in at least two formats
+  (`[MULTIPLIER]** Suggested p50: **1.30**` and
+  `[MULTIPLIER] SUGGESTED P50: **1.35**`), and there is no column tying an
+  episode to a forecast. Recovery would mean regex over markdown plus
+  timestamp correlation to guess which forecast each claim belonged to.
+
+  Mis-attributing one multiplier to the wrong forecast silently corrupts the
+  per-agent contribution estimate — the exact quantity attribution exists to
+  produce, and one nobody could sanity-check afterwards. A fabricated history
+  is worse than a short one.
+
+  **Attribution history therefore starts at the deploy.** Stated here so it
+  is a known property rather than a later surprise. If historical attribution
+  is genuinely wanted, the cheap honest route is adding `forecast_id` to
+  episodes going forward, not mining prose backwards.
 
 This is P0 because it is the only mechanism that can answer "which
 combinations work", and that is the precondition for every later item.

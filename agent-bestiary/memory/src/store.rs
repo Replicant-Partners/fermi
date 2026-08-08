@@ -402,6 +402,32 @@ impl MemoryStore {
     }
 
     /// Create or update an agent (used for seeding curated agents)
+    /// Insert or update an agent by `agent_name`. Used by the boot seeder to
+    /// push each on-disk `agent_card.json` into the database.
+    ///
+    /// # `tags`, `valence`, `output_contract` and `taxonomy`
+    ///
+    /// These four were once absent from the `ON CONFLICT` clause (and the
+    /// latter three from the INSERT column list entirely), so every card edit
+    /// to any of them was silently discarded on reseed: the row kept whatever
+    /// it held at first insert while the card on disk said something else, and
+    /// the seeder reported success every time.
+    ///
+    /// `tags` was the costly omission. The composition design (section 3 of
+    /// `docs/COMPOSITION_AS_FIRST_CLASS.md`) specifies the strategist registry
+    /// as a query for the `coordination_strategy` tag. `cohere_and_coordinate`
+    /// carries that tag on disk but its row did not, so the registry returned
+    /// one strategist instead of two and the composition creation flow had
+    /// almost nothing to offer a user. Every tag-driven surface shared the
+    /// stale view: marketplace filters, catalogue search, and the `?tag=`
+    /// query parameter.
+    ///
+    /// When adding a column to the agents table, add it in three places here
+    /// or it will look wired and silently never sync: the INSERT list, the
+    /// bind chain, and `ON CONFLICT DO UPDATE`.
+    ///
+    /// `user_id` is the deliberate exception, guarded by `COALESCE` so that
+    /// reseeding cannot wipe ownership an admin or user has set.
     pub async fn upsert_agent(&self, agent: Agent) -> Result<Uuid> {
         let row = sqlx::query(
             r#"
@@ -415,9 +441,10 @@ impl MemoryStore {
                 sample_queries, status, fork_pricing, forked_from, fork_count,
                 accepts, produces, workflow_template, prompt_template, requires_secrets,
                 model_ladder, min_tier, capability_gates,
-                fermi_contract, model_params
+                fermi_contract, model_params,
+                valence, output_contract, taxonomy
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42)
             ON CONFLICT (agent_name)
              DO UPDATE SET
                  agent_type = EXCLUDED.agent_type,
@@ -441,6 +468,12 @@ impl MemoryStore {
                  capability_gates = EXCLUDED.capability_gates,
                  fermi_contract = EXCLUDED.fermi_contract,
                  model_params = EXCLUDED.model_params,
+                 -- See the doc comment on upsert_agent: these four were
+                 -- absent here, so card edits to them were dropped on reseed
+                 tags = EXCLUDED.tags,
+                 valence = EXCLUDED.valence,
+                 output_contract = EXCLUDED.output_contract,
+                 taxonomy = EXCLUDED.taxonomy,
                  -- Preserve existing owner; only fill in if currently NULL
                  -- (prevents seed from wiping ownership set by admin/user)
                  user_id = COALESCE(agents.user_id, EXCLUDED.user_id)
@@ -486,6 +519,9 @@ impl MemoryStore {
         .bind(&agent.capability_gates)
         .bind(&agent.fermi_contract)
         .bind(&agent.model_params)
+        .bind(&agent.valence)
+        .bind(&agent.output_contract)
+        .bind(&agent.taxonomy)
         .fetch_one(&self.pool)
         .await?;
 
