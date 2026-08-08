@@ -102,6 +102,29 @@
   .link-row .lr-name:hover{color:var(--yellow);}
   .link-row .lr-via{color:var(--fg4);font-size:0.66rem;margin-left:auto;}
 
+  /* I/O contract + instruments */
+  .mono{font-family:inherit;color:var(--aqua);}
+  .contract-box{margin-top:9px;padding:8px 10px;background:var(--bg1);border-left:2px solid var(--aqua);}
+  .caveat{margin-top:8px;font-size:0.66rem;color:var(--fg4);line-height:1.45;}
+  .caveat.tight{margin:0 0 7px;}
+  .port.warn{border-color:var(--yellow);color:var(--yellow);}
+  .tool-row{display:flex;gap:8px;align-items:baseline;padding:3px 0;border-bottom:1px solid var(--bg2);font-size:0.7rem;}
+  .tool-row:last-child{border-bottom:none;}
+  .tool-name{color:var(--green);flex-shrink:0;min-width:180px;}
+  .tool-desc{color:var(--fg4);}
+
+  /* Declared pipeline stages */
+  .stage{padding:6px 0 7px;border-bottom:1px solid var(--bg2);}
+  .stage:last-child{border-bottom:none;}
+  .stage.open{background:rgba(215,153,33,0.06);border-left:2px solid var(--yellow);padding-left:8px;}
+  .stage-head{display:flex;gap:8px;align-items:baseline;font-size:0.74rem;}
+  .stage-n{color:var(--yellow);min-width:16px;}
+  .stage-name{color:var(--fg1);}
+  .stage-open{color:var(--yellow);font-size:0.66rem;font-style:italic;}
+  .stage-io{margin:4px 0 0 24px;}
+  .stage-io .arrow{color:var(--fg4);margin:0 4px;}
+  .stage-desc{margin:3px 0 0 24px;font-size:0.68rem;color:var(--fg4);}
+
   .dk-group{margin-bottom:9px;}
   .dk-name{font-size:0.68rem;color:var(--yellow);margin-bottom:3px;}
   .dk-item{font-size:0.7rem;color:var(--fg3);padding-left:9px;margin-bottom:1px;}
@@ -283,9 +306,93 @@ function renderSheet(s) {
     return `<div class="dk-group"><div class="dk-name">${esc(g.replace(/_/g," "))}</div>${desc}${items}</div>`;
   }).join("") : "";
 
-  const fc = (s.capabilities && s.capabilities.fermi_contract) || null;
+  const caps = s.capabilities || {};
+  const fc = caps.fermi_contract || null;
+  const oc = caps.output_contract || null;
   const samples = (s.metadata && s.metadata.sample_queries) || [];
   const deps = s.dependencies || {};
+  const mcpTools = caps.mcp_tools || [];
+  const secrets = s.requires_secrets || [];
+  const wf = s.workflow_template || null;
+
+  // ── I/O contract ────────────────────────────────────────────────
+  // The material interface. `accepts`/`produces` are labels, and only a
+  // handful of cards declare a typed `output_contract` on top of them, so
+  // the panel states which of the two you are looking at. Presenting a
+  // label match as a contract match is how you end up believing two agents
+  // compose when nothing has verified that they do.
+  const ioHtml = `
+    <div class="ports">
+      <div class="port-col"><div class="port-label">Accepts</div>
+        ${(s.accepts || []).map(x => `<span class="port in">${esc(x)}</span>`).join("") || `<span class="empty">—</span>`}</div>
+      <div class="port-col"><div class="port-label">Produces</div>
+        ${(s.produces || []).map(x => `<span class="port out">${esc(x)}</span>`).join("") || `<span class="empty">—</span>`}</div>
+    </div>
+    ${oc ? `
+      <div class="contract-box">
+        <div class="port-label">Typed output contract</div>
+        ${oc.domain ? `<div class="kv"><span class="k">Domain</span><span class="v">${esc(oc.domain)}</span></div>` : ""}
+        ${oc.produces_schema ? `<div class="kv"><span class="k">Schema</span><span class="v mono">${esc(oc.produces_schema)}</span></div>` : ""}
+        ${oc.calibration ? `
+          <div class="kv"><span class="k">Calibrated by</span><span class="v">${esc(oc.calibration.signal || "—")}</span></div>
+          ${oc.calibration.comparison ? `<div class="kv"><span class="k">Compared as</span><span class="v">${esc(oc.calibration.comparison)}</span></div>` : ""}
+          ${oc.calibration.resolution_delay ? `<div class="kv"><span class="k">Resolves in</span><span class="v">${esc(oc.calibration.resolution_delay)}</span></div>` : ""}` : ""}
+      </div>`
+      : `<div class="caveat">No typed schema declared — the ports above are
+         labels, so composability with them is asserted, not verified.</div>`}
+    ${fc ? `
+      <div class="contract-box">
+        <div class="port-label">Fermi contract</div>
+        ${fc.finding_labels?.length ? `<div style="margin-bottom:4px">${fc.finding_labels.map(x => `<span class="port">${esc(x)}</span>`).join("")}</div>` : ""}
+        ${fc.multiplier_range ? `<div class="kv"><span class="k">Multiplier</span><span class="v mono">${esc(JSON.stringify(fc.multiplier_range))}</span></div>` : ""}
+        ${fc.kg_fact_categories?.length ? `<div class="kv"><span class="k">KG categories</span><span class="v">${esc(fc.kg_fact_categories.join(", "))}</span></div>` : ""}
+        ${fc.seed_facts?.length ? `<div class="kv"><span class="k">Seed facts</span><span class="v">${fc.seed_facts.length}</span></div>` : ""}
+        <div class="kv"><span class="k">Note</span><span class="v" style="color:var(--fg4)">A declared
+          capability. It is not membership — that is the badge above.</span></div>
+      </div>` : ""}`;
+
+  // ── Instruments ────────────────────────────────────────────────
+  // 304 MCP tools are declared across the corpus and no surface showed them.
+  // What an agent can actually call is a material property, not a footnote:
+  // it is most of what distinguishes two agents with the same prompt shape.
+  const instrumentsHtml = `
+    ${mcpTools.length ? `<div class="port-label">Callable tools (${mcpTools.length})</div>
+      ${mcpTools.map(t => `<div class="tool-row">
+        <span class="tool-name">${esc(t.name || "—")}</span>
+        ${t.description ? `<span class="tool-desc">${esc(t.description)}</span>` : ""}
+      </div>`).join("")}` : ""}
+    ${(caps.skills || []).length ? `<div class="port-label" style="margin-top:8px">Skills</div>
+      ${caps.skills.map(x => `<span class="port">${esc(x)}</span>`).join("")}` : ""}
+    ${(caps.mcp_servers || []).length ? `<div class="port-label" style="margin-top:8px">Remote servers</div>
+      ${caps.mcp_servers.map(x => `<span class="port">${esc(typeof x === "string" ? x : (x.name || x.url || "server"))}</span>`).join("")}` : ""}
+    ${secrets.length ? `<div class="port-label" style="margin-top:8px">Requires credentials</div>
+      ${secrets.map(x => `<span class="port warn">${esc(typeof x === "string" ? x : (x.name || x.label || "secret"))}</span>`).join("")}` : ""}
+    ${!mcpTools.length && !(caps.skills || []).length && !secrets.length
+      ? `<div class="empty">Reaches for nothing — works from its prompt alone.</div>` : ""}`;
+
+  // ── Internal pipeline ──────────────────────────────────────────
+  // Where a card declares a workflow, each stage carries its own
+  // accepts/produces. A stage with no `agent` is an OPEN SLOT: a declared
+  // place where another agent is meant to plug in, which is the most
+  // concrete composition affordance the corpus contains.
+  const wfHtml = wf && (wf.stages || []).length ? `
+    ${wf.description ? `<div class="prose" style="font-size:0.73rem;color:var(--fg4);margin-bottom:8px">${esc(wf.description)}</div>` : ""}
+    ${wf.stages.map((st, i) => `
+      <div class="stage${st.agent ? "" : " open"}">
+        <div class="stage-head">
+          <span class="stage-n">${i + 1}</span>
+          <span class="stage-name">${esc(st.name || "stage")}</span>
+          ${st.agent
+            ? `<span class="lr-name" data-goto="${esc(st.agent)}">${esc(st.agent)}</span>`
+            : `<span class="stage-open">open slot — unfilled</span>`}
+        </div>
+        <div class="stage-io">
+          ${(st.accepts || []).map(x => `<span class="port in">${esc(x)}</span>`).join("")}
+          ${(st.accepts || []).length && (st.produces || []).length ? `<span class="arrow">→</span>` : ""}
+          ${(st.produces || []).map(x => `<span class="port out">${esc(x)}</span>`).join("")}
+        </div>
+        ${st.description ? `<div class="stage-desc">${esc(st.description)}</div>` : ""}
+      </div>`).join("")}` : "";
 
   document.getElementById("sheet").innerHTML = `
     <div class="sheet-head">
@@ -326,23 +433,28 @@ function renderSheet(s) {
           .map(x => `<span class="trait">${esc(x)}</span>`).join("") || `<span class="empty">no traits recorded</span>`}</div>
       </div>
 
-      <div class="panel">
-        <div class="panel-title">Morphology</div>
-        <div class="ports">
-          <div class="port-col"><div class="port-label">Accepts</div>
-            ${(s.accepts || []).map(x => `<span class="port in">${esc(x)}</span>`).join("") || `<span class="empty">—</span>`}</div>
-          <div class="port-col"><div class="port-label">Produces</div>
-            ${(s.produces || []).map(x => `<span class="port out">${esc(x)}</span>`).join("") || `<span class="empty">—</span>`}</div>
-        </div>
-        ${(s.capabilities?.skills || []).length ? `<div class="port-label" style="margin-top:9px">Skills</div>
-          ${s.capabilities.skills.map(x => `<span class="port">${esc(x)}</span>`).join("")}` : ""}
+      <div class="panel wide">
+        <div class="panel-title">I/O contract — the material interface</div>
+        ${ioHtml}
       </div>
 
+      <div class="panel wide">
+        <div class="panel-title">Instruments — what it can reach for</div>
+        ${instrumentsHtml}
+      </div>
+
+      ${wfHtml ? `<div class="panel wide">
+        <div class="panel-title">Internal pipeline — declared stages</div>${wfHtml}</div>` : ""}
+
       <div class="panel">
-        <div class="panel-title">Can feed</div>${linkList(comp.feeds, "via")}
+        <div class="panel-title">Can feed</div>
+        <div class="caveat tight">Label match on produces → accepts, not a verified schema match.</div>
+        ${linkList(comp.feeds, "via")}
       </div>
       <div class="panel">
-        <div class="panel-title">Can be fed by</div>${linkList(comp.fedBy, "via")}
+        <div class="panel-title">Can be fed by</div>
+        <div class="caveat tight">Label match on produces → accepts, not a verified schema match.</div>
+        ${linkList(comp.fedBy, "via")}
       </div>
 
       ${(deps.required?.length || deps.optional?.length) ? `<div class="panel">
@@ -353,17 +465,16 @@ function renderSheet(s) {
           <span class="lr-name" data-goto="${esc(d)}">${esc(d)}</span><span class="lr-via">optional</span></div>`).join("")}
       </div>` : ""}
 
-      ${fc ? `<div class="panel">
-        <div class="panel-title">Fermi contract</div>
-        ${fc.finding_labels?.length ? `<div class="port-label">Finding labels</div>
-          ${fc.finding_labels.map(x => `<span class="port">${esc(x)}</span>`).join("")}` : ""}
-        ${fc.multiplier_range ? `<div class="kv" style="margin-top:7px"><span class="k">Multiplier</span>
-          <span class="v">${esc(JSON.stringify(fc.multiplier_range))}</span></div>` : ""}
-        ${fc.kg_fact_categories?.length ? `<div class="kv"><span class="k">KG categories</span>
-          <span class="v">${esc(fc.kg_fact_categories.join(", "))}</span></div>` : ""}
-        <div class="kv"><span class="k">Note</span><span class="v" style="color:var(--fg4)">A declared
-          capability. It is not membership — that is the badge above.</span></div>
-      </div>` : ""}
+      <div class="panel">
+        <div class="panel-title">Substrate</div>
+        <div class="kv"><span class="k">Provider</span><span class="v">${esc(s.llm_provider || "anthropic")}</span></div>
+        <div class="kv"><span class="k">Model</span><span class="v mono">${esc(caps.model || "—")}</span></div>
+        <div class="kv"><span class="k">Temperature</span><span class="v">${caps.temperature ?? "—"}</span></div>
+        <div class="kv"><span class="k">Executor</span><span class="v">${esc(caps.executor || "—")}</span></div>
+        ${(caps.model_ladder || []).length ? `<div class="kv"><span class="k">Model ladder</span>
+          <span class="v">${caps.model_ladder.length} rung(s)</span></div>` : ""}
+        ${caps.min_tier ? `<div class="kv"><span class="k">Min tier</span><span class="v">${esc(caps.min_tier)}</span></div>` : ""}
+      </div>
 
       <div class="panel">
         <div class="panel-title">Vital signs</div>

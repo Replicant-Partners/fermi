@@ -115,6 +115,67 @@ ok(h.includes('yield_curve') || h.includes('base_rate') || h.includes('recession
 ok(h.includes('sample queries') || h.includes('Sample'), 'renders sample queries');
 ok(h.includes('Observatory'), 'cross-links to the clinical view');
 
+// ── I/O contract and material properties ──────────────────────────
+console.log('I/O contract:');
+ok(h.includes('material interface'), 'renders the I/O contract panel');
+ok(h.includes('labels, so composability with them is asserted, not verified'),
+   'says plainly that untyped ports are asserted, not verified — a label match must \n           not read as a schema match');
+ok(h.includes('Label match on produces'),
+   'the feeds/fed-by panels caveat that they are label matches');
+
+// A card WITH a typed contract must show the schema instead of the caveat.
+const typed = {
+  ...macro,
+  capabilities: { ...macro.capabilities, output_contract: {
+    domain: 'foraging_forecast', produces_schema: 'kask_wild/condition_forecast',
+    calibration: { signal: 'forage_observation', comparison: 'predicted_vs_actual',
+                   resolution_delay: '1-7 days' } } },
+};
+renderSheet(typed);
+let t = doc.sheet.innerHTML;
+ok(t.includes('Typed output contract'), 'shows a typed contract when one is declared');
+ok(t.includes('kask_wild/condition_forecast'), 'shows the schema identifier');
+ok(t.includes('forage_observation'), 'shows what calibrates the output');
+ok(!t.includes('asserted, not verified'),
+   'and drops the caveat, because this one IS verified by a schema');
+
+console.log('instruments (material properties):');
+const instrumented = {
+  ...macro,
+  capabilities: { ...macro.capabilities,
+    mcp_tools: [{ name: 'adaptogen_species_search', description: 'Search species by name.' }] },
+  requires_secrets: [{ name: 'FMP_API_KEY', label: 'Financial data' }],
+};
+renderSheet(instrumented);
+t = doc.sheet.innerHTML;
+ok(t.includes('Callable tools (1)'), 'counts and lists callable MCP tools');
+ok(t.includes('adaptogen_species_search'), 'names the tool');
+ok(t.includes('Search species by name.'), 'shows what the tool does');
+ok(t.includes('FMP_API_KEY'), 'surfaces required credentials as a material dependency');
+ok(t.includes('Substrate') && t.includes('claude'), 'shows model/provider substrate');
+
+renderSheet({ agent_id: 'bare2', metadata: {}, execution_stats: {}, habitats: [], capabilities: {} });
+t = doc.sheet.innerHTML;
+ok(t.includes('works from its prompt alone'),
+   'an agent with no instruments says so rather than showing an empty panel');
+
+console.log('composition — declared pipeline:');
+const piped = {
+  ...macro,
+  workflow_template: { description: '3-stage pipeline', stages: [
+    { name: 'Intake', agent: 'ar_card_producer', accepts: ['logo'], produces: ['brief'] },
+    { name: 'Review', agent: null, accepts: ['brief'], produces: ['verdict'],
+      description: 'Needs a reviewer' },
+  ]},
+};
+renderSheet(piped);
+t = doc.sheet.innerHTML;
+ok(t.includes('Internal pipeline'), 'renders declared pipeline stages');
+ok(t.includes('open slot'),
+   'an unfilled stage is called an open slot — the most concrete composition \n           affordance in the corpus');
+ok(t.includes('stage open'), 'and is visually distinguished');
+ok(t.includes('logo') && t.includes('brief'), 'shows each stage\'s own accepts/produces');
+
 renderSheet(sneaky);
 h = doc.sheet.innerHTML;
 ok(h.includes('admitted without review'), 'flags an unreviewed member on its sheet');
