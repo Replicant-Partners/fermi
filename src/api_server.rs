@@ -2503,6 +2503,10 @@ async fn main() {
             get(handlers::ecology::ecology_overview_handler),
         )
         .route(
+            "/api/ecology/specimens",
+            get(handlers::ecology::ecology_specimens_handler),
+        )
+        .route(
             "/observatory/hitl",
             get(handlers::pages::observatory_hitl_view),
         )

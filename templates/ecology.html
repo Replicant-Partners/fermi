@@ -9,291 +9,505 @@
   <link rel="stylesheet" href="/static/css/components.css"/>
   <style>
   body{font-family:"Berkeley Mono","JetBrains Mono",monospace;line-height:1.5;background:var(--bg0-hard);font-size:13px;margin:0;}
-  a{color:var(--fg3);text-decoration:none;}
-  a:hover{color:var(--yellow);}
+  a{color:var(--fg3);text-decoration:none;} a:hover{color:var(--yellow);}
 
-  .eco-shell{max-width:1400px;margin:0 auto;padding:0 0 60px;}
+  /* ── Shell: register | specimen ── */
+  .eco-shell{display:flex;height:100vh;overflow:hidden;}
+  .eco-left{width:320px;min-width:280px;max-width:380px;border-right:1px solid var(--bg2);
+            display:flex;flex-direction:column;background:var(--bg0);}
+  .eco-right{flex:1;overflow-y:auto;}
 
-  /* ── Header ── */
-  .eco-header{padding:14px 18px 10px;border-bottom:1px solid var(--bg2);background:var(--bg0);}
-  .eco-header h1{font-size:1rem;color:var(--aqua);margin:0 0 4px;}
-  .eco-header .sub{font-size:0.72rem;color:var(--fg4);}
-  .eco-header .nav{font-size:0.75rem;margin-top:6px;display:flex;gap:12px;}
+  .left-header{padding:12px 14px 8px;border-bottom:1px solid var(--bg2);}
+  .left-header h1{font-size:0.95rem;color:var(--aqua);margin:0 0 3px;}
+  .left-header .sub{font-size:0.7rem;color:var(--fg4);}
+  .left-header .nav{font-size:0.72rem;margin-top:6px;display:flex;gap:10px;flex-wrap:wrap;}
 
-  /* ── Census strip ── */
-  .census{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:1px;background:var(--bg2);border-bottom:1px solid var(--bg2);}
-  .census-cell{background:var(--bg0);padding:12px 14px;}
-  .cc-label{font-size:0.62rem;color:var(--fg4);text-transform:uppercase;letter-spacing:0.9px;margin-bottom:3px;}
-  .cc-value{font-size:1.5rem;font-weight:600;color:var(--fg1);line-height:1.1;}
-  .cc-sub{font-size:0.64rem;color:var(--fg4);margin-top:3px;}
+  .left-controls{padding:8px 10px;border-bottom:1px solid var(--bg2);display:flex;gap:5px;flex-wrap:wrap;}
+  .left-controls input,.left-controls select{background:var(--bg1);color:var(--fg2);border:1px solid var(--bg3);
+    padding:4px 7px;font-family:inherit;font-size:0.74rem;}
+  .left-controls input{flex:1;min-width:0;}
+  .btn-xs{background:transparent;border:1px solid var(--bg3);padding:3px 8px;font-size:0.7rem;
+          color:var(--fg4);cursor:pointer;font-family:inherit;}
+  .btn-xs:hover{border-color:var(--yellow);color:var(--yellow);}
+  .btn-xs.active{border-color:var(--aqua);color:var(--aqua);}
 
-  /* ── Governance banner ── */
-  .gov-alert{margin:14px 18px 0;padding:10px 14px;border-left:3px solid var(--yellow);
-             background:rgba(215,153,33,0.09);font-size:0.78rem;color:var(--yellow);}
+  /* ── Register (taxonomic) ── */
+  .register{flex:1;overflow-y:auto;}
+  .rank-group{border-bottom:1px solid var(--bg2);}
+  .rank-head{padding:5px 12px;background:var(--bg1);font-size:0.66rem;color:var(--fg4);
+             text-transform:uppercase;letter-spacing:0.9px;cursor:pointer;display:flex;gap:6px;align-items:center;}
+  .rank-head:hover{color:var(--yellow);}
+  .rank-head .rh-n{margin-left:auto;color:var(--fg4);}
+  .spec-row{display:flex;align-items:center;gap:7px;padding:5px 12px 5px 20px;cursor:pointer;
+            border-left:2px solid transparent;}
+  .spec-row:hover{background:var(--bg1);}
+  .spec-row.selected{background:var(--bg1);border-left-color:var(--aqua);}
+  .sr-dot{width:7px;height:7px;flex-shrink:0;}
+  .sr-name{flex:1;font-size:0.76rem;color:var(--fg2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .sr-meta{font-size:0.62rem;color:var(--fg4);flex-shrink:0;}
+
+  /* provenance colours — shared with habitat bars */
+  .p-approved,.d-approved{background:var(--green);}
+  .p-curated_seed,.d-curated_seed{background:#d4af37;}
+  .p-admin_grant,.d-admin_grant{background:var(--purple,#b16286);}
+  .p-implicit,.d-implicit{background:var(--bg3);}
+  .p-unknown,.d-unknown{background:var(--red,#cc241d);}
+  .d-none{background:var(--bg3);opacity:0.5;}
+
+  /* ── Specimen sheet ── */
+  .sheet{padding:16px 20px 60px;max-width:1000px;}
+  .sheet-head{border-bottom:1px solid var(--bg2);padding-bottom:12px;margin-bottom:14px;}
+  .sh-binomial{font-size:1.35rem;color:var(--fg1);font-style:italic;margin:0 0 2px;}
+  .sh-handle{font-size:0.8rem;color:var(--aqua);}
+  .sh-lineage{font-size:0.66rem;color:var(--fg4);margin-top:6px;letter-spacing:0.4px;}
+  .sh-lineage b{color:var(--fg3);font-weight:normal;}
+  .sh-badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}
+  .badge{font-size:0.62rem;padding:2px 7px;border:1px solid var(--bg3);color:var(--fg4);
+         text-transform:uppercase;letter-spacing:0.7px;}
+  .badge.b-approved{border-color:var(--green);color:var(--green);}
+  .badge.b-curated_seed{border-color:#d4af37;color:#d4af37;}
+  .badge.b-admin_grant{border-color:var(--purple,#b16286);color:var(--purple,#b16286);}
+  .badge.b-warn{border-color:var(--red,#cc241d);color:var(--red,#cc241d);}
+
+  .panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;}
+  .panel{background:var(--bg0);border:1px solid var(--bg2);padding:11px 13px;}
+  .panel.wide{grid-column:1/-1;}
+  .panel-title{font-size:0.66rem;color:var(--aqua);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;}
+  .kv{display:flex;gap:8px;font-size:0.74rem;margin-bottom:3px;}
+  .kv .k{color:var(--fg4);min-width:104px;}
+  .kv .v{color:var(--fg2);}
+  .prose{font-size:0.78rem;color:var(--fg2);line-height:1.65;}
+
+  /* temperament dials */
+  .dial{display:flex;align-items:center;gap:8px;font-size:0.72rem;margin-bottom:4px;}
+  .dial .dl{width:74px;color:var(--fg4);}
+  .dial .dt{flex:1;height:7px;background:var(--bg1);position:relative;}
+  .dial .df{height:100%;background:var(--aqua);}
+  .dial .dv{width:32px;text-align:right;color:var(--fg3);}
+  .traits{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px;}
+  .trait{font-size:0.66rem;padding:2px 7px;background:var(--bg1);color:var(--fg3);border:1px solid var(--bg2);}
+  .affect{font-size:0.95rem;color:var(--yellow);margin-bottom:6px;}
+
+  /* ports (accepts/produces) */
+  .ports{display:flex;gap:14px;flex-wrap:wrap;}
+  .port-col{flex:1;min-width:110px;}
+  .port-label{font-size:0.62rem;color:var(--fg4);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px;}
+  .port{font-size:0.68rem;padding:2px 6px;margin:0 3px 3px 0;display:inline-block;border:1px solid var(--bg3);color:var(--fg3);}
+  .port.in{border-color:#7ec8e3;color:#7ec8e3;}
+  .port.out{border-color:var(--green);color:var(--green);}
+
+  .link-row{font-size:0.74rem;padding:3px 0;border-bottom:1px solid var(--bg2);display:flex;gap:8px;}
+  .link-row:last-child{border-bottom:none;}
+  .link-row .lr-name{color:var(--aqua);cursor:pointer;}
+  .link-row .lr-name:hover{color:var(--yellow);}
+  .link-row .lr-via{color:var(--fg4);font-size:0.66rem;margin-left:auto;}
+
+  .dk-group{margin-bottom:9px;}
+  .dk-name{font-size:0.68rem;color:var(--yellow);margin-bottom:3px;}
+  .dk-item{font-size:0.7rem;color:var(--fg3);padding-left:9px;margin-bottom:1px;}
+  .dk-item b{color:var(--fg2);font-weight:normal;}
+  .sample{padding:6px 9px;background:var(--bg1);border-left:2px solid var(--yellow);
+          margin-bottom:4px;font-size:0.73rem;color:var(--fg2);}
+  .empty{color:var(--fg4);font-size:0.74rem;}
+
+  /* ── Field-guide (nothing selected) ── */
+  .census{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:1px;background:var(--bg2);margin-bottom:14px;}
+  .census-cell{background:var(--bg0);padding:10px 12px;}
+  .cc-label{font-size:0.6rem;color:var(--fg4);text-transform:uppercase;letter-spacing:0.9px;}
+  .cc-value{font-size:1.35rem;font-weight:600;color:var(--fg1);line-height:1.2;}
+  .cc-sub{font-size:0.62rem;color:var(--fg4);}
+  .gov-alert{padding:9px 13px;border-left:3px solid var(--yellow);background:rgba(215,153,33,0.09);
+             font-size:0.76rem;color:var(--yellow);margin-bottom:14px;}
   .gov-alert.clean{border-color:var(--green);background:rgba(152,151,26,0.08);color:var(--green);}
-  .gov-alert .ga-title{font-weight:600;margin-bottom:4px;}
-  .gov-alert .ga-body{color:var(--fg3);font-size:0.74rem;}
-  .gov-alert ul{margin:6px 0 0;padding-left:18px;}
-  .gov-alert li{color:var(--fg2);font-size:0.74rem;}
-
-  .section{padding:16px 18px 0;}
-  .section-title{font-size:0.72rem;color:var(--aqua);text-transform:uppercase;letter-spacing:1px;
-                 margin-bottom:10px;display:flex;align-items:baseline;gap:10px;}
-  .section-title .st-note{color:var(--fg4);text-transform:none;letter-spacing:0;font-size:0.7rem;}
-
-  /* ── Habitats ── */
-  .habitats{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px;}
-  .habitat{background:var(--bg0);border:1px solid var(--bg2);padding:12px 14px;}
-  .hab-head{display:flex;align-items:baseline;gap:8px;margin-bottom:2px;}
-  .hab-name{font-size:0.9rem;color:var(--fg1);font-weight:600;}
-  .hab-kind{font-size:0.6rem;padding:1px 6px;border:1px solid var(--bg3);color:var(--fg4);text-transform:uppercase;letter-spacing:0.8px;}
-  .hab-pop{margin-left:auto;font-size:1.1rem;color:var(--fg2);font-weight:600;}
-  .hab-rule{font-size:0.68rem;color:var(--fg4);margin-bottom:10px;}
-
-  /* provenance bar — the organising signal */
-  .prov-bar{display:flex;height:6px;margin-bottom:8px;background:var(--bg2);overflow:hidden;}
+  .gov-alert .ga-body{color:var(--fg3);font-size:0.72rem;}
+  .gov-alert ul{margin:5px 0 0;padding-left:17px;} .gov-alert li{color:var(--fg2);font-size:0.72rem;}
+  .prov-bar{display:flex;height:6px;margin:6px 0;background:var(--bg2);}
   .prov-seg{height:100%;}
-  .p-approved{background:var(--green);}
-  .p-curated_seed{background:#d4af37;}
-  .p-admin_grant{background:var(--purple,#b16286);}
-  .p-implicit{background:var(--bg3);}
-  .p-unknown{background:var(--red,#cc241d);}
-  .prov-key{display:flex;flex-wrap:wrap;gap:10px;font-size:0.65rem;color:var(--fg4);margin-bottom:10px;}
-  .prov-key span{display:inline-flex;align-items:center;gap:4px;}
-  .prov-swatch{width:8px;height:8px;display:inline-block;}
-
-  /* ── Member cells ── */
-  .cells{display:flex;flex-wrap:wrap;gap:4px;}
-  .cell{position:relative;padding:3px 7px;font-size:0.68rem;border:1px solid;cursor:default;
-        background:var(--bg1);white-space:nowrap;}
-  .cell.approved{border-color:var(--green);color:var(--green);}
-  .cell.curated_seed{border-color:#d4af37;color:#d4af37;}
-  .cell.admin_grant{border-color:var(--purple,#b16286);color:var(--purple,#b16286);}
-  .cell.unknown{border-color:var(--red,#cc241d);color:var(--red,#cc241d);}
-  /* An unreviewed third-party member is the anomaly this view exists to surface. */
-  .cell.flag{background:rgba(204,36,29,0.12);border-style:dashed;animation:pulse 2s infinite;}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.55}}
-  .cell .runs{color:var(--fg4);margin-left:4px;}
-
-  /* ── Distribution bars ── */
-  .dist{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;}
-  .dist-card{background:var(--bg0);border:1px solid var(--bg2);padding:12px 14px;}
-  .dist-row{display:flex;align-items:center;gap:8px;margin-bottom:5px;font-size:0.72rem;}
-  .dr-label{width:96px;color:var(--fg3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0;}
-  .dr-track{flex:1;height:9px;background:var(--bg1);}
-  .dr-fill{height:100%;background:var(--aqua);}
-  .dr-n{width:30px;text-align:right;color:var(--fg4);flex-shrink:0;}
-
-  /* ── Co-habitation ── */
-  .cohab-row{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:0.72rem;border-bottom:1px solid var(--bg2);}
-  .cohab-pair{flex:1;color:var(--fg2);}
-  .cohab-n{color:var(--fg4);}
-  .cohab-note{font-size:0.68rem;color:var(--fg4);margin-bottom:10px;line-height:1.45;}
-  .empty{color:var(--fg4);font-size:0.76rem;padding:10px 0;}
+  .prov-key{display:flex;flex-wrap:wrap;gap:9px;font-size:0.63rem;color:var(--fg4);}
+  .prov-key i{width:8px;height:8px;display:inline-block;margin-right:3px;}
+  .dist-row{display:flex;align-items:center;gap:7px;margin-bottom:4px;font-size:0.71rem;}
+  .dr-label{width:92px;color:var(--fg3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .dr-track{flex:1;height:8px;background:var(--bg1);} .dr-fill{height:100%;background:var(--aqua);}
+  .dr-n{width:28px;text-align:right;color:var(--fg4);}
+  .cohab-note{font-size:0.66rem;color:var(--fg4);margin-bottom:8px;line-height:1.45;}
   </style>
 </head>
 <body>
 <div class="eco-shell">
 
-  <div class="eco-header">
-    <h1>◇ Ecology</h1>
-    <div class="sub">What lives here — population, habitats, and how things got in</div>
-    <div class="nav">
-      <a href="/observatory">Observatory (clinical) →</a>
-      <a href="/agents">Catalogue →</a>
-      <a href="/">Home</a>
+  <div class="eco-left">
+    <div class="left-header">
+      <h1>◇ Ecology</h1>
+      <div class="sub">A field guide to the agent population</div>
+      <div class="nav">
+        <a href="#" id="home-link">Field guide</a>
+        <a href="/observatory">Observatory →</a>
+        <a href="/">Home</a>
+      </div>
     </div>
+    <div class="left-controls">
+      <input id="q" placeholder="Search specimens…" autocomplete="off"/>
+      <select id="group-by" title="Group the register by">
+        <option value="family">by family</option>
+        <option value="kingdom">by kingdom</option>
+        <option value="order">by order</option>
+        <option value="agent_type">by niche</option>
+        <option value="tier">by stratum</option>
+        <option value="habitat">by habitat</option>
+      </select>
+      <button class="btn-xs" id="f-flagged" title="Only members admitted without review">unreviewed</button>
+      <button class="btn-xs" id="f-fermi" title="Only Fermi orchestra members">fermi</button>
+    </div>
+    <div class="register" id="register"></div>
   </div>
 
-  <div class="census" id="census"></div>
-  <div id="gov"></div>
-
-  <div class="section">
-    <div class="section-title">Habitats
-      <span class="st-note">orchestras — colour is how each member was admitted</span>
-    </div>
-    <div class="habitats" id="habitats"></div>
-  </div>
-
-  <div class="section">
-    <div class="section-title">Niches &amp; strata
-      <span class="st-note">the shape of the published population</span>
-    </div>
-    <div class="dist" id="dist"></div>
-  </div>
-
-  <div class="section">
-    <div class="section-title">Co-habitation
-      <span class="st-note">pairs recurring across <em>distinct</em> team compositions</span>
-    </div>
-    <div class="dist-card" id="cohab"></div>
-  </div>
-
+  <div class="eco-right"><div class="sheet" id="sheet"></div></div>
 </div>
 
 <script>
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
   ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+const cap = s => String(s ?? "").replace(/^./, c => c.toUpperCase());
 
-const PROV_ORDER = ["approved","curated_seed","admin_grant","implicit","unknown"];
 const PROV_LABEL = {
   approved:     "approved — reviewed, has a receipt",
   curated_seed: "platform-seeded — never reviewed",
   admin_grant:  "admin grant — override",
   implicit:     "implicit — publishing is joining",
-  unknown:      "unknown",
 };
 
-function census(p) {
-  const tiers = Object.entries(p.by_tier || {}).map(([k,v]) => `${k} ${v}`).join(" · ");
-  const cells = [
-    ["Published agents", p.published, tiers],
-    ["Niches", Object.keys(p.by_niche || {}).length, "distinct agent types"],
-    ["Providers", Object.keys(p.by_provider || {}).length, "distinct LLM providers"],
-    ["Lifetime runs", (p.total_runs ?? 0).toLocaleString(), "across the population"],
-  ];
-  document.getElementById("census").innerHTML = cells.map(([l,v,s]) => `
-    <div class="census-cell">
-      <div class="cc-label">${esc(l)}</div>
-      <div class="cc-value">${esc(v)}</div>
-      <div class="cc-sub">${esc(s)}</div>
-    </div>`).join("");
-}
+let SPEC = [], OVERVIEW = null, SEL = null;
+let filters = { q: "", groupBy: "family", flagged: false, fermi: false };
 
-function governance(g) {
-  const un = g.unreviewed_members || [];
-  const el = document.getElementById("gov");
+/* ── Specimen helpers ─────────────────────────────────────────── */
+const tax      = s => (s.metadata && s.metadata.taxonomy) || {};
+const valence  = s => (s.metadata && s.metadata.valence) || {};
+const habitats = s => s.habitats || [];
+const fermiHab = s => habitats(s).find(h => h.orchestra === "fermi");
+const provOf   = s => (fermiHab(s) || {}).source || "none";
+// A community agent holding an explicit membership with no review behind
+// it is the anomaly this view exists to surface.
+const isFlagged = s => {
+  const h = fermiHab(s);
+  return !!h && h.source !== "approved" && !["system","curated"].includes(String(s.tier||"").toLowerCase());
+};
+const binomial = s => {
+  const t = tax(s);
+  return t.genus ? `${t.genus} ${t.species || s.agent_id}` : (s.display_alias || s.agent_id);
+};
+const groupKey = (s, by) => {
+  if (by === "habitat")  return fermiHab(s) ? "fermi" : "xaman_ek only";
+  if (by === "tier")     return s.tier || "unknown";
+  if (by === "agent_type") return s.agent_type || "unknown";
+  return tax(s)[by] || "Incertae sedis";   // unclassified — a real naturalist's bucket
+};
 
-  // The headline is deliberately blunt. An orchestra that has never once
-  // exercised its review process is not "clean" — it is unexercised, and
-  // that reads very differently.
-  if (un.length === 0 && g.approvals_ever > 0) {
-    el.innerHTML = `<div class="gov-alert clean">
-      <div class="ga-title">Every explicit member was reviewed</div>
-      <div class="ga-body">${g.approvals_ever} approval(s) on record · ${g.pending_requests} pending.</div>
+/* ── Register ─────────────────────────────────────────────────── */
+function renderRegister() {
+  const q = filters.q.toLowerCase();
+  let rows = SPEC.filter(s => {
+    if (filters.flagged && !isFlagged(s)) return false;
+    if (filters.fermi && !fermiHab(s)) return false;
+    if (!q) return true;
+    const hay = [s.agent_id, s.display_alias, s.description, s.agent_type,
+                 ...Object.values(tax(s)), ...(s.metadata?.tags || [])].join(" ").toLowerCase();
+    return hay.includes(q);
+  });
+
+  const groups = {};
+  for (const s of rows) (groups[groupKey(s, filters.groupBy)] ||= []).push(s);
+  const names = Object.keys(groups).sort((a, b) =>
+    (a === "Incertae sedis") - (b === "Incertae sedis") || a.localeCompare(b));
+
+  document.getElementById("register").innerHTML = names.length ? names.map(g => {
+    const list = groups[g].sort((a,b) => a.agent_id.localeCompare(b.agent_id));
+    return `<div class="rank-group">
+      <div class="rank-head">${esc(g)}<span class="rh-n">${list.length}</span></div>
+      ${list.map(s => `
+        <div class="spec-row${SEL === s.agent_id ? " selected" : ""}" data-id="${esc(s.agent_id)}">
+          <span class="sr-dot d-${esc(provOf(s))}"></span>
+          <span class="sr-name">${esc(s.agent_id)}</span>
+          <span class="sr-meta">${esc(s.agent_type || "")}</span>
+        </div>`).join("")}
     </div>`;
-    return;
-  }
+  }).join("") : `<div style="padding:20px 14px" class="empty">No specimens match.</div>`;
 
-  const never = g.approvals_ever === 0;
-  el.innerHTML = `<div class="gov-alert">
-    <div class="ga-title">${never
-      ? "The review process has never been used"
-      : `${un.length} member(s) hold a place without review`}</div>
-    <div class="ga-body">
-      ${never
-        ? `No membership request has ever been approved on this platform. Every current
-           member was seeded or granted directly, so admission has never actually been
-           gated by a decision.`
-        : `These are third-party agents in an explicit habitat with no approval behind them.`}
-      ${g.pending_requests > 0 ? ` ${g.pending_requests} request(s) awaiting review.` : ""}
-    </div>
-    ${un.length ? `<ul>${un.map(m =>
-      `<li>${esc(m.agent_name)} <span style="color:var(--fg4)">(${esc(m.tier)} · ${esc(m.membership_source)}${
-        m.owner ? " · owner " + esc(String(m.owner).slice(0,8)) : ""})</span></li>`).join("")}</ul>` : ""}
-  </div>`;
+  document.querySelectorAll(".spec-row").forEach(el =>
+    el.onclick = () => select(el.dataset.id));
 }
 
-function habitats(hs, unreviewedNames) {
-  document.getElementById("habitats").innerHTML = hs.map(h => {
-    const prov = h.provenance || {};
-    const total = Object.values(prov).reduce((a,b) => a+b, 0) || 1;
-    const segs = PROV_ORDER.filter(k => prov[k]).map(k =>
-      `<div class="prov-seg p-${k}" style="width:${(prov[k]/total*100).toFixed(1)}%"
-            title="${esc(PROV_LABEL[k])}: ${prov[k]}"></div>`).join("");
-    const key = PROV_ORDER.filter(k => prov[k]).map(k =>
-      `<span><i class="prov-swatch p-${k}"></i>${esc(k)} ${prov[k]}</span>`).join("");
+/* ── Compositional patterns ───────────────────────────────────── */
+// `produces` and `accepts` are declared on nearly every card (95/96), which
+// makes them a real interoperability graph rather than decoration: if A
+// produces `evidence` and B accepts `evidence`, A can feed B. This is the
+// concrete answer to "what composes with what" — distinct from
+// `dependencies`, which is what an author *declared* it needs.
+function composition(s) {
+  const mine = { out: new Set(s.produces || []), in: new Set(s.accepts || []) };
+  const feeds = [], fedBy = [];
+  for (const o of SPEC) {
+    if (o.agent_id === s.agent_id) continue;
+    const via  = (o.accepts  || []).filter(x => mine.out.has(x));
+    const via2 = (o.produces || []).filter(x => mine.in.has(x));
+    if (via.length)  feeds.push({ id: o.agent_id, via });
+    if (via2.length) fedBy.push({ id: o.agent_id, via: via2 });
+  }
+  const byCount = (a,b) => b.via.length - a.via.length || a.id.localeCompare(b.id);
+  return { feeds: feeds.sort(byCount), fedBy: fedBy.sort(byCount) };
+}
 
-    const cells = (h.members || []).length
-      ? `<div class="cells">${h.members.map(m => {
-          const src = m.membership_source || "unknown";
-          const flag = unreviewedNames.has(m.agent_name) ? " flag" : "";
-          const title = `${m.agent_type || ""} · ${m.tier || ""} · ${PROV_LABEL[src] || src}`;
-          return `<span class="cell ${src}${flag}" title="${esc(title)}">${esc(m.agent_name)}<span class="runs">${m.runs || 0}</span></span>`;
-        }).join("")}</div>`
-      : `<div class="empty">Membership is implicit — see the population figures above.</div>`;
+/* ── Specimen sheet ───────────────────────────────────────────── */
+function renderSheet(s) {
+  const t = tax(s), v = valence(s), st = s.execution_stats || {};
+  const fh = fermiHab(s), prov = provOf(s);
+  const ranks = ["kingdom","phylum","class","order","family","genus"]
+    .filter(r => t[r]).map(r => `<b>${esc(cap(r))}</b> ${esc(t[r])}`).join(" · ");
 
-    return `<div class="habitat">
-      <div class="hab-head">
-        <span class="hab-name">${esc(h.name)}</span>
-        <span class="hab-kind">${esc(h.kind)}</span>
-        <span class="hab-pop">${h.population}</span>
+  const dial = (label, val) => `<div class="dial"><span class="dl">${esc(label)}</span>
+    <span class="dt"><span class="df" style="width:${Math.round((val ?? 0)*100)}%"></span></span>
+    <span class="dv">${val ?? "—"}</span></div>`;
+
+  const comp = composition(s);
+  const linkList = (arr, verb) => arr.length
+    ? arr.slice(0, 10).map(x => `<div class="link-row">
+        <span class="lr-name" data-goto="${esc(x.id)}">${esc(x.id)}</span>
+        <span class="lr-via">${verb} ${esc(x.via.join(", "))}</span></div>`).join("")
+    : `<div class="empty">None — no declared interface overlap.</div>`;
+
+  const dk = (s.metadata && s.metadata.domain_knowledge) || {};
+  const dkHtml = Object.keys(dk).length ? Object.entries(dk).map(([g, body]) => {
+    if (typeof body !== "object" || body === null) return "";
+    const desc = body.description ? `<div class="dk-item" style="color:var(--fg4)">${esc(body.description)}</div>` : "";
+    const items = Object.entries(body).filter(([k]) => k !== "description")
+      .map(([k, val]) => `<div class="dk-item"><b>${esc(k)}</b> — ${esc(val)}</div>`).join("");
+    return `<div class="dk-group"><div class="dk-name">${esc(g.replace(/_/g," "))}</div>${desc}${items}</div>`;
+  }).join("") : "";
+
+  const fc = (s.capabilities && s.capabilities.fermi_contract) || null;
+  const samples = (s.metadata && s.metadata.sample_queries) || [];
+  const deps = s.dependencies || {};
+
+  document.getElementById("sheet").innerHTML = `
+    <div class="sheet-head">
+      <div class="sh-binomial">${esc(binomial(s))}</div>
+      <div class="sh-handle">${esc(s.agent_id)}</div>
+      ${ranks ? `<div class="sh-lineage">${ranks}</div>`
+              : `<div class="sh-lineage"><b>Undescribed</b> — no taxonomy on this card</div>`}
+      <div class="sh-badges">
+        <span class="badge">${esc(s.tier || "—")}</span>
+        <span class="badge">${esc(s.agent_type || "—")}</span>
+        <span class="badge">${esc(s.llm_provider || "anthropic")}</span>
+        ${fh ? `<span class="badge b-${esc(prov)}">fermi · ${esc(prov)}</span>`
+             : `<span class="badge">xaman_ek only</span>`}
+        ${isFlagged(s) ? `<span class="badge b-warn">admitted without review</span>` : ""}
       </div>
-      <div class="hab-rule">${esc(h.rule)}</div>
-      <div class="prov-bar">${segs}</div>
-      <div class="prov-key">${key}</div>
-      ${cells}
+    </div>
+
+    <div class="panels">
+      <div class="panel wide">
+        <div class="panel-title">Field notes</div>
+        <div class="prose">${esc(s.description || "No description recorded.")}</div>
+        ${s.author || s.metadata?.author ? `<div class="kv" style="margin-top:8px">
+          <span class="k">Described by</span><span class="v">${esc(s.author || s.metadata.author)}</span></div>` : ""}
+        ${s.metadata?.created ? `<div class="kv"><span class="k">First described</span>
+          <span class="v">${esc(s.metadata.created)}</span></div>` : ""}
+        ${s.forked_from ? `<div class="kv"><span class="k">Descends from</span>
+          <span class="v lr-name" data-goto="${esc(s.forked_from)}">${esc(s.forked_from)}</span></div>` : ""}
+        ${s.fork_count ? `<div class="kv"><span class="k">Descendants</span>
+          <span class="v">${s.fork_count}</span></div>` : ""}
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Temperament</div>
+        ${v.primary_affect ? `<div class="affect">${esc(v.primary_affect)}</div>` : ""}
+        ${dial("valence", v.valence)}
+        ${dial("arousal", v.arousal)}
+        <div class="traits">${(v.personality_traits || [])
+          .map(x => `<span class="trait">${esc(x)}</span>`).join("") || `<span class="empty">no traits recorded</span>`}</div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Morphology</div>
+        <div class="ports">
+          <div class="port-col"><div class="port-label">Accepts</div>
+            ${(s.accepts || []).map(x => `<span class="port in">${esc(x)}</span>`).join("") || `<span class="empty">—</span>`}</div>
+          <div class="port-col"><div class="port-label">Produces</div>
+            ${(s.produces || []).map(x => `<span class="port out">${esc(x)}</span>`).join("") || `<span class="empty">—</span>`}</div>
+        </div>
+        ${(s.capabilities?.skills || []).length ? `<div class="port-label" style="margin-top:9px">Skills</div>
+          ${s.capabilities.skills.map(x => `<span class="port">${esc(x)}</span>`).join("")}` : ""}
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Can feed</div>${linkList(comp.feeds, "via")}
+      </div>
+      <div class="panel">
+        <div class="panel-title">Can be fed by</div>${linkList(comp.fedBy, "via")}
+      </div>
+
+      ${(deps.required?.length || deps.optional?.length) ? `<div class="panel">
+        <div class="panel-title">Declared symbiosis</div>
+        ${(deps.required || []).map(d => `<div class="link-row">
+          <span class="lr-name" data-goto="${esc(d)}">${esc(d)}</span><span class="lr-via">required</span></div>`).join("")}
+        ${(deps.optional || []).map(d => `<div class="link-row">
+          <span class="lr-name" data-goto="${esc(d)}">${esc(d)}</span><span class="lr-via">optional</span></div>`).join("")}
+      </div>` : ""}
+
+      ${fc ? `<div class="panel">
+        <div class="panel-title">Fermi contract</div>
+        ${fc.finding_labels?.length ? `<div class="port-label">Finding labels</div>
+          ${fc.finding_labels.map(x => `<span class="port">${esc(x)}</span>`).join("")}` : ""}
+        ${fc.multiplier_range ? `<div class="kv" style="margin-top:7px"><span class="k">Multiplier</span>
+          <span class="v">${esc(JSON.stringify(fc.multiplier_range))}</span></div>` : ""}
+        ${fc.kg_fact_categories?.length ? `<div class="kv"><span class="k">KG categories</span>
+          <span class="v">${esc(fc.kg_fact_categories.join(", "))}</span></div>` : ""}
+        <div class="kv"><span class="k">Note</span><span class="v" style="color:var(--fg4)">A declared
+          capability. It is not membership — that is the badge above.</span></div>
+      </div>` : ""}
+
+      <div class="panel">
+        <div class="panel-title">Vital signs</div>
+        <div class="kv"><span class="k">Runs</span><span class="v">${st.total_executions ?? 0}</span></div>
+        <div class="kv"><span class="k">Succeeded</span><span class="v">${st.successful_executions ?? 0}</span></div>
+        <div class="kv"><span class="k">Cost to date</span><span class="v">$${(st.total_cost_usd ?? 0).toFixed(4)}</span></div>
+        <div class="kv"><span class="k">Model</span><span class="v">${esc(s.capabilities?.model || "—")}</span></div>
+        ${s.dreaming ? `<div class="kv"><span class="k">Dream credits</span>
+          <span class="v">${s.dreaming.credits_remaining ?? "—"} / ${s.dreaming.budget_credits ?? "—"}</span></div>` : ""}
+      </div>
+
+      ${dkHtml ? `<div class="panel wide"><div class="panel-title">Domain knowledge</div>${dkHtml}</div>` : ""}
+      ${samples.length ? `<div class="panel wide"><div class="panel-title">Observed behaviour — sample queries</div>
+        ${samples.map(q => `<div class="sample">${esc(q)}</div>`).join("")}</div>` : ""}
+
+      <div class="panel wide">
+        <div class="panel-title">Elsewhere</div>
+        <div class="kv"><span class="k">Clinical view</span>
+          <span class="v"><a href="/observatory?agent=${encodeURIComponent(s.agent_id)}">Observatory →</a></span></div>
+        <div class="kv"><span class="k">Full record</span>
+          <span class="v"><a href="/agent/${encodeURIComponent(s.agent_id)}">Agent page →</a></span></div>
+      </div>
     </div>`;
-  }).join("");
+
+  document.querySelectorAll("[data-goto]").forEach(el =>
+    el.onclick = () => select(el.dataset.goto));
 }
 
-function distribution(title, obj) {
-  const entries = Object.entries(obj || {}).sort((a,b) => b[1]-a[1]);
-  const max = entries.length ? entries[0][1] : 1;
-  return `<div class="dist-card">
-    <div class="section-title" style="margin-bottom:8px">${esc(title)}</div>
-    ${entries.map(([k,v]) => `
-      <div class="dist-row">
-        <span class="dr-label" title="${esc(k)}">${esc(k)}</span>
+/* ── Field guide (nothing selected) ───────────────────────────── */
+function renderFieldGuide() {
+  const d = OVERVIEW; if (!d) return;
+  const p = d.population, g = d.governance;
+  const dist = (title, obj) => {
+    const e = Object.entries(obj || {}).sort((a,b) => b[1]-a[1]);
+    const max = e.length ? e[0][1] : 1;
+    return `<div class="panel"><div class="panel-title">${esc(title)}</div>
+      ${e.map(([k,v]) => `<div class="dist-row"><span class="dr-label" title="${esc(k)}">${esc(k)}</span>
         <span class="dr-track"><span class="dr-fill" style="width:${(v/max*100).toFixed(1)}%"></span></span>
-        <span class="dr-n">${v}</span>
-      </div>`).join("")}
-  </div>`;
+        <span class="dr-n">${v}</span></div>`).join("")}</div>`;
+  };
+
+  const un = g.unreviewed_members || [];
+  const never = g.approvals_ever === 0;
+  const gov = (un.length === 0 && !never)
+    ? `<div class="gov-alert clean"><b>Every explicit member was reviewed</b>
+         <div class="ga-body">${g.approvals_ever} approval(s) on record · ${g.pending_requests} pending.</div></div>`
+    : `<div class="gov-alert"><b>${never ? "The review process has never been used"
+         : `${un.length} member(s) hold a place without review`}</b>
+        <div class="ga-body">${never
+          ? "No membership request has ever been approved here. Every current member was seeded or granted directly."
+          : "Third-party agents in an explicit habitat with no approval behind them."}
+          ${g.pending_requests > 0 ? ` ${g.pending_requests} awaiting review.` : ""}</div>
+        ${un.length ? `<ul>${un.map(m => `<li>${esc(m.agent_name)}</li>`).join("")}</ul>` : ""}</div>`;
+
+  const habs = (d.habitats || []).map(h => {
+    const pr = h.provenance || {}, tot = Object.values(pr).reduce((a,b)=>a+b,0) || 1;
+    return `<div class="panel"><div class="panel-title">${esc(h.name)} · ${h.population}</div>
+      <div class="prose" style="font-size:0.72rem;color:var(--fg4)">${esc(h.rule)}</div>
+      <div class="prov-bar">${Object.entries(pr).map(([k,v]) =>
+        `<div class="prov-seg p-${esc(k)}" style="width:${(v/tot*100).toFixed(1)}%"
+              title="${esc(PROV_LABEL[k]||k)}: ${v}"></div>`).join("")}</div>
+      <div class="prov-key">${Object.entries(pr).map(([k,v]) =>
+        `<span><i class="p-${esc(k)}"></i>${esc(k)} ${v}</span>`).join("")}</div></div>`;
+  }).join("");
+
+  const c = d.cohabitation || {}, pairs = c.pairs || [];
+  const clones = (c.total_workspaces || 0) - (c.distinct_rosters || 0);
+  const cohab = `<div class="panel wide"><div class="panel-title">Co-habitation</div>
+    <div class="cohab-note">Counted over ${c.distinct_rosters ?? 0} distinct roster(s) from
+      ${c.total_workspaces ?? 0} workspace(s) — ${clones} are exact template clones and are collapsed.
+      Counting instances would report the default template's pairs as co-occurring hundreds of times,
+      which measures template spawns, not affinity.</div>
+    ${pairs.length ? pairs.map(r => `<div class="link-row">
+        <span class="lr-name" data-goto="${esc(r.a)}">${esc(r.a)}</span>
+        <span style="color:var(--fg4)">+</span>
+        <span class="lr-name" data-goto="${esc(r.b)}">${esc(r.b)}</span>
+        <span class="lr-via">${r.distinct_teams} team(s)</span></div>`).join("")
+      : `<div class="empty">No pair yet recurs across more than one distinct team — teams are still
+         assembled from the template rather than composed.</div>`}</div>`;
+
+  const classified = SPEC.filter(s => Object.keys(tax(s)).length).length;
+  document.getElementById("sheet").innerHTML = `
+    <div class="sheet-head">
+      <div class="sh-binomial" style="font-style:normal">Field guide</div>
+      <div class="sh-handle">${p.published} published specimens · select one from the register</div>
+    </div>
+    <div class="census">
+      <div class="census-cell"><div class="cc-label">Specimens</div><div class="cc-value">${p.published}</div>
+        <div class="cc-sub">${Object.entries(p.by_tier).map(([k,v])=>`${k} ${v}`).join(" · ")}</div></div>
+      <div class="census-cell"><div class="cc-label">Described</div><div class="cc-value">${classified}</div>
+        <div class="cc-sub">carry a taxonomy; ${p.published - classified} undescribed</div></div>
+      <div class="census-cell"><div class="cc-label">Niches</div><div class="cc-value">${Object.keys(p.by_niche).length}</div>
+        <div class="cc-sub">distinct agent types</div></div>
+      <div class="census-cell"><div class="cc-label">Lifetime runs</div><div class="cc-value">${(p.total_runs||0).toLocaleString()}</div>
+        <div class="cc-sub">across the population</div></div>
+    </div>
+    ${gov}
+    <div class="panels">${habs}
+      ${dist("By niche", p.by_niche)}${dist("By stratum", p.by_tier)}${dist("By provider", p.by_provider)}
+      ${cohab}</div>`;
+
+  document.querySelectorAll("[data-goto]").forEach(el =>
+    el.onclick = () => select(el.dataset.goto));
 }
 
-function cohabitation(c) {
-  const el = document.getElementById("cohab");
-  const rows = (c && c.pairs) || [];
-  const distinct = c?.distinct_rosters ?? 0, totalWs = c?.total_workspaces ?? 0;
-
-  // Say why the panel is thin. Almost every workspace is a template clone,
-  // so counting workspace instances would report the default roster's pairs
-  // as co-occurring hundreds of times — a strong-looking number that
-  // measures template spawns, not affinity. Deduplicated by roster, the
-  // honest signal is currently small, and that is worth stating.
-  const clones = totalWs - distinct;
-  const caveat = `<div class="cohab-note">Counted over ${distinct} distinct roster(s) from
-    ${totalWs} workspace(s) — ${clones} are exact template clones and are collapsed.
-    Counting workspace instances instead would report every pair in the default
-    template as co-occurring ${clones > 0 ? "hundreds of" : "many"} times, which measures
-    how often the template was spawned, not affinity between two agents.</div>`;
-
-  if (!rows.length) {
-    el.innerHTML = caveat + `<div class="empty">No pair yet recurs across more than one
-      distinct team. The ecology hasn't diversified — teams are still being assembled
-      from the template rather than composed.</div>`;
-    return;
-  }
-  const max = rows[0].distinct_teams || 1;
-  el.innerHTML = caveat + rows.map(r => `
-    <div class="cohab-row">
-      <span class="cohab-pair">${esc(r.a)} <span style="color:var(--fg4)">+</span> ${esc(r.b)}</span>
-      <span class="dr-track" style="max-width:160px"><span class="dr-fill"
-            style="width:${(r.distinct_teams/max*100).toFixed(1)}%"></span></span>
-      <span class="cohab-n">${r.distinct_teams} team(s)</span>
-    </div>`).join("");
+function select(id) {
+  const s = SPEC.find(x => x.agent_id === id);
+  if (!s) return;
+  SEL = id;
+  history.replaceState(null, "", `?agent=${encodeURIComponent(id)}`);
+  renderRegister(); renderSheet(s);
+  document.querySelector(".eco-right").scrollTop = 0;
 }
 
 (async function load() {
   try {
-    const res = await fetch("/api/ecology/overview");
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-    const d = await res.json();
+    const [ovRes, spRes] = await Promise.all([
+      fetch("/api/ecology/overview"), fetch("/api/ecology/specimens")]);
+    if (!ovRes.ok) throw new Error(`overview: ${ovRes.status}`);
+    if (!spRes.ok) throw new Error(`specimens: ${spRes.status}`);
+    OVERVIEW = await ovRes.json();
+    SPEC = (await spRes.json()).specimens || [];
 
-    const unreviewedNames = new Set((d.governance?.unreviewed_members || []).map(m => m.agent_name));
+    document.getElementById("q").oninput = e => { filters.q = e.target.value; renderRegister(); };
+    document.getElementById("group-by").onchange = e => { filters.groupBy = e.target.value; renderRegister(); };
+    for (const [id, key] of [["f-flagged","flagged"], ["f-fermi","fermi"]]) {
+      document.getElementById(id).onclick = e => {
+        filters[key] = !filters[key];
+        e.target.classList.toggle("active", filters[key]);
+        renderRegister();
+      };
+    }
+    document.getElementById("home-link").onclick = e => {
+      e.preventDefault(); SEL = null;
+      history.replaceState(null, "", location.pathname);
+      renderRegister(); renderFieldGuide();
+    };
 
-    census(d.population || {});
-    governance(d.governance || {});
-    habitats(d.habitats || [], unreviewedNames);
-    document.getElementById("dist").innerHTML =
-        distribution("By niche (agent type)", d.population?.by_niche)
-      + distribution("By stratum (tier)",     d.population?.by_tier)
-      + distribution("By provider",           d.population?.by_provider);
-    cohabitation(d.cohabitation);
+    renderRegister();
+    const want = new URLSearchParams(location.search).get("agent");
+    if (want && SPEC.some(s => s.agent_id === want)) select(want); else renderFieldGuide();
   } catch (e) {
-    document.getElementById("census").innerHTML =
-      `<div class="census-cell"><div class="cc-label">Error</div>
-       <div class="cc-sub">${esc(e.message)}</div></div>`;
+    document.getElementById("sheet").innerHTML =
+      `<div class="empty">Could not load the ecology: ${esc(e.message)}</div>`;
   }
 })();
 </script>

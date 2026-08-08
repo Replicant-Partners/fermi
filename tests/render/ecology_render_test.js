@@ -1,83 +1,159 @@
 // Render checks for templates/ecology.html.
 //
-// Loads the page's render functions and exercises them against a payload
-// shaped like the real /api/ecology/overview response — no browser, no
-// database. The point is that this view's value is entirely in *what it
-// makes obvious*, so the assertions are about meaning, not markup:
-// unreviewed third-party members must be flagged, platform-seeded ones
-// must not be, and "zero approvals" must never render as the green
-// all-clear state.
+// Loads the page's render functions and exercises them against payloads
+// shaped like the real /api/ecology/* responses -- no browser, no
+// database. Specimen fixtures are read from actual agent_card.json files
+// on disk, so the assertions run against authentic data shapes rather
+// than what I imagined the shape to be.
+//
+// This view's value is entirely in *what it makes obvious*, so the
+// assertions are about meaning, not markup: unreviewed third-party
+// members must be flagged, platform-seeded ones must not be, "zero
+// approvals" must never render as the green all-clear, and a declared
+// contract must never be presented as membership.
 //
 // Run:  node tests/render/ecology_render_test.js
 const fs = require('fs');
 const path = require('path');
-const html = fs.readFileSync(
-  path.join(__dirname, '..', '..', 'templates', 'ecology.html'), 'utf8');
-const js = html.match(/<script>([\s\S]*)<\/script>/)[1]
+const ROOT = path.join(__dirname, '..', '..');
+
+const html = fs.readFileSync(path.join(ROOT, 'templates', 'ecology.html'), 'utf8');
+const src = html.match(/<script>([\s\S]*)<\/script>/)[1]
   .replace(/\(async function load\(\)[\s\S]*$/, '');   // drop the fetch bootstrap
 
+// Minimal DOM: elements remember their innerHTML; querySelectorAll is a no-op
+// because we assert on innerHTML, not on wiring.
 const doc = {};
-global.document = { getElementById: id => (doc[id] = doc[id] || { innerHTML: '' }) };
-eval(js);
-
-// Payload shaped exactly like the verified production queries.
-const P = {
-  population: { published: 104, total_runs: 30,
-    by_tier: { curated: 78, community: 11, system: 15 },
-    by_niche: { research: 55, creative: 20, meta: 9 },
-    by_provider: { anthropic: 103, deepseek: 1 } },
-  habitats: [
-    { name: 'fermi', kind: 'explicit', rule: 'admitted by review', population: 21,
-      provenance: { curated_seed: 21 },
-      members: [
-        { agent_name: 'biotech_analyst', tier: 'curated',   agent_type: 'research', runs: 0, membership_source: 'curated_seed' },
-        { agent_name: 'efra_forensic',   tier: 'community', agent_type: 'research', runs: 0, membership_source: 'curated_seed' },
-      ] },
-    { name: 'xaman_ek', kind: 'implicit', rule: 'publishing is joining', population: 104,
-      provenance: { implicit: 104 }, members: [] },
-  ],
-  governance: { pending_requests: 0, approvals_ever: 0,
-    unreviewed_members: [{ agent_name: 'efra_forensic', tier: 'community', owner: '010e541a-x', membership_source: 'curated_seed' }] },
-  cohabitation: { pairs: [{ a: 'dyad_observer', b: 'anomaly_triager', distinct_teams: 2 }],
-                  distinct_rosters: 8, total_workspaces: 199 },
+global.document = {
+  getElementById: id => (doc[id] = doc[id] || { innerHTML: '' }),
+  querySelectorAll: () => [],
+  querySelector: () => ({ scrollTop: 0 }),
 };
+global.history = { replaceState() {} };
+global.location = { search: '', pathname: '/ecology' };
 
-const unrev = new Set(P.governance.unreviewed_members.map(m => m.agent_name));
-census(P.population); governance(P.governance);
-habitats(P.habitats, unrev); cohabitation(P.cohabitation);
+// The page declares its functions with `const`, which does not leak out of
+// an `eval`. Wrap in a Function body (non-strict, so declarations are
+// function-scoped) and return a handle that closes over them. Getters and
+// setters for SPEC/OVERVIEW because the page holds them in `let`.
+const page = new Function(src + `
+  return {
+    binomial, groupKey, isFlagged, composition, renderSheet, renderFieldGuide,
+    tax, valence, fermiHab, provOf,
+    get SPEC() { return SPEC; },       set SPEC(v) { SPEC = v; },
+    get OVERVIEW() { return OVERVIEW; }, set OVERVIEW(v) { OVERVIEW = v; },
+  };`)();
+
+const { binomial, groupKey, isFlagged, composition, renderSheet, renderFieldGuide, tax } = page;
+
+// ── Fixtures from real cards on disk ──────────────────────────────
+function card(name) {
+  const p = path.join(ROOT, 'agents', 'curated', name, 'agent_card.json');
+  const c = JSON.parse(fs.readFileSync(p, 'utf8'));
+  return {
+    agent_id: c.agent_id, agent_type: c.agent_type, tier: 'curated',
+    description: c.description, llm_provider: 'anthropic',
+    accepts: c.accepts || [], produces: c.produces || [],
+    dependencies: c.dependencies || {}, capabilities: c.capabilities || {},
+    metadata: c.metadata || {}, execution_stats: { total_executions: 0, total_cost_usd: 0 },
+    habitats: [],
+  };
+}
+
+const macro = card('macro_forecaster');
+// A third-party agent holding fermi membership with no review behind it.
+const sneaky = {
+  agent_id: 'efra_forensic', agent_type: 'research', tier: 'community',
+  description: 'FORENSIC is the risk and trust engine.',
+  accepts: ['evidence'], produces: ['diagnosis'],
+  capabilities: { fermi_contract: { finding_labels: ['red_flag'], multiplier_range: [0.5, 2.0] } },
+  metadata: {}, execution_stats: {}, habitats: [{ orchestra: 'fermi', source: 'curated_seed' }],
+};
+const legit = { ...macro, habitats: [{ orchestra: 'fermi', source: 'approved' }] };
 
 let fail = 0;
 const ok = (cond, label) => { console.log((cond ? '  PASS  ' : '  FAIL  ') + label); if (!cond) fail++; };
 
-console.log('census:');
-ok(doc.census.innerHTML.includes('104'), 'shows published population');
-ok(doc.census.innerHTML.includes('curated 78'), 'shows tier breakdown');
+// ── Specimen classification ───────────────────────────────────────
+console.log('classification (from the real macro_forecaster card):');
+ok(binomial(macro) === 'Analyticus macro_forecaster',
+   `renders a binomial from taxonomy (got "${binomial(macro)}")`);
+ok(groupKey(macro, 'family') === 'Investigatidae', 'groups by family');
+ok(groupKey({ agent_id: 'x', metadata: {} }, 'family') === 'Incertae sedis',
+   'an untaxonomised card falls into Incertae sedis, not "undefined"');
 
-console.log('governance:');
-ok(doc.gov.innerHTML.includes('never been used'),
-   'zero approvals reads as "never used", not as "clean"');
-ok(!doc.gov.innerHTML.includes('gov-alert clean'), 'does NOT render the clean/green state');
-ok(doc.gov.innerHTML.includes('efra_forensic'), 'names the unreviewed member');
+console.log('provenance:');
+ok(isFlagged(sneaky) === true, 'community member with curated_seed IS flagged');
+ok(isFlagged(legit) === false, 'community-visible but approved member is NOT flagged');
+ok(isFlagged({ ...macro, tier: 'curated', habitats: [{ orchestra: 'fermi', source: 'curated_seed' }] }) === false,
+   'platform-seeded curated member is NOT flagged (expected provenance)');
+ok(isFlagged({ ...macro, habitats: [] }) === false, 'non-member is not flagged');
 
-console.log('habitats:');
-ok(doc.habitats.innerHTML.includes('cell curated_seed flag'),
-   'unreviewed third-party member is visually flagged');
-ok(doc.habitats.innerHTML.includes('>biotech_analyst<') ||
-   doc.habitats.innerHTML.includes('biotech_analyst'), 'renders platform member');
-ok(!/class="cell curated_seed flag"[^>]*>biotech_analyst/.test(doc.habitats.innerHTML),
-   'platform-seeded member is NOT flagged (only third-party)');
-ok(doc.habitats.innerHTML.includes('p-implicit'), 'implicit habitat renders its own provenance');
+// ── Composition graph ─────────────────────────────────────────────
+console.log('composition (produces -> accepts):');
+page.SPEC = [macro, sneaky, { agent_id: 'consumer', accepts: ['evidence'], produces: [], metadata: {} }];
+const comp = composition(macro);
+ok(comp.feeds.some(f => f.id === 'consumer' && f.via.includes('evidence')),
+   'macro_forecaster can feed an agent that accepts `evidence`');
+ok(comp.feeds.some(f => f.id === 'efra_forensic'),
+   'and efra_forensic, which also accepts evidence');
+ok(composition(sneaky).fedBy.some(f => f.id === 'macro_forecaster'),
+   'the reverse edge resolves: efra_forensic can be fed by macro_forecaster');
+ok(!comp.feeds.some(f => f.id === 'macro_forecaster'), 'never composes with itself');
 
-console.log('cohabitation:');
-ok(doc.cohab.innerHTML.includes('191 are exact template clones'),
-   'states how many workspaces are template clones (199-8)');
-ok(doc.cohab.innerHTML.includes('2 team(s)'), 'counts distinct teams, not workspace instances');
+// ── Specimen sheet ────────────────────────────────────────────────
+console.log('specimen sheet:');
+renderSheet(macro);
+let h = doc.sheet.innerHTML;
+ok(h.includes('Analyticus macro_forecaster'), 'shows the binomial');
+ok(h.includes('Investigatidae'), 'shows the taxonomic lineage');
+ok(h.includes('foresight'), 'shows primary affect from valence');
+ok(h.includes('analytical'), 'shows personality traits');
+ok(h.includes('Domain knowledge'), 'renders the domain-knowledge panel');
+ok(h.includes('yield_curve') || h.includes('base_rate') || h.includes('recession'),
+   'surfaces actual domain-knowledge content');
+ok(h.includes('sample queries') || h.includes('Sample'), 'renders sample queries');
+ok(h.includes('Observatory'), 'cross-links to the clinical view');
 
+renderSheet(sneaky);
+h = doc.sheet.innerHTML;
+ok(h.includes('admitted without review'), 'flags an unreviewed member on its sheet');
+ok(h.includes('fermi · curated_seed'), 'states provenance explicitly on the badge');
+ok(h.includes('It is not membership'),
+   'a fermi_contract is labelled a capability, never presented as membership');
+
+renderSheet({ agent_id: 'bare', metadata: {}, execution_stats: {}, habitats: [] });
+h = doc.sheet.innerHTML;
+ok(h.includes('Undescribed'), 'a card with no taxonomy says so rather than rendering blanks');
+ok(h.includes('xaman_ek only'), 'a non-member shows implicit habitat only');
+
+// ── Field guide ───────────────────────────────────────────────────
+console.log('field guide:');
+page.OVERVIEW = {
+  population: { published: 104, total_runs: 30, by_tier: { curated: 78, community: 11, system: 15 },
+                by_niche: { research: 55 }, by_provider: { anthropic: 103 } },
+  habitats: [{ name: 'fermi', kind: 'explicit', rule: 'admitted by review',
+               population: 12, provenance: { curated_seed: 12 } }],
+  governance: { pending_requests: 0, approvals_ever: 0,
+                unreviewed_members: [{ agent_name: 'guidance_tracker' }] },
+  cohabitation: { pairs: [], distinct_rosters: 8, total_workspaces: 199 },
+};
+page.SPEC = [macro, sneaky];
+renderFieldGuide();
+h = doc.sheet.innerHTML;
+ok(h.includes('never been used'), 'zero approvals reads as "never used", not clean');
+ok(!h.includes('gov-alert clean'), 'does NOT render the green all-clear');
+ok(h.includes('guidance_tracker'), 'names the unreviewed member');
+ok(h.includes('191 are exact template clones'), 'explains the collapsed template clones');
+ok(h.includes('undescribed'), 'reports how many specimens lack a taxonomy');
+
+// ── Escaping ──────────────────────────────────────────────────────
 console.log('escaping:');
-doc.gov.innerHTML = '';
-governance({ pending_requests: 0, approvals_ever: 1,
-  unreviewed_members: [{ agent_name: '<img src=x onerror=alert(1)>', tier: 'community', membership_source: 'x' }] });
-ok(!doc.gov.innerHTML.includes('<img'), 'escapes hostile agent names');
+renderSheet({ agent_id: '<img src=x onerror=alert(1)>', description: '<script>bad()</script>',
+              metadata: {}, execution_stats: {}, habitats: [] });
+h = doc.sheet.innerHTML;
+ok(!h.includes('<img'), 'escapes a hostile agent id');
+ok(!h.includes('<script>bad'), 'escapes a hostile description');
 
 console.log(fail === 0 ? '\nALL RENDER CHECKS PASSED' : `\n${fail} CHECK(S) FAILED`);
 process.exit(fail === 0 ? 0 : 1);

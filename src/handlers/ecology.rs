@@ -32,6 +32,72 @@ use sqlx::Row;
 
 use crate::AppState;
 
+/// GET /api/ecology/specimens
+///
+/// Every published agent as a full dossier, in one call, so the register
+/// and the specimen sheet need no per-agent round trips.
+///
+/// Built from `agents::build_agent_json` — the same merge the catalogue
+/// uses — because the interesting material lives in the on-disk
+/// `agent_card.json`, not the `agents` table: the seven-rank taxonomy,
+/// `valence` (affect + personality traits), `domain_knowledge`, and the
+/// `accepts`/`produces` interfaces. A second hand-rolled merge here would
+/// drift from the catalogue within a release.
+///
+/// Orchestra membership and its provenance are joined on, so the register
+/// can colour a specimen by how it was admitted.
+pub async fn ecology_specimens_handler(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let agents = state
+        .memory_store
+        .list_agents()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Membership + provenance per agent, one query rather than N.
+    let grants =
+        sqlx::query("SELECT agent_id, orchestra_name, source FROM public.orchestra_members")
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
+    let mut membership: std::collections::HashMap<uuid::Uuid, Vec<(String, String)>> =
+        Default::default();
+    for g in &grants {
+        if let (Ok(id), Ok(orch), Ok(src)) = (
+            g.try_get::<uuid::Uuid, _>("agent_id"),
+            g.try_get::<String, _>("orchestra_name"),
+            g.try_get::<String, _>("source"),
+        ) {
+            membership.entry(id).or_default().push((orch, src));
+        }
+    }
+
+    let specimens: Vec<Value> = agents
+        .iter()
+        .filter(|a| a.status.eq_ignore_ascii_case("published"))
+        .map(|a| {
+            let mut v = crate::handlers::agents::build_agent_json(&state, a, None, 0);
+            let habitats: Vec<Value> = membership
+                .get(&a.agent_id)
+                .map(|ms| {
+                    ms.iter()
+                        .map(|(o, s)| json!({ "orchestra": o, "source": s }))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if let Some(obj) = v.as_object_mut() {
+                // Every published agent is implicitly in xaman_ek; only
+                // explicit habitats carry a provenance worth showing.
+                obj.insert("habitats".into(), Value::Array(habitats));
+            }
+            v
+        })
+        .collect();
+
+    Ok(Json(json!({ "specimens": specimens })))
+}
+
 /// GET /api/ecology/overview
 ///
 /// One aggregated payload. Anonymous-readable: this is public-facing

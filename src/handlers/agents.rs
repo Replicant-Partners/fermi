@@ -60,7 +60,14 @@ fn agent_visible_to_caller(agent: &Agent, caller: Option<&AuthPrincipal>) -> boo
 /// get_agent_handler. Kept in one place so the client contract is
 /// identical whether the caller lists the catalogue or fetches a
 /// single agent by name.
-fn build_agent_json(
+/// Merge a DB agent row with its on-disk `agent_card.json` (when one
+/// exists) into the catalogue's canonical JSON shape.
+///
+/// `pub(crate)` so the Ecology lens builds specimens from exactly the same
+/// merge the catalogue uses — taxonomy, valence, domain knowledge and the
+/// accepts/produces interfaces all live in the card, not the table, so a
+/// second hand-rolled merge would quietly diverge.
+pub(crate) fn build_agent_json(
     state: &AppState,
     agent: &Agent,
     owner_display: Option<String>,
