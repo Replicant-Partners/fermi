@@ -91,6 +91,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Composita",
+      "class": "Creativia",
+      "order": "Narrativales",
+      "species": "flight_coordinator"
+    },
     "tags": [
       "rabble",
       "flight",

@@ -375,9 +375,9 @@
     "description": "SimOps strategist and domain-constrained MoE orchestrator for kask.bio. Conversational process-design companion that emits structured action blocks (edit_process, invoke_agent, fork_variation, compare_variations, declare_sosa_contract, annotate) executed by the kask client. Emergent design: on an empty workspace leads from blank to first-draft process through conversation, no fixed interview. The only agent the user talks to directly in SimOps v3.",
     "taxonomy": {
       "kingdom": "Quantitativa",
-      "phylum": "Physicalivora",
-      "class": "Processoria",
-      "order": "Strategales",
+      "phylum": "Instrumenta",
+      "class": "Strategia",
+      "order": "Narrativales",
       "family": "Simopsidae",
       "genus": "Companion",
       "species": "simops_companion"

@@ -74,6 +74,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Diagnosticales",
+      "species": "observation_analyst"
+    },
     "tags": [
       "sensor",
       "sosa",

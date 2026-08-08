@@ -103,9 +103,9 @@
     "description": "Energy-balance default-filling specialist for SimOps stages. Proposes power_kwh_per_input_unit, labor_hours_per_input_unit, carbon_intensity, and resource energy_density with rationale + confidence + typical_range. Companion to sensor_advisor (what to observe) and supply_chain_oracle (BoM pricing).",
     "taxonomy": {
       "kingdom": "Quantitativa",
-      "phylum": "Energetica",
-      "class": "Advisoria",
-      "order": "Advisorales",
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Consiliales",
       "family": "Investigatidae",
       "genus": "Advisor",
       "species": "energy_advisor"

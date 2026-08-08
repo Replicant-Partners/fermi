@@ -93,6 +93,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Vigilia",
+      "order": "Diagnosticales",
+      "species": "anomaly_triager"
+    },
     "created": "2026-05-11",
     "author": "Fermi Team",
     "description": "Observability composition member — classifies anomaly_events by severity (L0-L3) and routes high-severity events to HITL review. Vigilant but not alarmist; treats reviewer attention as a scarce resource.",

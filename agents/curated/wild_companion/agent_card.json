@@ -99,6 +99,12 @@
   "wallet": { "public_address": "", "balance": 0.0, "currency": "ABW", "budget": 1000.0 },
   "ontology_stats": { "entities": 0, "relationships": 0, "last_updated": "2026-06-05T00:00:00Z", "evolution_commits": 0 },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Strategia",
+      "order": "Operationales",
+      "species": "wild_companion"
+    },
     "tags": ["wild", "foraging", "companion", "orchestrator", "strategist", "kask-wild"],
     "created": "2026-06-05",
     "author": "Fermi Team",

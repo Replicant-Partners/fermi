@@ -119,9 +119,9 @@
     "description": "BoM price resolver and supply chain risk assessor for botanical ingredients, skincare actives, and process materials. Called by the SimOps Composer when the user requests agent-resolved pricing. Returns mid-market prices, cost ranges, supplier notes, and supply chain risk flags.",
     "taxonomy": {
       "kingdom": "Quantitativa",
-      "phylum": "Mercatoria",
-      "class": "Supplyia",
-      "order": "Oraclales",
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Diagnosticales",
       "family": "Investigatidae",
       "genus": "Oracle",
       "species": "supply_chain_oracle"

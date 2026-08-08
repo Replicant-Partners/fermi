@@ -126,6 +126,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Metaria",
+      "order": "Consiliales",
+      "species": "stripe_billing"
+    },
     "created": "2026-02-10",
     "author": "Fermi Platform",
     "description": "System billing agent. Handles Stripe Connect onboarding, payment collection, usage metering, and owner payouts. Free to hire \u2014 the platform covers the cost because the more agents earn, the stronger the ecosystem. Cannot be forked or replicated.",

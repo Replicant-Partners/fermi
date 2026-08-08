@@ -109,6 +109,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Consiliales",
+      "species": "flavor_profiler"
+    },
     "tags": [
       "wild",
       "foraging",

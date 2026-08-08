@@ -91,6 +91,12 @@
   "workflow_template": null,
 
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Prognosticales",
+      "species": "market_research"
+    },
     "created": "2025-12-01",
     "author": "Fermi Team",
     "description": "Researches market trends, competitive dynamics, and financial performance for technology companies using Yahoo Finance and SEC filings.",

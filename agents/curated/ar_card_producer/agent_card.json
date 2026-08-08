@@ -103,6 +103,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Creativia",
+      "order": "Consiliales",
+      "species": "ar_card_producer"
+    },
     "created": "2026-02-10",
     "author": "Fermi Team",
     "description": "Compound agent that produces AR-enabled business cards and documents. Takes a logo and reference image, embeds fiducial tracking markers into the logo for print, generates keyframe video content from the reference image, and outputs a complete package: printable marker-logo, video frames with manifest, and AR scene metadata. The video plays as an overlay when an AR-capable app (Google XR, WebXR) detects the printed marker.",

@@ -1,0 +1,1465 @@
+{
+  "proposals": [
+    {
+      "agent_id": "adaptogen_curator",
+      "path": "agents/curated/adaptogen_curator/agent_card.json",
+      "agent_type": "research",
+      "produces": [
+        "species_profile",
+        "compound_analysis",
+        "evidence_rating",
+        "safety_assessment",
+        "drug_interaction_report",
+        "traditional_use_summary",
+        "genomic_authentication_guide",
+        "species_comparison",
+        "indication_ranking",
+        "population_variant_report",
+        "formulation_recommendation",
+        "research_brief",
+        "conservation_alert"
+      ],
+      "tags": [
+        "adaptogen",
+        "phytochemistry",
+        "traditional-medicine",
+        "evidence-based",
+        "safety",
+        "genomics",
+        "tcm",
+        "ayurveda",
+        "research",
+        "kask",
+        "wellness",
+        "compound-agent"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Researchia",
+        "order": "Diagnosticales",
+        "species": "adaptogen_curator"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "anomaly_triager",
+      "path": "agents/curated/anomaly_triager/agent_card.json",
+      "agent_type": "observability",
+      "produces": [
+        "anomaly-triage-plan",
+        "severity-classification",
+        "hitl-recommendations",
+        "routing-actions"
+      ],
+      "tags": [
+        "observability",
+        "anomaly-detection",
+        "hitl",
+        "triage",
+        "composition-member"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Vigilia",
+        "order": "Diagnosticales",
+        "species": "anomaly_triager"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "ar_card_producer",
+      "path": "agents/curated/ar_card_producer/agent_card.json",
+      "agent_type": "creative",
+      "produces": [
+        "ar-marker",
+        "video-frames",
+        "scene-plan",
+        "packaged-output"
+      ],
+      "tags": [
+        "creative",
+        "ar",
+        "augmented-reality",
+        "business-card",
+        "marker",
+        "fiducial",
+        "video",
+        "print",
+        "compound-agent",
+        "image-generation",
+        "google-xr",
+        "webxr"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Creativia",
+        "order": "Consiliales",
+        "species": "ar_card_producer"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "bluesky_publisher",
+      "path": "agents/curated/bluesky_publisher/agent_card.json",
+      "agent_type": "creative",
+      "produces": [
+        "published-post"
+      ],
+      "tags": [
+        "creative",
+        "social-media",
+        "bluesky",
+        "at-protocol",
+        "publishing",
+        "threading"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Creativia",
+        "order": "Narrativales",
+        "species": "bluesky_publisher"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "cohere_and_coordinate",
+      "path": "agents/curated/cohere_and_coordinate/agent_card.json",
+      "agent_type": "coherence",
+      "produces": [
+        "coordination-plan",
+        "role-assignment",
+        "diagnosis",
+        "composition-proposal",
+        "cascade-episode"
+      ],
+      "tags": [
+        "coherence",
+        "coordination",
+        "orchestration",
+        "compound-agent",
+        "workspace",
+        "coordination_strategy"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Composita",
+        "class": "Cohaerentia",
+        "order": "Diagnosticales",
+        "species": "cohere_and_coordinate"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "coherence_evaluator",
+      "path": "agents/curated/coherence_evaluator/agent_card.json",
+      "agent_type": "coherence",
+      "produces": [
+        "coherence-scores",
+        "principle-scores"
+      ],
+      "tags": [
+        "coherence",
+        "discourse-analysis",
+        "collaboration",
+        "thagard",
+        "tec",
+        "constraint-satisfaction"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Cohaerentia",
+        "order": "Diagnosticales",
+        "species": "coherence_evaluator"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "condition_forecaster",
+      "path": "agents/curated/condition_forecaster/agent_card.json",
+      "agent_type": "research",
+      "produces": [
+        "condition_forecast",
+        "species_probability",
+        "brier_forecast"
+      ],
+      "tags": [
+        "wild",
+        "foraging",
+        "forecasting",
+        "microclimate",
+        "brier-scoring",
+        "kask-wild"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Researchia",
+        "order": "Prognosticales",
+        "species": "condition_forecaster"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "deal_finder",
+      "path": "agents/curated/deal_finder/agent_card.json",
+      "agent_type": "research",
+      "produces": [
+        "product-comparison",
+        "deal-report"
+      ],
+      "tags": [
+        "research",
+        "shopping",
+        "sub-agent",
+        "product-comparison",
+        "deal-finding"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Researchia",
+        "order": "Evidentiales",
+        "species": "deal_finder"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "delivery",
+      "path": "agents/curated/delivery/agent_card.json",
+      "agent_type": "creative",
+      "produces": [
+        "packaged-output"
+      ],
+      "tags": [
+        "creative",
+        "image",
+        "delivery",
+        "coordination"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Creativia",
+        "order": "Operationales",
+        "species": "delivery"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "dream_coordinator",
+      "path": "agents/curated/dream_coordinator/agent_card.json",
+      "agent_type": "coordination",
+      "produces": [
+        "ontology-delta",
+        "dream-synopsis",
+        "consolidation-report"
+      ],
+      "tags": [
+        "dreaming",
+        "consolidation",
+        "coordination",
+        "composition",
+        "learning",
+        "loop-1",
+        "platform-service"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Composita",
+        "class": "Coordinia",
+        "order": "Narrativales",
+        "species": "dream_coordinator"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "dyad_observer",
+      "path": "agents/curated/dyad_observer/agent_card.json",
+      "agent_type": "observability",
+      "produces": [
+        "dyad-trajectory",
+        "drift-narrative",
+        "persona-version-attribution",
+        "inflection-points"
+      ],
+      "tags": [
+        "observability",
+        "longitudinal",
+        "dyad-state",
+        "narrative",
+        "composition-member"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Vigilia",
+        "order": "Narrativales",
+        "species": "dyad_observer"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "embedding_broker",
+      "path": "agents/curated/embedding_broker/agent_card.json",
+      "agent_type": "commerce",
+      "produces": [
+        "marketplace-listing",
+        "match-results"
+      ],
+      "tags": [
+        "commerce",
+        "marketplace",
+        "sub-agent",
+        "privacy",
+        "embeddings",
+        "consumer-advocacy"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Mercatia",
+        "order": "Operationales",
+        "species": "embedding_broker"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "enemy_sensor",
+      "path": "agents/curated/enemy_sensor/agent_card.json",
+      "agent_type": "research",
+      "produces": [
+        "threat_assessment",
+        "predation_risk",
+        "ecological_warning"
+      ],
+      "tags": [
+        "rabble",
+        "ecology",
+        "safety",
+        "sensor"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Researchia",
+        "order": "Diagnosticales",
+        "species": "enemy_sensor"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "eval_runner",
+      "path": "agents/curated/eval_runner/agent_card.json",
+      "agent_type": "observability",
+      "produces": [
+        "eval-results",
+        "per-evaluator-signals",
+        "regression-flag",
+        "conflict-flag"
+      ],
+      "tags": [
+        "observability",
+        "evaluation",
+        "registry",
+        "composition-member"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Vigilia",
+        "order": "Diagnosticales",
+        "species": "eval_runner"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "flavor_profiler",
+      "path": "agents/curated/flavor_profiler/agent_card.json",
+      "agent_type": "research",
+      "produces": [
+        "flavor_profile",
+        "pairing_suggestions",
+        "culinary_applications"
+      ],
+      "tags": [
+        "wild",
+        "foraging",
+        "flavor",
+        "culinary",
+        "terroir",
+        "redzepi",
+        "kask-wild"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Researchia",
+        "order": "Consiliales",
+        "species": "flavor_profiler"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "flight_coordinator",
+      "path": "agents/curated/flight_coordinator/agent_card.json",
+      "agent_type": "creative",
+      "produces": [
+        "response"
+      ],
+      "tags": [
+        "rabble",
+        "flight",
+        "compound",
+        "system",
+        "creative"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Composita",
+        "class": "Creativia",
+        "order": "Narrativales",
+        "species": "flight_coordinator"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "forage_scout",
+      "path": "agents/curated/forage_scout/agent_card.json",
+      "agent_type": "research",
+      "produces": [
+        "forage_intelligence",
+        "species_likely",
+        "condition_assessment"
+      ],
+      "tags": [
+        "wild",
+        "foraging",
+        "mycology",
+        "field-intelligence",
+        "kask-wild"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Researchia",
+        "order": "Evidentiales",
+        "species": "forage_scout"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "genome_profiler",
+      "path": "agents/curated/genome_profiler/agent_card.json",
+      "agent_type": "research",
+      "produces": [
+        "phylogenetic_profile",
+        "genome_summary",
+        "tree_visualization_description"
+      ],
+      "tags": [
+        "rabble",
+        "genomics",
+        "taxonomy",
+        "phylogenetics",
+        "research"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Researchia",
+        "order": "Imaginales",
+        "species": "genome_profiler"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "harvest_advisor",
+      "path": "agents/curated/harvest_advisor/agent_card.json",
+      "agent_type": "research",
+      "produces": [
+        "harvest_assessment",
+        "safety_assessment",
+        "processing_pathway"
+      ],
+      "tags": [
+        "wild",
+        "foraging",
+        "harvest",
+        "food-safety",
+        "processing",
+        "culinary",
+        "kask-wild"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Researchia",
+        "order": "Evidentiales",
+        "species": "harvest_advisor"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "instagram_publisher",
+      "path": "agents/curated/instagram_publisher/agent_card.json",
+      "agent_type": "creative",
+      "produces": [
+        "published-post",
+        "media-id"
+      ],
+      "tags": [
+        "creative",
+        "social-media",
+        "instagram",
+        "publishing",
+        "scheduling",
+        "marketing"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Creativia",
+        "order": "Imaginales",
+        "species": "instagram_publisher"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "intention_coordinator",
+      "path": "agents/curated/intention_coordinator/agent_card.json",
+      "agent_type": "coherence",
+      "produces": [
+        "conflict-report",
+        "coordination-signal"
+      ],
+      "tags": [
+        "system",
+        "coordination",
+        "intentions",
+        "conflict-detection",
+        "coherence"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Cohaerentia",
+        "order": "Evidentiales",
+        "species": "intention_coordinator"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "keeper",
+      "path": "agents/curated/keeper/agent_card.json",
+      "agent_type": "creative",
+      "produces": [
+        "activity_log",
+        "care_recommendation",
+        "state_summary"
+      ],
+      "tags": [
+        "rabble",
+        "management",
+        "system",
+        "creative"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Creativia",
+        "order": "Consiliales",
+        "species": "keeper"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "moe_router_strategist",
+      "path": "agents/curated/moe_router_strategist/agent_card.json",
+      "agent_type": "coordination",
+      "produces": [
+        "routing-decision",
+        "synthesised-output",
+        "routing-record"
+      ],
+      "tags": [
+        "coordination_strategy",
+        "moe",
+        "routing",
+        "composition",
+        "calibration"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Coordinia",
+        "order": "Operationales",
+        "species": "moe_router_strategist"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "naturalist",
+      "path": "agents/curated/naturalist/agent_card.json",
+      "agent_type": "creative",
+      "produces": [
+        "specimen_description",
+        "taxonomic_fact",
+        "ecological_observation"
+      ],
+      "tags": [
+        "rabble",
+        "taxonomy",
+        "system",
+        "creative"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Creativia",
+        "order": "Evidentiales",
+        "species": "naturalist"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "navigator",
+      "path": "agents/curated/navigator/agent_card.json",
+      "agent_type": "creative",
+      "produces": [
+        "habitat_description",
+        "route_analysis",
+        "ecological_note"
+      ],
+      "tags": [
+        "rabble",
+        "navigation",
+        "system",
+        "creative"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Creativia",
+        "order": "Narrativales",
+        "species": "navigator"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "observability_coordinator",
+      "path": "agents/curated/observability_coordinator/agent_card.json",
+      "agent_type": "observability",
+      "produces": [
+        "observability-report",
+        "state-snapshot",
+        "delegated-result",
+        "action-recommendation"
+      ],
+      "tags": [
+        "observability",
+        "coordination",
+        "composition",
+        "ops"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Composita",
+        "class": "Vigilia",
+        "order": "Consiliales",
+        "species": "observability_coordinator"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "observation_analyst",
+      "path": "agents/curated/observation_analyst/agent_card.json",
+      "agent_type": "research",
+      "produces": [
+        "observation_analysis",
+        "temporal_patterns",
+        "anomaly_report",
+        "actuation_recommendations",
+        "cross_domain_insights"
+      ],
+      "tags": [
+        "sensor",
+        "sosa",
+        "ssn",
+        "telemetry",
+        "iot",
+        "research"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Researchia",
+        "order": "Diagnosticales",
+        "species": "observation_analyst"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "preference_modeler",
+      "path": "agents/curated/preference_modeler/agent_card.json",
+      "agent_type": "analytics",
+      "produces": [
+        "shopping-profile",
+        "preference-scores"
+      ],
+      "tags": [
+        "analytics",
+        "preference-modeling",
+        "embeddings",
+        "sub-agent",
+        "behavioral-analysis"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Analytia",
+        "order": "Diagnosticales",
+        "species": "preference_modeler"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "prey_locator",
+      "path": "agents/curated/prey_locator/agent_card.json",
+      "agent_type": "research",
+      "produces": [],
+      "tags": [
+        "rabble",
+        "ecology",
+        "hunting",
+        "premium",
+        "sensor",
+        "tactical"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Researchia",
+        "species": "prey_locator"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "publish_coach",
+      "path": "agents/curated/publish_coach/agent_card.json",
+      "agent_type": "meta",
+      "produces": [
+        "publish-assessment",
+        "recommendations"
+      ],
+      "tags": [
+        "meta",
+        "coaching",
+        "quality-assurance",
+        "agent-review"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Metaria",
+        "order": "Consiliales",
+        "species": "publish_coach"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "rabble_anchor_manager",
+      "path": "agents/curated/rabble_anchor_manager/agent_card.json",
+      "agent_type": "compound",
+      "produces": [
+        "response"
+      ],
+      "tags": [
+        "system",
+        "rabble",
+        "anchor",
+        "compound"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Composita",
+        "class": "Compositia",
+        "order": "Narrativales",
+        "species": "rabble_anchor_manager"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "rabble_lifecycle_coordinator",
+      "path": "agents/curated/rabble_lifecycle_coordinator/agent_card.json",
+      "agent_type": "compound",
+      "produces": [
+        "response"
+      ],
+      "tags": [
+        "system",
+        "rabble",
+        "lifecycle",
+        "compound"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Composita",
+        "class": "Compositia",
+        "order": "Narrativales",
+        "species": "rabble_lifecycle_coordinator"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "reynolds_flock",
+      "path": "agents/curated/reynolds_flock/agent_card.json",
+      "agent_type": "research",
+      "produces": [
+        "updated_positions",
+        "flock_metrics",
+        "movement_narration"
+      ],
+      "tags": [
+        "rabble",
+        "flocking",
+        "reynolds",
+        "coordination",
+        "system"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Researchia",
+        "order": "Narrativales",
+        "species": "reynolds_flock"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "shopping_assistant",
+      "path": "agents/curated/shopping_assistant/agent_card.json",
+      "agent_type": "commerce",
+      "produces": [
+        "product-comparison",
+        "shopping-profile",
+        "marketplace-listing"
+      ],
+      "tags": [
+        "commerce",
+        "shopping",
+        "compound-agent",
+        "preference-modeling",
+        "marketplace",
+        "consumer-advocacy",
+        "embeddings"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Composita",
+        "class": "Mercatia",
+        "order": "Operationales",
+        "species": "shopping_assistant"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "social_media_studio",
+      "path": "agents/curated/social_media_studio/agent_card.json",
+      "agent_type": "creative",
+      "produces": [
+        "social-post",
+        "image",
+        "caption"
+      ],
+      "tags": [
+        "creative",
+        "social-media",
+        "instagram",
+        "bluesky",
+        "compound-agent",
+        "content-pipeline",
+        "cross-posting",
+        "image-generation",
+        "marketing"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Composita",
+        "class": "Creativia",
+        "order": "Imaginales",
+        "species": "social_media_studio"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "stripe_billing",
+      "path": "agents/curated/stripe_billing/agent_card.json",
+      "agent_type": "meta",
+      "produces": [
+        "billing-analysis",
+        "recommendations"
+      ],
+      "tags": [
+        "system",
+        "payments",
+        "billing",
+        "stripe",
+        "monetization"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Metaria",
+        "order": "Consiliales",
+        "species": "stripe_billing"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "stripe_connect_advisor",
+      "path": "agents/curated/stripe_connect_advisor/agent_card.json",
+      "agent_type": "meta",
+      "produces": [
+        "connect-analysis",
+        "recommendations"
+      ],
+      "tags": [
+        "meta",
+        "payments",
+        "stripe",
+        "billing",
+        "monetization",
+        "architecture"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Metaria",
+        "order": "Consiliales",
+        "species": "stripe_connect_advisor"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "style_transfer",
+      "path": "agents/curated/style_transfer/agent_card.json",
+      "agent_type": "creative",
+      "produces": [
+        "image"
+      ],
+      "tags": [
+        "creative",
+        "image",
+        "style-transfer",
+        "art"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Creativia",
+        "order": "Imaginales",
+        "species": "style_transfer"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "swarm_coordinator",
+      "path": "agents/curated/swarm_coordinator/agent_card.json",
+      "agent_type": "research",
+      "produces": [
+        "telemetry_analysis",
+        "formation_classification",
+        "coherence_metrics",
+        "action_recommendations"
+      ],
+      "tags": [
+        "swarm",
+        "telemetry",
+        "robotics",
+        "onto4mat",
+        "sosa",
+        "research"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Researchia",
+        "order": "Consiliales",
+        "species": "swarm_coordinator"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "swarm_host",
+      "path": "agents/curated/swarm_host/agent_card.json",
+      "agent_type": "creative",
+      "produces": [
+        "welcome_message",
+        "taxonomic_fact",
+        "event_summary"
+      ],
+      "tags": [
+        "rabble",
+        "narration",
+        "taxonomy",
+        "social",
+        "creative"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Creativia",
+        "order": "Narrativales",
+        "species": "swarm_host"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "video_analyst",
+      "path": "agents/curated/video_analyst/agent_card.json",
+      "agent_type": "creative",
+      "produces": [
+        "video-analysis",
+        "timestamps"
+      ],
+      "tags": [
+        "creative",
+        "video",
+        "transcript",
+        "reduct",
+        "highlight-reel"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Creativia",
+        "order": "Imaginales",
+        "species": "video_analyst"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "watermark",
+      "path": "agents/curated/watermark/agent_card.json",
+      "agent_type": "creative",
+      "produces": [
+        "image"
+      ],
+      "tags": [
+        "creative",
+        "image",
+        "watermark",
+        "authentication"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Creativia",
+        "order": "Imaginales",
+        "species": "watermark"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "wild_companion",
+      "path": "agents/curated/wild_companion/agent_card.json",
+      "agent_type": "strategist",
+      "produces": [
+        "kask_wild/action_block",
+        "foraging_intelligence",
+        "observation_log"
+      ],
+      "tags": [
+        "wild",
+        "foraging",
+        "companion",
+        "orchestrator",
+        "strategist",
+        "kask-wild"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Strategia",
+        "order": "Operationales",
+        "species": "wild_companion"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "wild_narrator",
+      "path": "agents/curated/wild_narrator/agent_card.json",
+      "agent_type": "meta",
+      "produces": [
+        "field_journal_entry",
+        "dream_narrative"
+      ],
+      "tags": [
+        "wild",
+        "foraging",
+        "narrative",
+        "dream",
+        "field-journal",
+        "kask-wild"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Metaria",
+        "order": "Narrativales",
+        "species": "wild_narrator"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "wing_segmenter",
+      "path": "agents/curated/wing_segmenter/agent_card.json",
+      "agent_type": "creative",
+      "produces": [
+        "response"
+      ],
+      "tags": [
+        "creative",
+        "rabble",
+        "animation",
+        "image-segmentation",
+        "butterfly",
+        "ar"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Creativia",
+        "order": "Narrativales",
+        "species": "wing_segmenter"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "xaman_ek",
+      "path": "agents/curated/xaman_ek/agent_card.json",
+      "agent_type": "meta",
+      "produces": [
+        "guidance",
+        "navigation",
+        "agent-card-draft",
+        "composition-plan"
+      ],
+      "tags": [
+        "meta",
+        "navigation",
+        "platform-guide",
+        "concierge",
+        "system"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Metaria",
+        "order": "Consiliales",
+        "species": "xaman_ek"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "YOUR_AGENT_NAME",
+      "path": "agents/templates/agent_card.json",
+      "agent_type": "research",
+      "produces": [
+        "evidence-summary",
+        "forecast-adjustment"
+      ],
+      "tags": [
+        "tag1",
+        "tag2",
+        "tag3"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Solitaria",
+        "class": "Researchia",
+        "order": "Prognosticales",
+        "species": "YOUR_AGENT_NAME"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "market_research",
+      "path": "agents/templates/examples/market_research/agent_card.json",
+      "agent_type": "research",
+      "produces": [
+        "evidence-summary",
+        "forecast-adjustment",
+        "competitive-analysis"
+      ],
+      "tags": [
+        "market",
+        "research",
+        "competitive-analysis",
+        "finance",
+        "tech"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Researchia",
+        "order": "Prognosticales",
+        "species": "market_research"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "risk_monitor",
+      "path": "agents/templates/examples/risk_monitor/agent_card.json",
+      "agent_type": "research",
+      "produces": [
+        "risk-assessment",
+        "evidence-summary"
+      ],
+      "tags": [
+        "security",
+        "risk-assessment",
+        "vulnerabilities",
+        "cve",
+        "threat-intelligence"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Instrumenta",
+        "class": "Researchia",
+        "order": "Diagnosticales",
+        "species": "risk_monitor"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    },
+    {
+      "agent_id": "sentiment_analyzer",
+      "path": "agents/templates/examples/sentiment_analyzer/agent_card.json",
+      "agent_type": "research",
+      "produces": [
+        "sentiment-score",
+        "evidence-summary"
+      ],
+      "tags": [
+        "sentiment",
+        "nlp",
+        "classification",
+        "research",
+        "reviews"
+      ],
+      "description": "",
+      "derived": {
+        "phylum": "Solitaria",
+        "class": "Researchia",
+        "order": "Diagnosticales",
+        "species": "sentiment_analyzer"
+      },
+      "editorial_TODO": {
+        "kingdom": "",
+        "family": "",
+        "genus": ""
+      }
+    }
+  ]
+}

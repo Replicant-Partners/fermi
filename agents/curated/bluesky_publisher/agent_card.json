@@ -252,6 +252,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Creativia",
+      "order": "Narrativales",
+      "species": "bluesky_publisher"
+    },
     "created": "2026-02-10",
     "author": "Fermi Team",
     "description": "Publishes posts, threads, and image posts to Bluesky via the AT Protocol. Handles rich text facets (mentions, links, hashtags), image blob uploads, reply threading, quote posts, and website card embeds. Requires a Bluesky app password for authentication.",

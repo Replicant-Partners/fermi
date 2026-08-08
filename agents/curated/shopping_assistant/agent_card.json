@@ -105,6 +105,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Composita",
+      "class": "Mercatia",
+      "order": "Operationales",
+      "species": "shopping_assistant"
+    },
     "created": "2026-02-10",
     "author": "Fermi Team",
     "description": "Compound shopping intelligence agent. Helps research purchases, compare products, track preferences, and build personal shopping embeddings. Coordinates deal_finder for research, preference_modeler for embedding computation, and embedding_broker for marketplace listing. Consumer controls all data \u2014 reverse SEO model.",

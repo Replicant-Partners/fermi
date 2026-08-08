@@ -83,6 +83,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Composita",
+      "class": "Coordinia",
+      "order": "Narrativales",
+      "species": "dream_coordinator"
+    },
     "created": "2026-08-03",
     "author": "Fermi Team",
     "description": "Compound orchestrator behind the ABW 'dreaming' affordance. Runs the consolidation pipeline — embed, cluster, extract (ontologist), narrate (dream_narrator) — turning an agent's episodic memory into durable knowledge-graph entities/rules (Loop 1) plus a dream synopsis. System-tier, platform-funded; members resolved declaratively from its dependencies.",

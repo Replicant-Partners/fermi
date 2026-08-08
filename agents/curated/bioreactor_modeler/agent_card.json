@@ -129,9 +129,9 @@
     "description": "Real-time operational intelligence for the Ambu bioreactor. Monitors live SOSA sensor streams, detects harvest timing signals, issues actuator commands, and coordinates SimOps cascade/predictor/optimizer for batch planning and KPI reporting.",
     "taxonomy": {
       "kingdom": "Quantitativa",
-      "phylum": "Physicalivora",
-      "class": "Processoria",
-      "order": "Monitorizales",
+      "phylum": "Composita",
+      "class": "Researchia",
+      "order": "Consiliales",
       "family": "Simopsidae",
       "genus": "Modeler",
       "species": "bioreactor_modeler"

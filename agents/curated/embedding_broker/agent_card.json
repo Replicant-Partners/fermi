@@ -92,6 +92,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Mercatia",
+      "order": "Operationales",
+      "species": "embedding_broker"
+    },
     "created": "2026-02-10",
     "author": "Fermi Team",
     "description": "Marketplace management sub-agent for the consumer side of embedding commerce. Helps users list shopping profiles, set pricing, understand privacy, and review match history. Ensures consumers maintain full control over their data. Raw embeddings never exposed.",

@@ -229,6 +229,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Creativia",
+      "order": "Imaginales",
+      "species": "instagram_publisher"
+    },
     "created": "2026-02-10",
     "author": "Fermi Team",
     "description": "Publishes images, carousels, reels, and stories to Instagram via the official Graph API. Handles caption writing, hashtag strategy, scheduling, and post-publish analytics. Requires a connected Instagram Business or Creator account.",

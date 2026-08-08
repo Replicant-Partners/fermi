@@ -24,6 +24,12 @@
   "wallet": { "public_address": "", "balance": 0.0, "currency": "ABW", "budget": 200.0 },
   "ontology_stats": { "entities": 0, "relationships": 0, "last_updated": "2026-06-05T00:00:00Z", "evolution_commits": 0 },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Metaria",
+      "order": "Narrativales",
+      "species": "wild_narrator"
+    },
     "tags": ["wild", "foraging", "narrative", "dream", "field-journal", "kask-wild"],
     "created": "2026-06-05",
     "author": "Fermi Team",

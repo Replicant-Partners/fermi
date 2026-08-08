@@ -114,9 +114,9 @@
     "description": "Commercial product scout for bio-manufacturing sidestreams. Given accepted sidestreams and process context, identifies viable product paths with unit economics, buyer archetypes, regulatory class, and lead time to revenue. Powers the Insights drawer 'What could this become?' action next to accepted sidestream cards.",
     "taxonomy": {
       "kingdom": "Quantitativa",
-      "phylum": "Mercatoria",
-      "class": "Supplyia",
-      "order": "Scoutales",
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Prognosticales",
       "family": "Simopsidae",
       "genus": "Scout",
       "species": "product_scout"

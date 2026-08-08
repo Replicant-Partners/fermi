@@ -82,6 +82,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Creativia",
+      "order": "Narrativales",
+      "species": "swarm_host"
+    },
     "tags": [
       "rabble",
       "narration",

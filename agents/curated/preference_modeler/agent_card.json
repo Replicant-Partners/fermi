@@ -92,6 +92,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Analytia",
+      "order": "Diagnosticales",
+      "species": "preference_modeler"
+    },
     "created": "2026-02-10",
     "author": "Fermi Team",
     "description": "Specialist sub-agent for extracting shopping preferences and computing composite embeddings. Analyzes conversation patterns to build brand affinities, price sensitivity, and quality bias scores. Triggers server-side weighted centroid embedding computation from episode history.",

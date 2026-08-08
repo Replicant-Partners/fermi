@@ -77,6 +77,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Metaria",
+      "order": "Consiliales",
+      "species": "stripe_connect_advisor"
+    },
     "created": "2026-02-10",
     "author": "Fermi Team",
     "description": "Advises on Stripe Connect integration and API metering for agent monetization. Helps platform builders design systems where agent owners charge real money for usage by external clients, with usage-based billing, connected account payouts, and webhook-driven reconciliation.",

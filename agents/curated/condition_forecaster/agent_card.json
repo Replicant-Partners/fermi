@@ -159,6 +159,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Prognosticales",
+      "species": "condition_forecaster"
+    },
     "tags": [
       "wild",
       "foraging",

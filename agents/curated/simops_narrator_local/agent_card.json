@@ -82,8 +82,8 @@
     "description": "Local-first variant of simops_narrator. Runs entirely on a local Ollama instance — no per-token cloud charge, no process data sent to external APIs. Swap the model field for any model pulled in your Ollama instance. Generation is local; memory embeddings still use the platform's cloud embedder (Voyage). Proof-of-life agent for ABW Phase 0 local model support.",
     "taxonomy": {
       "kingdom": "Quantitativa",
-      "phylum": "Physicalivora",
-      "class": "Processoria",
+      "phylum": "Solitaria",
+      "class": "Researchia",
       "order": "Narrativales",
       "family": "Simopsidae",
       "genus": "Narrator",

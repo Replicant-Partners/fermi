@@ -92,6 +92,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Cohaerentia",
+      "order": "Diagnosticales",
+      "species": "coherence_evaluator"
+    },
     "created": "2026-02-08",
     "author": "Replicant Partners",
     "description": "Observes multi-party conversations and evaluates collaborative discourse coherence using Thagard's Theory of Explanatory Coherence (TEC). Computes global coherence score, per-principle diagnostics, and actionable feedback via connectionist constraint-satisfaction (ECHO).",

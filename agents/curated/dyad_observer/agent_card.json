@@ -91,6 +91,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Vigilia",
+      "order": "Narrativales",
+      "species": "dyad_observer"
+    },
     "created": "2026-05-11",
     "author": "Fermi Team",
     "description": "Observability composition member — narrates longitudinal trajectories of agents and dyads. Evidence-anchored, modest about causal claims, distinguishes trend from noise.",

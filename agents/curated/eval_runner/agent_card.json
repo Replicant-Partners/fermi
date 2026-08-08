@@ -87,6 +87,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Vigilia",
+      "order": "Diagnosticales",
+      "species": "eval_runner"
+    },
     "created": "2026-05-11",
     "author": "Fermi Team",
     "description": "Observability composition member — invokes the EvaluatorRegistry on demand and reports per-evaluator results. Terse, table-heavy reporter; defers interpretation to dyad_observer and anomaly_triager.",

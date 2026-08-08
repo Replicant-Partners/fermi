@@ -84,6 +84,12 @@
     "optional": []
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Coordinia",
+      "order": "Operationales",
+      "species": "moe_router_strategist"
+    },
     "created": "2026-05-15",
     "author": "Fermi Team",
     "description": "Mixture-of-Experts routing strategist. Classifies each input against member capabilities, routes to the most accurate expert(s), synthesises outputs. Supports general MoE (open output schema) and domain-constrained MoE (typed output contract + Brier calibration loop). Use when expert precision matters more than discourse coherence.",

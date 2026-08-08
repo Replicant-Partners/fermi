@@ -82,6 +82,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Creativia",
+      "order": "Narrativales",
+      "species": "wing_segmenter"
+    },
     "created": "2026-02-13",
     "author": "Fermi Team",
     "description": "Segments butterfly specimen images into animation-ready layers (body, left wing, right wing) using Gemini image editing. Enables parametric wing animation in the AR viewer based on Chen et al. flight dynamics model.",

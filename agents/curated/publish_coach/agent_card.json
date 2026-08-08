@@ -72,6 +72,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Metaria",
+      "order": "Consiliales",
+      "species": "publish_coach"
+    },
     "description": "Reviews agent cards for publication readiness. Evaluates name clarity, description completeness, system prompt quality, tag relevance, and model appropriateness.",
     "author": "Fermi Platform",
     "tags": [

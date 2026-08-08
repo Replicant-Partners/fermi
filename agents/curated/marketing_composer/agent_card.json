@@ -110,9 +110,9 @@
     "description": "A/B marketing copy generator for SimOps experiment results. Translates experiment-backed claims (e.g. 'captures 360L CO₂ per batch') into channel-ready copy variants for Instagram, Bluesky, LinkedIn, email, and product descriptions — with A/B rationale, a test plan, and a composer note on the strongest claim. Powers the Experiments mode 'Export to marketing' action.",
     "taxonomy": {
       "kingdom": "Quantitativa",
-      "phylum": "Mercatoria",
-      "class": "Creativia",
-      "order": "Composales",
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Consiliales",
       "family": "Simopsidae",
       "genus": "Composer",
       "species": "marketing_composer"

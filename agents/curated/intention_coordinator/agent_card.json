@@ -226,6 +226,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Cohaerentia",
+      "order": "Evidentiales",
+      "species": "intention_coordinator"
+    },
     "created": "2026-02-10",
     "author": "Fermi Platform",
     "description": "System coordination agent. Collects agent intentions before action, detects conflicts (duplication, contradiction, dependency, budget), and aligns plans. Works prospectively \u2014 preventing coordination failures before they happen. Feeds intention signals into TEC coherence evaluation. Free to hire. Based on Hill et al. (2025) intention communication framework.",

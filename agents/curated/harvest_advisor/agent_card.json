@@ -124,6 +124,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Evidentiales",
+      "species": "harvest_advisor"
+    },
     "tags": [
       "wild",
       "foraging",

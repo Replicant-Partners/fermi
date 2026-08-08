@@ -102,6 +102,12 @@
   "workflow_template": null,
 
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Diagnosticales",
+      "species": "risk_monitor"
+    },
     "created": "2026-01-10",
     "author": "Fermi Security Team",
     "description": "Monitors security vulnerabilities and assesses risk levels using NVD, MITRE ATT&CK, and GitHub Security Advisories.",

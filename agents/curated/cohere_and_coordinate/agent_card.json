@@ -143,6 +143,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Composita",
+      "class": "Cohaerentia",
+      "order": "Diagnosticales",
+      "species": "cohere_and_coordinate"
+    },
     "created": "2026-02-10",
     "author": "Fermi Team",
     "description": "The default workspace strategist. Combines prospective intention coordination (Stage 0), retrospective TEC coherence analysis (Stages 1-2), real-time coordination (Stage 3), and longitudinal composition learning with valence homophily detection and tune-team RSI proposals (Stage 4 — Composition Dreaming).",

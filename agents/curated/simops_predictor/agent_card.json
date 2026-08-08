@@ -133,9 +133,9 @@
     "description": "Continuous learning OLS regression engine. Trains on SOSA observation history to forecast yield and detect diminishing returns. Powers the predictive loop in the SimOps framework.",
     "taxonomy": {
       "kingdom": "Quantitativa",
-      "phylum": "Physicalivora",
-      "class": "Processoria",
-      "order": "Predictivales",
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Prognosticales",
       "family": "Simopsidae",
       "genus": "Predictor",
       "species": "simops_predictor"

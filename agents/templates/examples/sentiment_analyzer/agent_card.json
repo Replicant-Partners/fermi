@@ -48,6 +48,12 @@
   "workflow_template": null,
 
   "metadata": {
+    "taxonomy": {
+      "phylum": "Solitaria",
+      "class": "Researchia",
+      "order": "Diagnosticales",
+      "species": "sentiment_analyzer"
+    },
     "created": "2026-01-15",
     "author": "Fermi Team",
     "description": "Classifies text sentiment as positive, negative, or neutral with calibrated confidence scores and theme extraction.",

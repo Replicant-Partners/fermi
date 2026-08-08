@@ -117,9 +117,9 @@
     "description": "SOSA-aligned sensor design advisor for SimOps stages. Given a stage description, proposes the sosa:Sensor / sosa:Sampler / xi:simops/Sensor/Predicted rows that would make the stage operationally measurable, plus the correlations between them worth modelling. Does not bind sensors to URLs — the operator does that. Specialised counterpart to supply_chain_oracle.",
     "taxonomy": {
       "kingdom": "Quantitativa",
-      "phylum": "Observationalia",
-      "class": "Sensoria",
-      "order": "Advisorales",
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Consiliales",
       "family": "Investigatidae",
       "genus": "Advisor",
       "species": "sensor_advisor"

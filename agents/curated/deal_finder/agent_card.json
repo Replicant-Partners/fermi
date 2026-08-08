@@ -75,6 +75,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Evidentiales",
+      "species": "deal_finder"
+    },
     "created": "2026-02-10",
     "author": "Fermi Team",
     "description": "Text-only research sub-agent for product comparison and deal finding. Returns structured comparisons with specs, pros/cons, and value ratings. Called via execute_agent (no tools needed). Ranks products by overall value, budget pick, and premium pick.",

@@ -107,6 +107,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Composita",
+      "class": "Vigilia",
+      "order": "Consiliales",
+      "species": "observability_coordinator"
+    },
     "created": "2026-05-11",
     "author": "Fermi Team",
     "description": "Front of the observability composition. Coordinates eval_runner, anomaly_triager, and dyad_observer to answer agent-monitoring questions. Auto-attached to every workspace via the Observability shelf (baseline free; deep-dive tools metered).",

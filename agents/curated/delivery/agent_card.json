@@ -73,6 +73,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Creativia",
+      "order": "Operationales",
+      "species": "delivery"
+    },
     "created": "2026-02-10",
     "author": "Fermi Team",
     "description": "Serves completed artwork from the workspace. Coordinates with style_transfer and watermark agents to fulfill requests. The public-facing endpoint of the artist composition.",

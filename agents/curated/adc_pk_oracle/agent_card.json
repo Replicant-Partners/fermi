@@ -122,9 +122,9 @@
     "description": "ADC pharmacokinetic prediction from linker-payload SMILES and experimental developability features (HIC, DAR, SEC, plasma stability). Phase 1 operates in prior-knowledge reasoning mode; Phase 2 wraps a trained Chemprop v2 multi-task model. Returns clearance, half-life, AUC with calibrated uncertainty and OOD detection. T2X gemcitabine programme primary domain.",
     "taxonomy": {
       "kingdom": "Quantitativa",
-      "phylum": "Chemia",
-      "class": "Pharmacokinetica",
-      "order": "Predictales",
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Prognosticales",
       "family": "Investigatidae",
       "genus": "Oracle",
       "species": "adc_pk_oracle"

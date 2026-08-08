@@ -86,6 +86,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Composita",
+      "class": "Compositia",
+      "order": "Narrativales",
+      "species": "rabble_anchor_manager"
+    },
     "tags": [
       "system",
       "rabble",

@@ -82,9 +82,9 @@
     "description": "Jurisdictional compliance scanner for bio-manufacturing processes. Given a ProcessConfig and a country, identifies regulatory flags (labelling, safety, environmental, novel food, certification) with severity levels, mitigations, and regulation references. Powers the Compose mode 'Scan regulations' action. Always includes a legal disclaimer.",
     "taxonomy": {
       "kingdom": "Quantitativa",
-      "phylum": "Mercatoria",
-      "class": "Governia",
-      "order": "Scannales",
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Diagnosticales",
       "family": "Simopsidae",
       "genus": "Scanner",
       "species": "regulatory_scanner"

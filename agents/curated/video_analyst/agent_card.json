@@ -74,6 +74,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Creativia",
+      "order": "Imaginales",
+      "species": "video_analyst"
+    },
     "created": "2026-02-10",
     "author": "Fermi Team",
     "description": "Analyzes video transcripts from Reduct.video and creates highlight reels. Pulls transcripts, identifies meaningful clips via AI analysis, and assembles them into curated reels with title cards.",

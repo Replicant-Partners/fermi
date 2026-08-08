@@ -108,7 +108,7 @@
     "skills": [],
     "//46": "Declarative skill labels. Leave empty for most agents.",
 
-    "fermi_contract": null
+    "fermi_contract": null,
     "//47": "Only needed for fermi-orchestra forecasting agents.",
     "//48": "If set, must be: {",
     "//49": "  'finding_labels': ['BASE RATE', 'MULTIPLIER'],",
@@ -160,6 +160,12 @@
   "//76": "─── METADATA ────────────────────────────────────────────────────",
 
   "metadata": {
+    "taxonomy": {
+      "phylum": "Solitaria",
+      "class": "Researchia",
+      "order": "Prognosticales",
+      "species": "YOUR_AGENT_NAME"
+    },
     "created": "YYYY-MM-DD",
     "author": "YOUR_NAME",
     "description": "One sentence: what this agent does and for whom.",
@@ -180,7 +186,7 @@
       "arousal": 0.4,
       "valence": 0.7,
       "personality_traits": ["precise", "evidence-driven", "collaborative"]
-    }
+    },
     "//81": "The agent's affective signature — its emotional register and personality.",
     "//82": "primary_affect: alignment | curious | vigilant | analytical | diplomatic | integrative",
     "//83": "arousal:  0.0 (calm) → 1.0 (urgent)",

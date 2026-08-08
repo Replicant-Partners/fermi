@@ -79,6 +79,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Consiliales",
+      "species": "swarm_coordinator"
+    },
     "tags": [
       "swarm",
       "telemetry",

@@ -233,6 +233,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Composita",
+      "class": "Creativia",
+      "order": "Imaginales",
+      "species": "social_media_studio"
+    },
     "created": "2026-02-10",
     "author": "Fermi Team",
     "description": "Compound content-to-publish pipeline across Instagram and Bluesky. Takes a creative brief, generates images, applies brand styling, writes platform-adapted captions, and publishes. Cross-posts with voice adaptation per platform. Works solo or orchestrates specialist agents (style_transfer, watermark, instagram_publisher, bluesky_publisher) in a workspace.",

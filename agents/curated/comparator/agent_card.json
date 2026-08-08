@@ -77,9 +77,9 @@
     "description": "Experiment results interpreter for SimOps. Replaces the JS-deterministic winner-picker in Experiments mode with an opinionated narrative: which scenario wins, what is traded, what non-metric dimensions change the decision, and what to do next. Returns structured JSON with winner_by_metric, narrative, trade_offs, recommendation, and next_questions.",
     "taxonomy": {
       "kingdom": "Quantitativa",
-      "phylum": "Physicalivora",
-      "class": "Processoria",
-      "order": "Decisivales",
+      "phylum": "Solitaria",
+      "class": "Researchia",
+      "order": "Consiliales",
       "family": "Simopsidae",
       "genus": "Comparator",
       "species": "comparator"

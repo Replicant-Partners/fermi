@@ -250,9 +250,9 @@
     ],
     "taxonomy": {
       "kingdom": "Quantitativa",
-      "phylum": "Prognosticales",
-      "class": "Domainria",
-      "order": "Sentimentales",
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Diagnosticales",
       "family": "Investigatidae",
       "genus": "Analyticus",
       "species": "sentiment_analyzer"

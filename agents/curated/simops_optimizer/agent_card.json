@@ -130,9 +130,9 @@
     "description": "What-if solver for process optimisation. Given a trained predictor and a target output, solves for the required input quantities using proportional scaling or single-variable analytical solution.",
     "taxonomy": {
       "kingdom": "Quantitativa",
-      "phylum": "Physicalivora",
-      "class": "Processoria",
-      "order": "Optimizales",
+      "phylum": "Composita",
+      "class": "Researchia",
+      "order": "Consiliales",
       "family": "Simopsidae",
       "genus": "Optimizer",
       "species": "simops_optimizer"

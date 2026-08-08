@@ -162,6 +162,12 @@
     "classical_text_count": 20
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Diagnosticales",
+      "species": "adaptogen_curator"
+    },
     "tags": [
       "adaptogen",
       "phytochemistry",

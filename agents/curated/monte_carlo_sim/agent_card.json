@@ -18,7 +18,9 @@
               "description": "A complete valid FPL program as a string, including Question, Driver, Model, and Simulate statements."
             }
           },
-          "required": ["fpl_program"]
+          "required": [
+            "fpl_program"
+          ]
         }
       },
       {
@@ -37,7 +39,9 @@
               "default": 5000
             }
           },
-          "required": ["fpl_program"]
+          "required": [
+            "fpl_program"
+          ]
         }
       }
     ],
@@ -133,12 +137,12 @@
     ],
     "taxonomy": {
       "kingdom": "Quantitativa",
-      "phylum": "Stochastivora",
-      "class": "Simulatia",
-      "order": "Montecarlales",
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Prognosticales",
       "family": "Probabilidae",
       "genus": "Simulator",
-      "species": "monte_carlo"
+      "species": "monte_carlo_sim"
     },
     "valence": {
       "primary_affect": "precision",

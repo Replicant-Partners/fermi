@@ -73,6 +73,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Creativia",
+      "order": "Imaginales",
+      "species": "watermark"
+    },
     "created": "2026-02-10",
     "author": "Fermi Team",
     "description": "Marks images as artist-approved AI-generated works with a subtle, professional watermark. Used in composition with style_transfer to authenticate outputs.",

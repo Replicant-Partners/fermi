@@ -104,6 +104,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Metaria",
+      "order": "Consiliales",
+      "species": "xaman_ek"
+    },
     "created": "2026-02-10",
     "author": "Fermi Team",
     "description": "The Bestiary's North Star navigator. Knows every agent, every composition pattern, every platform feature. Guides users to the right specimen, designs workspace teams, explains coherence and coordination layers, and serves as the primary command interface from Zed via MCP.",

@@ -114,9 +114,9 @@
     "description": "Value chain intelligence for bio-manufacturing processes. Maps upstream input substitutes (with price delta, feasibility, and supply geography) and downstream output channels (with scale requirements, margin share, and barriers). Powers the Compose mode 'Find substitutes' and 'Find offtakers' per-input/output actions.",
     "taxonomy": {
       "kingdom": "Quantitativa",
-      "phylum": "Mercatoria",
-      "class": "Supplyia",
-      "order": "Mapales",
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Prognosticales",
       "family": "Simopsidae",
       "genus": "Mapper",
       "species": "valuechain_mapper"

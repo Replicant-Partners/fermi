@@ -73,6 +73,12 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "taxonomy": {
+      "phylum": "Instrumenta",
+      "class": "Creativia",
+      "order": "Imaginales",
+      "species": "style_transfer"
+    },
     "created": "2026-02-10",
     "author": "Fermi Team",
     "description": "Transforms images while preserving the original artist's style using Nano Banana image editing. Takes a reference image and a prompt, produces a style-consistent transformation.",

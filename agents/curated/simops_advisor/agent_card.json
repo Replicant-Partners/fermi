@@ -126,9 +126,9 @@
     "description": "Agent-led process modelling guide. Conducts a 6-turn domain-aware interview to build a SimOps pipeline config. Identifies value leakages, sidestream opportunities, supply chain risks, and pricing gaps. Reference implementation: AMBU bioreactor.",
     "taxonomy": {
       "kingdom": "Quantitativa",
-      "phylum": "Physicalivora",
-      "class": "Processoria",
-      "order": "Consultivales",
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Diagnosticales",
       "family": "Simopsidae",
       "genus": "Advisor",
       "species": "simops_advisor"

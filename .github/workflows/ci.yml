@@ -136,6 +136,13 @@ jobs:
       - name: Lint — user-reference columns FK to users(user_id)
         run: ./scripts/lint-owner-columns.sh
 
+      # SPEC_30 — gate=derived fails only on machine-checkable defects (a
+      # rank contradicting its own card, a broken suffix, species != agent_id).
+      # Editorial naming gaps are reported but do not fail the build; flip to
+      # `--gate all` once agents/taxonomy_vocab.json is fully populated.
+      - name: Lint — agent taxonomy conformance
+        run: ./scripts/taxonomy.py audit --gate derived
+
       - name: Check all binaries compile
         run: cargo check --bins --workspace
 

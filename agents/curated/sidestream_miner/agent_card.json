@@ -83,9 +83,9 @@
     "description": "Surfaces uncaptured sidestream value in bio-manufacturing process stages. Given a stage's input/output/efficiency, identifies resource flows currently being lost — CO₂, biomass, marc, heat, condensate — and returns structured candidates with capture fractions, value estimates, regulatory class, and confidence scores. Powers the Compose mode 'What else?' affordance.",
     "taxonomy": {
       "kingdom": "Quantitativa",
-      "phylum": "Physicalivora",
-      "class": "Processoria",
-      "order": "Circulales",
+      "phylum": "Instrumenta",
+      "class": "Researchia",
+      "order": "Prognosticales",
       "family": "Simopsidae",
       "genus": "Miner",
       "species": "sidestream_miner"
