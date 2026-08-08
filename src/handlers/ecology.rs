@@ -78,6 +78,24 @@ pub async fn ecology_specimens_handler(
         .filter(|a| a.status.eq_ignore_ascii_case("published"))
         .map(|a| {
             let mut v = crate::handlers::agents::build_agent_json(&state, a, None, 0);
+
+            // mig-186 — taxonomy from the DB row wins over the on-disk card.
+            //
+            // `build_agent_json` merges the card, which for curated agents
+            // carries a taxonomy. But the DB column is what agents authored
+            // through the API have, and it is also what the boot seeder
+            // refreshes derived ranks into — so the row is the fresher of the
+            // two. Reading only the card is what left every DB-native agent
+            // undescribed.
+            if let Some(tax) = a.taxonomy.clone() {
+                if let Some(obj) = v.as_object_mut() {
+                    let md = obj.entry("metadata").or_insert_with(|| json!({}));
+                    if let Some(md_obj) = md.as_object_mut() {
+                        md_obj.insert("taxonomy".into(), tax);
+                    }
+                }
+            }
+
             let habitats: Vec<Value> = membership
                 .get(&a.agent_id)
                 .map(|ms| {

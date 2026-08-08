@@ -742,6 +742,18 @@ pub async fn create_agent_handler(
     // downstream.
     fermi::slug::validate_http("agent_name", &req.agent_name)?;
 
+    // SPEC_30 — classify at birth. Before mig-186 taxonomy lived only in
+    // on-disk cards, so an agent authored through this endpoint could never
+    // be classified and sat under `Incertae sedis` forever. Derived ranks
+    // only; kingdom/family/genus are editorial and stay unset.
+    let derived_taxonomy = fermi::taxonomy::derive(&fermi::taxonomy::DeriveInput {
+        agent_name: req.agent_name.clone(),
+        agent_type: req.agent_type.clone(),
+        produces: req.produces.clone(),
+        has_required_deps: false,
+        has_instruments: false,
+    });
+
     let agent = Agent {
         agent_id: uuid::Uuid::new_v4(),
         agent_name: req.agent_name.clone(),
@@ -796,6 +808,7 @@ pub async fn create_agent_handler(
         model_params: serde_json::Value::Object(serde_json::Map::new()),
         valence: None,
         output_contract: None,
+        taxonomy: Some(derived_taxonomy),
     };
 
     // If education budget requested, debit from user's wallet
@@ -1001,6 +1014,21 @@ pub async fn import_agent_handler(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
+    // SPEC_30 — an imported card may carry a taxonomy. Trust its EDITORIAL
+    // ranks (kingdom/family/genus are a human's claim about kinship, and the
+    // author of the card is a human) but always recompute the derived ranks
+    // from the card's actual structure, so an imported taxonomy cannot
+    // assert a class that contradicts its own agent_type.
+    let imported_taxonomy = card
+        .get("metadata")
+        .and_then(|m| m.get("taxonomy"))
+        .filter(|v| v.is_object())
+        .cloned();
+    let taxonomy = Some(fermi::taxonomy::merge(
+        imported_taxonomy.as_ref(),
+        &fermi::taxonomy::derive(&fermi::taxonomy::input_from_card(card)),
+    ));
+
     let agent = Agent {
         agent_id: uuid::Uuid::new_v4(),
         agent_name: agent_name.clone(),
@@ -1130,6 +1158,7 @@ pub async fn import_agent_handler(
             .get("capabilities")
             .and_then(|c| c.get("output_contract"))
             .cloned(),
+        taxonomy,
     };
 
     // Tell the importer we stripped the contract rather than letting them

@@ -542,6 +542,15 @@ pub struct AgentMetadata {
     pub sample_queries: Vec<String>,
     #[serde(default)]
     pub valence: Option<AgentValence>,
+    /// Seven-rank classification (SPEC_30). Kept as a raw JSON map rather
+    /// than a struct because the rank set is a modelling decision that has
+    /// already changed once — SPEC_30 reformed four of the seven — and a
+    /// typed struct would turn the next reform into a breaking change across
+    /// every card. Read by the seeder so a card's EDITORIAL ranks
+    /// (kingdom/family/genus, which need a human) reach `agents.taxonomy`;
+    /// derived ranks are always recomputed rather than trusted.
+    #[serde(default)]
+    pub taxonomy: Option<serde_json::Value>,
 }
 
 impl AgentCard {
@@ -602,6 +611,7 @@ impl AgentCard {
                 tags: vec![],
                 sample_queries: vec![],
                 valence: None,
+                taxonomy: None,
             },
             system_prompt: None,
             dependencies: AgentDependencies::default(),

@@ -584,6 +584,13 @@ pub struct Agent {
     // Domain output contract (migration 117) — typed schema for domain-constrained MoE
     #[serde(default)]
     pub output_contract: Option<serde_json::Value>,
+    // Seven-rank classification (migration 186, SPEC_30). Flat
+    // string->string. Previously lived only in the on-disk agent_card.json,
+    // which meant agents authored through the API could never be classified
+    // at all. `None` means undescribed — rendered as "Incertae sedis" rather
+    // than guessed at.
+    #[serde(default)]
+    pub taxonomy: Option<serde_json::Value>,
 }
 
 fn default_persona_version() -> i32 {
@@ -670,6 +677,9 @@ pub struct AgentUpdate {
     pub valence: Option<serde_json::Value>,
     // Domain output contract — typed schema for domain-constrained MoE members
     pub output_contract: Option<serde_json::Value>,
+    // Seven-rank classification (SPEC_30). Editorial ranks are set by a
+    // human; derived ranks are recomputed from the agent on write.
+    pub taxonomy: Option<serde_json::Value>,
     // Semantic version string — allows callers to bump via PUT without a redeploy
     pub version: Option<String>,
 }

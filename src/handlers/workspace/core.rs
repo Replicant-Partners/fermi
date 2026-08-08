@@ -354,6 +354,16 @@ pub async fn create_workspace_agent_handler(
             )
         })?;
 
+    // SPEC_30 — classify at birth, same as the catalogue create path.
+    // Derived ranks only; kingdom/family/genus need a human.
+    let derived_taxonomy = fermi::taxonomy::derive(&fermi::taxonomy::DeriveInput {
+        agent_name: req.agent_name.clone(),
+        agent_type: req.agent_type.clone(),
+        produces: Vec::new(),
+        has_required_deps: false,
+        has_instruments: false,
+    });
+
     // Create agent owned by workspace
     let agent = Agent {
         agent_id: uuid::Uuid::new_v4(),
@@ -409,6 +419,7 @@ pub async fn create_workspace_agent_handler(
         model_params: serde_json::Value::Object(serde_json::Map::new()),
         valence: None,
         output_contract: None,
+        taxonomy: Some(derived_taxonomy),
     };
 
     let agent_id = state.memory_store.create_agent(&agent).await.map_err(|e| {

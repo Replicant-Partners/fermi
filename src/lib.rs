@@ -53,6 +53,11 @@ pub mod email;
 // is why an unsatisfiable contract survived eight releases unnoticed.
 pub mod schema_trust;
 
+// Agent taxonomy (SPEC_30) — the derived ranks. Lives in the lib so both
+// the API (classifying agents at creation) and the parity test can reach
+// it; `scripts/taxonomy.py` remains the editorial tool for on-disk cards.
+pub mod taxonomy;
+
 // Re-export main types
 pub use ast::*;
 pub use evaluator::{evaluate, EvalError, EvaluationContext};

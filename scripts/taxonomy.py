@@ -121,14 +121,41 @@ ORDER_PATTERNS = [
 VOCAB_PATH = "agents/taxonomy_vocab.json"
 
 
+# `agents/templates/` holds the authoring template and worked examples, not
+# real agents. Excluded from the corpus for a concrete reason: the examples
+# reuse real agent_ids (`sentiment_analyzer`, `market_research`), so keying
+# anything by agent_id across the whole tree silently collides. That was
+# diagnosed by the Rust parity test reporting two "rule mismatches" that
+# turned out to be last-wins collisions between a curated card and its
+# example twin — the two tools happened to walk the tree in different
+# orders and so picked different winners.
+#
+# The production registry already loads from `agents/curated` only
+# ($AGENTS_DIR), so nothing shadows a real card at runtime.
+EXCLUDE_DIRS = ("agents/templates/",)
+
+
 def load_cards():
     out = []
+    seen = {}
     for p in sorted(glob.glob("agents/**/agent_card.json", recursive=True)):
+        if any(x in p for x in EXCLUDE_DIRS):
+            continue
         try:
             with open(p) as f:
-                out.append((p, json.load(f)))
+                card = json.load(f)
         except Exception as e:
             print(f"  WARN unreadable {p}: {e}", file=sys.stderr)
+            continue
+        aid = card.get("agent_id")
+        if aid and aid in seen:
+            # Two real cards claiming one identity is a corpus defect, not
+            # something to resolve silently by ordering.
+            print(f"  WARN duplicate agent_id {aid!r}: {seen[aid]} and {p}", file=sys.stderr)
+            continue
+        if aid:
+            seen[aid] = p
+        out.append((p, card))
     return out
 
 
@@ -391,6 +418,10 @@ def main():
     ap.add_argument("--derived", action="store_true", help="apply only derived ranks")
     ap.add_argument("--from", dest="from_file", help="reviewed proposal file")
     ap.add_argument("--out", default="agents/taxonomy_proposals.json")
+    ap.add_argument("--emit-expected", metavar="PATH",
+                    help="audit: also write derived ranks for every card to PATH, "
+                         "the fixture tests/taxonomy_parity.rs asserts the Rust "
+                         "implementation against. Regenerate whenever a rule changes.")
     ap.add_argument("--gate", choices=["derived", "all"], default="derived",
                     help="audit: which findings fail the build. `derived` (default) "
                          "fails only on machine-checkable defects, so CI can enforce "
@@ -400,6 +431,18 @@ def main():
 
     cards = load_cards()
     if a.command == "audit":
+        if a.emit_expected:
+            # Fixture for the Rust parity test. Two implementations of one
+            # rule will drift; this is what notices.
+            payload = {
+                card.get("agent_id"): derive(card)
+                for _, card in cards
+                if card.get("agent_id")
+            }
+            with open(a.emit_expected, "w") as f:
+                json.dump(payload, f, indent=2, sort_keys=True, ensure_ascii=False)
+                f.write("\n")
+            print(f"wrote derived-rank fixture for {len(payload)} card(s) -> {a.emit_expected}")
         errors, warnings = audit(cards, load_vocab())
         bad = bool(errors) or (a.gate == "all" and bool(warnings))
         if errors:

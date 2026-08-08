@@ -954,6 +954,21 @@ async fn run_migrations(db: &PgPool) {
         // directly, so they need the predicate too. Acute for
         // xaman_ek, whose rule is literally "every published agent".
         "migrations/185_hide_test_cruft_from_rosters.sql",
+        // SPEC_30 — agents.taxonomy. Taxonomy lived only in on-disk
+        // agent_card.json, so it was structurally unavailable to every agent
+        // created through the UI or import: no card on disk, nothing to read.
+        // All 13 efra agents were permanently "Incertae sedis", and that is
+        // the majority shape of third-party agents. Derived ranks are now
+        // written at creation by fermi::taxonomy::derive; the curated seeder
+        // carries each card's editorial ranks through on every boot.
+        "migrations/186_agents_taxonomy.sql",
+        // Append-only ledger of the individual quantitative claims agents make
+        // (driver multipliers). Without it, a resolved forecast's per-agent
+        // inputs are gone — the params write is current-state only — so agent
+        // credit is unrecoverable after the fact. Prerequisite for the
+        // counterfactual subset re-runs that exact Shapley attribution needs
+        // (src/attribution/).
+        "migrations/187_forecast_agent_claims.sql",
     ];
 
     for file in &migration_files {
@@ -1796,6 +1811,22 @@ async fn main() {
     // Seed filesystem agents into database (idempotent)
     println!("Seeding agents to database...");
     seed_agents_to_database(&memory_store, &registry).await;
+
+    // SPEC_30 / mig-186 — classify any agent still lacking a taxonomy.
+    //
+    // The seeder covers agents that have a card on disk, and the create /
+    // import handlers classify new ones at birth. Neither reaches agents
+    // that were authored through the API *before* the column existed — the
+    // 13 efra agents among them — because nothing re-creates them. This is
+    // the one-time pass that does, and it is self-healing: it only touches
+    // rows where `taxonomy IS NULL`, so it is a no-op on every later boot.
+    //
+    // Derives from the DB row through `fermi::taxonomy`, the same single
+    // implementation the handlers use. Deliberately NOT expressed as SQL in
+    // a migration: that would be a third copy of the derivation rules, and
+    // the two that already exist are only safe because
+    // `tests/taxonomy_parity.rs` holds them to each other.
+    backfill_agent_taxonomy(&memory_store).await;
     println!("Agent seeding complete");
 
     // Seed registered Apps from apps/ directory (idempotent upsert by slug)
@@ -4608,6 +4639,27 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
                 .as_ref()
                 .and_then(|v| serde_json::to_value(v).ok()),
             output_contract: card.capabilities.output_contract.clone(),
+            // SPEC_30 / mig-186 — carry the card's taxonomy into the DB so the
+            // Ecology lens can group DB rows without reading the filesystem.
+            //
+            // Editorial ranks (kingdom/family/genus) come from the card,
+            // because those are a human's claim about kinship and the card is
+            // where a human recorded them. Derived ranks are recomputed from
+            // the card's actual structure and overwrite whatever it says, so a
+            // stale card cannot assert a class that contradicts its own
+            // agent_type — the exact defect SPEC_30 found in 41 cards.
+            taxonomy: Some(fermi::taxonomy::merge(
+                card.metadata.taxonomy.as_ref(),
+                &fermi::taxonomy::derive(&fermi::taxonomy::DeriveInput {
+                    agent_name: card.agent_id.clone(),
+                    agent_type: card.agent_type.clone(),
+                    produces: card.produces.clone(),
+                    has_required_deps: !card.dependencies.required.is_empty(),
+                    has_instruments: !card.capabilities.mcp_servers.is_empty()
+                        || !card.capabilities.mcp_tools.is_empty()
+                        || !card.capabilities.skills.is_empty(),
+                }),
+            )),
         };
 
         // Log any executable skills this card declares — these are dispatchable
@@ -4681,6 +4733,91 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
             Err(e) => eprintln!("Warning: failed to seed {}: {}", card.agent_id, e),
         }
     }
+}
+
+/// Classify any agent whose `taxonomy` is still NULL, from its own DB row.
+///
+/// Covers the population neither the seeder nor the create handlers reach:
+/// agents authored through the API before mig-186 added the column. Only
+/// derived ranks — kingdom, family and genus are claims about kinship and
+/// stay unset until a human makes them.
+///
+/// Idempotent by construction: the query selects only unclassified rows, so
+/// this is a no-op after the first boot and can never overwrite an editorial
+/// decision.
+async fn backfill_agent_taxonomy(memory_store: &MemoryStore) {
+    let rows = match sqlx::query(
+        "SELECT agent_id, agent_name, agent_type, produces, mcp_servers, mcp_tools \
+           FROM public.agents \
+          WHERE taxonomy IS NULL \
+            AND agent_name NOT LIKE 'test\\_agent\\_%'",
+    )
+    .fetch_all(memory_store.pool())
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Note: taxonomy backfill skipped ({})", e);
+            return;
+        }
+    };
+
+    if rows.is_empty() {
+        return;
+    }
+
+    let mut classified = 0usize;
+    for row in &rows {
+        let agent_id: uuid::Uuid = match row.try_get("agent_id") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let agent_name: String = row.try_get("agent_name").unwrap_or_default();
+        let agent_type: String = row.try_get("agent_type").unwrap_or_default();
+        let produces: Vec<String> = row.try_get("produces").unwrap_or_default();
+        let has_instruments = row
+            .try_get::<Option<serde_json::Value>, _>("mcp_servers")
+            .ok()
+            .flatten()
+            .map(|v| {
+                !matches!(v, serde_json::Value::Null) && v.as_array().is_none_or(|a| !a.is_empty())
+            })
+            .unwrap_or(false)
+            || row
+                .try_get::<Option<serde_json::Value>, _>("mcp_tools")
+                .ok()
+                .flatten()
+                .and_then(|v| v.as_array().map(|a| !a.is_empty()))
+                .unwrap_or(false);
+
+        let taxonomy = fermi::taxonomy::derive(&fermi::taxonomy::DeriveInput {
+            agent_name,
+            agent_type,
+            produces,
+            // Dependencies aren't a column, so a pre-existing DB agent can't
+            // be shown to orchestrate anything. Under-claiming (Instrumenta /
+            // Solitaria rather than Composita) is the safe direction: it
+            // states less than we know rather than more.
+            has_required_deps: false,
+            has_instruments,
+        });
+
+        if sqlx::query("UPDATE public.agents SET taxonomy = $1 WHERE agent_id = $2")
+            .bind(&taxonomy)
+            .bind(agent_id)
+            .execute(memory_store.pool())
+            .await
+            .is_ok()
+        {
+            classified += 1;
+        }
+    }
+
+    println!(
+        "Taxonomy: classified {} previously undescribed agent(s) (derived ranks only; \
+         kingdom/family/genus need a human)",
+        classified
+    );
 }
 
 /// Seed App manifests from the `apps/` directory into the `apps` table.
@@ -5215,6 +5352,11 @@ pub(crate) fn agent_card_from_db(agent: &Agent) -> AgentCard {
             tags: agent.tags.clone(),
             sample_queries: agent.sample_queries.clone(),
             valence: None,
+            // mig-186 — this is the path that makes DB-native agents
+            // classifiable at all. Before the column existed, a card
+            // reconstructed from a DB row had no taxonomy to carry, so every
+            // agent authored through the API was permanently undescribed.
+            taxonomy: agent.taxonomy.clone(),
         },
         system_prompt: agent.system_prompt.clone(),
         dependencies: AgentDependencies::default(),

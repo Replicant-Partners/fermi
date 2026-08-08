@@ -188,6 +188,7 @@ impl SeedData {
                 fermi_contract: None,
                 model_params: serde_json::Value::Object(serde_json::Map::new()),
                 valence: None,
+            taxonomy: None,
                 output_contract: None,
             },
             Agent {
@@ -248,6 +249,7 @@ impl SeedData {
                 fermi_contract: None,
                 model_params: serde_json::Value::Object(serde_json::Map::new()),
                 valence: None,
+            taxonomy: None,
                 output_contract: None,
             },
             Agent {
@@ -303,6 +305,7 @@ impl SeedData {
                 fermi_contract: None,
                 model_params: serde_json::Value::Object(serde_json::Map::new()),
                 valence: None,
+            taxonomy: None,
                 output_contract: None,
             },
         ]

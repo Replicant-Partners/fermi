@@ -1,0 +1,556 @@
+{
+  "adaptogen_curator": {
+    "class": "Researchia",
+    "order": "Diagnosticales",
+    "phylum": "Instrumenta",
+    "species": "adaptogen_curator"
+  },
+  "adc_pk_oracle": {
+    "class": "Researchia",
+    "order": "Prognosticales",
+    "phylum": "Instrumenta",
+    "species": "adc_pk_oracle"
+  },
+  "anomaly_triager": {
+    "class": "Vigilia",
+    "order": "Diagnosticales",
+    "phylum": "Instrumenta",
+    "species": "anomaly_triager"
+  },
+  "ar_avatar_renderer": {
+    "class": "Creativia",
+    "order": "Imaginales",
+    "phylum": "Instrumenta",
+    "species": "ar_avatar_renderer"
+  },
+  "ar_beacon": {
+    "class": "Creativia",
+    "order": "Operationales",
+    "phylum": "Instrumenta",
+    "species": "ar_beacon"
+  },
+  "ar_card_producer": {
+    "class": "Creativia",
+    "order": "Consiliales",
+    "phylum": "Instrumenta",
+    "species": "ar_card_producer"
+  },
+  "ar_cartographer": {
+    "class": "Creativia",
+    "order": "Imaginales",
+    "phylum": "Instrumenta",
+    "species": "ar_cartographer"
+  },
+  "ar_choreographer": {
+    "class": "Creativia",
+    "order": "Imaginales",
+    "phylum": "Composita",
+    "species": "ar_choreographer"
+  },
+  "bioreactor_modeler": {
+    "class": "Researchia",
+    "order": "Consiliales",
+    "phylum": "Composita",
+    "species": "bioreactor_modeler"
+  },
+  "biotech_analyst": {
+    "class": "Researchia",
+    "order": "Prognosticales",
+    "phylum": "Instrumenta",
+    "species": "biotech_analyst"
+  },
+  "bluesky_publisher": {
+    "class": "Creativia",
+    "order": "Narrativales",
+    "phylum": "Instrumenta",
+    "species": "bluesky_publisher"
+  },
+  "cohere_and_coordinate": {
+    "class": "Cohaerentia",
+    "order": "Diagnosticales",
+    "phylum": "Composita",
+    "species": "cohere_and_coordinate"
+  },
+  "coherence_consultant": {
+    "class": "Cohaerentia",
+    "order": "Diagnosticales",
+    "phylum": "Instrumenta",
+    "species": "coherence_consultant"
+  },
+  "coherence_evaluator": {
+    "class": "Cohaerentia",
+    "order": "Diagnosticales",
+    "phylum": "Instrumenta",
+    "species": "coherence_evaluator"
+  },
+  "companion_builder_coach": {
+    "class": "Compandia",
+    "phylum": "Instrumenta",
+    "species": "companion_builder_coach"
+  },
+  "comparator": {
+    "class": "Researchia",
+    "order": "Consiliales",
+    "phylum": "Solitaria",
+    "species": "comparator"
+  },
+  "condition_forecaster": {
+    "class": "Researchia",
+    "order": "Prognosticales",
+    "phylum": "Instrumenta",
+    "species": "condition_forecaster"
+  },
+  "daily_puzzle": {
+    "class": "Ludia",
+    "phylum": "Instrumenta",
+    "species": "daily_puzzle"
+  },
+  "deal_finder": {
+    "class": "Researchia",
+    "order": "Evidentiales",
+    "phylum": "Instrumenta",
+    "species": "deal_finder"
+  },
+  "delivery": {
+    "class": "Creativia",
+    "order": "Operationales",
+    "phylum": "Instrumenta",
+    "species": "delivery"
+  },
+  "dream_coordinator": {
+    "class": "Coordinia",
+    "order": "Narrativales",
+    "phylum": "Composita",
+    "species": "dream_coordinator"
+  },
+  "dream_narrator": {
+    "class": "Metaria",
+    "order": "Narrativales",
+    "phylum": "Instrumenta",
+    "species": "dream_narrator"
+  },
+  "dyad_observer": {
+    "class": "Vigilia",
+    "order": "Narrativales",
+    "phylum": "Instrumenta",
+    "species": "dyad_observer"
+  },
+  "embedding_broker": {
+    "class": "Mercatia",
+    "order": "Operationales",
+    "phylum": "Instrumenta",
+    "species": "embedding_broker"
+  },
+  "embedding_projector_guide": {
+    "class": "Researchia",
+    "order": "Narrativales",
+    "phylum": "Instrumenta",
+    "species": "embedding_projector_guide"
+  },
+  "enemy_sensor": {
+    "class": "Researchia",
+    "order": "Diagnosticales",
+    "phylum": "Instrumenta",
+    "species": "enemy_sensor"
+  },
+  "energy_advisor": {
+    "class": "Researchia",
+    "order": "Consiliales",
+    "phylum": "Instrumenta",
+    "species": "energy_advisor"
+  },
+  "entity_investigator": {
+    "class": "Researchia",
+    "order": "Diagnosticales",
+    "phylum": "Instrumenta",
+    "species": "entity_investigator"
+  },
+  "equity_analyst": {
+    "class": "Researchia",
+    "order": "Evidentiales",
+    "phylum": "Instrumenta",
+    "species": "equity_analyst"
+  },
+  "eval_runner": {
+    "class": "Vigilia",
+    "order": "Diagnosticales",
+    "phylum": "Instrumenta",
+    "species": "eval_runner"
+  },
+  "fermi": {
+    "class": "Metaria",
+    "order": "Consiliales",
+    "phylum": "Instrumenta",
+    "species": "fermi"
+  },
+  "fixture_context_agent": {
+    "class": "Researchia",
+    "order": "Prognosticales",
+    "phylum": "Instrumenta",
+    "species": "fixture_context_agent"
+  },
+  "flavor_profiler": {
+    "class": "Researchia",
+    "order": "Consiliales",
+    "phylum": "Instrumenta",
+    "species": "flavor_profiler"
+  },
+  "flight_coordinator": {
+    "class": "Creativia",
+    "order": "Narrativales",
+    "phylum": "Composita",
+    "species": "flight_coordinator"
+  },
+  "football_analyst": {
+    "class": "Researchia",
+    "order": "Prognosticales",
+    "phylum": "Instrumenta",
+    "species": "football_analyst"
+  },
+  "football_institution_agent": {
+    "class": "Researchia",
+    "order": "Prognosticales",
+    "phylum": "Instrumenta",
+    "species": "football_institution_agent"
+  },
+  "forage_scout": {
+    "class": "Researchia",
+    "order": "Evidentiales",
+    "phylum": "Instrumenta",
+    "species": "forage_scout"
+  },
+  "genome_profiler": {
+    "class": "Researchia",
+    "order": "Imaginales",
+    "phylum": "Instrumenta",
+    "species": "genome_profiler"
+  },
+  "harvest_advisor": {
+    "class": "Researchia",
+    "order": "Evidentiales",
+    "phylum": "Instrumenta",
+    "species": "harvest_advisor"
+  },
+  "instagram_publisher": {
+    "class": "Creativia",
+    "order": "Imaginales",
+    "phylum": "Instrumenta",
+    "species": "instagram_publisher"
+  },
+  "intention_coordinator": {
+    "class": "Cohaerentia",
+    "order": "Evidentiales",
+    "phylum": "Instrumenta",
+    "species": "intention_coordinator"
+  },
+  "keeper": {
+    "class": "Creativia",
+    "order": "Consiliales",
+    "phylum": "Instrumenta",
+    "species": "keeper"
+  },
+  "macro_data_agent": {
+    "class": "Researchia",
+    "order": "Prognosticales",
+    "phylum": "Instrumenta",
+    "species": "macro_data_agent"
+  },
+  "macro_forecaster": {
+    "class": "Researchia",
+    "order": "Prognosticales",
+    "phylum": "Instrumenta",
+    "species": "macro_forecaster"
+  },
+  "market_research": {
+    "class": "Researchia",
+    "order": "Evidentiales",
+    "phylum": "Instrumenta",
+    "species": "market_research"
+  },
+  "marketing_composer": {
+    "class": "Researchia",
+    "order": "Consiliales",
+    "phylum": "Instrumenta",
+    "species": "marketing_composer"
+  },
+  "micro_patron_template": {
+    "class": "Creativia",
+    "order": "Prognosticales",
+    "phylum": "Instrumenta",
+    "species": "micro_patron_template"
+  },
+  "moe_router_strategist": {
+    "class": "Coordinia",
+    "order": "Operationales",
+    "phylum": "Instrumenta",
+    "species": "moe_router_strategist"
+  },
+  "monte_carlo_sim": {
+    "class": "Researchia",
+    "order": "Prognosticales",
+    "phylum": "Instrumenta",
+    "species": "monte_carlo_sim"
+  },
+  "naturalist": {
+    "class": "Creativia",
+    "order": "Evidentiales",
+    "phylum": "Instrumenta",
+    "species": "naturalist"
+  },
+  "navigator": {
+    "class": "Creativia",
+    "order": "Narrativales",
+    "phylum": "Instrumenta",
+    "species": "navigator"
+  },
+  "nba_analyst": {
+    "class": "Researchia",
+    "order": "Prognosticales",
+    "phylum": "Instrumenta",
+    "species": "nba_analyst"
+  },
+  "observability_coordinator": {
+    "class": "Vigilia",
+    "order": "Consiliales",
+    "phylum": "Composita",
+    "species": "observability_coordinator"
+  },
+  "observation_analyst": {
+    "class": "Researchia",
+    "order": "Diagnosticales",
+    "phylum": "Instrumenta",
+    "species": "observation_analyst"
+  },
+  "ontologist": {
+    "class": "Metaria",
+    "order": "Operationales",
+    "phylum": "Instrumenta",
+    "species": "ontologist"
+  },
+  "performance_coach": {
+    "class": "Metaria",
+    "order": "Diagnosticales",
+    "phylum": "Instrumenta",
+    "species": "performance_coach"
+  },
+  "preference_modeler": {
+    "class": "Analytia",
+    "order": "Diagnosticales",
+    "phylum": "Instrumenta",
+    "species": "preference_modeler"
+  },
+  "prey_locator": {
+    "class": "Researchia",
+    "phylum": "Instrumenta",
+    "species": "prey_locator"
+  },
+  "product_scout": {
+    "class": "Researchia",
+    "order": "Prognosticales",
+    "phylum": "Instrumenta",
+    "species": "product_scout"
+  },
+  "publish_coach": {
+    "class": "Metaria",
+    "order": "Consiliales",
+    "phylum": "Instrumenta",
+    "species": "publish_coach"
+  },
+  "rabble_anchor_manager": {
+    "class": "Compositia",
+    "order": "Narrativales",
+    "phylum": "Composita",
+    "species": "rabble_anchor_manager"
+  },
+  "rabble_curator": {
+    "class": "Mercatia",
+    "phylum": "Composita",
+    "species": "rabble_curator"
+  },
+  "rabble_lifecycle_coordinator": {
+    "class": "Compositia",
+    "order": "Narrativales",
+    "phylum": "Composita",
+    "species": "rabble_lifecycle_coordinator"
+  },
+  "regulatory_scanner": {
+    "class": "Researchia",
+    "order": "Diagnosticales",
+    "phylum": "Instrumenta",
+    "species": "regulatory_scanner"
+  },
+  "reynolds_flock": {
+    "class": "Researchia",
+    "order": "Narrativales",
+    "phylum": "Instrumenta",
+    "species": "reynolds_flock"
+  },
+  "sensor_advisor": {
+    "class": "Researchia",
+    "order": "Consiliales",
+    "phylum": "Instrumenta",
+    "species": "sensor_advisor"
+  },
+  "sentiment_analyzer": {
+    "class": "Researchia",
+    "order": "Diagnosticales",
+    "phylum": "Instrumenta",
+    "species": "sentiment_analyzer"
+  },
+  "shopping_assistant": {
+    "class": "Mercatia",
+    "order": "Operationales",
+    "phylum": "Composita",
+    "species": "shopping_assistant"
+  },
+  "sidestream_miner": {
+    "class": "Researchia",
+    "order": "Prognosticales",
+    "phylum": "Instrumenta",
+    "species": "sidestream_miner"
+  },
+  "simops_advisor": {
+    "class": "Researchia",
+    "order": "Diagnosticales",
+    "phylum": "Instrumenta",
+    "species": "simops_advisor"
+  },
+  "simops_cascade": {
+    "class": "Researchia",
+    "order": "Narrativales",
+    "phylum": "Instrumenta",
+    "species": "simops_cascade"
+  },
+  "simops_companion": {
+    "class": "Strategia",
+    "order": "Narrativales",
+    "phylum": "Instrumenta",
+    "species": "simops_companion"
+  },
+  "simops_dynamics_runner": {
+    "class": "Researchia",
+    "order": "Prognosticales",
+    "phylum": "Instrumenta",
+    "species": "simops_dynamics_runner"
+  },
+  "simops_narrator": {
+    "class": "Researchia",
+    "order": "Narrativales",
+    "phylum": "Instrumenta",
+    "species": "simops_narrator"
+  },
+  "simops_narrator_local": {
+    "class": "Researchia",
+    "order": "Narrativales",
+    "phylum": "Solitaria",
+    "species": "simops_narrator_local"
+  },
+  "simops_optimizer": {
+    "class": "Researchia",
+    "order": "Consiliales",
+    "phylum": "Composita",
+    "species": "simops_optimizer"
+  },
+  "simops_predictor": {
+    "class": "Researchia",
+    "order": "Prognosticales",
+    "phylum": "Instrumenta",
+    "species": "simops_predictor"
+  },
+  "social_media_studio": {
+    "class": "Creativia",
+    "order": "Imaginales",
+    "phylum": "Composita",
+    "species": "social_media_studio"
+  },
+  "species_resolver": {
+    "class": "Researchia",
+    "order": "Imaginales",
+    "phylum": "Instrumenta",
+    "species": "species_resolver"
+  },
+  "specimen_minter": {
+    "class": "Creativia",
+    "order": "Imaginales",
+    "phylum": "Composita",
+    "species": "specimen_minter"
+  },
+  "stripe_billing": {
+    "class": "Metaria",
+    "order": "Consiliales",
+    "phylum": "Instrumenta",
+    "species": "stripe_billing"
+  },
+  "stripe_connect_advisor": {
+    "class": "Metaria",
+    "order": "Consiliales",
+    "phylum": "Instrumenta",
+    "species": "stripe_connect_advisor"
+  },
+  "style_transfer": {
+    "class": "Creativia",
+    "order": "Imaginales",
+    "phylum": "Instrumenta",
+    "species": "style_transfer"
+  },
+  "supply_chain_oracle": {
+    "class": "Researchia",
+    "order": "Diagnosticales",
+    "phylum": "Instrumenta",
+    "species": "supply_chain_oracle"
+  },
+  "swarm_coordinator": {
+    "class": "Researchia",
+    "order": "Consiliales",
+    "phylum": "Instrumenta",
+    "species": "swarm_coordinator"
+  },
+  "swarm_host": {
+    "class": "Creativia",
+    "order": "Narrativales",
+    "phylum": "Instrumenta",
+    "species": "swarm_host"
+  },
+  "valuechain_mapper": {
+    "class": "Researchia",
+    "order": "Prognosticales",
+    "phylum": "Instrumenta",
+    "species": "valuechain_mapper"
+  },
+  "video_analyst": {
+    "class": "Creativia",
+    "order": "Imaginales",
+    "phylum": "Instrumenta",
+    "species": "video_analyst"
+  },
+  "watermark": {
+    "class": "Creativia",
+    "order": "Imaginales",
+    "phylum": "Instrumenta",
+    "species": "watermark"
+  },
+  "wild_companion": {
+    "class": "Strategia",
+    "order": "Operationales",
+    "phylum": "Instrumenta",
+    "species": "wild_companion"
+  },
+  "wild_narrator": {
+    "class": "Metaria",
+    "order": "Narrativales",
+    "phylum": "Instrumenta",
+    "species": "wild_narrator"
+  },
+  "wing_segmenter": {
+    "class": "Creativia",
+    "order": "Narrativales",
+    "phylum": "Instrumenta",
+    "species": "wing_segmenter"
+  },
+  "xaman_ek": {
+    "class": "Metaria",
+    "order": "Consiliales",
+    "phylum": "Instrumenta",
+    "species": "xaman_ek"
+  }
+}
