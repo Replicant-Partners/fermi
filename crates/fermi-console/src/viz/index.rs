@@ -38,14 +38,27 @@ pub use fermi_console::plot::index::{IndexData, IndexProbe};
 use super::paint::{self, Align};
 use super::PlotSurface;
 
-const FG: u32 = 0xCBCCC6;
-const FG_DIM: u32 = 0x5C6773;
-const FG_FAINT: u32 = 0x3E4B59;
-const CYAN: u32 = 0x5CCFE6;
-const GREEN: u32 = 0xBAE67E;
-const GOLD: u32 = 0xFFCC66;
-const ORANGE: u32 = 0xFFAE57;
-const PURPLE: u32 = 0xD4BFFF;
+// Chart palette. Re-exported from `crate::theme` rather than redeclared,
+// because these constants *were* redeclared — and then drifted: the axis
+// labels here kept the pre-accessibility grey (2.7:1 against the panel
+// background) long after the same token was fixed everywhere else.
+//
+// `AXIS_LABEL` is text and carries a contrast floor; `GRIDLINE` is a
+// hairline and does not. Keeping them as separate names is what stops the
+// next person from reaching for the quiet one to draw a label with.
+use crate::theme;
+
+const FG: u32 = theme::FG;
+const AXIS_LABEL: u32 = theme::FG_DIM;
+const GRIDLINE: u32 = theme::BORDER;
+/// The hover crosshair. Brighter than [`GRIDLINE`] on purpose — it
+/// tracks the cursor and has to be findable at a glance.
+const CROSSHAIR: u32 = theme::FG_DIM;
+const CYAN: u32 = theme::CYAN;
+const GREEN: u32 = theme::GREEN;
+const GOLD: u32 = theme::GOLD;
+const ORANGE: u32 = theme::ORANGE;
+const PURPLE: u32 = theme::PURPLE;
 
 #[derive(IntoElement)]
 pub struct IndexPlot {
@@ -124,7 +137,7 @@ impl IndexPlot {
                 plot.top + plot.height() / 2.0 - 4.0,
                 "no versions yet — save to start the index",
                 9.0,
-                paint::hsla(FG_DIM, 1.0),
+                paint::hsla(AXIS_LABEL, 1.0),
                 Align::Center,
             );
             return;
@@ -142,7 +155,7 @@ impl IndexPlot {
                 plot.left,
                 plot.right,
                 y,
-                paint::hsla(FG_FAINT, 0.45),
+                paint::hsla(GRIDLINE, 0.45),
                 1.0,
                 None,
             );
@@ -154,7 +167,7 @@ impl IndexPlot {
                 y - 5.0,
                 format!("{:.0}%", v),
                 8.0,
-                paint::hsla(FG_DIM, 1.0),
+                paint::hsla(AXIS_LABEL, 1.0),
                 Align::End,
             );
         }
@@ -318,7 +331,7 @@ impl IndexPlot {
                 plot.bottom + 2.0,
                 v.label.clone(),
                 8.0,
-                paint::hsla(FG_DIM, 1.0),
+                paint::hsla(AXIS_LABEL, 1.0),
                 Align::Center,
             );
         }
@@ -332,7 +345,7 @@ impl IndexPlot {
                 x,
                 plot.top,
                 plot.bottom,
-                paint::hsla(FG_DIM, 0.8),
+                paint::hsla(CROSSHAIR, 0.8),
                 1.0,
                 None,
             );

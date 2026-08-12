@@ -52,6 +52,7 @@ Install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cp
 | `ANTHROPIC_API_KEY` | Enable real agent execution (otherwise uses mock) |
 | `FMP_API_KEY` | Financial data provider |
 | `AGENTS_DIR` | Custom path to agent directory |
+| `FERMI_UI_SCALE` | Override the UI scale (e.g. `1.4`); not saved |
 
 Example:
 
@@ -84,6 +85,27 @@ cargo build -p fermi-console --release
 | `Ctrl+5` | Leaderboard |
 | `Ctrl+N` | New Forecast |
 | `Ctrl+Q` | Quit |
+| `Ctrl++` | Larger text |
+| `Ctrl+-` | Smaller text |
+| `Ctrl+0` | Reset text size |
+
+## Text Size
+
+The whole interface scales together — type, spacing, and panel widths — so
+nothing truncates or overlaps as it grows. Adjust it with `Ctrl+` `+` / `-`,
+from the **Text** stepper at the bottom of the sidebar, or from
+**View → Larger Text**.
+
+The range is 90%–160%, the default is 115%, and your choice is saved to
+`~/.config/fermi-console/ui.json` (`~/Library/Application Support/FermiConsole/ui.json`
+on macOS).
+
+To pin a size without changing your saved preference — for screenshots or a
+demo — set `FERMI_UI_SCALE`:
+
+```bash
+FERMI_UI_SCALE=1.4 cargo run -p fermi-console
+```
 
 ## Troubleshooting
 
@@ -112,7 +134,9 @@ fermi/
 ├── crates/fermi-console/    # This application
 │   ├── src/
 │   │   ├── main.rs          # Entry point
-│   │   └── cockpit.rs      # Main UI layout
+│   │   ├── cockpit.rs       # Main UI layout
+│   │   ├── ui.rs            # Design tokens (type scale, `s()` unit)
+│   │   └── uiscale.rs       # UI scale factor + type scale (tested)
 │   └── Cargo.toml
 ├── agents/curated/          # Agent definitions
 └── target/                  # Build output

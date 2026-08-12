@@ -48,6 +48,7 @@ use crate::api::client::{
 };
 use crate::text_input::TextInput;
 use crate::theme;
+use crate::ui;
 use fermi_console::wire::{clamp_wire_interval_bound, clamp_wire_probability};
 
 // ════════════════════════════════════════════════════════════════════
@@ -10849,7 +10850,7 @@ impl Render for CockpitState {
                     .id("composer-left-panel")
                     .flex()
                     .flex_col()
-                    .w(px(700.0))
+                    .w(ui::s(700.0))
                     .h_full()
                     .overflow_y_scroll()
                     // Question + Outside View section
@@ -10867,31 +10868,31 @@ impl Render for CockpitState {
                             .collect();
                         el.child(
                             div()
-                                .mx(px(8.0))
-                                .my(px(6.0))
-                                .px(px(16.0))
-                                .py(px(12.0))
-                                .rounded(px(8.0))
+                                .mx(ui::s(8.0))
+                                .my(ui::s(6.0))
+                                .px(ui::s(16.0))
+                                .py(ui::s(12.0))
+                                .rounded(ui::s(8.0))
                                 .bg(rgb(0x1A2332))
                                 .border_1()
                                 .border_color(rgb(theme::GOLD))
                                 .flex()
                                 .flex_col()
-                                .gap(px(6.0))
+                                .gap(ui::s(6.0))
                                 .child(
                                     div()
                                         .flex()
                                         .items_center()
-                                        .gap(px(8.0))
+                                        .gap(ui::s(8.0))
                                         .child(
                                             div()
-                                                .text_size(px(14.0))
+                                                .text_size(ui::TEXT_XL)
                                                 .text_color(rgb(theme::GOLD))
                                                 .child("⟳"),
                                         )
                                         .child(
                                             div()
-                                                .text_size(px(13.0))
+                                                .text_size(ui::TEXT_LG)
                                                 .text_color(rgb(theme::GOLD))
                                                 .font_weight(FontWeight::BOLD)
                                                 .child("Fermi is decomposing your forecast…"),
@@ -10899,21 +10900,21 @@ impl Render for CockpitState {
                                 )
                                 .child(
                                     div()
-                                        .text_size(px(11.0))
+                                        .text_size(ui::TEXT_BASE)
                                         .text_color(rgb(theme::FG_DIM))
                                         .child("Researching base rates, identifying drivers, gathering initial evidence. This takes 20–30 seconds."),
                                 )
                                 // Progress bar
                                 .child(
                                     div()
-                                        .h(px(4.0))
+                                        .h(ui::s(4.0))
                                         .w_full()
-                                        .rounded(px(2.0))
+                                        .rounded(ui::s(2.0))
                                         .bg(rgb(theme::BG))
                                         .child(
                                             div()
-                                                .h(px(4.0))
-                                                .rounded(px(2.0))
+                                                .h(ui::s(4.0))
+                                                .rounded(ui::s(2.0))
                                                 .bg(rgb(theme::GOLD))
                                                 .w(gpui::px(
                                                     if agent_count > 0 {
@@ -10927,8 +10928,8 @@ impl Render for CockpitState {
                                 .when(!running_names.is_empty(), |el| {
                                     el.child(
                                         div()
-                                            .text_size(px(9.0))
-                                            .text_color(rgb(theme::FG_FAINT))
+                                            .text_size(ui::TEXT_XS)
+                                            .text_color(rgb(theme::FG_MUTED))
                                             .child(format!(
                                                 "Running: {} ({}/{})",
                                                 running_names.join(", "),
@@ -10960,20 +10961,20 @@ impl Render for CockpitState {
                     }, |el| {
                         el.child(
                             div()
-                                .mx(px(8.0))
-                                .my(px(6.0))
-                                .px(px(16.0))
-                                .py(px(10.0))
-                                .rounded(px(8.0))
+                                .mx(ui::s(8.0))
+                                .my(ui::s(6.0))
+                                .px(ui::s(16.0))
+                                .py(ui::s(10.0))
+                                .rounded(ui::s(8.0))
                                 .bg(rgb(0x1A2A1A))
                                 .border_1()
                                 .border_color(rgb(theme::GREEN))
                                 .flex()
                                 .items_center()
-                                .gap(px(12.0))
+                                .gap(ui::s(12.0))
                                 .child(
                                     div()
-                                        .text_size(px(16.0))
+                                        .text_size(ui::TEXT_2XL)
                                         .text_color(rgb(theme::GREEN))
                                         .child("✓"),
                                 )
@@ -10981,17 +10982,17 @@ impl Render for CockpitState {
                                     div()
                                         .flex()
                                         .flex_col()
-                                        .gap(px(2.0))
+                                        .gap(ui::s(2.0))
                                         .child(
                                             div()
-                                                .text_size(px(13.0))
+                                                .text_size(ui::TEXT_LG)
                                                 .text_color(rgb(theme::GREEN))
                                                 .font_weight(FontWeight::BOLD)
                                                 .child("Research complete — ready to simulate"),
                                         )
                                         .child(
                                             div()
-                                                .text_size(px(10.0))
+                                                .text_size(ui::TEXT_SM)
                                                 .text_color(rgb(theme::FG_DIM))
                                                 .child(format!("Review drivers and evidence above, then press {} to run Monte Carlo simulation.", crate::keys::chord("R"))),
                                         ),
@@ -11002,26 +11003,26 @@ impl Render for CockpitState {
                     .when(self.sim_running, |el| {
                         el.child(
                             div()
-                                .mx(px(8.0))
-                                .my(px(6.0))
-                                .px(px(16.0))
-                                .py(px(10.0))
-                                .rounded(px(8.0))
+                                .mx(ui::s(8.0))
+                                .my(ui::s(6.0))
+                                .px(ui::s(16.0))
+                                .py(ui::s(10.0))
+                                .rounded(ui::s(8.0))
                                 .bg(rgb(0x1A2332))
                                 .border_1()
                                 .border_color(rgb(theme::CYAN))
                                 .flex()
                                 .items_center()
-                                .gap(px(12.0))
+                                .gap(ui::s(12.0))
                                 .child(
                                     div()
-                                        .text_size(px(16.0))
+                                        .text_size(ui::TEXT_2XL)
                                         .text_color(rgb(theme::CYAN))
                                         .child("⟳"),
                                 )
                                 .child(
                                     div()
-                                        .text_size(px(13.0))
+                                        .text_size(ui::TEXT_LG)
                                         .text_color(rgb(theme::CYAN))
                                         .font_weight(FontWeight::BOLD)
                                         .child("Running Monte Carlo simulation (10,000 iterations)…"),
@@ -11035,11 +11036,11 @@ impl Render for CockpitState {
                             .flex_col()
                             .child(
                                 div()
-                                    .px(px(16.0))
-                                    .py(px(8.0))
+                                    .px(ui::s(16.0))
+                                    .py(ui::s(8.0))
                                     .border_b_1()
-                                    .border_color(rgb(theme::FG_FAINT))
-                                    .text_size(px(12.0))
+                                    .border_color(rgb(theme::BORDER))
+                                    .text_size(ui::TEXT_MD)
                                     .text_color(rgb(theme::GREEN))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(if self.orchestration_running && driver_names.is_empty() {
@@ -11054,54 +11055,54 @@ impl Render for CockpitState {
                             .when(self.orchestration_running && driver_names.is_empty(), |el| {
                                 el.children((0..4).map(|i| {
                                     div()
-                                        .mx(px(8.0))
-                                        .my(px(3.0))
-                                        .px(px(12.0))
-                                        .py(px(12.0))
-                                        .rounded(px(6.0))
+                                        .mx(ui::s(8.0))
+                                        .my(ui::s(3.0))
+                                        .px(ui::s(12.0))
+                                        .py(ui::s(12.0))
+                                        .rounded(ui::s(6.0))
                                         .border_1()
-                                        .border_color(rgb(theme::FG_FAINT))
+                                        .border_color(rgb(theme::BORDER))
                                         .bg(rgb(theme::BG_ELEVATED))
                                         .opacity(if i % 2 == 0 { 0.5 } else { 0.35 })
                                         .flex()
                                         .flex_col()
-                                        .gap(px(6.0))
+                                        .gap(ui::s(6.0))
                                         // Skeleton name bar
                                         .child(
                                             div()
                                                 .flex()
                                                 .items_center()
-                                                .gap(px(8.0))
+                                                .gap(ui::s(8.0))
                                                 .child(
                                                     div()
-                                                        .h(px(12.0))
-                                                        .w(px(120.0 + (i as f32) * 20.0))
-                                                        .rounded(px(3.0))
-                                                        .bg(rgb(theme::FG_FAINT)),
+                                                        .h(ui::s(12.0))
+                                                        .w(ui::s(120.0 + (i as f32) * 20.0))
+                                                        .rounded(ui::s(3.0))
+                                                        .bg(rgb(theme::BORDER)),
                                                 )
                                                 .child(
                                                     div()
-                                                        .h(px(10.0))
-                                                        .w(px(60.0))
-                                                        .rounded(px(2.0))
-                                                        .bg(rgb(theme::FG_FAINT)),
+                                                        .h(ui::s(10.0))
+                                                        .w(ui::s(60.0))
+                                                        .rounded(ui::s(2.0))
+                                                        .bg(rgb(theme::BORDER)),
                                                 ),
                                         )
                                         // Skeleton parameter bar
                                         .child(
                                             div()
-                                                .h(px(8.0))
-                                                .w(px(200.0 - (i as f32) * 15.0))
-                                                .rounded(px(2.0))
-                                                .bg(rgb(theme::FG_FAINT)),
+                                                .h(ui::s(8.0))
+                                                .w(ui::s(200.0 - (i as f32) * 15.0))
+                                                .rounded(ui::s(2.0))
+                                                .bg(rgb(theme::BORDER)),
                                         )
                                         // Skeleton confidence dots
                                         .child(
                                             div()
-                                                .h(px(8.0))
-                                                .w(px(100.0))
-                                                .rounded(px(2.0))
-                                                .bg(rgb(theme::FG_FAINT)),
+                                                .h(ui::s(8.0))
+                                                .w(ui::s(100.0))
+                                                .rounded(ui::s(2.0))
+                                                .bg(rgb(theme::BORDER)),
                                         )
                                 }))
                             })
@@ -11168,19 +11169,19 @@ impl Render for CockpitState {
                             .child(
                                 div()
                                     .flex()
-                                    .gap(px(8.0))
-                                    .px(px(12.0))
-                                    .py(px(6.0))
+                                    .gap(ui::s(8.0))
+                                    .px(ui::s(12.0))
+                                    .py(ui::s(6.0))
                                     .child(
                                         div()
                                             .id("add-continuous-btn")
-                                            .px(px(10.0))
-                                            .py(px(4.0))
-                                            .rounded(px(4.0))
+                                            .px(ui::s(10.0))
+                                            .py(ui::s(4.0))
+                                            .rounded(ui::s(4.0))
                                             .bg(rgb(theme::BG_ELEVATED))
                                             .border_1()
                                             .border_color(rgb(theme::GREEN))
-                                            .text_size(px(11.0))
+                                            .text_size(ui::TEXT_BASE)
                                             .text_color(rgb(theme::GREEN))
                                             .cursor_pointer()
                                             .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -11192,13 +11193,13 @@ impl Render for CockpitState {
                                     .child(
                                         div()
                                             .id("add-binary-btn")
-                                            .px(px(10.0))
-                                            .py(px(4.0))
-                                            .rounded(px(4.0))
+                                            .px(ui::s(10.0))
+                                            .py(ui::s(4.0))
+                                            .rounded(ui::s(4.0))
                                             .bg(rgb(theme::BG_ELEVATED))
                                             .border_1()
                                             .border_color(rgb(theme::GOLD))
-                                            .text_size(px(11.0))
+                                            .text_size(ui::TEXT_BASE)
                                             .text_color(rgb(theme::GOLD))
                                             .cursor_pointer()
                                             .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -11220,11 +11221,11 @@ impl Render for CockpitState {
                     .flex()
                     .flex_col()
                     .flex_grow()
-                    .min_w(px(0.0))
+                    .min_w(ui::s(0.0))
                     .h_full()
                     .bg(rgb(theme::BG_ELEVATED))
                     .border_l_1()
-                    .border_color(rgb(theme::FG_FAINT))
+                    .border_color(rgb(theme::BORDER))
                     // Tab bar
                     .child(render_tab_bar(self.right_tab, cx))
                     // Tab content (scrollable)
@@ -11235,7 +11236,7 @@ impl Render for CockpitState {
                             .flex_col()
                             .flex_grow()
                             .overflow_y_scroll()
-                            .min_w(px(0.0))
+                            .min_w(ui::s(0.0))
                             .child(match self.right_tab {
                                 RightTab::Edit => render_right_panel(self, &focused, cx),
                                 RightTab::Fpl => render_fpl_tab(self).into_any_element(),
@@ -11282,12 +11283,12 @@ fn render_question_section(
     div()
         .bg(rgb(theme::BG_ELEVATED))
         .border_b_1()
-        .border_color(rgb(theme::FG_FAINT))
-        .px(px(16.0))
-        .py(px(12.0))
+        .border_color(rgb(theme::BORDER))
+        .px(ui::s(16.0))
+        .py(ui::s(12.0))
         .flex()
         .flex_col()
-        .gap(px(8.0))
+        .gap(ui::s(8.0))
         .child(state.question_input.clone())
         // Polymarket type-ahead strip (zero-friction integration).
         // Only rendered when the operator is composing a fresh forecast
@@ -11323,12 +11324,12 @@ fn render_question_section(
                 .flex()
                 .flex_wrap()
                 .items_center()
-                .gap(px(16.0))
-                .min_w(px(0.0))
+                .gap(ui::s(16.0))
+                .min_w(ui::s(0.0))
                 .child(
                     div()
                         .flex_none()
-                        .text_size(px(28.0))
+                        .text_size(ui::TEXT_7XL)
                         .text_color(rgb(theme::CYAN))
                         .font_weight(FontWeight::BOLD)
                         .child(prob_pct),
@@ -11336,15 +11337,15 @@ fn render_question_section(
                 .when(!state.inside_view_explanation.is_empty(), |el| {
                     el.child(
                         div()
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(rgb(theme::FG_DIM))
                             // min_w large enough to hold a multi-word phrase,
                             // not 0 — when the parent flex_wrap()s, the text
                             // element otherwise shrinks below per-word width
                             // and GPUI falls back to per-character line breaks
                             // ("s/t/a/r/t/i/n/g" stacked vertically).
-                            .min_w(px(220.0))
-                            .max_w(px(560.0))
+                            .min_w(ui::s(220.0))
+                            .max_w(ui::s(560.0))
                             .flex_grow()
                             .child(state.inside_view_explanation.clone()),
                     )
@@ -11363,13 +11364,16 @@ fn render_question_section(
                         } else {
                             theme::RED
                         };
-                        el.child(div().text_size(px(10.0)).text_color(rgb(conf_color)).child(
-                            format!(
-                                "Confidence: {} ({:.0}%)",
-                                conf_label,
-                                state.forecast_confidence * 100.0
-                            ),
-                        ))
+                        el.child(
+                            div()
+                                .text_size(ui::TEXT_SM)
+                                .text_color(rgb(conf_color))
+                                .child(format!(
+                                    "Confidence: {} ({:.0}%)",
+                                    conf_label,
+                                    state.forecast_confidence * 100.0
+                                )),
+                        )
                     })
                 })
                 .when(state.orchestration_running, |el| {
@@ -11377,20 +11381,20 @@ fn render_question_section(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
-                            .px(px(8.0))
-                            .py(px(4.0))
-                            .rounded(px(4.0))
+                            .gap(ui::s(8.0))
+                            .px(ui::s(8.0))
+                            .py(ui::s(4.0))
+                            .rounded(ui::s(4.0))
                             .bg(rgb(0x2A2D3A))
                             .child(
                                 div()
-                                    .text_size(px(13.0))
+                                    .text_size(ui::TEXT_LG)
                                     .text_color(rgb(theme::GOLD))
                                     .child("⟳"),
                             )
                             .child(
                                 div()
-                                    .text_size(px(12.0))
+                                    .text_size(ui::TEXT_MD)
                                     .text_color(rgb(theme::GOLD))
                                     .child("Researching… Fermi is decomposing your forecast"),
                             ),
@@ -11426,8 +11430,8 @@ fn render_question_section(
                     el.child(
                         div()
                             .flex_none()
-                            .w(px(360.0))
-                            .text_size(px(11.0))
+                            .w(ui::s(360.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(rgb(color))
                             .child(short),
                     )
@@ -11548,13 +11552,13 @@ fn action_chip_static(
         .id(SharedString::from(format!("action-chip-{}", id)))
         .flex()
         .items_center()
-        .gap(px(6.0))
-        .px(px(8.0))
-        .py(px(3.0))
-        .rounded(px(4.0))
+        .gap(ui::s(6.0))
+        .px(ui::s(8.0))
+        .py(ui::s(3.0))
+        .rounded(ui::s(4.0))
         .border_1()
         .border_color(rgb(accent))
-        .text_size(px(10.0))
+        .text_size(ui::TEXT_SM)
         .text_color(rgb(accent))
         .opacity(0.85)
         .when(!icon.is_empty(), |el| {
@@ -11591,7 +11595,7 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
     } else if next == NextAction::Research {
         ("💡", "Research", theme::CYAN)
     } else {
-        ("", "Research", theme::FG_FAINT)
+        ("", "Research", theme::FG_MUTED)
     };
     let research_disabled = !has_question || state.orchestration_running || locked;
 
@@ -11605,7 +11609,7 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
     } else if next == NextAction::Simulate {
         ("▶", "Simulate", theme::CYAN)
     } else {
-        ("", "Simulate", theme::FG_FAINT)
+        ("", "Simulate", theme::FG_MUTED)
     };
     let sim_disabled = state.sim_running || locked || !has_drivers;
 
@@ -11629,7 +11633,7 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
     } else if next == NextAction::Save {
         ("💾".to_string(), "Save".to_string(), theme::CYAN)
     } else {
-        (String::new(), "Save".to_string(), theme::FG_FAINT)
+        (String::new(), "Save".to_string(), theme::FG_MUTED)
     };
     let save_disabled = locked || !has_question || !can_edit;
     // Only the read-only case gets a spelled-out reason. The other two
@@ -11652,7 +11656,7 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
     } else if next == NextAction::Publish {
         ("🚀", "Publish", theme::CYAN)
     } else {
-        ("", "Publish", theme::FG_FAINT)
+        ("", "Publish", theme::FG_MUTED)
     };
     // v0.8.13: loosen the publish gate. Old gate required sim_results to
     // be Some, which meant an operator who couldn't run agents (e.g.
@@ -11728,13 +11732,13 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
         .id(SharedString::from("action-chip-research"))
         .flex()
         .items_center()
-        .gap(px(6.0))
-        .px(px(8.0))
-        .py(px(3.0))
-        .rounded(px(4.0))
+        .gap(ui::s(6.0))
+        .px(ui::s(8.0))
+        .py(ui::s(3.0))
+        .rounded(ui::s(4.0))
         .border_1()
         .border_color(rgb(research_accent))
-        .text_size(px(10.0))
+        .text_size(ui::TEXT_SM)
         .text_color(rgb(research_accent))
         .when(next == NextAction::Research, |el| el.bg(rgb(primary_bg)))
         .when(research_disabled, |el| el.opacity(0.5))
@@ -11774,13 +11778,13 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
         .id(SharedString::from("action-chip-simulate"))
         .flex()
         .items_center()
-        .gap(px(6.0))
-        .px(px(8.0))
-        .py(px(3.0))
-        .rounded(px(4.0))
+        .gap(ui::s(6.0))
+        .px(ui::s(8.0))
+        .py(ui::s(3.0))
+        .rounded(ui::s(4.0))
         .border_1()
         .border_color(rgb(sim_accent))
-        .text_size(px(10.0))
+        .text_size(ui::TEXT_SM)
         .text_color(rgb(sim_accent))
         .when(next == NextAction::Simulate, |el| el.bg(rgb(primary_bg)))
         .when(sim_disabled, |el| el.opacity(0.5))
@@ -11813,13 +11817,13 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
         .id(SharedString::from("action-chip-save"))
         .flex()
         .items_center()
-        .gap(px(6.0))
-        .px(px(8.0))
-        .py(px(3.0))
-        .rounded(px(4.0))
+        .gap(ui::s(6.0))
+        .px(ui::s(8.0))
+        .py(ui::s(3.0))
+        .rounded(ui::s(4.0))
         .border_1()
         .border_color(rgb(save_accent))
-        .text_size(px(10.0))
+        .text_size(ui::TEXT_SM)
         .text_color(rgb(save_accent))
         .when(next == NextAction::Save, |el| el.bg(rgb(primary_bg)))
         .when(save_disabled, |el| el.opacity(0.5))
@@ -11849,13 +11853,13 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
         .id(SharedString::from("action-chip-publish"))
         .flex()
         .items_center()
-        .gap(px(6.0))
-        .px(px(8.0))
-        .py(px(3.0))
-        .rounded(px(4.0))
+        .gap(ui::s(6.0))
+        .px(ui::s(8.0))
+        .py(ui::s(3.0))
+        .rounded(ui::s(4.0))
         .border_1()
         .border_color(rgb(pub_accent))
-        .text_size(px(10.0))
+        .text_size(ui::TEXT_SM)
         .text_color(rgb(pub_accent))
         .when(next == NextAction::Publish, |el| el.bg(rgb(primary_bg)))
         .when(pub_disabled, |el| el.opacity(0.5))
@@ -11900,9 +11904,9 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
         div()
             .flex()
             .items_center()
-            .px(px(6.0))
-            .text_size(px(10.0))
-            .text_color(rgb(theme::FG_FAINT))
+            .px(ui::s(6.0))
+            .text_size(ui::TEXT_SM)
+            .text_color(rgb(theme::FG_MUTED))
             .child(format!("— disabled: {}", reason))
     });
 
@@ -11910,17 +11914,17 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
         div()
             .flex()
             .items_center()
-            .px(px(6.0))
-            .text_size(px(10.0))
-            .text_color(rgb(theme::FG_FAINT))
+            .px(ui::s(6.0))
+            .text_size(ui::TEXT_SM)
+            .text_color(rgb(theme::FG_MUTED))
             .child(format!("— {}", reason))
     });
 
     let mut chip_row = div()
         .flex()
         .flex_wrap()
-        .gap(px(8.0))
-        .mt(px(6.0))
+        .gap(ui::s(8.0))
+        .mt(ui::s(6.0))
         .child(research_chip)
         .child(simulate_chip)
         .child(save_chip);
@@ -11938,21 +11942,21 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
             "➕",
             "New",
             &crate::keys::chord("N"),
-            theme::FG_FAINT,
+            theme::FG_MUTED,
         ))
         .child(action_chip_static(
             "import",
             "⬇",
             "Import",
             &crate::keys::chord("O"),
-            theme::FG_FAINT,
+            theme::FG_MUTED,
         ))
         .child(action_chip_static(
             "tabs",
             "⇆",
             "Tabs",
             &crate::keys::chord("E"),
-            theme::FG_FAINT,
+            theme::FG_MUTED,
         ));
     chip_row
         // v0.8.11: PM search retry chip. Visible only on unlinked
@@ -11971,13 +11975,13 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
                         .id("action-chip-pm-search")
                         .flex()
                         .items_center()
-                        .gap(px(6.0))
-                        .px(px(8.0))
-                        .py(px(3.0))
-                        .rounded(px(4.0))
+                        .gap(ui::s(6.0))
+                        .px(ui::s(8.0))
+                        .py(ui::s(3.0))
+                        .rounded(ui::s(4.0))
                         .border_1()
                         .border_color(rgb(theme::PURPLE))
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(rgb(theme::PURPLE))
                         .cursor_pointer()
                         .hover(|s| s.bg(theme::bg_hover()))
@@ -12000,20 +12004,20 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
             let (label, color) = if armed {
                 ("Click again to confirm", theme::RED)
             } else {
-                ("Delete", theme::FG_FAINT)
+                ("Delete", theme::FG_MUTED)
             };
             el.child(
                 div()
                     .id("action-chip-delete")
                     .flex()
                     .items_center()
-                    .gap(px(6.0))
-                    .px(px(8.0))
-                    .py(px(3.0))
-                    .rounded(px(4.0))
+                    .gap(ui::s(6.0))
+                    .px(ui::s(8.0))
+                    .py(ui::s(3.0))
+                    .rounded(ui::s(4.0))
                     .border_1()
                     .border_color(rgb(color))
-                    .text_size(px(10.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(rgb(color))
                     .cursor_pointer()
                     .hover(|s| s.bg(theme::bg_hover()))
@@ -12113,22 +12117,22 @@ fn render_delta_chip(label: &str, delta_pp: f64) -> gpui::Div {
     div()
         .flex()
         .items_center()
-        .gap(px(6.0))
-        .px(px(8.0))
-        .py(px(3.0))
-        .rounded(px(3.0))
+        .gap(ui::s(6.0))
+        .px(ui::s(8.0))
+        .py(ui::s(3.0))
+        .rounded(ui::s(3.0))
         .bg(rgb(theme::BG_ELEVATED))
         .border_1()
         .border_color(rgb(color))
         .child(
             div()
-                .text_size(px(9.0))
-                .text_color(rgb(theme::FG_FAINT))
+                .text_size(ui::TEXT_XS)
+                .text_color(rgb(theme::FG_MUTED))
                 .child(label.to_string()),
         )
         .child(
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(rgb(color))
                 .font_weight(FontWeight::BOLD)
                 .child(format!("{}{:.1}pp", sign, delta_pp)),
@@ -12141,15 +12145,15 @@ fn render_delta_chip(label: &str, delta_pp: f64) -> gpui::Div {
 fn render_delta_chips(state: &CockpitState) -> gpui::Div {
     let t = AnchorTriad::from_state(state);
     if !t.has_any_delta() {
-        return div().w(px(0.0)).h(px(0.0));
+        return div().w(ui::s(0.0)).h(ui::s(0.0));
     }
 
     let mut row = div()
         .flex()
         .flex_wrap()
         .items_center()
-        .gap(px(6.0))
-        .text_size(px(11.0));
+        .gap(ui::s(6.0))
+        .text_size(ui::TEXT_BASE);
 
     if let Some(d) = t.delta_io_pp {
         row = row.child(render_delta_chip("model − base", d));
@@ -12325,20 +12329,20 @@ fn render_interactive_histogram(
                 dom_hi * 100.0,
                 sim.iterations
             ),
-            theme::FG_FAINT,
+            theme::FG_MUTED,
         ),
     };
 
     let tooltip = div()
-        .w(px(chart_w))
-        .h(px(30.0))
-        .px(px(6.0))
-        .py(px(3.0))
-        .rounded(px(4.0))
+        .w(ui::s(chart_w))
+        .h(ui::s(30.0))
+        .px(ui::s(6.0))
+        .py(ui::s(3.0))
+        .rounded(ui::s(4.0))
         .bg(rgb(theme::BG_ELEVATED))
         .border_1()
-        .border_color(rgb(theme::FG_FAINT))
-        .text_size(px(9.0))
+        .border_color(rgb(theme::BORDER))
+        .text_size(ui::TEXT_XS)
         .flex()
         .flex_col()
         .overflow_hidden()
@@ -12354,10 +12358,10 @@ fn render_interactive_histogram(
         div()
             .flex()
             .items_center()
-            .gap(px(8.0))
+            .gap(ui::s(8.0))
             .child(
                 div()
-                    .text_size(px(13.0))
+                    .text_size(ui::TEXT_LG)
                     .font_weight(FontWeight::BOLD)
                     .text_color(rgb(theme::GREEN))
                     .child(format!("P(≥ {:.1}%) = {:.0}%", t * 100.0, p * 100.0)),
@@ -12365,9 +12369,9 @@ fn render_interactive_histogram(
             .child(
                 div()
                     .id("threshold-clear")
-                    .px(px(6.0))
-                    .rounded(px(3.0))
-                    .text_size(px(9.0))
+                    .px(ui::s(6.0))
+                    .rounded(ui::s(3.0))
+                    .text_size(ui::TEXT_XS)
                     .text_color(rgb(theme::FG_DIM))
                     .cursor_pointer()
                     .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -12384,11 +12388,11 @@ fn render_interactive_histogram(
     let mut bars_row = div()
         .id("histogram-bars-row")
         .relative()
-        .w(px(chart_w))
-        .h(px(chart_h))
+        .w(ui::s(chart_w))
+        .h(ui::s(chart_h))
         .flex()
         .items_end()
-        .gap(px(bar_gap));
+        .gap(ui::s(bar_gap));
 
     for idx in 0..n_bins {
         let count = sim.histogram[idx];
@@ -12418,8 +12422,8 @@ fn render_interactive_histogram(
         bars_row = bars_row.child(
             div()
                 .id(("hist-bar", idx))
-                .w(px(bar_w))
-                .h(px(bar_h.max(1.0)))
+                .w(ui::s(bar_w))
+                .h(ui::s(bar_h.max(1.0)))
                 .bg(bar_color)
                 .when(hovered, |el| {
                     // Hovered bar pops via a gold outline — keeps the bar
@@ -12445,10 +12449,10 @@ fn render_interactive_histogram(
     // ── Anchor reference lines ──────────────────────────────────────
     let mut overlay = div()
         .absolute()
-        .top(px(0.0))
-        .left(px(0.0))
-        .w(px(chart_w))
-        .h(px(chart_h));
+        .top(ui::s(0.0))
+        .left(ui::s(0.0))
+        .w(ui::s(chart_w))
+        .h(ui::s(chart_h));
 
     for (value, color) in [
         (Some(triad.inside_pct), theme::CYAN),
@@ -12460,10 +12464,10 @@ fn render_interactive_histogram(
         overlay = overlay.child(
             div()
                 .absolute()
-                .left(px(x))
-                .top(px(0.0))
-                .w(px(1.5))
-                .h(px(chart_h))
+                .left(ui::s(x))
+                .top(ui::s(0.0))
+                .w(ui::s(1.5))
+                .h(ui::s(chart_h))
                 .bg(rgb(color)),
         );
     }
@@ -12476,10 +12480,10 @@ fn render_interactive_histogram(
             .child(
                 div()
                     .absolute()
-                    .left(px(x))
-                    .top(px(0.0))
-                    .w(px(2.0))
-                    .h(px(chart_h))
+                    .left(ui::s(x))
+                    .top(ui::s(0.0))
+                    .w(ui::s(2.0))
+                    .h(ui::s(chart_h))
                     .bg(rgb(theme::GREEN)),
             )
             // A visible grab target. An invisible drag affordance isn't
@@ -12487,11 +12491,11 @@ fn render_interactive_histogram(
             .child(
                 div()
                     .absolute()
-                    .left(px(x - 4.0))
-                    .top(px(-3.0))
-                    .w(px(8.0))
-                    .h(px(8.0))
-                    .rounded(px(2.0))
+                    .left(ui::s(x - 4.0))
+                    .top(ui::s(-3.0))
+                    .w(ui::s(8.0))
+                    .h(ui::s(8.0))
+                    .rounded(ui::s(2.0))
                     .bg(rgb(theme::GREEN)),
             );
     }
@@ -12516,9 +12520,9 @@ fn render_interactive_histogram(
     let drag_band = div()
         .id("histogram-threshold-band")
         .relative()
-        .w(px(chart_w))
-        .pt(px(6.0))
-        .pb(px(10.0))
+        .w(ui::s(chart_w))
+        .pt(ui::s(6.0))
+        .pb(ui::s(10.0))
         .child(bars_row)
         .on_mouse_down(
             gpui::MouseButton::Left,
@@ -12566,7 +12570,7 @@ fn render_interactive_histogram(
         );
 
     // ── Compose ─────────────────────────────────────────────────────
-    let mut root = div().flex().flex_col().gap(px(4.0));
+    let mut root = div().flex().flex_col().gap(ui::s(4.0));
     if let Some(r) = readout {
         root = root.child(r);
     }
@@ -12575,9 +12579,9 @@ fn render_interactive_histogram(
         .child(
             div()
                 .flex()
-                .gap(px(10.0))
-                .text_size(px(8.0))
-                .text_color(rgb(theme::FG_FAINT))
+                .gap(ui::s(10.0))
+                .text_size(ui::TEXT_MICRO)
+                .text_color(rgb(theme::FG_MUTED))
                 .child(div().text_color(rgb(theme::CYAN)).child("│ model"))
                 .when(triad.outside_pct.is_some(), |el| {
                     el.child(div().text_color(rgb(theme::GOLD)).child("│ base"))
@@ -12623,6 +12627,18 @@ fn render_interactive_index_chart(
     if state.versions.len() < 2 {
         return div().into_any_element();
     }
+
+    // Resolve the UI scale here, once, into *real* pixels.
+    //
+    // Unlike the histogram above, this chart is painted by `viz` into a
+    // canvas at coordinates it derives from `IndexSpec` — so the spec and
+    // the wrapper `div` have to agree exactly. Sizing the wrapper in `rems`
+    // would let layout scale the box while the painter kept drawing at
+    // design size, and the crosshair would stop landing on the data.
+    // Everything downstream of this point is already-scaled pixels and
+    // keeps its `px(..)`.
+    let chart_w = ui::sp(chart_w);
+    let chart_h = ui::sp(chart_h);
 
     let base_rate_pct = state
         .program
@@ -12743,20 +12759,20 @@ fn render_interactive_index_chart(
                     .map(|v| format!("{:.1}%", v.model_pct))
                     .unwrap_or_default()
             ),
-            theme::FG_FAINT,
+            theme::FG_MUTED,
         ),
     };
 
     let readout = div()
         .w(px(chart_w))
-        .h(px(30.0))
-        .px(px(6.0))
-        .py(px(3.0))
-        .rounded(px(4.0))
+        .h(ui::s(30.0))
+        .px(ui::s(6.0))
+        .py(ui::s(3.0))
+        .rounded(ui::s(4.0))
         .bg(rgb(theme::BG_ELEVATED))
         .border_1()
-        .border_color(rgb(theme::FG_FAINT))
-        .text_size(px(9.0))
+        .border_color(rgb(theme::BORDER))
+        .text_size(ui::TEXT_XS)
         .flex()
         .flex_col()
         .overflow_hidden()
@@ -12796,15 +12812,15 @@ fn render_interactive_index_chart(
     div()
         .flex()
         .flex_col()
-        .gap(px(4.0))
+        .gap(ui::s(4.0))
         .child(readout)
         .child(chart)
         .child(
             div()
                 .flex()
-                .gap(px(10.0))
-                .text_size(px(8.0))
-                .text_color(rgb(theme::FG_FAINT))
+                .gap(ui::s(10.0))
+                .text_size(ui::TEXT_MICRO)
+                .text_color(rgb(theme::FG_MUTED))
                 .child(div().text_color(rgb(theme::CYAN)).child("─ model"))
                 .when(base_rate_pct.is_some(), |el| {
                     el.child(div().text_color(rgb(theme::GOLD)).child("╌ base"))
@@ -12828,7 +12844,7 @@ fn render_interactive_index_chart(
                 })
                 .child(
                     div()
-                        .text_color(rgb(theme::FG_FAINT))
+                        .text_color(rgb(theme::FG_MUTED))
                         .child(format!("{} versions", n)),
                 ),
         )
@@ -12841,20 +12857,20 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
     let base_rate = state.program.question().and_then(|q| q.base_rate.as_ref());
 
     div()
-        .mx(px(8.0))
-        .my(px(4.0))
-        .px(px(12.0))
-        .py(px(8.0))
-        .rounded(px(6.0))
+        .mx(ui::s(8.0))
+        .my(ui::s(4.0))
+        .px(ui::s(12.0))
+        .py(ui::s(8.0))
+        .rounded(ui::s(6.0))
         .bg(rgb(theme::BG_ELEVATED))
         .border_1()
         .border_color(rgb(theme::GOLD))
         .flex()
         .flex_col()
-        .gap(px(4.0))
+        .gap(ui::s(4.0))
         .child(
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(rgb(theme::GOLD))
                 .font_weight(FontWeight::SEMIBOLD)
                 .child("Outside View (Base Rate)"),
@@ -12865,10 +12881,10 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(12.0))
+                    .gap(ui::s(12.0))
                     .child(
                         div()
-                            .text_size(px(22.0))
+                            .text_size(ui::TEXT_5XL)
                             .text_color(rgb(theme::GOLD))
                             .font_weight(FontWeight::BOLD)
                             .child(format!("{:.2}%", br.historical_frequency * 100.0)),
@@ -12877,18 +12893,18 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(2.0))
+                            .gap(ui::s(2.0))
                             .child(
                                 div()
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(rgb(theme::FG))
                                     .child(br.reference_class.clone()),
                             )
                             .when(br.sample_size.is_some(), |el| {
                                 el.child(
                                     div()
-                                        .text_size(px(10.0))
-                                        .text_color(rgb(theme::FG_FAINT))
+                                        .text_size(ui::TEXT_SM)
+                                        .text_color(rgb(theme::FG_MUTED))
                                         .child(format!("n={}", br.sample_size.unwrap_or(0))),
                                 )
                             }),
@@ -12897,26 +12913,26 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
             .when(br.reasoning.is_some(), |el| {
                 el.child(
                     div()
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(rgb(theme::FG_DIM))
                         .child(br.reasoning.as_deref().unwrap_or("").to_string()),
                 )
             })
             .child(
                 div()
-                    .text_size(px(9.0))
-                    .text_color(rgb(theme::FG_FAINT))
+                    .text_size(ui::TEXT_XS)
+                    .text_color(rgb(theme::FG_MUTED))
                     .child(format!("Source: {}", br.source)),
             )
             .child(
                 div()
                     .id("update-base-rate")
-                    .mt(px(4.0))
-                    .px(px(8.0))
-                    .py(px(3.0))
-                    .rounded(px(3.0))
+                    .mt(ui::s(4.0))
+                    .px(ui::s(8.0))
+                    .py(ui::s(3.0))
+                    .rounded(ui::s(3.0))
                     .bg(rgb(theme::BG))
-                    .text_size(px(10.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(rgb(theme::GOLD))
                     .cursor_pointer()
                     .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -12929,7 +12945,7 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
         .when(base_rate.is_none(), |el| {
             el.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(rgb(theme::FG_DIM))
                     .child(if state.orchestration_running {
                         "Searching for reference class…".to_string()
@@ -12989,36 +13005,36 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
 
             el.child(
                 div()
-                    .mt(px(6.0))
-                    .px(px(12.0))
-                    .py(px(8.0))
-                    .rounded(px(6.0))
+                    .mt(ui::s(6.0))
+                    .px(ui::s(12.0))
+                    .py(ui::s(8.0))
+                    .rounded(ui::s(6.0))
                     .bg(rgb(0x1A1A2E))
                     .border_1()
                     .border_color(rgb(theme::PURPLE))
                     .flex()
                     .flex_col()
-                    .gap(px(4.0))
+                    .gap(ui::s(4.0))
                     // Header
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
+                            .gap(ui::s(8.0))
                             .child(
                                 div()
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(rgb(theme::PURPLE))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child("Outside View (Prediction Market)"),
                             )
                             .child(
                                 div()
-                                    .text_size(px(8.0))
+                                    .text_size(ui::TEXT_MICRO)
                                     .text_color(rgb(theme::PURPLE))
-                                    .px(px(4.0))
-                                    .py(px(1.0))
-                                    .rounded(px(2.0))
+                                    .px(ui::s(4.0))
+                                    .py(ui::s(1.0))
+                                    .rounded(ui::s(2.0))
                                     .bg(rgb(theme::BG))
                                     .child("🔗 Polymarket"),
                             ),
@@ -13028,10 +13044,10 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(12.0))
+                            .gap(ui::s(12.0))
                             .child(
                                 div()
-                                    .text_size(px(22.0))
+                                    .text_size(ui::TEXT_5XL)
                                     .text_color(rgb(theme::PURPLE))
                                     .font_weight(FontWeight::BOLD)
                                     .child(pm_pct),
@@ -13040,12 +13056,12 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                                 div()
                                     .flex()
                                     .flex_col()
-                                    .gap(px(2.0))
+                                    .gap(ui::s(2.0))
                                     .flex_grow()
-                                    .min_w(px(0.0))
+                                    .min_w(ui::s(0.0))
                                     .child(
                                         div()
-                                            .text_size(px(11.0))
+                                            .text_size(ui::TEXT_BASE)
                                             .text_color(rgb(theme::FG))
                                             .child(
                                                 state.pm_question.as_deref()
@@ -13056,9 +13072,9 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                                     .child(
                                         div()
                                             .flex()
-                                            .gap(px(8.0))
-                                            .text_size(px(9.0))
-                                            .text_color(rgb(theme::FG_FAINT))
+                                            .gap(ui::s(8.0))
+                                            .text_size(ui::TEXT_XS)
+                                            .text_color(rgb(theme::FG_MUTED))
                                             .when(!vol_str.is_empty(), |el| {
                                                 el.child(format!("{} vol/24h", vol_str))
                                             })
@@ -13084,7 +13100,7 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                         };
                         el.child(
                             div()
-                                .text_size(px(9.0))
+                                .text_size(ui::TEXT_XS)
                                 .text_color(rgb(trend_color))
                                 .child(format!(
                                     "{} {:+.1}pp this week",
@@ -13096,19 +13112,19 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                     // Divergence box
                     .child(
                         div()
-                            .mt(px(4.0))
-                            .px(px(10.0))
-                            .py(px(6.0))
-                            .rounded(px(4.0))
+                            .mt(ui::s(4.0))
+                            .px(ui::s(10.0))
+                            .py(ui::s(6.0))
+                            .rounded(ui::s(4.0))
                             .bg(rgb(theme::BG))
                             .border_1()
                             .border_color(rgb(div_color))
                             .flex()
                             .flex_col()
-                            .gap(px(2.0))
+                            .gap(ui::s(2.0))
                             .child(
                                 div()
-                                    .text_size(px(12.0))
+                                    .text_size(ui::TEXT_MD)
                                     .text_color(rgb(div_color))
                                     .font_weight(FontWeight::BOLD)
                                     .child(format!(
@@ -13120,7 +13136,7 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                             )
                             .child(
                                 div()
-                                    .text_size(px(9.0))
+                                    .text_size(ui::TEXT_XS)
                                     .text_color(rgb(theme::FG_DIM))
                                     .child(format!(
                                         "{} divergence — Your model: {:.1}% · Crowd: {:.1}%",
@@ -13132,7 +13148,7 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                             .when(div_abs > 15.0, |el| {
                                 el.child(
                                     div()
-                                        .text_size(px(9.0))
+                                        .text_size(ui::TEXT_XS)
                                         .text_color(rgb(theme::GOLD))
                                         .child("Is this alpha or overconfidence?"),
                                 )
@@ -13142,12 +13158,12 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                     .child(
                         div()
                             .flex()
-                            .gap(px(8.0))
-                            .mt(px(2.0))
+                            .gap(ui::s(8.0))
+                            .mt(ui::s(2.0))
                             .when(state.pm_url.is_some(), |el| {
                                 el.child(
                                     div()
-                                        .text_size(px(9.0))
+                                        .text_size(ui::TEXT_XS)
                                         .text_color(rgb(theme::PURPLE))
                                         .child(format!(
                                             "🔗 {}",
@@ -13158,13 +13174,13 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                             .child(
                                 div()
                                     .id("use-pm-as-base-rate")
-                                    .px(px(8.0))
-                                    .py(px(2.0))
-                                    .rounded(px(3.0))
+                                    .px(ui::s(8.0))
+                                    .py(ui::s(2.0))
+                                    .rounded(ui::s(3.0))
                                     .bg(rgb(theme::BG_ELEVATED))
                                     .border_1()
                                     .border_color(rgb(theme::PURPLE))
-                                    .text_size(px(9.0))
+                                    .text_size(ui::TEXT_XS)
                                     .text_color(rgb(theme::PURPLE))
                                     .cursor_pointer()
                                     .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -13265,7 +13281,7 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                             };
                             (format!("updated {}", rel), rgb(theme::GREEN))
                         } else {
-                            ("never refreshed".to_string(), rgb(theme::FG_FAINT))
+                            ("never refreshed".to_string(), rgb(theme::FG_MUTED))
                         };
                         let refresh_disabled = state.pm_refresh_in_flight;
 
@@ -13274,16 +13290,16 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(3.0))
-                            .mt(px(4.0))
+                            .gap(ui::s(3.0))
+                            .mt(ui::s(4.0))
                             .child(div()
                             .flex()
                             .items_center()
-                            .gap(px(4.0))
+                            .gap(ui::s(4.0))
                             .child(
                                 div()
-                                    .text_size(px(8.0))
-                                    .text_color(rgb(theme::FG_FAINT))
+                                    .text_size(ui::TEXT_MICRO)
+                                    .text_color(rgb(theme::FG_MUTED))
                                     .child("Crowd price refresh:"),
                             )
                             // Manual "refresh now" — fires an immediate
@@ -13295,13 +13311,13 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                             .child(
                                 div()
                                     .id("pm-refresh-now")
-                                    .px(px(6.0))
-                                    .py(px(1.0))
-                                    .rounded(px(2.0))
-                                    .text_size(px(8.0))
+                                    .px(ui::s(6.0))
+                                    .py(ui::s(1.0))
+                                    .rounded(ui::s(2.0))
+                                    .text_size(ui::TEXT_MICRO)
                                     .bg(rgb(theme::BG))
                                     .text_color(if refresh_disabled {
-                                        rgb(theme::FG_FAINT)
+                                        rgb(theme::FG_MUTED)
                                     } else {
                                         rgb(theme::CYAN)
                                     })
@@ -13323,10 +13339,10 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                             // silent server errors when it isn't).
                             .child(
                                 div()
-                                    .px(px(6.0))
-                                    .py(px(1.0))
-                                    .rounded(px(2.0))
-                                    .text_size(px(8.0))
+                                    .px(ui::s(6.0))
+                                    .py(ui::s(1.0))
+                                    .rounded(ui::s(2.0))
+                                    .text_size(ui::TEXT_MICRO)
                                     .text_color(status_color)
                                     .child(status_text),
                             )
@@ -13339,10 +13355,10 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                                 let s = secs;
                                 div()
                                     .id(ElementId::Name(format!("pm-poll-{}", secs).into()))
-                                    .px(px(5.0))
-                                    .py(px(1.0))
-                                    .rounded(px(2.0))
-                                    .text_size(px(8.0))
+                                    .px(ui::s(5.0))
+                                    .py(ui::s(1.0))
+                                    .rounded(ui::s(2.0))
+                                    .text_size(ui::TEXT_MICRO)
                                     .cursor_pointer()
                                     .when(is_active, |el| {
                                         el.bg(rgb(theme::PURPLE))
@@ -13375,11 +13391,11 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                                 let full = last_error.unwrap_or_default();
                                 el.child(
                                     div()
-                                        .px(px(6.0))
-                                        .py(px(2.0))
-                                        .rounded(px(2.0))
+                                        .px(ui::s(6.0))
+                                        .py(ui::s(2.0))
+                                        .rounded(ui::s(2.0))
                                         .bg(rgb(theme::BG))
-                                        .text_size(px(8.0))
+                                        .text_size(ui::TEXT_MICRO)
                                         .text_color(rgb(theme::RED))
                                         .child(full),
                                 )
@@ -13471,17 +13487,17 @@ fn render_driver_card(
     } else if any_agent_running {
         theme::GOLD
     } else {
-        theme::FG_FAINT
+        theme::FG_MUTED
     };
     let name_owned = name.to_string();
 
     div()
         .id(ElementId::Name(format!("driver-card-{}", name).into()))
-        .mx(px(8.0))
-        .my(px(3.0))
-        .px(px(12.0))
-        .py(px(8.0))
-        .rounded(px(6.0))
+        .mx(ui::s(8.0))
+        .my(ui::s(3.0))
+        .px(ui::s(12.0))
+        .py(ui::s(8.0))
+        .rounded(ui::s(6.0))
         .border_1()
         .border_color(rgb(border_color))
         .bg(if is_focused {
@@ -13496,19 +13512,19 @@ fn render_driver_card(
         }))
         .flex()
         .flex_col()
-        .gap(px(4.0))
+        .gap(ui::s(4.0))
         // Header: name + type + summary
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(px(8.0))
+                .gap(ui::s(8.0))
                 .child(
                     div()
-                        .text_size(px(13.0))
+                        .text_size(ui::TEXT_LG)
                         .text_color(rgb(theme::FG))
                         .font_weight(FontWeight::SEMIBOLD)
-                        .min_w(px(0.0))
+                        .min_w(ui::s(0.0))
                         // overflow_hidden + truncate the long names
                         // ('dynamic_performance' wraps to two lines without
                         // this and breaks the card header layout).
@@ -13528,11 +13544,11 @@ fn render_driver_card(
                 )
                 .child(
                     div()
-                        .text_size(px(9.0))
+                        .text_size(ui::TEXT_XS)
                         .text_color(rgb(type_color))
-                        .px(px(4.0))
-                        .py(px(1.0))
-                        .rounded(px(2.0))
+                        .px(ui::s(4.0))
+                        .py(ui::s(1.0))
+                        .rounded(ui::s(2.0))
                         .bg(rgb(theme::BG))
                         .flex_shrink_0()
                         .child(type_label),
@@ -13547,18 +13563,18 @@ fn render_driver_card(
                     let name_edit = name.to_string();
                     div()
                         .id(ElementId::Name(format!("driver-edit-{}", name).into()))
-                        .text_size(px(9.0))
+                        .text_size(ui::TEXT_XS)
                         .text_color(rgb(if is_focused {
                             theme::CYAN
                         } else {
                             theme::FG_DIM
                         }))
-                        .px(px(5.0))
-                        .py(px(1.0))
-                        .rounded(px(3.0))
+                        .px(ui::s(5.0))
+                        .py(ui::s(1.0))
+                        .rounded(ui::s(3.0))
                         .bg(rgb(theme::BG))
                         .border_1()
-                        .border_color(rgb(theme::FG_FAINT))
+                        .border_color(rgb(theme::BORDER))
                         .flex_shrink_0()
                         .cursor_pointer()
                         .hover(|s| {
@@ -13605,11 +13621,11 @@ fn render_driver_card(
                             let driver_name_reject = pending_driver.clone();
                             el.child(
                                 div()
-                                    .text_size(px(9.0))
+                                    .text_size(ui::TEXT_XS)
                                     .text_color(rgb(badge_color))
-                                    .px(px(5.0))
-                                    .py(px(1.0))
-                                    .rounded(px(2.0))
+                                    .px(ui::s(5.0))
+                                    .py(ui::s(1.0))
+                                    .rounded(ui::s(2.0))
                                     .bg(rgb(theme::BG))
                                     .border_1()
                                     .border_color(rgb(badge_color))
@@ -13622,11 +13638,11 @@ fn render_driver_card(
                                     .id(ElementId::Name(
                                         format!("bayesops-accept-{}", driver_name_accept).into(),
                                     ))
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(rgb(theme::GREEN))
-                                    .px(px(6.0))
-                                    .py(px(1.0))
-                                    .rounded(px(2.0))
+                                    .px(ui::s(6.0))
+                                    .py(ui::s(1.0))
+                                    .rounded(ui::s(2.0))
                                     .bg(rgb(theme::BG))
                                     .border_1()
                                     .border_color(rgb(theme::GREEN))
@@ -13650,11 +13666,11 @@ fn render_driver_card(
                                     .id(ElementId::Name(
                                         format!("bayesops-reject-{}", driver_name_reject).into(),
                                     ))
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(rgb(theme::RED))
-                                    .px(px(6.0))
-                                    .py(px(1.0))
-                                    .rounded(px(2.0))
+                                    .px(ui::s(6.0))
+                                    .py(ui::s(1.0))
+                                    .rounded(ui::s(2.0))
                                     .bg(rgb(theme::BG))
                                     .border_1()
                                     .border_color(rgb(theme::RED))
@@ -13686,11 +13702,11 @@ fn render_driver_card(
                             };
                             el.child(
                                 div()
-                                    .text_size(px(9.0))
+                                    .text_size(ui::TEXT_XS)
                                     .text_color(rgb(badge_color))
-                                    .px(px(5.0))
-                                    .py(px(1.0))
-                                    .rounded(px(2.0))
+                                    .px(ui::s(5.0))
+                                    .py(ui::s(1.0))
+                                    .rounded(ui::s(2.0))
                                     .bg(rgb(theme::BG))
                                     .border_1()
                                     .border_color(rgb(badge_color))
@@ -13703,9 +13719,9 @@ fn render_driver_card(
                 .child(
                     div()
                         .flex_grow()
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(rgb(theme::FG_DIM))
-                        .min_w(px(0.0))
+                        .min_w(ui::s(0.0))
                         .child(summary),
                 )
                 // Distribution sparkline for continuous drivers
@@ -13757,9 +13773,9 @@ fn render_driver_card(
                             ))
                             .child(
                                 div()
-                                    .text_size(px(9.0))
-                                    .text_color(rgb(theme::FG_FAINT))
-                                    .min_w(px(0.0))
+                                    .text_size(ui::TEXT_XS)
+                                    .text_color(rgb(theme::FG_MUTED))
+                                    .min_w(ui::s(0.0))
                                     .child(format!("{} spread · {}", shape_label, evidence_label)),
                             )
                         } else {
@@ -13772,7 +13788,7 @@ fn render_driver_card(
                 .when(msg_count > 0, |el| {
                     el.child(
                         div()
-                            .text_size(px(9.0))
+                            .text_size(ui::TEXT_XS)
                             .text_color(rgb(theme::GOLD))
                             .child(format!(
                                 "{} hint{}",
@@ -13784,12 +13800,12 @@ fn render_driver_card(
                 .when(pending_suggestion_count > 0, |el| {
                     el.child(
                         div()
-                            .text_size(px(9.0))
+                            .text_size(ui::TEXT_XS)
                             .text_color(rgb(theme::BG_DEEP))
                             .bg(rgb(theme::GOLD))
-                            .px(px(5.0))
-                            .py(px(1.0))
-                            .rounded(px(3.0))
+                            .px(ui::s(5.0))
+                            .py(ui::s(1.0))
+                            .rounded(ui::s(3.0))
                             .font_weight(FontWeight::BOLD)
                             .child(format!(
                                 "💡 {} suggestion{}",
@@ -13846,12 +13862,12 @@ fn render_driver_card(
             div()
                 .flex()
                 .items_center()
-                .gap(px(6.0))
+                .gap(ui::s(6.0))
                 .child(
                     div()
-                        .text_size(px(9.0))
+                        .text_size(ui::TEXT_XS)
                         .text_color(rgb(conf_color))
-                        .px(px(4.0))
+                        .px(ui::s(4.0))
                         .child(format!(
                             "{}: {} {:.0}%",
                             label_prefix,
@@ -13865,8 +13881,8 @@ fn render_driver_card(
                     |el| {
                         el.child(
                             div()
-                                .text_size(px(8.0))
-                                .text_color(rgb(theme::FG_FAINT))
+                                .text_size(ui::TEXT_MICRO)
+                                .text_color(rgb(theme::FG_MUTED))
                                 .child(format!("(computed: {:.0}%)", computed_conf * 100.0)),
                         )
                     },
@@ -13874,11 +13890,11 @@ fn render_driver_card(
                 .when(has_evidence_gap, |el| {
                     el.child(
                         div()
-                            .text_size(px(9.0))
+                            .text_size(ui::TEXT_XS)
                             .text_color(rgb(theme::RED))
-                            .px(px(4.0))
-                            .py(px(1.0))
-                            .rounded(px(3.0))
+                            .px(ui::s(4.0))
+                            .py(ui::s(1.0))
+                            .rounded(ui::s(3.0))
                             .bg(rgb(0x3D1F1F))
                             .child("⚠ No agents — assign one to research this driver"),
                     )
@@ -13888,9 +13904,9 @@ fn render_driver_card(
                     |el| {
                         el.child(
                             div()
-                                .text_size(px(9.0))
+                                .text_size(ui::TEXT_XS)
                                 .text_color(rgb(theme::GOLD))
-                                .px(px(4.0))
+                                .px(ui::s(4.0))
                                 .child("◌ Awaiting evidence"),
                         )
                     },
@@ -13900,8 +13916,8 @@ fn render_driver_card(
         .when(driver.rationale.is_some(), |el| {
             el.child(
                 div()
-                    .text_size(px(10.0))
-                    .text_color(rgb(theme::FG_FAINT))
+                    .text_size(ui::TEXT_SM)
+                    .text_color(rgb(theme::FG_MUTED))
                     .child(driver.rationale.as_deref().unwrap_or("").to_string()),
             )
         })
@@ -13910,8 +13926,8 @@ fn render_driver_card(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(4.0))
-                .mt(px(4.0))
+                .gap(ui::s(4.0))
+                .mt(ui::s(4.0))
                 .children(assigned_agents.iter().map(|agent_name| {
                     let run = agent_runs.iter().find(|r| r.agent_name == *agent_name);
                     let status = run.map(|r| &r.status);
@@ -13970,18 +13986,18 @@ fn render_driver_card(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(6.0))
-                        .px(px(8.0))
-                        .py(px(4.0))
-                        .rounded(px(4.0))
+                        .gap(ui::s(6.0))
+                        .px(ui::s(8.0))
+                        .py(ui::s(4.0))
+                        .rounded(ui::s(4.0))
                         .bg(rgb(bg_color))
                         .border_1()
                         .border_color(rgb(status_color))
                         .child(
                             div()
-                                .text_size(px(14.0))
+                                .text_size(ui::TEXT_XL)
                                 .text_color(rgb(status_color))
-                                .w(px(18.0))
+                                .w(ui::s(18.0))
                                 .child(status_icon.to_string()),
                         )
                         .child(
@@ -13989,17 +14005,17 @@ fn render_driver_card(
                                 .flex()
                                 .flex_col()
                                 .flex_grow()
-                                .min_w(px(0.0))
+                                .min_w(ui::s(0.0))
                                 .child(
                                     div()
-                                        .text_size(px(11.0))
+                                        .text_size(ui::TEXT_BASE)
                                         .text_color(rgb(theme::FG))
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .child(display_name),
                                 )
                                 .child(
                                     div()
-                                        .text_size(px(9.0))
+                                        .text_size(ui::TEXT_XS)
                                         .text_color(rgb(status_color))
                                         .child(status_text.clone()),
                                 ),
@@ -14007,8 +14023,8 @@ fn render_driver_card(
                         .when(confidence.is_some(), |el| {
                             el.child(
                                 div()
-                                    .text_size(px(9.0))
-                                    .text_color(rgb(theme::FG_FAINT))
+                                    .text_size(ui::TEXT_XS)
+                                    .text_color(rgb(theme::FG_MUTED))
                                     .child(format!("{:.0}%", confidence.unwrap_or(0.0) * 100.0)),
                             )
                         })
@@ -14017,8 +14033,8 @@ fn render_driver_card(
                             let credits = run.and_then(|r| r.credits_charged).unwrap_or(0.0);
                             el.child(
                                 div()
-                                    .text_size(px(9.0))
-                                    .text_color(rgb(theme::FG_FAINT))
+                                    .text_size(ui::TEXT_XS)
+                                    .text_color(rgb(theme::FG_MUTED))
                                     .child(format!("⚡{:.1}", credits)),
                             )
                         })
@@ -14031,10 +14047,10 @@ fn render_driver_card(
                             if !err_msg.is_empty() {
                                 el.child(
                                     div()
-                                        .text_size(px(9.0))
+                                        .text_size(ui::TEXT_XS)
                                         .text_color(rgb(theme::RED))
-                                        .mt(px(2.0))
-                                        .min_w(px(0.0))
+                                        .mt(ui::s(2.0))
+                                        .min_w(ui::s(0.0))
                                         .child(format!("⚠ {}", err_msg)),
                                 )
                             } else {
@@ -14062,10 +14078,10 @@ fn render_driver_card(
                                 if !latest.is_empty() {
                                     el.child(
                                         div()
-                                            .text_size(px(9.0))
-                                            .text_color(rgb(theme::FG_FAINT))
-                                            .mt(px(2.0))
-                                            .min_w(px(0.0))
+                                            .text_size(ui::TEXT_XS)
+                                            .text_color(rgb(theme::FG_MUTED))
+                                            .mt(ui::s(2.0))
+                                            .min_w(ui::s(0.0))
                                             .child(format!(
                                                 "💬 {}",
                                                 if latest.chars().count() > 100 {
@@ -14099,13 +14115,13 @@ fn render_driver_card(
                                 el.child(
                                     div()
                                         .id(ElementId::Name(format!("retry-{}", an).into()))
-                                        .px(px(6.0))
-                                        .py(px(2.0))
-                                        .rounded(px(3.0))
+                                        .px(ui::s(6.0))
+                                        .py(ui::s(2.0))
+                                        .rounded(ui::s(3.0))
                                         .bg(rgb(theme::BG_ELEVATED))
                                         .border_1()
                                         .border_color(rgb(theme::GOLD))
-                                        .text_size(px(9.0))
+                                        .text_size(ui::TEXT_XS)
                                         .text_color(rgb(theme::GOLD))
                                         .cursor_pointer()
                                         .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -14124,10 +14140,10 @@ fn render_driver_card(
                         .id(ElementId::Name(format!("assign-agent-{}", name).into()))
                         .flex()
                         .items_center()
-                        .gap(px(6.0))
-                        .px(px(8.0))
-                        .py(px(4.0))
-                        .rounded(px(4.0))
+                        .gap(ui::s(6.0))
+                        .px(ui::s(8.0))
+                        .py(ui::s(4.0))
+                        .rounded(ui::s(4.0))
                         .bg(rgb(theme::BG))
                         .border_1()
                         .border_color(rgb(theme::BLUE))
@@ -14138,7 +14154,7 @@ fn render_driver_card(
                         }))
                         .child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(rgb(theme::BLUE))
                                 .child("+ Assign Agent"),
                         )
@@ -14165,10 +14181,10 @@ fn render_right_panel(
             div()
                 .flex()
                 .flex_col()
-                .p(px(16.0))
+                .p(ui::s(16.0))
                 .child(
                     div()
-                        .text_size(px(12.0))
+                        .text_size(ui::TEXT_MD)
                         .text_color(rgb(theme::FG_DIM))
                         .child("Click a driver on the left to edit, or click '+ agent' to assign research agents."),
                 )
@@ -14385,8 +14401,8 @@ fn render_agent_picker(
     div()
         .flex()
         .flex_col()
-        .gap(px(10.0))
-        .p(px(16.0))
+        .gap(ui::s(10.0))
+        .p(ui::s(16.0))
         // ── Header with driver context ────────────────────────────
         .child(
             div()
@@ -14395,7 +14411,7 @@ fn render_agent_picker(
                 .justify_between()
                 .child(
                     div()
-                        .text_size(px(14.0))
+                        .text_size(ui::TEXT_XL)
                         .text_color(rgb(theme::CYAN))
                         .font_weight(FontWeight::BOLD)
                         .child(format!("🔬 Research: {}", driver_display)),
@@ -14404,11 +14420,11 @@ fn render_agent_picker(
                     let dn2 = dn.clone();
                     div()
                         .id("close-agent-picker")
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(rgb(theme::FG_DIM))
-                        .px(px(8.0))
-                        .py(px(3.0))
-                        .rounded(px(4.0))
+                        .px(ui::s(8.0))
+                        .py(ui::s(3.0))
+                        .rounded(ui::s(4.0))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::FG)))
                         .on_click(cx.listener(move |this, _event, _window, cx| {
@@ -14422,25 +14438,25 @@ fn render_agent_picker(
         // ── Driver context card ───────────────────────────────────
         .child(
             div()
-                .px(px(10.0))
-                .py(px(8.0))
-                .rounded(px(4.0))
+                .px(ui::s(10.0))
+                .py(ui::s(8.0))
+                .rounded(ui::s(4.0))
                 .bg(rgb(theme::BG))
                 .flex()
                 .flex_col()
-                .gap(px(4.0))
+                .gap(ui::s(4.0))
                 .when(!rationale.is_empty(), |el| {
                     el.child(
                         div()
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(rgb(theme::FG_DIM))
-                            .min_w(px(0.0))
+                            .min_w(ui::s(0.0))
                             .child(rationale.clone()),
                     )
                 })
                 .child(
                     div()
-                        .text_size(px(9.0))
+                        .text_size(ui::TEXT_XS)
                         .text_color(rgb(theme::CYAN))
                         .font_family("Ubuntu Mono, DejaVu Sans Mono, monospace")
                         .child(format!("p5={:.2}  p50={:.2}  p95={:.2}", p5, p50, p95)),
@@ -14467,10 +14483,10 @@ fn render_agent_picker(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
+                            .gap(ui::s(8.0))
                             .child(
                                 div()
-                                    .text_size(px(9.0))
+                                    .text_size(ui::TEXT_XS)
                                     .text_color(rgb(theme::GREEN))
                                     .child(format!(
                                         "✓ {} evidence items collected",
@@ -14479,11 +14495,11 @@ fn render_agent_picker(
                             )
                             .child(
                                 div()
-                                    .text_size(px(8.0))
+                                    .text_size(ui::TEXT_MICRO)
                                     .text_color(rgb(q_color))
-                                    .px(px(4.0))
-                                    .py(px(1.0))
-                                    .rounded(px(2.0))
+                                    .px(ui::s(4.0))
+                                    .py(ui::s(1.0))
+                                    .rounded(ui::s(2.0))
                                     .bg(rgb(theme::BG_ELEVATED))
                                     .child(format!("Quality: {} ({:.0}%)", q_label, avg_quality * 100.0)),
                             ),
@@ -14492,7 +14508,7 @@ fn render_agent_picker(
                 .when(existing_evidence.is_empty(), |el| {
                     el.child(
                         div()
-                            .text_size(px(9.0))
+                            .text_size(ui::TEXT_XS)
                             .text_color(rgb(theme::RED))
                             .child("⚠ No evidence yet — research needed"),
                     )
@@ -14508,12 +14524,12 @@ fn render_agent_picker(
         .when(!driver_agents.is_empty(), |el| {
             el.child(
                 div()
-                    .text_size(px(10.0))
-                    .text_color(rgb(theme::FG_FAINT))
+                    .text_size(ui::TEXT_SM)
+                    .text_color(rgb(theme::FG_MUTED))
                     .child("Currently assigned to this driver:"),
             )
             .child({
-                let mut col = div().flex().flex_col().gap(px(6.0));
+                let mut col = div().flex().flex_col().gap(ui::s(6.0));
                 for assigned in &driver_agents {
                     // The AST agent name is the BOUND name
                     // (`<base>_<driver>`). The schedule API and the
@@ -14544,21 +14560,21 @@ fn render_agent_picker(
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(4.0))
-                            .px(px(10.0))
-                            .py(px(8.0))
-                            .rounded(px(4.0))
+                            .gap(ui::s(4.0))
+                            .px(ui::s(10.0))
+                            .py(ui::s(8.0))
+                            .rounded(ui::s(4.0))
                             .bg(rgb(theme::BG_ELEVATED))
                             .border_1()
-                            .border_color(rgb(theme::FG_FAINT))
+                            .border_color(rgb(theme::BORDER))
                             .child(
                                 div()
                                     .flex()
                                     .items_center()
-                                    .gap(px(8.0))
+                                    .gap(ui::s(8.0))
                                     .child(
                                         div()
-                                            .text_size(px(11.0))
+                                            .text_size(ui::TEXT_BASE)
                                             .text_color(rgb(theme::CYAN))
                                             .font_weight(FontWeight::SEMIBOLD)
                                             // Display the BASE agent id, not
@@ -14568,9 +14584,9 @@ fn render_agent_picker(
                                     )
                                     .child(
                                         div()
-                                            .text_size(px(9.0))
+                                            .text_size(ui::TEXT_XS)
                                             .text_color(rgb(theme::FG_DIM))
-                                            .min_w(px(0.0))
+                                            .min_w(ui::s(0.0))
                                             .child(desc),
                                     ),
                             )
@@ -14580,17 +14596,17 @@ fn render_agent_picker(
                             .child(
                                 div()
                                     .flex()
-                                    .gap(px(6.0))
+                                    .gap(ui::s(6.0))
                                     .child(
                                         div()
                                             .id(ElementId::Name(
                                                 format!("assigned-run-{}-{}", driver_name, base_id).into(),
                                             ))
-                                            .text_size(px(10.0))
+                                            .text_size(ui::TEXT_SM)
                                             .text_color(rgb(theme::CYAN))
-                                            .px(px(8.0))
-                                            .py(px(3.0))
-                                            .rounded(px(3.0))
+                                            .px(ui::s(8.0))
+                                            .py(ui::s(3.0))
+                                            .rounded(ui::s(3.0))
                                             .bg(rgb(theme::BG))
                                             .border_1()
                                             .border_color(rgb(theme::CYAN))
@@ -14608,11 +14624,11 @@ fn render_agent_picker(
                                             .id(ElementId::Name(
                                                 format!("assigned-daily-{}-{}", driver_name, base_id).into(),
                                             ))
-                                            .text_size(px(10.0))
+                                            .text_size(ui::TEXT_SM)
                                             .text_color(rgb(theme::GREEN))
-                                            .px(px(8.0))
-                                            .py(px(3.0))
-                                            .rounded(px(3.0))
+                                            .px(ui::s(8.0))
+                                            .py(ui::s(3.0))
+                                            .rounded(ui::s(3.0))
                                             .bg(rgb(theme::BG))
                                             .border_1()
                                             .border_color(rgb(theme::GREEN))
@@ -14636,11 +14652,11 @@ fn render_agent_picker(
                                             .id(ElementId::Name(
                                                 format!("assigned-weekly-{}-{}", driver_name, base_id).into(),
                                             ))
-                                            .text_size(px(10.0))
+                                            .text_size(ui::TEXT_SM)
                                             .text_color(rgb(theme::GOLD))
-                                            .px(px(8.0))
-                                            .py(px(3.0))
-                                            .rounded(px(3.0))
+                                            .px(ui::s(8.0))
+                                            .py(ui::s(3.0))
+                                            .rounded(ui::s(3.0))
                                             .bg(rgb(theme::BG))
                                             .border_1()
                                             .border_color(rgb(theme::GOLD))
@@ -14668,51 +14684,51 @@ fn render_agent_picker(
         // ── Recommended agent (highlighted) ───────────────────────
         .child(
             div()
-                .text_size(px(10.0))
-                .text_color(rgb(theme::FG_FAINT))
+                .text_size(ui::TEXT_SM)
+                .text_color(rgb(theme::FG_MUTED))
                 .child("Recommended for this driver:"),
         )
         .child({
             let rec_id = recommended.to_string();
             let dn_rec = dn.clone();
             div()
-                .px(px(10.0))
-                .py(px(10.0))
-                .rounded(px(6.0))
+                .px(ui::s(10.0))
+                .py(ui::s(10.0))
+                .rounded(ui::s(6.0))
                 .bg(rgb(0x1A2332))
                 .border_1()
                 .border_color(rgb(theme::CYAN))
                 .flex()
                 .flex_col()
-                .gap(px(6.0))
+                .gap(ui::s(6.0))
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(8.0))
+                        .gap(ui::s(8.0))
                         .child(
                             div()
-                                .text_size(px(13.0))
+                                .text_size(ui::TEXT_LG)
                                 .text_color(rgb(theme::CYAN))
                                 .font_weight(FontWeight::BOLD)
                                 .child(recommended.to_string()),
                         )
                         .child(
                             div()
-                                .text_size(px(9.0))
+                                .text_size(ui::TEXT_XS)
                                 .text_color(rgb(theme::GREEN))
-                                .px(px(4.0))
-                                .py(px(1.0))
-                                .rounded(px(2.0))
+                                .px(ui::s(4.0))
+                                .py(ui::s(1.0))
+                                .rounded(ui::s(2.0))
                                 .bg(rgb(theme::BG))
                                 .child("★ best match"),
                         ),
                 )
                 .child(
                     div()
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(rgb(theme::FG_DIM))
-                        .min_w(px(0.0))
+                        .min_w(ui::s(0.0))
                         .child(recommended_desc),
                 )
                 // Query preview
@@ -14720,22 +14736,22 @@ fn render_agent_picker(
                     div()
                         .flex()
                         .flex_col()
-                        .gap(px(3.0))
-                        .mt(px(4.0))
-                        .pt(px(6.0))
+                        .gap(ui::s(3.0))
+                        .mt(ui::s(4.0))
+                        .pt(ui::s(6.0))
                         .border_t_1()
-                        .border_color(rgb(theme::FG_FAINT))
+                        .border_color(rgb(theme::BORDER))
                         .child(
                             div()
-                                .text_size(px(9.0))
-                                .text_color(rgb(theme::FG_FAINT))
+                                .text_size(ui::TEXT_XS)
+                                .text_color(rgb(theme::FG_MUTED))
                                 .child("Research query (edit below to customize):"),
                         )
                         .child(
                             div()
-                                .text_size(px(9.0))
+                                .text_size(ui::TEXT_XS)
                                 .text_color(rgb(theme::FG_DIM))
-                                .min_w(px(0.0))
+                                .min_w(ui::s(0.0))
                                 .child(
                                     suggested_query
                                         .chars()
@@ -14749,19 +14765,19 @@ fn render_agent_picker(
                 .child(
                     div()
                         .flex()
-                        .gap(px(6.0))
-                        .mt(px(4.0))
+                        .gap(ui::s(6.0))
+                        .mt(ui::s(4.0))
                         .child(
                             div()
                                 .id(ElementId::Name(
                                     format!("research-now-{}", recommended).into(),
                                 ))
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(rgb(theme::BG))
                                 .font_weight(FontWeight::BOLD)
-                                .px(px(14.0))
-                                .py(px(5.0))
-                                .rounded(px(4.0))
+                                .px(ui::s(14.0))
+                                .py(ui::s(5.0))
+                                .rounded(ui::s(4.0))
                                 .bg(rgb(theme::CYAN))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(rgb(theme::GREEN)))
@@ -14790,11 +14806,11 @@ fn render_agent_picker(
                                 .id(ElementId::Name(
                                     format!("research-daily-{}", recommended).into(),
                                 ))
-                                .text_size(px(10.0))
+                                .text_size(ui::TEXT_SM)
                                 .text_color(rgb(theme::GREEN))
-                                .px(px(10.0))
-                                .py(px(5.0))
-                                .rounded(px(4.0))
+                                .px(ui::s(10.0))
+                                .py(ui::s(5.0))
+                                .rounded(ui::s(4.0))
                                 .bg(rgb(theme::BG))
                                 .border_1()
                                 .border_color(rgb(theme::GREEN))
@@ -14820,11 +14836,11 @@ fn render_agent_picker(
                                 .id(ElementId::Name(
                                     format!("research-weekly-{}", recommended).into(),
                                 ))
-                                .text_size(px(10.0))
+                                .text_size(ui::TEXT_SM)
                                 .text_color(rgb(theme::GOLD))
-                                .px(px(10.0))
-                                .py(px(5.0))
-                                .rounded(px(4.0))
+                                .px(ui::s(10.0))
+                                .py(ui::s(5.0))
+                                .rounded(ui::s(4.0))
                                 .bg(rgb(theme::BG))
                                 .border_1()
                                 .border_color(rgb(theme::GOLD))
@@ -14866,20 +14882,20 @@ fn render_agent_picker(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(6.0))
-                            .px(px(4.0))
-                            .py(px(3.0))
-                            .rounded(px(3.0))
+                            .gap(ui::s(6.0))
+                            .px(ui::s(4.0))
+                            .py(ui::s(3.0))
+                            .rounded(ui::s(3.0))
                             .bg(rgb(theme::BG_ACTIVE))
                             .child(
                                 div()
-                                    .text_size(px(9.0))
+                                    .text_size(ui::TEXT_XS)
                                     .text_color(rgb(theme::GREEN))
                                     .child("🔁"),
                             )
                             .child(
                                 div()
-                                    .text_size(px(9.0))
+                                    .text_size(ui::TEXT_XS)
                                     .text_color(rgb(theme::FG_DIM))
                                     .flex_grow()
                                     .child(format!(
@@ -14892,11 +14908,11 @@ fn render_agent_picker(
                                     .id(ElementId::Name(
                                         format!("run-now-{}", sid_run).into(),
                                     ))
-                                    .text_size(px(9.0))
+                                    .text_size(ui::TEXT_XS)
                                     .text_color(rgb(theme::CYAN))
-                                    .px(px(6.0))
-                                    .py(px(2.0))
-                                    .rounded(px(3.0))
+                                    .px(ui::s(6.0))
+                                    .py(ui::s(2.0))
+                                    .rounded(ui::s(3.0))
                                     .bg(rgb(theme::BG))
                                     .cursor_pointer()
                                     .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -14910,11 +14926,11 @@ fn render_agent_picker(
                                     .id(ElementId::Name(
                                         format!("del-sched-{}", sid_del).into(),
                                     ))
-                                    .text_size(px(9.0))
-                                    .text_color(rgb(theme::FG_FAINT))
-                                    .px(px(6.0))
-                                    .py(px(2.0))
-                                    .rounded(px(3.0))
+                                    .text_size(ui::TEXT_XS)
+                                    .text_color(rgb(theme::FG_MUTED))
+                                    .px(ui::s(6.0))
+                                    .py(ui::s(2.0))
+                                    .rounded(ui::s(3.0))
                                     .bg(rgb(theme::BG))
                                     .cursor_pointer()
                                     .hover(|s| s.text_color(rgb(theme::RED)))
@@ -14928,17 +14944,17 @@ fn render_agent_picker(
                     .collect();
 
                 div()
-                    .px(px(10.0))
-                    .py(px(6.0))
+                    .px(ui::s(10.0))
+                    .py(ui::s(6.0))
                     .flex()
                     .flex_col()
-                    .gap(px(3.0))
+                    .gap(ui::s(3.0))
                     .child(
                         div()
-                            .text_size(px(9.0))
-                            .text_color(rgb(theme::FG_FAINT))
+                            .text_size(ui::TEXT_XS)
+                            .text_color(rgb(theme::FG_MUTED))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .mb(px(2.0))
+                            .mb(ui::s(2.0))
                             .child("SCHEDULED AUTO-RESEARCH"),
                     )
                     .children(rows)
@@ -14951,16 +14967,16 @@ fn render_agent_picker(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(4.0))
-                .px(px(10.0))
-                .py(px(8.0))
-                .rounded(px(4.0))
+                .gap(ui::s(4.0))
+                .px(ui::s(10.0))
+                .py(ui::s(8.0))
+                .rounded(ui::s(4.0))
                 .bg(rgb(theme::BG))
                 .border_1()
-                .border_color(rgb(theme::FG_FAINT))
+                .border_color(rgb(theme::BORDER))
                 .child(
                     div()
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(rgb(theme::FG))
                         .font_weight(FontWeight::SEMIBOLD)
                         .child("What do you want to research?"),
@@ -14968,8 +14984,8 @@ fn render_agent_picker(
                 .child(state.driver_research_input.clone())
                 .child(
                     div()
-                        .text_size(px(8.0))
-                        .text_color(rgb(theme::FG_FAINT))
+                        .text_size(ui::TEXT_MICRO)
+                        .text_color(rgb(theme::FG_MUTED))
                         .child("Type your question — the system will structure it for the best agent. Or use the pre-filled query below."),
                 ),
         )
@@ -14978,14 +14994,14 @@ fn render_agent_picker(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(4.0))
-                .px(px(10.0))
-                .py(px(8.0))
-                .rounded(px(4.0))
+                .gap(ui::s(4.0))
+                .px(ui::s(10.0))
+                .py(ui::s(8.0))
+                .rounded(ui::s(4.0))
                 .bg(rgb(theme::BG))
                 .child(
                     div()
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(rgb(theme::FG))
                         .font_weight(FontWeight::SEMIBOLD)
                         .child("📎 Add evidence (URL or text)"),
@@ -14996,15 +15012,15 @@ fn render_agent_picker(
                     let dn_ev = dn.clone();
                     div()
                         .flex()
-                        .gap(px(6.0))
+                        .gap(ui::s(6.0))
                         .child(
                             div()
                                 .id("add-evidence-btn")
-                                .text_size(px(10.0))
+                                .text_size(ui::TEXT_SM)
                                 .text_color(rgb(theme::GREEN))
-                                .px(px(10.0))
-                                .py(px(4.0))
-                                .rounded(px(3.0))
+                                .px(ui::s(10.0))
+                                .py(ui::s(4.0))
+                                .rounded(ui::s(3.0))
                                 .bg(rgb(theme::BG_ACTIVE))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -15016,11 +15032,11 @@ fn render_agent_picker(
                         .child(
                             div()
                                 .id("analyze-url-btn")
-                                .text_size(px(10.0))
+                                .text_size(ui::TEXT_SM)
                                 .text_color(rgb(theme::BLUE))
-                                .px(px(10.0))
-                                .py(px(4.0))
-                                .rounded(px(3.0))
+                                .px(ui::s(10.0))
+                                .py(ui::s(4.0))
+                                .rounded(ui::s(3.0))
                                 .bg(rgb(theme::BG_ACTIVE))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -15043,8 +15059,8 @@ fn render_agent_picker(
                 })
                 .child(
                     div()
-                        .text_size(px(8.0))
-                        .text_color(rgb(theme::FG_FAINT))
+                        .text_size(ui::TEXT_MICRO)
+                        .text_color(rgb(theme::FG_MUTED))
                         .child("Paste a URL and click 'Analyze URL' — an agent will summarize it and suggest how it impacts this driver."),
                 ),
         )
@@ -15053,11 +15069,11 @@ fn render_agent_picker(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(3.0))
+                .gap(ui::s(3.0))
                 .child(
                     div()
-                        .text_size(px(9.0))
-                        .text_color(rgb(theme::FG_FAINT))
+                        .text_size(ui::TEXT_XS)
+                        .text_color(rgb(theme::FG_MUTED))
                         .child("Advanced: edit the full agent query"),
                 )
                 .child(state.agent_query_input.clone()),
@@ -15068,14 +15084,14 @@ fn render_agent_picker(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(4.0))
-                    .pt(px(6.0))
+                    .gap(ui::s(4.0))
+                    .pt(ui::s(6.0))
                     .border_t_1()
-                    .border_color(rgb(theme::FG_FAINT))
+                    .border_color(rgb(theme::BORDER))
                     .child(
                         div()
-                            .text_size(px(10.0))
-                            .text_color(rgb(theme::FG_FAINT))
+                            .text_size(ui::TEXT_SM)
+                            .text_color(rgb(theme::FG_MUTED))
                             .child("Or choose a different agent:"),
                     )
                     .children(available_agents.iter().map(|(agent_id, description, skills)| {
@@ -15085,13 +15101,13 @@ fn render_agent_picker(
                             .id(ElementId::Name(format!("pick-alt-{}", agent_id).into()))
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
-                            .px(px(8.0))
-                            .py(px(6.0))
-                            .rounded(px(4.0))
+                            .gap(ui::s(8.0))
+                            .px(ui::s(8.0))
+                            .py(ui::s(6.0))
+                            .rounded(ui::s(4.0))
                             .bg(rgb(theme::BG))
                             .border_1()
-                            .border_color(rgb(theme::FG_FAINT))
+                            .border_color(rgb(theme::BORDER))
                             .cursor_pointer()
                             .hover(|s| s.border_color(rgb(theme::BLUE)).bg(rgb(theme::BG_HOVER)))
                             .on_click(cx.listener(move |this, _event, _window, cx| {
@@ -15102,20 +15118,20 @@ fn render_agent_picker(
                                     .flex()
                                     .flex_col()
                                     .flex_grow()
-                                    .min_w(px(0.0))
-                                    .gap(px(2.0))
+                                    .min_w(ui::s(0.0))
+                                    .gap(ui::s(2.0))
                                     .child(
                                         div()
-                                            .text_size(px(11.0))
+                                            .text_size(ui::TEXT_BASE)
                                             .text_color(rgb(theme::FG))
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .child(agent_id.clone()),
                                     )
                                     .child(
                                         div()
-                                            .text_size(px(9.0))
+                                            .text_size(ui::TEXT_XS)
                                             .text_color(rgb(theme::FG_DIM))
-                                            .min_w(px(0.0))
+                                            .min_w(ui::s(0.0))
                                             .child(
                                                 description
                                                     .chars()
@@ -15126,11 +15142,11 @@ fn render_agent_picker(
                             )
                             .child(
                                 div()
-                                    .text_size(px(10.0))
+                                    .text_size(ui::TEXT_SM)
                                     .text_color(rgb(theme::BLUE))
-                                    .px(px(8.0))
-                                    .py(px(3.0))
-                                    .rounded(px(3.0))
+                                    .px(ui::s(8.0))
+                                    .py(ui::s(3.0))
+                                    .rounded(ui::s(3.0))
                                     .bg(rgb(theme::BG_ACTIVE))
                                     .child("Run ▶"),
                             )
@@ -15140,7 +15156,7 @@ fn render_agent_picker(
         .when(available_agents.is_empty(), |el| {
             el.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(rgb(theme::FG_DIM))
                     .child("No research agents found in registry."),
             )
@@ -15171,19 +15187,19 @@ fn render_learnable_toggle(
     let (toggle_label, toggle_color, toggle_bg) = if learnable {
         ("● learnable", theme::CYAN, theme::BG_ELEVATED)
     } else {
-        ("○ frozen", theme::FG_FAINT, theme::BG)
+        ("○ frozen", theme::FG_MUTED, theme::BG)
     };
 
     let toggle_name = name.to_string();
     let toggle = div()
         .id(ElementId::Name(format!("learnable-toggle-{}", name).into()))
-        .px(px(10.0))
-        .py(px(4.0))
-        .rounded(px(12.0))
+        .px(ui::s(10.0))
+        .py(ui::s(4.0))
+        .rounded(ui::s(12.0))
         .border_1()
         .border_color(rgb(toggle_color))
         .bg(rgb(toggle_bg))
-        .text_size(px(11.0))
+        .text_size(ui::TEXT_BASE)
         .text_color(rgb(toggle_color))
         .cursor_pointer()
         .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -15260,18 +15276,23 @@ fn render_learnable_toggle(
     let mut row = div()
         .flex()
         .items_center()
-        .gap(px(10.0))
+        .gap(ui::s(10.0))
         .child(
             div()
-                .text_size(px(10.0))
-                .text_color(rgb(theme::FG_FAINT))
-                .w(px(80.0))
+                .text_size(ui::TEXT_SM)
+                .text_color(rgb(theme::FG_MUTED))
+                .w(ui::s(80.0))
                 .child("BayesOps:"),
         )
         .child(toggle);
 
     if let Some((text, color)) = status_chip {
-        row = row.child(div().text_size(px(10.0)).text_color(rgb(color)).child(text));
+        row = row.child(
+            div()
+                .text_size(ui::TEXT_SM)
+                .text_color(rgb(color))
+                .child(text),
+        );
     }
 
     row
@@ -15317,10 +15338,10 @@ fn render_driver_editor_and_evidence(
     div()
         .flex()
         .flex_col()
-        .gap(px(8.0))
-        .p(px(16.0))
+        .gap(ui::s(8.0))
+        .p(ui::s(16.0))
         .border_b_1()
-        .border_color(rgb(theme::FG_FAINT))
+        .border_color(rgb(theme::BORDER))
         // Header with close button
         .child(
             div()
@@ -15329,7 +15350,7 @@ fn render_driver_editor_and_evidence(
                 .justify_between()
                 .child(
                     div()
-                        .text_size(px(14.0))
+                        .text_size(ui::TEXT_XL)
                         .text_color(rgb(theme::CYAN))
                         .font_weight(FontWeight::BOLD)
                         .child(format!("Editing: {}", name)),
@@ -15337,11 +15358,11 @@ fn render_driver_editor_and_evidence(
                 .child(
                     div()
                         .id("close-editor")
-                        .text_size(px(12.0))
+                        .text_size(ui::TEXT_MD)
                         .text_color(rgb(theme::FG_DIM))
-                        .px(px(8.0))
-                        .py(px(2.0))
-                        .rounded(px(4.0))
+                        .px(ui::s(8.0))
+                        .py(ui::s(2.0))
+                        .rounded(ui::s(4.0))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::FG)))
                         .on_click(cx.listener(|this, _event, _window, cx| {
@@ -15355,11 +15376,11 @@ fn render_driver_editor_and_evidence(
                     let del_name = name.to_string();
                     div()
                         .id("delete-driver-btn")
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(rgb(theme::RED))
-                        .px(px(8.0))
-                        .py(px(2.0))
-                        .rounded(px(4.0))
+                        .px(ui::s(8.0))
+                        .py(ui::s(2.0))
+                        .rounded(ui::s(4.0))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(theme::BG_HOVER)))
                         .on_click(cx.listener(move |this, _event, _window, cx| {
@@ -15372,11 +15393,11 @@ fn render_driver_editor_and_evidence(
         .when(!rationale_text.is_empty(), |el| {
             el.child(
                 div()
-                    .px(px(8.0))
-                    .py(px(6.0))
-                    .rounded(px(4.0))
+                    .px(ui::s(8.0))
+                    .py(ui::s(6.0))
+                    .rounded(ui::s(4.0))
                     .bg(rgb(theme::BG))
-                    .text_size(px(11.0))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(rgb(theme::FG_DIM))
                     .child(rationale_text),
             )
@@ -15398,12 +15419,12 @@ fn render_driver_editor_and_evidence(
         .child(
             div()
                 .flex()
-                .gap(px(8.0))
-                .child(div().w(px(140.0)).child(state.editor_name.clone()))
+                .gap(ui::s(8.0))
+                .child(div().w(ui::s(140.0)).child(state.editor_name.clone()))
                 .child(
                     div()
                         .flex_grow()
-                        .min_w(px(0.0))
+                        .min_w(ui::s(0.0))
                         .child(state.editor_rationale.clone()),
                 ),
         )
@@ -15411,11 +15432,11 @@ fn render_driver_editor_and_evidence(
             el.child(
                 div()
                     .flex()
-                    .gap(px(8.0))
-                    .child(div().w(px(90.0)).child(state.editor_p5.clone()))
-                    .child(div().w(px(90.0)).child(state.editor_p50.clone()))
-                    .child(div().w(px(90.0)).child(state.editor_p95.clone()))
-                    .child(div().w(px(90.0)).child(state.editor_unit.clone())),
+                    .gap(ui::s(8.0))
+                    .child(div().w(ui::s(90.0)).child(state.editor_p5.clone()))
+                    .child(div().w(ui::s(90.0)).child(state.editor_p50.clone()))
+                    .child(div().w(ui::s(90.0)).child(state.editor_p95.clone()))
+                    .child(div().w(ui::s(90.0)).child(state.editor_unit.clone())),
             )
         })
         // Learnable toggle — opt this driver into BayesOps-managed distribution
@@ -15429,9 +15450,9 @@ fn render_driver_editor_and_evidence(
             el.child(
                 div()
                     .flex()
-                    .gap(px(8.0))
-                    .child(div().w(px(120.0)).child(state.editor_prob.clone()))
-                    .child(div().w(px(120.0)).child(state.editor_impact.clone())),
+                    .gap(ui::s(8.0))
+                    .child(div().w(ui::s(120.0)).child(state.editor_prob.clone()))
+                    .child(div().w(ui::s(120.0)).child(state.editor_impact.clone())),
             )
         })
         // Confidence override (user-settable per driver)
@@ -15462,17 +15483,17 @@ fn render_driver_editor_and_evidence(
             div()
                 .flex()
                 .items_center()
-                .gap(px(8.0))
-                .child(div().w(px(90.0)).child(state.editor_confidence.clone()))
+                .gap(ui::s(8.0))
+                .child(div().w(ui::s(90.0)).child(state.editor_confidence.clone()))
                 .child(
                     div()
                         .flex()
                         .flex_col()
-                        .gap(px(2.0))
+                        .gap(ui::s(2.0))
                         .child(
                             div()
-                                .text_size(px(9.0))
-                                .text_color(rgb(theme::FG_FAINT))
+                                .text_size(ui::TEXT_XS)
+                                .text_color(rgb(theme::FG_MUTED))
                                 .child(format!("Computed: {:.0}%", computed_conf * 100.0)),
                         )
                         .when(user_conf.is_some(), |el| {
@@ -15485,15 +15506,15 @@ fn render_driver_editor_and_evidence(
                             } else {
                                 ("±", theme::FG_DIM)
                             };
-                            el.child(div().text_size(px(9.0)).text_color(rgb(color)).child(
+                            el.child(div().text_size(ui::TEXT_XS).text_color(rgb(color)).child(
                                 format!("Override: {:.0}% ({}{}pp)", uc * 100.0, sign, delta),
                             ))
                         })
                         .when(user_conf.is_none(), |el| {
                             el.child(
                                 div()
-                                    .text_size(px(9.0))
-                                    .text_color(rgb(theme::FG_FAINT))
+                                    .text_size(ui::TEXT_XS)
+                                    .text_color(rgb(theme::FG_MUTED))
                                     .child("Leave empty to use computed confidence"),
                             )
                         }),
@@ -15501,8 +15522,8 @@ fn render_driver_editor_and_evidence(
         })
         .child(
             div()
-                .text_size(px(10.0))
-                .text_color(rgb(theme::FG_FAINT))
+                .text_size(ui::TEXT_SM)
+                .text_color(rgb(theme::FG_MUTED))
                 .child(format!(
                     "Values save when you close, switch drivers, or simulate ({}).",
                     crate::keys::chord("R")
@@ -15536,20 +15557,20 @@ fn render_driver_editor_and_evidence(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(6.0))
-                    .mt(px(8.0))
-                    .pt(px(8.0))
+                    .gap(ui::s(6.0))
+                    .mt(ui::s(8.0))
+                    .pt(ui::s(8.0))
                     .border_t_1()
-                    .border_color(rgb(theme::FG_FAINT))
+                    .border_color(rgb(theme::BORDER))
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(rgb(theme::CYAN))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(format!("Scheduled research ({})", assigned_agents.len())),
                     )
                     .child({
-                        let mut col = div().flex().flex_col().gap(px(6.0));
+                        let mut col = div().flex().flex_col().gap(ui::s(6.0));
                         for bound_name in &assigned_agents {
                             // The AST has the BOUND name
                             // (`<base>_<driver>`); the schedule API and the
@@ -15593,21 +15614,21 @@ fn render_driver_editor_and_evidence(
                                 div()
                                     .flex()
                                     .flex_col()
-                                    .gap(px(4.0))
-                                    .px(px(10.0))
-                                    .py(px(8.0))
-                                    .rounded(px(4.0))
+                                    .gap(ui::s(4.0))
+                                    .px(ui::s(10.0))
+                                    .py(ui::s(8.0))
+                                    .rounded(ui::s(4.0))
                                     .bg(rgb(theme::BG_ELEVATED))
                                     .border_1()
-                                    .border_color(rgb(theme::FG_FAINT))
+                                    .border_color(rgb(theme::BORDER))
                                     .child(
                                         div()
                                             .flex()
                                             .items_center()
-                                            .gap(px(8.0))
+                                            .gap(ui::s(8.0))
                                             .child(
                                                 div()
-                                                    .text_size(px(11.0))
+                                                    .text_size(ui::TEXT_BASE)
                                                     .text_color(rgb(theme::CYAN))
                                                     .font_weight(FontWeight::SEMIBOLD)
                                                     // Display the BASE id; the
@@ -15618,11 +15639,11 @@ fn render_driver_editor_and_evidence(
                                             .when(active_label.is_some(), |el| {
                                                 el.child(
                                                     div()
-                                                        .text_size(px(9.0))
+                                                        .text_size(ui::TEXT_XS)
                                                         .text_color(rgb(theme::GREEN))
-                                                        .px(px(6.0))
-                                                        .py(px(1.0))
-                                                        .rounded(px(3.0))
+                                                        .px(ui::s(6.0))
+                                                        .py(ui::s(1.0))
+                                                        .rounded(ui::s(3.0))
                                                         .bg(rgb(theme::BG))
                                                         .border_1()
                                                         .border_color(rgb(theme::GREEN))
@@ -15631,27 +15652,27 @@ fn render_driver_editor_and_evidence(
                                             })
                                             .child(
                                                 div()
-                                                    .text_size(px(9.0))
+                                                    .text_size(ui::TEXT_XS)
                                                     .text_color(rgb(theme::FG_DIM))
-                                                    .min_w(px(0.0))
+                                                    .min_w(ui::s(0.0))
                                                     .child(desc),
                                             ),
                                     )
                                     .child(
                                         div()
                                             .flex()
-                                            .gap(px(6.0))
+                                            .gap(ui::s(6.0))
                                             .child(
                                                 div()
                                                     .id(ElementId::Name(
                                                         format!("editor-run-{}-{}", name, base_id)
                                                             .into(),
                                                     ))
-                                                    .text_size(px(10.0))
+                                                    .text_size(ui::TEXT_SM)
                                                     .text_color(rgb(theme::CYAN))
-                                                    .px(px(8.0))
-                                                    .py(px(3.0))
-                                                    .rounded(px(3.0))
+                                                    .px(ui::s(8.0))
+                                                    .py(ui::s(3.0))
+                                                    .rounded(ui::s(3.0))
                                                     .bg(rgb(theme::BG))
                                                     .border_1()
                                                     .border_color(rgb(theme::CYAN))
@@ -15678,11 +15699,11 @@ fn render_driver_editor_and_evidence(
                                                         )
                                                         .into(),
                                                     ))
-                                                    .text_size(px(10.0))
+                                                    .text_size(ui::TEXT_SM)
                                                     .text_color(rgb(theme::GREEN))
-                                                    .px(px(8.0))
-                                                    .py(px(3.0))
-                                                    .rounded(px(3.0))
+                                                    .px(ui::s(8.0))
+                                                    .py(ui::s(3.0))
+                                                    .rounded(ui::s(3.0))
                                                     .bg(rgb(theme::BG))
                                                     .border_1()
                                                     .border_color(rgb(theme::GREEN))
@@ -15713,11 +15734,11 @@ fn render_driver_editor_and_evidence(
                                                         )
                                                         .into(),
                                                     ))
-                                                    .text_size(px(10.0))
+                                                    .text_size(ui::TEXT_SM)
                                                     .text_color(rgb(theme::GOLD))
-                                                    .px(px(8.0))
-                                                    .py(px(3.0))
-                                                    .rounded(px(3.0))
+                                                    .px(ui::s(8.0))
+                                                    .py(ui::s(3.0))
+                                                    .rounded(ui::s(3.0))
                                                     .bg(rgb(theme::BG))
                                                     .border_1()
                                                     .border_color(rgb(theme::GOLD))
@@ -15752,14 +15773,14 @@ fn render_driver_editor_and_evidence(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(4.0))
-                    .mt(px(8.0))
-                    .pt(px(8.0))
+                    .gap(ui::s(4.0))
+                    .mt(ui::s(8.0))
+                    .pt(ui::s(8.0))
                     .border_t_1()
-                    .border_color(rgb(theme::FG_FAINT))
+                    .border_color(rgb(theme::BORDER))
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(rgb(theme::CYAN))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(format!("Evidence ({})", driver_evidence.len())),
@@ -15786,10 +15807,10 @@ fn render_driver_editor_and_evidence(
                             .id(ElementId::Name(format!("ev-{}", ev.id).into()))
                             .flex()
                             .flex_col()
-                            .gap(px(2.0))
-                            .px(px(8.0))
-                            .py(px(6.0))
-                            .rounded(px(4.0))
+                            .gap(ui::s(2.0))
+                            .px(ui::s(8.0))
+                            .py(ui::s(6.0))
+                            .rounded(ui::s(4.0))
                             .bg(rgb(theme::BG))
                             .cursor_pointer()
                             .on_click(cx.listener(move |this, _event, _window, _cx| {
@@ -15800,22 +15821,22 @@ fn render_driver_editor_and_evidence(
                                 div()
                                     .flex()
                                     .items_center()
-                                    .gap(px(6.0))
+                                    .gap(ui::s(6.0))
                                     .child(
                                         div()
-                                            .text_size(px(10.0))
-                                            .text_color(rgb(theme::FG_FAINT))
+                                            .text_size(ui::TEXT_SM)
+                                            .text_color(rgb(theme::FG_MUTED))
                                             .flex_shrink_0()
                                             .child(ev.source.clone()),
                                     )
                                     // Quality indicator
                                     .child(
                                         div()
-                                            .text_size(px(8.0))
+                                            .text_size(ui::TEXT_MICRO)
                                             .text_color(rgb(quality_color))
-                                            .px(px(4.0))
-                                            .py(px(1.0))
-                                            .rounded(px(2.0))
+                                            .px(ui::s(4.0))
+                                            .py(ui::s(1.0))
+                                            .rounded(ui::s(2.0))
                                             .bg(rgb(theme::BG_ELEVATED))
                                             .flex_shrink_0()
                                             .child(format!(
@@ -15827,7 +15848,7 @@ fn render_driver_editor_and_evidence(
                                     .when(ev.relevance.is_some(), |el| {
                                         el.child(
                                             div()
-                                                .text_size(px(9.0))
+                                                .text_size(ui::TEXT_XS)
                                                 .text_color(rgb(theme::CYAN))
                                                 .flex_shrink_0()
                                                 .child(format!(
@@ -15840,8 +15861,8 @@ fn render_driver_editor_and_evidence(
                                     .child(
                                         div()
                                             .flex_grow()
-                                            .text_size(px(9.0))
-                                            .text_color(rgb(theme::FG_FAINT))
+                                            .text_size(ui::TEXT_XS)
+                                            .text_color(rgb(theme::FG_MUTED))
                                             .child(if is_collapsed {
                                                 "▸ expand"
                                             } else {
@@ -15852,14 +15873,14 @@ fn render_driver_editor_and_evidence(
                             // Quality bar (thin colored strip)
                             .child(
                                 div()
-                                    .h(px(2.0))
+                                    .h(ui::s(2.0))
                                     .w_full()
-                                    .rounded(px(1.0))
+                                    .rounded(ui::s(1.0))
                                     .bg(rgb(theme::BG_ELEVATED))
                                     .child(
                                         div()
-                                            .h(px(2.0))
-                                            .rounded(px(1.0))
+                                            .h(ui::s(2.0))
+                                            .rounded(ui::s(1.0))
                                             .bg(rgb(quality_color))
                                             .w(gpui::px((quality_score * 200.0).min(200.0) as f32)),
                                     ),
@@ -15868,9 +15889,9 @@ fn render_driver_editor_and_evidence(
                             .when(!display_summary.is_empty(), |el| {
                                 el.child(
                                     div()
-                                        .text_size(px(11.0))
+                                        .text_size(ui::TEXT_BASE)
                                         .text_color(rgb(theme::FG))
-                                        .mt(px(2.0))
+                                        .mt(ui::s(2.0))
                                         .child(display_summary),
                                 )
                             })
@@ -15878,7 +15899,7 @@ fn render_driver_editor_and_evidence(
                             .when(!ev.key_findings.is_empty(), |el| {
                                 el.children(ev.key_findings.iter().take(findings_limit).map(|f| {
                                     div()
-                                        .text_size(px(10.0))
+                                        .text_size(ui::TEXT_SM)
                                         .text_color(rgb(theme::FG_DIM))
                                         .child(format!("• {}", f))
                                 }))
@@ -15887,8 +15908,8 @@ fn render_driver_editor_and_evidence(
                                     |el2| {
                                         el2.child(
                                             div()
-                                                .text_size(px(9.0))
-                                                .text_color(rgb(theme::FG_FAINT))
+                                                .text_size(ui::TEXT_XS)
+                                                .text_color(rgb(theme::FG_MUTED))
                                                 .child(format!(
                                                     "… {} more findings",
                                                     total_findings - findings_limit
@@ -15901,9 +15922,9 @@ fn render_driver_editor_and_evidence(
                             .when(!is_collapsed && ev.date.is_some(), |el| {
                                 el.child(
                                     div()
-                                        .text_size(px(8.0))
-                                        .text_color(rgb(theme::FG_FAINT))
-                                        .mt(px(2.0))
+                                        .text_size(ui::TEXT_MICRO)
+                                        .text_color(rgb(theme::FG_MUTED))
+                                        .mt(ui::s(2.0))
                                         .child(format!("📅 {}", ev.date.as_deref().unwrap_or(""))),
                                 )
                             })
@@ -15911,9 +15932,9 @@ fn render_driver_editor_and_evidence(
                             .when(!is_collapsed && ev.url.is_some(), |el| {
                                 el.child(
                                     div()
-                                        .text_size(px(9.0))
+                                        .text_size(ui::TEXT_XS)
                                         .text_color(rgb(theme::BLUE))
-                                        .mt(px(2.0))
+                                        .mt(ui::s(2.0))
                                         .child(format!("🔗 {}", ev.url.as_deref().unwrap_or(""))),
                                 )
                             })
@@ -15929,14 +15950,14 @@ fn render_driver_editor_and_evidence(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(4.0))
-                .mt(px(8.0))
-                .pt(px(8.0))
+                .gap(ui::s(4.0))
+                .mt(ui::s(8.0))
+                .pt(ui::s(8.0))
                 .border_t_1()
-                .border_color(rgb(theme::FG_FAINT))
+                .border_color(rgb(theme::BORDER))
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(rgb(theme::FG_DIM))
                         .font_weight(FontWeight::SEMIBOLD)
                         .child("Add Evidence"),
@@ -15946,12 +15967,12 @@ fn render_driver_editor_and_evidence(
                 .child({
                     div()
                         .id("add-evidence-btn")
-                        .px(px(12.0))
-                        .py(px(4.0))
-                        .rounded(px(4.0))
+                        .px(ui::s(12.0))
+                        .py(ui::s(4.0))
+                        .rounded(ui::s(4.0))
                         .bg(rgb(theme::CYAN))
                         .text_color(rgb(theme::BG_DEEP))
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .font_weight(FontWeight::SEMIBOLD)
                         .cursor_pointer()
                         .hover(|s| s.opacity(0.8))
@@ -15984,10 +16005,10 @@ fn render_editor_panel(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(8.0))
-                .p(px(16.0))
+                .gap(ui::s(8.0))
+                .p(ui::s(16.0))
                 .border_b_1()
-                .border_color(rgb(theme::FG_FAINT))
+                .border_color(rgb(theme::BORDER))
                 // Header with close button
                 .child(
                     div()
@@ -15996,7 +16017,7 @@ fn render_editor_panel(
                         .justify_between()
                         .child(
                             div()
-                                .text_size(px(14.0))
+                                .text_size(ui::TEXT_XL)
                                 .text_color(rgb(theme::CYAN))
                                 .font_weight(FontWeight::BOLD)
                                 .child(format!("Editing: {}", name)),
@@ -16004,11 +16025,11 @@ fn render_editor_panel(
                         .child(
                             div()
                                 .id("close-editor")
-                                .text_size(px(12.0))
+                                .text_size(ui::TEXT_MD)
                                 .text_color(rgb(theme::FG_DIM))
-                                .px(px(8.0))
-                                .py(px(2.0))
-                                .rounded(px(4.0))
+                                .px(ui::s(8.0))
+                                .py(ui::s(2.0))
+                                .rounded(ui::s(4.0))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::FG)))
                                 .on_click(cx.listener(|this, _event, _window, cx| {
@@ -16023,11 +16044,11 @@ fn render_editor_panel(
                 .when(!rationale_text.is_empty(), |el| {
                     el.child(
                         div()
-                            .px(px(8.0))
-                            .py(px(6.0))
-                            .rounded(px(4.0))
+                            .px(ui::s(8.0))
+                            .py(ui::s(6.0))
+                            .rounded(ui::s(4.0))
                             .bg(rgb(theme::BG))
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(rgb(theme::FG_DIM))
                             .child(rationale_text),
                     )
@@ -16035,12 +16056,12 @@ fn render_editor_panel(
                 .child(
                     div()
                         .flex()
-                        .gap(px(8.0))
-                        .child(div().w(px(140.0)).child(state.editor_name.clone()))
+                        .gap(ui::s(8.0))
+                        .child(div().w(ui::s(140.0)).child(state.editor_name.clone()))
                         .child(
                             div()
                                 .flex_grow()
-                                .min_w(px(0.0))
+                                .min_w(ui::s(0.0))
                                 .child(state.editor_rationale.clone()),
                         ),
                 )
@@ -16048,20 +16069,20 @@ fn render_editor_panel(
                     el.child(
                         div()
                             .flex()
-                            .gap(px(8.0))
-                            .child(div().w(px(90.0)).child(state.editor_p5.clone()))
-                            .child(div().w(px(90.0)).child(state.editor_p50.clone()))
-                            .child(div().w(px(90.0)).child(state.editor_p95.clone()))
-                            .child(div().w(px(90.0)).child(state.editor_unit.clone())),
+                            .gap(ui::s(8.0))
+                            .child(div().w(ui::s(90.0)).child(state.editor_p5.clone()))
+                            .child(div().w(ui::s(90.0)).child(state.editor_p50.clone()))
+                            .child(div().w(ui::s(90.0)).child(state.editor_p95.clone()))
+                            .child(div().w(ui::s(90.0)).child(state.editor_unit.clone())),
                     )
                 })
                 .when(!is_continuous, |el| {
                     el.child(
                         div()
                             .flex()
-                            .gap(px(8.0))
-                            .child(div().w(px(120.0)).child(state.editor_prob.clone()))
-                            .child(div().w(px(120.0)).child(state.editor_impact.clone())),
+                            .gap(ui::s(8.0))
+                            .child(div().w(ui::s(120.0)).child(state.editor_prob.clone()))
+                            .child(div().w(ui::s(120.0)).child(state.editor_impact.clone())),
                     )
                 })
                 // Confidence override
@@ -16091,12 +16112,12 @@ fn render_editor_panel(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(8.0))
-                        .child(div().w(px(90.0)).child(state.editor_confidence.clone()))
+                        .gap(ui::s(8.0))
+                        .child(div().w(ui::s(90.0)).child(state.editor_confidence.clone()))
                         .child(
                             div()
-                                .text_size(px(9.0))
-                                .text_color(rgb(theme::FG_FAINT))
+                                .text_size(ui::TEXT_XS)
+                                .text_color(rgb(theme::FG_MUTED))
                                 .child(format!(
                                     "Computed: {:.0}%{}",
                                     computed_conf * 100.0,
@@ -16108,8 +16129,8 @@ fn render_editor_panel(
                 })
                 .child(
                     div()
-                        .text_size(px(10.0))
-                        .text_color(rgb(theme::FG_FAINT))
+                        .text_size(ui::TEXT_SM)
+                        .text_color(rgb(theme::FG_MUTED))
                         .child(format!(
                             "Values save when you close, switch drivers, or simulate ({}).",
                             crate::keys::chord("R")
@@ -16118,12 +16139,12 @@ fn render_editor_panel(
                 .into_any_element()
         }
         _ => div()
-            .p(px(16.0))
+            .p(ui::s(16.0))
             .border_b_1()
-            .border_color(rgb(theme::FG_FAINT))
+            .border_color(rgb(theme::BORDER))
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(ui::TEXT_MD)
                     .text_color(rgb(theme::FG_DIM))
                     .child("Click a driver on the left to edit its parameters."),
             )
@@ -16151,28 +16172,28 @@ fn render_locked_banner(state: &CockpitState, cx: &mut Context<CockpitState>) ->
     div()
         .flex()
         .items_center()
-        .gap(px(12.0))
-        .px(px(16.0))
-        .py(px(8.0))
+        .gap(ui::s(12.0))
+        .px(ui::s(16.0))
+        .py(ui::s(8.0))
         .bg(rgb(theme::BG_ELEVATED))
         .border_b_1()
         .border_color(rgb(outcome_color))
         .child(
             div()
-                .text_size(px(14.0))
+                .text_size(ui::TEXT_XL)
                 .text_color(rgb(outcome_color))
                 .child("🔒"),
         )
         .child(
             div()
-                .text_size(px(12.0))
+                .text_size(ui::TEXT_MD)
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(outcome_color))
                 .child(reason),
         )
         .child(
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(rgb(theme::FG_DIM))
                 .child(format!(
                     "settled at {} · re-sims & new snapshots disabled",
@@ -16183,11 +16204,11 @@ fn render_locked_banner(state: &CockpitState, cx: &mut Context<CockpitState>) ->
         .child(
             div()
                 .id("cockpit-reconcile")
-                .px(px(10.0))
-                .py(px(4.0))
-                .rounded(px(4.0))
+                .px(ui::s(10.0))
+                .py(ui::s(4.0))
+                .rounded(ui::s(4.0))
                 .bg(rgb(theme::BG_ACTIVE))
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(rgb(theme::CYAN))
                 .cursor_pointer()
                 .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -16221,33 +16242,44 @@ fn render_locked_banner(state: &CockpitState, cx: &mut Context<CockpitState>) ->
 // ══════════════════════════════════════════════════════════════════
 
 /// Size profile for the sensitivity bars.
+///
+/// Dimensions are design pixels (fed through `ui::s`); type comes from the
+/// shared scale. The two profiles differ in *density*, not in legibility —
+/// the compact one used to drop to 7px numerals, which made the panel it
+/// serves unreadable rather than merely dense.
 struct SensitivityStyle {
     label_w: f32,
     bar_w: f32,
     row_h: f32,
-    label_size: f32,
-    value_size: f32,
-    header_size: f32,
+    label_size: gpui::Rems,
+    value_size: gpui::Rems,
+    header_size: gpui::Rems,
 }
 
 impl SensitivityStyle {
     /// The forecast-index panel — narrow column, dense.
     const COMPACT: Self = Self {
-        label_w: 100.0,
+        // Tracks `label_size`: the label column is `overflow_hidden`, so
+        // it clips driver names rather than growing, and a width still
+        // measured against the old 8px type would have eaten several
+        // characters off every one of them.
+        label_w: 130.0,
         bar_w: 180.0,
-        row_h: 14.0,
-        label_size: 8.0,
-        value_size: 7.0,
-        header_size: 8.0,
+        // Tall enough for `label_size` plus leading. Undersizing this
+        // clips descenders rather than growing the row.
+        row_h: 18.0,
+        label_size: ui::TEXT_XS,
+        value_size: ui::TEXT_MICRO,
+        header_size: ui::TEXT_XS,
     };
     /// The wiki tab — more room to breathe.
     const WIDE: Self = Self {
-        label_w: 140.0,
+        label_w: 175.0,
         bar_w: 260.0,
-        row_h: 16.0,
-        label_size: 9.0,
-        value_size: 8.0,
-        header_size: 9.0,
+        row_h: 20.0,
+        label_size: ui::TEXT_SM,
+        value_size: ui::TEXT_XS,
+        header_size: ui::TEXT_SM,
     };
 }
 
@@ -16406,9 +16438,9 @@ fn render_sensitivity_bars(state: &CockpitState, s: &SensitivityStyle) -> gpui::
     let header = div()
         .flex()
         .items_center()
-        .gap(px(6.0))
-        .text_size(px(s.header_size))
-        .child(div().text_color(rgb(theme::FG_FAINT)).child(if has_sobol {
+        .gap(ui::s(6.0))
+        .text_size(s.header_size)
+        .child(div().text_color(rgb(theme::FG_MUTED)).child(if has_sobol {
             "Driver influence"
         } else {
             "Driver spread — run a sim for Sobol influence"
@@ -16463,13 +16495,13 @@ fn render_sensitivity_bars(state: &CockpitState, s: &SensitivityStyle) -> gpui::
         };
         Some(
             div()
-                .text_size(px(s.value_size))
+                .text_size(s.value_size)
                 .text_color(rgb(color))
                 .child(msg),
         )
     });
 
-    let mut root = div().flex().flex_col().gap(px(2.0)).child(header);
+    let mut root = div().flex().flex_col().gap(ui::s(2.0)).child(header);
 
     root = root.children(rows.into_iter().map(|r| {
         // Bar geometry. The two segments are drawn as adjacent divs so
@@ -16488,18 +16520,18 @@ fn render_sensitivity_bars(state: &CockpitState, s: &SensitivityStyle) -> gpui::
         } else if r.ev_count >= 1 {
             theme::GOLD
         } else {
-            theme::FG_FAINT
+            theme::FG_MUTED
         };
 
         div()
             .flex()
             .items_center()
-            .gap(px(4.0))
-            .h(px(s.row_h))
+            .gap(ui::s(4.0))
+            .h(ui::s(s.row_h))
             .child(
                 div()
-                    .w(px(s.label_w))
-                    .text_size(px(s.label_size))
+                    .w(ui::s(s.label_w))
+                    .text_size(s.label_size)
                     .text_color(rgb(theme::FG_DIM))
                     .overflow_hidden()
                     .child(r.display.clone()),
@@ -16509,27 +16541,27 @@ fn render_sensitivity_bars(state: &CockpitState, s: &SensitivityStyle) -> gpui::
                 div()
                     .flex()
                     .items_center()
-                    .w(px(s.bar_w))
+                    .w(ui::s(s.bar_w))
                     .child(
                         div()
-                            .h(px(8.0))
-                            .w(px(first_w))
-                            .rounded_l(px(2.0))
+                            .h(ui::s(8.0))
+                            .w(ui::s(first_w))
+                            .rounded_l(ui::s(2.0))
                             .bg(rgba(0x5CCFE6CC)),
                     )
                     .child(
                         div()
-                            .h(px(8.0))
-                            .w(px(interaction_w))
-                            .rounded_r(px(2.0))
+                            .h(ui::s(8.0))
+                            .w(ui::s(interaction_w))
+                            .rounded_r(ui::s(2.0))
                             .bg(rgba(0xD4BFFF99)),
                     ),
             )
             // Total-order value.
             .child(
                 div()
-                    .text_size(px(s.value_size))
-                    .text_color(rgb(theme::FG_FAINT))
+                    .text_size(s.value_size)
+                    .text_color(rgb(theme::FG_MUTED))
                     .child(format!("{:.2}", r.total)),
             )
             // Coupling marker — this driver's influence is mostly
@@ -16537,7 +16569,7 @@ fn render_sensitivity_bars(state: &CockpitState, s: &SensitivityStyle) -> gpui::
             .when(r.interaction_dominated, |el| {
                 el.child(
                     div()
-                        .text_size(px(s.value_size))
+                        .text_size(s.value_size)
                         .text_color(rgb(theme::PURPLE))
                         .child("⋈"),
                 )
@@ -16551,7 +16583,7 @@ fn render_sensitivity_bars(state: &CockpitState, s: &SensitivityStyle) -> gpui::
                 };
                 el.child(
                     div()
-                        .text_size(px(s.value_size))
+                        .text_size(s.value_size)
                         .text_color(rgb(color))
                         .child(format!("{}{}", glyph, delta.abs())),
                 )
@@ -16559,7 +16591,7 @@ fn render_sensitivity_bars(state: &CockpitState, s: &SensitivityStyle) -> gpui::
             // Evidence count.
             .child(
                 div()
-                    .text_size(px(s.value_size))
+                    .text_size(s.value_size)
                     .text_color(rgb(ev_color))
                     .child(if r.ev_count > 0 {
                         format!("{}", r.ev_count)
@@ -16576,7 +16608,7 @@ fn render_sensitivity_bars(state: &CockpitState, s: &SensitivityStyle) -> gpui::
     if unmeasured > 0 {
         root = root.child(
             div()
-                .text_size(px(s.value_size))
+                .text_size(s.value_size)
                 .text_color(rgb(theme::GOLD))
                 .child(format!(
                     "{} driver{} added since the last sim — re-run for their influence",
@@ -16604,17 +16636,17 @@ fn render_forecast_index(state: &CockpitState, cx: &mut Context<CockpitState>) -
     div()
         .flex()
         .flex_col()
-        .gap(px(6.0))
-        .mx(px(8.0))
-        .my(px(4.0))
+        .gap(ui::s(6.0))
+        .mx(ui::s(8.0))
+        .my(ui::s(4.0))
         // Only show if we have something to visualize
         .when(!has_base_rate && !has_sim && !has_drivers, |el| {
             el.child(
                 div()
-                    .px(px(16.0))
-                    .py(px(8.0))
-                    .text_size(px(11.0))
-                    .text_color(rgb(theme::FG_FAINT))
+                    .px(ui::s(16.0))
+                    .py(ui::s(8.0))
+                    .text_size(ui::TEXT_BASE)
+                    .text_color(rgb(theme::FG_MUTED))
                     .child(format!(
                         "{} to research · {} to simulate",
                         crate::keys::chord("Enter"),
@@ -16649,13 +16681,13 @@ fn render_forecast_index(state: &CockpitState, cx: &mut Context<CockpitState>) -
 
             el.child(
                 div()
-                    .px(px(12.0))
-                    .py(px(8.0))
-                    .rounded(px(6.0))
+                    .px(ui::s(12.0))
+                    .py(ui::s(8.0))
+                    .rounded(ui::s(6.0))
                     .bg(rgb(theme::BG_ELEVATED))
                     .flex()
                     .flex_col()
-                    .gap(px(6.0))
+                    .gap(ui::s(6.0))
                     // Labels row
                     .child(
                         div()
@@ -16665,31 +16697,32 @@ fn render_forecast_index(state: &CockpitState, cx: &mut Context<CockpitState>) -
                             .child(
                                 div()
                                     .flex()
-                                    .gap(px(12.0))
+                                    .gap(ui::s(12.0))
                                     .child(
                                         div()
-                                            .text_size(px(10.0))
+                                            .text_size(ui::TEXT_SM)
                                             .text_color(rgb(theme::GOLD))
                                             .child(format!("Out {:.1}%", outside * 100.0)),
                                     )
                                     .child(
                                         div()
-                                            .text_size(px(10.0))
+                                            .text_size(ui::TEXT_SM)
                                             .text_color(rgb(theme::CYAN))
                                             .font_weight(FontWeight::BOLD)
                                             .child(format!("In {:.1}%", inside * 100.0)),
                                     )
                                     .child(
-                                        div().text_size(px(10.0)).text_color(rgb(div_color)).child(
-                                            format!(
+                                        div()
+                                            .text_size(ui::TEXT_SM)
+                                            .text_color(rgb(div_color))
+                                            .child(format!(
                                                 "{}pp",
                                                 if divergence > 0.0 {
                                                     format!("+{:.0}", divergence)
                                                 } else {
                                                     format!("{:.0}", divergence)
                                                 }
-                                            ),
-                                        ),
+                                            )),
                                     ),
                             )
                             .when(state.forecast_confidence > 0.0, |el| {
@@ -16702,7 +16735,7 @@ fn render_forecast_index(state: &CockpitState, cx: &mut Context<CockpitState>) -
                                 };
                                 el.child(
                                     div()
-                                        .text_size(px(9.0))
+                                        .text_size(ui::TEXT_XS)
                                         .text_color(rgb(color))
                                         .child(format!("{} confidence", label)),
                                 )
@@ -16711,41 +16744,41 @@ fn render_forecast_index(state: &CockpitState, cx: &mut Context<CockpitState>) -
                     // Divergence bar
                     .child(
                         div()
-                            .h(px(6.0))
+                            .h(ui::s(6.0))
                             .w(gpui::px(bar_w))
-                            .rounded(px(4.0))
+                            .rounded(ui::s(4.0))
                             .bg(rgb(theme::BG))
                             .relative()
                             // Outside view marker (gold)
                             .child(
                                 div()
                                     .absolute()
-                                    .top(px(0.0))
+                                    .top(ui::s(0.0))
                                     .left(gpui::px(outside_x - 2.0))
-                                    .w(px(4.0))
-                                    .h(px(6.0))
-                                    .rounded(px(1.0))
+                                    .w(ui::s(4.0))
+                                    .h(ui::s(6.0))
+                                    .rounded(ui::s(1.0))
                                     .bg(rgb(theme::GOLD)),
                             )
                             // Inside view marker (cyan)
                             .child(
                                 div()
                                     .absolute()
-                                    .top(px(0.0))
+                                    .top(ui::s(0.0))
                                     .left(gpui::px(inside_x - 2.0))
-                                    .w(px(4.0))
-                                    .h(px(6.0))
-                                    .rounded(px(1.0))
+                                    .w(ui::s(4.0))
+                                    .h(ui::s(6.0))
+                                    .rounded(ui::s(1.0))
                                     .bg(rgb(theme::CYAN)),
                             )
                             // Fill between the two markers
                             .child(
                                 div()
                                     .absolute()
-                                    .top(px(1.0))
+                                    .top(ui::s(1.0))
                                     .left(gpui::px(outside_x.min(inside_x)))
                                     .w(gpui::px((outside_x - inside_x).abs()))
-                                    .h(px(4.0))
+                                    .h(ui::s(4.0))
                                     .bg(rgb(div_color)),
                             ),
                     ),
@@ -16755,9 +16788,9 @@ fn render_forecast_index(state: &CockpitState, cx: &mut Context<CockpitState>) -
         .when(state.sim_running, |el| {
             el.child(
                 div()
-                    .px(px(12.0))
-                    .py(px(4.0))
-                    .text_size(px(10.0))
+                    .px(ui::s(12.0))
+                    .py(ui::s(4.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(rgb(theme::GOLD))
                     .child("⟳ Simulating…"),
             )
@@ -16765,9 +16798,9 @@ fn render_forecast_index(state: &CockpitState, cx: &mut Context<CockpitState>) -
         .when(state.sim_error.is_some(), |el| {
             el.child(
                 div()
-                    .px(px(12.0))
-                    .py(px(4.0))
-                    .text_size(px(10.0))
+                    .px(ui::s(12.0))
+                    .py(ui::s(4.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(rgb(theme::RED))
                     .child(format!("✗ {}", state.sim_error.as_deref().unwrap_or(""))),
             )
@@ -16778,19 +16811,19 @@ fn render_forecast_index(state: &CockpitState, cx: &mut Context<CockpitState>) -
                 // Stats row (compact)
                 .child(
                     div()
-                        .px(px(12.0))
+                        .px(ui::s(12.0))
                         .flex()
-                        .gap(px(10.0))
-                        .text_size(px(10.0))
+                        .gap(ui::s(10.0))
+                        .text_size(ui::TEXT_SM)
                         .child(render_stat("mean", sim.mean, theme::FG))
                         .child(render_stat("p5", sim.p5, theme::FG_DIM))
                         .child(render_stat("p50", sim.median, theme::CYAN))
                         .child(render_stat("p95", sim.p95, theme::FG_DIM))
-                        .child(render_stat("σ", sim.std_dev, theme::FG_FAINT))
+                        .child(render_stat("σ", sim.std_dev, theme::FG_MUTED))
                         .child(
                             div()
-                                .text_size(px(8.0))
-                                .text_color(rgb(theme::FG_FAINT))
+                                .text_size(ui::TEXT_MICRO)
+                                .text_color(rgb(theme::FG_MUTED))
                                 .child(format!(
                                     "{}k·{}ms",
                                     sim.iterations / 1000,
@@ -16803,9 +16836,9 @@ fn render_forecast_index(state: &CockpitState, cx: &mut Context<CockpitState>) -
                 // dimensions for the composer layout.
                 .child(
                     div()
-                        .px(px(12.0))
+                        .px(ui::s(12.0))
                         .flex()
-                        .gap(px(8.0))
+                        .gap(ui::s(8.0))
                         // Histogram (left)
                         .when(!sim.histogram.is_empty(), |el| {
                             let chart_w = 240.0_f32;
@@ -16814,11 +16847,11 @@ fn render_forecast_index(state: &CockpitState, cx: &mut Context<CockpitState>) -
                                 div()
                                     .flex()
                                     .flex_col()
-                                    .gap(px(2.0))
+                                    .gap(ui::s(2.0))
                                     .child(
                                         div()
-                                            .text_size(px(8.0))
-                                            .text_color(rgb(theme::FG_FAINT))
+                                            .text_size(ui::TEXT_MICRO)
+                                            .text_color(rgb(theme::FG_MUTED))
                                             .child("Distribution — hover bars"),
                                     )
                                     .child(render_interactive_histogram(
@@ -16834,11 +16867,11 @@ fn render_forecast_index(state: &CockpitState, cx: &mut Context<CockpitState>) -
                                 div()
                                     .flex()
                                     .flex_col()
-                                    .gap(px(2.0))
+                                    .gap(ui::s(2.0))
                                     .child(
                                         div()
-                                            .text_size(px(8.0))
-                                            .text_color(rgb(theme::FG_FAINT))
+                                            .text_size(ui::TEXT_MICRO)
+                                            .text_color(rgb(theme::FG_MUTED))
                                             .child("Model · Base rate · Crowd — hover versions"),
                                     )
                                     .child(render_interactive_index_chart(
@@ -16854,7 +16887,7 @@ fn render_forecast_index(state: &CockpitState, cx: &mut Context<CockpitState>) -
         .when(has_drivers, |el| {
             el.child(
                 div()
-                    .px(px(12.0))
+                    .px(ui::s(12.0))
                     .child(render_sensitivity_bars(state, &SensitivityStyle::COMPACT)),
             )
         })
@@ -16864,10 +16897,10 @@ fn render_forecast_index(state: &CockpitState, cx: &mut Context<CockpitState>) -
             |el| {
                 el.child(
                     div()
-                        .px(px(12.0))
-                        .py(px(2.0))
-                        .text_size(px(9.0))
-                        .text_color(rgb(theme::FG_FAINT))
+                        .px(ui::s(12.0))
+                        .py(ui::s(2.0))
+                        .text_size(ui::TEXT_XS)
+                        .text_color(rgb(theme::FG_MUTED))
                         .child(format!("{} to simulate", crate::keys::chord("R"))),
                 )
             },
@@ -16910,22 +16943,22 @@ fn render_pinned_suggestions(
     div()
         .flex()
         .flex_col()
-        .gap(px(4.0))
+        .gap(ui::s(4.0))
         .when(!driver_suggestions.is_empty(), |el| {
-            el.mt(px(4.0))
-                .pt(px(8.0))
-                .pb(px(8.0))
-                .px(px(10.0))
-                .rounded(px(6.0))
+            el.mt(ui::s(4.0))
+                .pt(ui::s(8.0))
+                .pb(ui::s(8.0))
+                .px(ui::s(10.0))
+                .rounded(ui::s(6.0))
                 .border_1()
                 .border_color(rgb(theme::GOLD))
                 .bg(rgb(0x1F1A0E))
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(rgb(theme::GOLD))
                         .font_weight(FontWeight::SEMIBOLD)
-                        .mb(px(4.0))
+                        .mb(ui::s(4.0))
                         .child(format!(
                             "💡 Suggested Adjustments ({}) — review to apply",
                             driver_suggestions.len()
@@ -16944,11 +16977,11 @@ fn render_pinned_suggestions(
                     div()
                         .flex()
                         .flex_col()
-                        .gap(px(4.0))
-                        .px(px(10.0))
-                        .py(px(8.0))
-                        .mt(px(4.0))
-                        .rounded(px(6.0))
+                        .gap(ui::s(4.0))
+                        .px(ui::s(10.0))
+                        .py(ui::s(8.0))
+                        .mt(ui::s(4.0))
+                        .rounded(ui::s(6.0))
                         .bg(rgb(0x2A2518))
                         .border_1()
                         .border_color(rgb(theme::GOLD))
@@ -16957,10 +16990,10 @@ fn render_pinned_suggestions(
                             div()
                                 .flex()
                                 .items_center()
-                                .gap(px(8.0))
+                                .gap(ui::s(8.0))
                                 .child(
                                     div()
-                                        .text_size(px(11.0))
+                                        .text_size(ui::TEXT_BASE)
                                         .text_color(rgb(theme::FG))
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .child(format!(
@@ -16970,7 +17003,7 @@ fn render_pinned_suggestions(
                                 )
                                 .child(
                                     div()
-                                        .text_size(px(12.0))
+                                        .text_size(ui::TEXT_MD)
                                         .text_color(rgb(delta_color))
                                         .font_weight(FontWeight::BOLD)
                                         .child(format!(
@@ -16985,28 +17018,28 @@ fn render_pinned_suggestions(
                         // Reasoning excerpt
                         .child(
                             div()
-                                .text_size(px(10.0))
+                                .text_size(ui::TEXT_SM)
                                 .text_color(rgb(theme::FG_DIM))
-                                .min_w(px(0.0))
+                                .min_w(ui::s(0.0))
                                 .child(sug.reasoning.chars().take(150).collect::<String>()),
                         )
                         // Accept / Reject buttons
                         .child(
                             div()
                                 .flex()
-                                .gap(px(8.0))
-                                .mt(px(4.0))
+                                .gap(ui::s(8.0))
+                                .mt(ui::s(4.0))
                                 .child(
                                     div()
                                         .id(ElementId::Name(
                                             format!("accept-pinned-{}", sug.id).into(),
                                         ))
-                                        .px(px(14.0))
-                                        .py(px(4.0))
-                                        .rounded(px(4.0))
+                                        .px(ui::s(14.0))
+                                        .py(ui::s(4.0))
+                                        .rounded(ui::s(4.0))
                                         .bg(rgb(theme::GREEN))
                                         .text_color(rgb(theme::BG_DEEP))
-                                        .text_size(px(11.0))
+                                        .text_size(ui::TEXT_BASE)
                                         .font_weight(FontWeight::BOLD)
                                         .cursor_pointer()
                                         .hover(|s| s.opacity(0.8))
@@ -17020,14 +17053,14 @@ fn render_pinned_suggestions(
                                         .id(ElementId::Name(
                                             format!("reject-pinned-{}", sug.id).into(),
                                         ))
-                                        .px(px(14.0))
-                                        .py(px(4.0))
-                                        .rounded(px(4.0))
+                                        .px(ui::s(14.0))
+                                        .py(ui::s(4.0))
+                                        .rounded(ui::s(4.0))
                                         .bg(rgb(theme::BG_ELEVATED))
                                         .border_1()
                                         .border_color(rgb(theme::RED))
                                         .text_color(rgb(theme::RED))
-                                        .text_size(px(11.0))
+                                        .text_size(ui::TEXT_BASE)
                                         .cursor_pointer()
                                         .hover(|s| s.bg(rgb(theme::BG_HOVER)))
                                         .on_click(cx.listener(move |this, _event, _window, cx| {
@@ -17066,13 +17099,13 @@ fn render_stat(label: &str, value: f64, color: u32) -> impl IntoElement {
         .items_center()
         .child(
             div()
-                .text_size(px(9.0))
-                .text_color(rgb(theme::FG_FAINT))
+                .text_size(ui::TEXT_XS)
+                .text_color(rgb(theme::FG_MUTED))
                 .child(label.to_string()),
         )
         .child(
             div()
-                .text_size(px(13.0))
+                .text_size(ui::TEXT_LG)
                 .text_color(rgb(color))
                 .font_weight(FontWeight::BOLD)
                 .child(formatted),
@@ -17169,24 +17202,24 @@ fn render_cascade_group_strip(
         return div()
             .flex()
             .items_center()
-            .gap(px(6.0))
-            .px(px(8.0))
-            .py(px(4.0))
-            .rounded(px(6.0))
+            .gap(ui::s(6.0))
+            .px(ui::s(8.0))
+            .py(ui::s(4.0))
+            .rounded(ui::s(6.0))
             .bg(rgb(theme::BG))
             .border_1()
-            .border_color(rgb(theme::FG_FAINT))
+            .border_color(rgb(theme::BORDER))
             .child(
                 div()
-                    .text_size(px(9.0))
-                    .text_color(rgb(theme::FG_FAINT))
+                    .text_size(ui::TEXT_XS)
+                    .text_color(rgb(theme::FG_MUTED))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("CASCADES:"),
             )
             .child(
                 div()
-                    .text_size(px(10.0))
-                    .text_color(rgb(theme::FG_FAINT))
+                    .text_size(ui::TEXT_SM)
+                    .text_color(rgb(theme::FG_MUTED))
                     .child("Publish this forecast first, then add it to a cascade group."),
             )
             .into_any_element();
@@ -17198,17 +17231,17 @@ fn render_cascade_group_strip(
         .flex()
         .flex_wrap()
         .items_center()
-        .gap(px(4.0))
-        .px(px(8.0))
-        .py(px(4.0))
-        .rounded(px(6.0))
+        .gap(ui::s(4.0))
+        .px(ui::s(8.0))
+        .py(ui::s(4.0))
+        .rounded(ui::s(6.0))
         .bg(rgb(theme::BG))
         .border_1()
-        .border_color(rgb(theme::FG_FAINT))
+        .border_color(rgb(theme::BORDER))
         .child(
             div()
-                .text_size(px(9.0))
-                .text_color(rgb(theme::FG_FAINT))
+                .text_size(ui::TEXT_XS)
+                .text_color(rgb(theme::FG_MUTED))
                 .font_weight(FontWeight::SEMIBOLD)
                 .child("CASCADES:"),
         );
@@ -17216,8 +17249,8 @@ fn render_cascade_group_strip(
     if !has_groups {
         row = row.child(
             div()
-                .text_size(px(10.0))
-                .text_color(rgb(theme::FG_FAINT))
+                .text_size(ui::TEXT_SM)
+                .text_color(rgb(theme::FG_MUTED))
                 .child("Not in any cascade group."),
         );
     }
@@ -17249,18 +17282,18 @@ fn render_cascade_group_strip(
                 .id(SharedString::from(format!("cascade-chip-{}", gid)))
                 .flex()
                 .items_center()
-                .gap(px(4.0))
-                .px(px(8.0))
-                .py(px(2.0))
-                .rounded(px(10.0))
+                .gap(ui::s(4.0))
+                .px(ui::s(8.0))
+                .py(ui::s(2.0))
+                .rounded(ui::s(10.0))
                 .bg(rgb(theme::BG_ELEVATED))
                 .border_1()
                 .border_color(rgb(chip_border))
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(rgb(theme::CYAN))
                 .child(
                     div()
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(rgb(theme::FG_DIM))
                         .child(glyph),
                 )
@@ -17285,8 +17318,8 @@ fn render_cascade_group_strip(
                 .child(
                     div()
                         .id(SharedString::from(format!("cascade-chip-x-{}", gid)))
-                        .px(px(4.0))
-                        .text_size(px(11.0))
+                        .px(ui::s(4.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(rgb(theme::FG_DIM))
                         .cursor_pointer()
                         .hover(|s| s.text_color(rgb(theme::RED)))
@@ -17305,18 +17338,18 @@ fn render_cascade_group_strip(
             .id("cascade-chip-add")
             .flex()
             .items_center()
-            .gap(px(4.0))
-            .px(px(8.0))
-            .py(px(2.0))
-            .rounded(px(10.0))
+            .gap(ui::s(4.0))
+            .px(ui::s(8.0))
+            .py(ui::s(2.0))
+            .rounded(ui::s(10.0))
             .bg(rgb(theme::BG_ELEVATED))
             .border_1()
             .border_color(rgb(if picker_open {
                 theme::GOLD
             } else {
-                theme::FG_FAINT
+                theme::FG_MUTED
             }))
-            .text_size(px(11.0))
+            .text_size(ui::TEXT_BASE)
             .text_color(rgb(if picker_open {
                 theme::GOLD
             } else {
@@ -17339,7 +17372,7 @@ fn render_cascade_group_strip(
     if let Some(err) = &state.cascade_groups_error {
         row = row.child(
             div()
-                .text_size(px(10.0))
+                .text_size(ui::TEXT_SM)
                 .text_color(rgb(theme::RED))
                 .child(err.clone()),
         );
@@ -17356,9 +17389,9 @@ fn render_cascade_picker(state: &CockpitState, cx: &mut Context<CockpitState>) -
     let panel = div()
         .flex()
         .flex_col()
-        .gap(px(8.0))
-        .p(px(12.0))
-        .rounded(px(6.0))
+        .gap(ui::s(8.0))
+        .p(ui::s(12.0))
+        .rounded(ui::s(6.0))
         .bg(rgb(theme::BG))
         .border_1()
         .border_color(rgb(theme::GOLD));
@@ -17398,7 +17431,7 @@ fn render_cascade_browse_list(
         })
         .collect();
 
-    let mut container = div().flex().flex_col().gap(px(6.0));
+    let mut container = div().flex().flex_col().gap(ui::s(6.0));
 
     // Header
     container = container.child(
@@ -17408,7 +17441,7 @@ fn render_cascade_browse_list(
             .justify_between()
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(ui::TEXT_BASE)
                     .font_weight(FontWeight::BOLD)
                     .text_color(rgb(theme::GOLD))
                     .child("Add to cascade group"),
@@ -17416,13 +17449,13 @@ fn render_cascade_browse_list(
             .child(
                 div()
                     .id("cascade-picker-new")
-                    .px(px(8.0))
-                    .py(px(2.0))
-                    .rounded(px(4.0))
+                    .px(ui::s(8.0))
+                    .py(ui::s(2.0))
+                    .rounded(ui::s(4.0))
                     .bg(rgb(theme::BG_ELEVATED))
                     .border_1()
                     .border_color(rgb(theme::GREEN))
-                    .text_size(px(10.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(rgb(theme::GREEN))
                     .cursor_pointer()
                     .child("+ New cascade group")
@@ -17441,7 +17474,7 @@ fn render_cascade_browse_list(
     if state.cascade_groups_loading && state.available_cascade_groups.is_none() {
         container = container.child(
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(rgb(theme::FG_DIM))
                 .child("Loading cascade groups…"),
         );
@@ -17458,7 +17491,7 @@ fn render_cascade_browse_list(
         };
         container = container.child(
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(rgb(theme::FG_DIM))
                 .child(msg),
         );
@@ -17475,17 +17508,17 @@ fn render_cascade_browse_list(
                     .id(SharedString::from(format!("cascade-picker-row-{}", gid)))
                     .flex()
                     .items_center()
-                    .gap(px(8.0))
-                    .px(px(8.0))
-                    .py(px(6.0))
-                    .rounded(px(4.0))
+                    .gap(ui::s(8.0))
+                    .px(ui::s(8.0))
+                    .py(ui::s(6.0))
+                    .rounded(ui::s(4.0))
                     .bg(rgb(theme::BG_ELEVATED))
                     .cursor_pointer()
                     .hover(|s| s.bg(rgb(theme::BG_HOVER)))
                     .child(
                         div()
-                            .w(px(24.0))
-                            .text_size(px(12.0))
+                            .w(ui::s(24.0))
+                            .text_size(ui::TEXT_MD)
                             .text_color(rgb(theme::CYAN))
                             .child(kind_glyph),
                     )
@@ -17496,14 +17529,14 @@ fn render_cascade_browse_list(
                             .flex_col()
                             .child(
                                 div()
-                                    .text_size(px(12.0))
+                                    .text_size(ui::TEXT_MD)
                                     .text_color(rgb(theme::FG))
                                     .font_weight(FontWeight::BOLD)
                                     .child(gid.clone()),
                             )
                             .child(
                                 div()
-                                    .text_size(px(10.0))
+                                    .text_size(ui::TEXT_SM)
                                     .text_color(rgb(theme::FG_DIM))
                                     .child(desc.unwrap_or_else(|| {
                                         cascade_kind_label(&group.kind).to_string()
@@ -17512,19 +17545,19 @@ fn render_cascade_browse_list(
                     )
                     .child(
                         div()
-                            .text_size(px(10.0))
-                            .text_color(rgb(theme::FG_FAINT))
+                            .text_size(ui::TEXT_SM)
+                            .text_color(rgb(theme::FG_MUTED))
                             .child(format!("{} members", member_count)),
                     )
                     .child(
                         div()
-                            .px(px(8.0))
-                            .py(px(2.0))
-                            .rounded(px(4.0))
+                            .px(ui::s(8.0))
+                            .py(ui::s(2.0))
+                            .rounded(ui::s(4.0))
                             .bg(rgb(theme::BG))
                             .border_1()
                             .border_color(rgb(theme::CYAN))
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(rgb(theme::CYAN))
                             .child("add →"),
                     )
@@ -17562,7 +17595,7 @@ fn render_cascade_create_form(
         "new_cascade".to_string()
     };
 
-    let mut form = div().flex().flex_col().gap(px(8.0));
+    let mut form = div().flex().flex_col().gap(ui::s(8.0));
 
     // Header + cancel
     form = form.child(
@@ -17572,7 +17605,7 @@ fn render_cascade_create_form(
             .justify_between()
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(ui::TEXT_BASE)
                     .font_weight(FontWeight::BOLD)
                     .text_color(rgb(theme::GREEN))
                     .child("Create cascade group"),
@@ -17580,10 +17613,10 @@ fn render_cascade_create_form(
             .child(
                 div()
                     .id("cascade-create-cancel")
-                    .px(px(8.0))
-                    .py(px(2.0))
-                    .rounded(px(4.0))
-                    .text_size(px(10.0))
+                    .px(ui::s(8.0))
+                    .py(ui::s(2.0))
+                    .rounded(ui::s(4.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(rgb(theme::FG_DIM))
                     .cursor_pointer()
                     .hover(|s| s.text_color(rgb(theme::FG)))
@@ -17599,23 +17632,23 @@ fn render_cascade_create_form(
         div()
             .flex()
             .flex_col()
-            .gap(px(2.0))
+            .gap(ui::s(2.0))
             .child(
                 div()
-                    .text_size(px(9.0))
-                    .text_color(rgb(theme::FG_FAINT))
+                    .text_size(ui::TEXT_XS)
+                    .text_color(rgb(theme::FG_MUTED))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("GROUP ID"),
             )
             .child(
                 div()
-                    .px(px(8.0))
-                    .py(px(4.0))
-                    .rounded(px(4.0))
+                    .px(ui::s(8.0))
+                    .py(ui::s(4.0))
+                    .rounded(ui::s(4.0))
                     .bg(rgb(theme::BG_ELEVATED))
                     .border_1()
-                    .border_color(rgb(theme::FG_FAINT))
-                    .text_size(px(11.0))
+                    .border_color(rgb(theme::BORDER))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(rgb(theme::FG))
                     .child(suggested_gid.clone()),
             ),
@@ -17623,7 +17656,7 @@ fn render_cascade_create_form(
 
     // Kind chips — clickable, current selection highlighted.
     let current_kind = draft.kind.clone();
-    let mut kind_row = div().flex().gap(px(6.0)).items_center();
+    let mut kind_row = div().flex().gap(ui::s(6.0)).items_center();
     for (kind, label) in [
         ("mutex", "Mutually exclusive (⊗)"),
         ("at_most_n", "At most N (≤n)"),
@@ -17634,9 +17667,9 @@ fn render_cascade_create_form(
         kind_row = kind_row.child(
             div()
                 .id(SharedString::from(format!("cascade-kind-{}", kind)))
-                .px(px(10.0))
-                .py(px(4.0))
-                .rounded(px(10.0))
+                .px(ui::s(10.0))
+                .py(ui::s(4.0))
+                .rounded(ui::s(10.0))
                 .bg(rgb(if is_selected {
                     theme::BG_ACTIVE
                 } else {
@@ -17646,9 +17679,9 @@ fn render_cascade_create_form(
                 .border_color(rgb(if is_selected {
                     theme::CYAN
                 } else {
-                    theme::FG_FAINT
+                    theme::FG_MUTED
                 }))
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(rgb(if is_selected {
                     theme::CYAN
                 } else {
@@ -17668,11 +17701,11 @@ fn render_cascade_create_form(
         div()
             .flex()
             .flex_col()
-            .gap(px(4.0))
+            .gap(ui::s(4.0))
             .child(
                 div()
-                    .text_size(px(9.0))
-                    .text_color(rgb(theme::FG_FAINT))
+                    .text_size(ui::TEXT_XS)
+                    .text_color(rgb(theme::FG_MUTED))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("KIND"),
             )
@@ -17688,7 +17721,7 @@ fn render_cascade_create_form(
     };
     form = form.child(
         div()
-            .text_size(px(10.0))
+            .text_size(ui::TEXT_SM)
             .text_color(rgb(theme::FG_DIM))
             .child(hint),
     );
@@ -17698,13 +17731,13 @@ fn render_cascade_create_form(
         || (current_kind == "implies"
             && (draft.implies_antecedent.is_empty() || draft.implies_consequent.is_empty()));
     let gid_for_submit = suggested_gid.clone();
-    let mut submit_row = div().flex().items_center().gap(px(8.0));
+    let mut submit_row = div().flex().items_center().gap(ui::s(8.0));
     submit_row = submit_row.child(
         div()
             .id("cascade-create-submit")
-            .px(px(12.0))
-            .py(px(4.0))
-            .rounded(px(4.0))
+            .px(ui::s(12.0))
+            .py(ui::s(4.0))
+            .rounded(ui::s(4.0))
             .bg(rgb(if create_disabled {
                 theme::BG_ELEVATED
             } else {
@@ -17712,13 +17745,13 @@ fn render_cascade_create_form(
             }))
             .border_1()
             .border_color(rgb(if create_disabled {
-                theme::FG_FAINT
+                theme::FG_MUTED
             } else {
                 theme::GREEN
             }))
-            .text_size(px(11.0))
+            .text_size(ui::TEXT_BASE)
             .text_color(rgb(if create_disabled {
-                theme::FG_FAINT
+                theme::FG_MUTED
             } else {
                 theme::GREEN
             }))
@@ -17745,7 +17778,7 @@ fn render_cascade_create_form(
     if let Some(err) = &state.cascade_groups_error {
         submit_row = submit_row.child(
             div()
-                .text_size(px(10.0))
+                .text_size(ui::TEXT_SM)
                 .text_color(rgb(theme::RED))
                 .child(err.clone()),
         );
@@ -17790,9 +17823,9 @@ fn render_cascade_detail_panel(
     let panel = div()
         .flex()
         .flex_col()
-        .gap(px(10.0))
-        .p(px(12.0))
-        .rounded(px(6.0))
+        .gap(ui::s(10.0))
+        .p(ui::s(12.0))
+        .rounded(ui::s(6.0))
         .bg(rgb(theme::BG))
         .border_1()
         .border_color(rgb(theme::GOLD));
@@ -17801,17 +17834,17 @@ fn render_cascade_detail_panel(
     if state.cascade_detail_data.is_none() {
         let body = if state.cascade_groups_loading {
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(rgb(theme::FG_DIM))
                 .child(format!("Loading cascade group ‘{}’…", group_id))
         } else if let Some(err) = &state.cascade_groups_error {
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(rgb(theme::RED))
                 .child(err.clone())
         } else {
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(rgb(theme::FG_DIM))
                 .child("Waiting for cascade group…")
         };
@@ -17857,28 +17890,28 @@ fn render_cascade_detail_body(
         .flex()
         .items_center()
         .justify_between()
-        .gap(px(8.0))
+        .gap(ui::s(8.0))
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(px(8.0))
+                .gap(ui::s(8.0))
                 .child(
                     div()
-                        .text_size(px(14.0))
+                        .text_size(ui::TEXT_XL)
                         .text_color(rgb(theme::CYAN))
                         .child(glyph),
                 )
                 .child(
                     div()
-                        .text_size(px(13.0))
+                        .text_size(ui::TEXT_LG)
                         .font_weight(FontWeight::BOLD)
                         .text_color(rgb(theme::CYAN))
                         .child(group_id.to_string()),
                 )
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(rgb(theme::FG_DIM))
                         .child(format!(
                             "kind: {} — {} member{} — {}",
@@ -17890,19 +17923,19 @@ fn render_cascade_detail_body(
                 )
                 .child(
                     div()
-                        .w(px(8.0))
-                        .h(px(8.0))
-                        .rounded(px(4.0))
+                        .w(ui::s(8.0))
+                        .h(ui::s(8.0))
+                        .rounded(ui::s(4.0))
                         .bg(rgb(invariant_color)),
                 ),
         )
         .child({
             div()
                 .id("cascade-detail-close")
-                .px(px(8.0))
-                .py(px(2.0))
-                .rounded(px(4.0))
-                .text_size(px(10.0))
+                .px(ui::s(8.0))
+                .py(ui::s(2.0))
+                .rounded(ui::s(4.0))
+                .text_size(ui::TEXT_SM)
                 .text_color(rgb(theme::FG_DIM))
                 .cursor_pointer()
                 .hover(|s| s.text_color(rgb(theme::FG)))
@@ -17915,7 +17948,7 @@ fn render_cascade_detail_body(
     // ---- Optional description ----
     let desc_row = description.map(|d| {
         div()
-            .text_size(px(11.0))
+            .text_size(ui::TEXT_BASE)
             .text_color(rgb(theme::FG_DIM))
             .child(d)
     });
@@ -17924,17 +17957,17 @@ fn render_cascade_detail_body(
     let table_head = div()
         .flex()
         .items_center()
-        .gap(px(12.0))
-        .px(px(6.0))
-        .py(px(4.0))
+        .gap(ui::s(12.0))
+        .px(ui::s(6.0))
+        .py(ui::s(4.0))
         .border_b_1()
-        .border_color(rgb(theme::FG_FAINT))
-        .text_size(px(9.0))
-        .text_color(rgb(theme::FG_FAINT))
+        .border_color(rgb(theme::BORDER))
+        .text_size(ui::TEXT_XS)
+        .text_color(rgb(theme::FG_MUTED))
         .child(div().flex_grow().child("MEMBER"))
-        .child(div().w(px(80.0)).child("CURRENT"))
-        .child(div().w(px(90.0)).child("STATUS"))
-        .child(div().w(px(100.0)).child("PREVIEW"));
+        .child(div().w(ui::s(80.0)).child("CURRENT"))
+        .child(div().w(ui::s(90.0)).child("STATUS"))
+        .child(div().w(ui::s(100.0)).child("PREVIEW"));
 
     let preview_trigger = state.cascade_preview_trigger.clone();
     let preview_loading = state.cascade_preview_loading;
@@ -17972,7 +18005,7 @@ fn render_cascade_detail_body(
         let short = shorten_question_for_provenance(&q);
         let status_color = match status.as_str() {
             "resolved" | "completed" => theme::GREEN,
-            "archived" | "failed" => theme::FG_FAINT,
+            "archived" | "failed" => theme::FG_MUTED,
             _ => theme::FG_DIM,
         };
 
@@ -17980,13 +18013,13 @@ fn render_cascade_detail_body(
             div()
                 .flex()
                 .items_center()
-                .gap(px(12.0))
-                .px(px(6.0))
-                .py(px(4.0))
+                .gap(ui::s(12.0))
+                .px(ui::s(6.0))
+                .py(ui::s(4.0))
                 .bg(rgb(row_bg))
                 .border_b_1()
                 .border_color(rgb(theme::BG))
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .child(
                     div()
                         .flex_grow()
@@ -17996,24 +18029,24 @@ fn render_cascade_detail_body(
                 )
                 .child(
                     div()
-                        .w(px(80.0))
+                        .w(ui::s(80.0))
                         .text_color(rgb(theme::CYAN))
                         .child(format!("{:.1}%", p * 100.0)),
                 )
                 .child(
                     div()
-                        .w(px(90.0))
-                        .text_size(px(10.0))
+                        .w(ui::s(108.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(rgb(status_color))
                         .child(status),
                 )
                 .child(
                     div()
                         .id(SharedString::from(format!("cascade-preview-btn-{}", mid)))
-                        .w(px(100.0))
-                        .px(px(8.0))
-                        .py(px(2.0))
-                        .rounded(px(4.0))
+                        .w(ui::s(100.0))
+                        .px(ui::s(8.0))
+                        .py(ui::s(2.0))
+                        .rounded(ui::s(4.0))
                         .bg(rgb(if is_this_preview {
                             theme::BG_HOVER
                         } else {
@@ -18025,9 +18058,9 @@ fn render_cascade_detail_body(
                         } else if is_this_preview {
                             theme::GOLD
                         } else {
-                            theme::FG_FAINT
+                            theme::FG_MUTED
                         }))
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(rgb(if is_this_preview {
                             theme::GOLD
                         } else {
@@ -18061,9 +18094,9 @@ fn render_cascade_detail_body(
     let mut panel = div()
         .flex()
         .flex_col()
-        .gap(px(10.0))
-        .p(px(12.0))
-        .rounded(px(6.0))
+        .gap(ui::s(10.0))
+        .p(ui::s(12.0))
+        .rounded(ui::s(6.0))
         .bg(rgb(theme::BG))
         .border_1()
         .border_color(rgb(theme::GOLD))
@@ -18078,7 +18111,7 @@ fn render_cascade_detail_body(
     if let Some(err) = &state.cascade_groups_error {
         panel = panel.child(
             div()
-                .text_size(px(10.0))
+                .text_size(ui::TEXT_SM)
                 .text_color(rgb(theme::RED))
                 .child(err.clone()),
         );
@@ -18092,7 +18125,7 @@ fn render_cascade_detail_body(
 /// Returns a display string plus a colour for the health dot.
 fn cascade_invariant_health(kind: &str, sum_p: f64, n_members: usize) -> (String, u32) {
     if n_members == 0 {
-        return ("(empty group)".to_string(), theme::FG_FAINT);
+        return ("(empty group)".to_string(), theme::FG_MUTED);
     }
     match kind {
         "mutex" | "mutually_exclusive" | "at_most_n" => {
@@ -18106,7 +18139,7 @@ fn cascade_invariant_health(kind: &str, sum_p: f64, n_members: usize) -> (String
             };
             (format!("Σp = {:.3}", sum_p), color)
         }
-        _ => ("Σp n/a".to_string(), theme::FG_FAINT),
+        _ => ("Σp n/a".to_string(), theme::FG_MUTED),
     }
 }
 
@@ -18156,7 +18189,7 @@ fn render_cascade_preview_strip(
         .justify_between()
         .child(
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .font_weight(FontWeight::BOLD)
                 .text_color(rgb(theme::GOLD))
                 .child(match trigger_short {
@@ -18167,10 +18200,10 @@ fn render_cascade_preview_strip(
         .child(
             div()
                 .id("cascade-preview-clear")
-                .px(px(6.0))
-                .py(px(2.0))
-                .rounded(px(4.0))
-                .text_size(px(10.0))
+                .px(ui::s(6.0))
+                .py(ui::s(2.0))
+                .rounded(ui::s(4.0))
+                .text_size(ui::TEXT_SM)
                 .text_color(rgb(theme::FG_DIM))
                 .cursor_pointer()
                 .hover(|s| s.text_color(rgb(theme::FG)))
@@ -18220,11 +18253,11 @@ fn render_cascade_preview_strip(
             div()
                 .flex()
                 .items_center()
-                .gap(px(10.0))
-                .px(px(6.0))
-                .py(px(3.0))
-                .text_size(px(11.0))
-                .child(div().w(px(12.0)).text_color(rgb(color)).child(glyph))
+                .gap(ui::s(10.0))
+                .px(ui::s(6.0))
+                .py(ui::s(3.0))
+                .text_size(ui::TEXT_BASE)
+                .child(div().w(ui::s(12.0)).text_color(rgb(color)).child(glyph))
                 .child(
                     div()
                         .flex_grow()
@@ -18233,23 +18266,23 @@ fn render_cascade_preview_strip(
                 )
                 .child(
                     div()
-                        .w(px(60.0))
+                        .w(ui::s(60.0))
                         .font_weight(FontWeight::BOLD)
                         .text_color(rgb(color))
                         .child(format!("{}{:.2}", sign, delta_pp)),
                 )
                 .child(
                     div()
-                        .h(px(5.0))
-                        .w(px(bar_w))
-                        .rounded(px(2.0))
+                        .h(ui::s(5.0))
+                        .w(ui::s(bar_w))
+                        .rounded(ui::s(2.0))
                         .bg(rgb(color)),
                 )
                 .child(
                     div()
-                        .w(px(110.0))
+                        .w(ui::s(132.0))
                         .text_color(rgb(theme::FG_DIM))
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .child(format!("{:.1}% → {:.1}%", prev * 100.0, new_p * 100.0)),
                 ),
         );
@@ -18258,9 +18291,9 @@ fn render_cascade_preview_strip(
     div()
         .flex()
         .flex_col()
-        .gap(px(6.0))
-        .p(px(8.0))
-        .rounded(px(4.0))
+        .gap(ui::s(6.0))
+        .p(ui::s(8.0))
+        .rounded(ui::s(4.0))
         .bg(rgb(theme::BG_ELEVATED))
         .border_1()
         .border_color(rgb(theme::GOLD))
@@ -18333,17 +18366,17 @@ fn render_portfolio_membership_strip(
         .flex()
         .flex_wrap()
         .items_center()
-        .gap(px(4.0))
-        .px(px(8.0))
-        .py(px(4.0))
-        .rounded(px(6.0))
+        .gap(ui::s(4.0))
+        .px(ui::s(8.0))
+        .py(ui::s(4.0))
+        .rounded(ui::s(6.0))
         .bg(rgb(theme::BG))
         .border_1()
-        .border_color(rgb(theme::FG_FAINT))
+        .border_color(rgb(theme::BORDER))
         .child(
             div()
-                .text_size(px(9.0))
-                .text_color(rgb(theme::FG_FAINT))
+                .text_size(ui::TEXT_XS)
+                .text_color(rgb(theme::FG_MUTED))
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(header_text),
         );
@@ -18362,7 +18395,7 @@ fn render_portfolio_membership_strip(
         } else if is_pending {
             theme::GOLD
         } else {
-            theme::FG_FAINT
+            theme::FG_MUTED
         };
         let text_color = if is_member {
             theme::CYAN
@@ -18382,9 +18415,9 @@ fn render_portfolio_membership_strip(
         };
         let mut chip = div()
             .id(SharedString::from(format!("pf-chip-{}", pid)))
-            .px(px(8.0))
-            .py(px(2.0))
-            .rounded(px(10.0))
+            .px(ui::s(8.0))
+            .py(ui::s(2.0))
+            .rounded(ui::s(10.0))
             .border_1()
             .border_color(rgb(border_color))
             .bg(if is_selected {
@@ -18392,7 +18425,7 @@ fn render_portfolio_membership_strip(
             } else {
                 rgb(theme::BG_ELEVATED)
             })
-            .text_size(px(10.0))
+            .text_size(ui::TEXT_SM)
             .text_color(rgb(text_color))
             .child(label);
         if !in_flight {
@@ -18430,8 +18463,8 @@ fn render_portfolio_membership_strip(
         };
         row = row.child(
             div()
-                .text_size(px(9.0))
-                .text_color(rgb(theme::FG_FAINT))
+                .text_size(ui::TEXT_XS)
+                .text_color(rgb(theme::FG_MUTED))
                 .child(hint),
         );
     }
@@ -18461,10 +18494,10 @@ fn render_pm_typeahead_strip(
     let mut container = div()
         .flex()
         .flex_col()
-        .gap(px(8.0))
-        .px(px(12.0))
-        .py(px(10.0))
-        .rounded(px(8.0))
+        .gap(ui::s(8.0))
+        .px(ui::s(12.0))
+        .py(ui::s(10.0))
+        .rounded(ui::s(8.0))
         .bg(rgb(0x1A1A2E))
         .border_1()
         .border_color(rgb(theme::PURPLE))
@@ -18476,7 +18509,7 @@ fn render_pm_typeahead_strip(
                 .justify_between()
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(rgb(theme::PURPLE))
                         .font_weight(FontWeight::BOLD)
                         .child(if state.pm_suggestions_loading {
@@ -18488,10 +18521,10 @@ fn render_pm_typeahead_strip(
                 .child(
                     div()
                         .id("pm-typeahead-dismiss")
-                        .px(px(8.0))
-                        .py(px(2.0))
-                        .rounded(px(4.0))
-                        .text_size(px(12.0))
+                        .px(ui::s(8.0))
+                        .py(ui::s(2.0))
+                        .rounded(ui::s(4.0))
+                        .text_size(ui::TEXT_MD)
                         .text_color(theme::fg_dim())
                         .cursor_pointer()
                         .hover(|s| s.bg(theme::bg_hover()))
@@ -18505,7 +18538,7 @@ fn render_pm_typeahead_strip(
     // Rich rows — one clickable row per match, mirroring the Dashboard.
     // Vertical list (not flex-wrap) so each row can show price / question
     // + event_title / vol / liq / confidence / end date consistently.
-    let mut rows = div().flex().flex_col().gap(px(6.0));
+    let mut rows = div().flex().flex_col().gap(ui::s(6.0));
     for (i, result) in state.pm_suggestions.iter().enumerate() {
         let event_id = result
             .get("pm_event_id")
@@ -18585,7 +18618,7 @@ fn render_pm_typeahead_strip(
             Some("Very High") => theme::GREEN,
             Some("High") => theme::CYAN,
             Some("Medium") => theme::GOLD,
-            _ => theme::FG_FAINT,
+            _ => theme::FG_MUTED,
         };
 
         // Clone captures for the click handler.
@@ -18603,13 +18636,13 @@ fn render_pm_typeahead_strip(
                 .id(SharedString::from(format!("pm-sugg-{}", i)))
                 .flex()
                 .items_center()
-                .gap(px(10.0))
-                .px(px(10.0))
-                .py(px(8.0))
-                .rounded(px(6.0))
+                .gap(ui::s(10.0))
+                .px(ui::s(10.0))
+                .py(ui::s(8.0))
+                .rounded(ui::s(6.0))
                 .bg(rgb(theme::BG_ELEVATED))
                 .border_1()
-                .border_color(rgb(theme::FG_FAINT))
+                .border_color(rgb(theme::BORDER))
                 .cursor_pointer()
                 .hover(|s| s.border_color(rgb(theme::PURPLE)).bg(rgb(theme::BG_HOVER)))
                 .on_click(cx.listener(move |state, _, _, cx| {
@@ -18631,10 +18664,10 @@ fn render_pm_typeahead_strip(
                         .flex()
                         .flex_col()
                         .items_center()
-                        .w(px(60.0))
+                        .w(ui::s(60.0))
                         .child(
                             div()
-                                .text_size(px(18.0))
+                                .text_size(ui::TEXT_3XL)
                                 .text_color(rgb(theme::PURPLE))
                                 .font_weight(FontWeight::BOLD)
                                 .child(price_pct),
@@ -18650,7 +18683,7 @@ fn render_pm_typeahead_strip(
                             };
                             el.child(
                                 div()
-                                    .text_size(px(8.0))
+                                    .text_size(ui::TEXT_MICRO)
                                     .text_color(rgb(color))
                                     .child(format!("{}{:.1}pp", arrow, c * 100.0)),
                             )
@@ -18660,13 +18693,13 @@ fn render_pm_typeahead_strip(
                 .child(
                     div()
                         .flex_grow()
-                        .min_w(px(0.0))
+                        .min_w(ui::s(0.0))
                         .flex()
                         .flex_col()
-                        .gap(px(2.0))
+                        .gap(ui::s(2.0))
                         .child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(ui::TEXT_MD)
                                 .text_color(theme::fg())
                                 .child(question_text.clone()),
                         )
@@ -18675,8 +18708,8 @@ fn render_pm_typeahead_strip(
                             |el| {
                                 el.child(
                                     div()
-                                        .text_size(px(9.0))
-                                        .text_color(theme::fg_faint())
+                                        .text_size(ui::TEXT_XS)
+                                        .text_color(theme::fg_muted())
                                         .child(event_title.clone()),
                                 )
                             },
@@ -18684,9 +18717,9 @@ fn render_pm_typeahead_strip(
                         .child(
                             div()
                                 .flex()
-                                .gap(px(8.0))
-                                .text_size(px(9.0))
-                                .text_color(theme::fg_faint())
+                                .gap(ui::s(8.0))
+                                .text_size(ui::TEXT_XS)
+                                .text_color(theme::fg_muted())
                                 .when(!vol_fmt.is_empty(), |el| {
                                     el.child(format!("{} vol", vol_fmt))
                                 })
@@ -18708,11 +18741,11 @@ fn render_pm_typeahead_strip(
                 // Import pill (mirrors Dashboard).
                 .child(
                     div()
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(rgb(theme::PURPLE))
-                        .px(px(10.0))
-                        .py(px(4.0))
-                        .rounded(px(4.0))
+                        .px(ui::s(10.0))
+                        .py(ui::s(4.0))
+                        .rounded(ui::s(4.0))
                         .bg(rgb(0x1A1A2E))
                         .border_1()
                         .border_color(rgb(theme::PURPLE))
@@ -18731,7 +18764,7 @@ fn render_pm_typeahead_strip(
     {
         container = container.child(
             div()
-                .text_size(px(10.0))
+                .text_size(ui::TEXT_SM)
                 .text_color(rgb(theme::FG_DIM))
                 .child(
                     "No Polymarket matches for that phrasing. Compose without a market, \
@@ -18783,22 +18816,22 @@ fn render_status_bar(state: &CockpitState) -> impl IntoElement {
         .count();
 
     div()
-        .h(px(32.0))
-        .px(px(16.0))
+        .h(ui::s(32.0))
+        .px(ui::s(16.0))
         .border_t_1()
-        .border_color(rgb(theme::FG_FAINT))
+        .border_color(rgb(theme::BORDER))
         .flex()
         .items_center()
-        .gap(px(12.0))
-        .text_size(px(10.0))
-        .text_color(rgb(theme::FG_FAINT))
+        .gap(ui::s(12.0))
+        .text_size(ui::TEXT_SM)
+        .text_color(rgb(theme::FG_MUTED))
         .child(format!("{} drivers", total_drivers))
         .child(
             div()
                 .text_color(if total_evidence > 0 {
                     rgb(theme::GREEN)
                 } else {
-                    rgb(theme::FG_FAINT)
+                    rgb(theme::FG_MUTED)
                 })
                 .child(format!("{} evidence", total_evidence)),
         )
@@ -18833,7 +18866,7 @@ fn render_status_bar(state: &CockpitState) -> impl IntoElement {
         .when(state.session_cost > 0.0, |el| {
             el.child(
                 div()
-                    .text_color(rgb(theme::FG_FAINT))
+                    .text_color(rgb(theme::FG_MUTED))
                     .child(format!("⚡{:.1} credits", state.session_cost)),
             )
         })
@@ -18874,15 +18907,15 @@ fn render_tab_bar(active: RightTab, cx: &mut Context<CockpitState>) -> impl Into
     div()
         .flex()
         .border_b_1()
-        .border_color(rgb(theme::FG_FAINT))
+        .border_color(rgb(theme::BORDER))
         .children(tabs.iter().map(|(tab, label)| {
             let t = *tab;
             let is_active = t == active;
             div()
                 .id(ElementId::Name(format!("tab-{}", label).into()))
-                .px(px(16.0))
-                .py(px(8.0))
-                .text_size(px(12.0))
+                .px(ui::s(16.0))
+                .py(ui::s(8.0))
+                .text_size(ui::TEXT_MD)
                 .font_weight(if is_active {
                     FontWeight::BOLD
                 } else {
@@ -18972,16 +19005,16 @@ fn render_access_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> im
         .id("access-tab")
         .flex()
         .flex_col()
-        .gap(px(12.0))
-        .p(px(16.0))
+        .gap(ui::s(12.0))
+        .p(ui::s(16.0))
         .overflow_y_scroll();
 
     // Gate on a published forecast — shares attach to a forecast row.
     if state.forecast_id.is_none() {
         return container.child(
             div()
-                .p(px(8.0))
-                .text_size(px(11.0))
+                .p(ui::s(8.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(rgb(theme::FG_DIM))
                 .child(format!(
                     "Publish this forecast first ({}) to share it with people or teams.",
@@ -19008,7 +19041,7 @@ fn render_access_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> im
     container
         .child(
             div()
-                .text_size(px(13.0))
+                .text_size(ui::TEXT_LG)
                 .font_weight(FontWeight::BOLD)
                 .text_color(rgb(theme::CYAN))
                 .child("🔗 Access"),
@@ -19019,7 +19052,7 @@ fn render_access_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> im
         .child(render_my_access_line(state))
         .child(
             div()
-                .text_size(px(10.0))
+                .text_size(ui::TEXT_SM)
                 .text_color(rgb(theme::FG_DIM))
                 .child(
                     "Add by email (sends an invite if they have no account) or user id. \
@@ -19031,17 +19064,17 @@ fn render_access_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> im
             div()
                 .flex()
                 .items_center()
-                .gap(px(8.0))
+                .gap(ui::s(8.0))
                 .child(div().flex_grow().child(state.share_input.clone()))
                 // Permission cycle chip
                 .child(
                     div()
                         .id("share-perm")
-                        .px(px(10.0))
-                        .py(px(6.0))
-                        .rounded(px(4.0))
+                        .px(ui::s(10.0))
+                        .py(ui::s(6.0))
+                        .rounded(ui::s(4.0))
                         .bg(rgb(theme::BG_ACTIVE))
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(rgb(theme::GOLD))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -19059,11 +19092,11 @@ fn render_access_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> im
                 .child(
                     div()
                         .id("share-add")
-                        .px(px(12.0))
-                        .py(px(6.0))
-                        .rounded(px(4.0))
+                        .px(ui::s(12.0))
+                        .py(ui::s(6.0))
+                        .rounded(ui::s(4.0))
                         .bg(rgb(theme::CYAN))
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(rgb(theme::BG))
                         .font_weight(FontWeight::SEMIBOLD)
                         .cursor_pointer()
@@ -19082,7 +19115,7 @@ fn render_access_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> im
         .when(state.share_error.is_some(), |el| {
             el.child(
                 div()
-                    .text_size(px(10.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(rgb(theme::RED))
                     .child(state.share_error.clone().unwrap_or_default()),
             )
@@ -19090,7 +19123,7 @@ fn render_access_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> im
         // Shares list header
         .child(
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(theme::FG_DIM))
                 .child(if state.shares_loading {
@@ -19102,8 +19135,8 @@ fn render_access_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> im
         .when(state.shares.is_empty() && !state.shares_loading, |el| {
             el.child(
                 div()
-                    .text_size(px(10.0))
-                    .text_color(rgb(theme::FG_FAINT))
+                    .text_size(ui::TEXT_SM)
+                    .text_color(rgb(theme::FG_MUTED))
                     .child("Private — not shared with anyone yet."),
             )
         })
@@ -19112,8 +19145,8 @@ fn render_access_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> im
         .when(state.shares.iter().any(|s| s.permission == "view"), |el| {
             el.child(
                 div()
-                    .text_size(px(9.0))
-                    .text_color(rgb(theme::FG_FAINT))
+                    .text_size(ui::TEXT_XS)
+                    .text_color(rgb(theme::FG_MUTED))
                     .child("Click a 'view' chip to grant edit access."),
             )
         })
@@ -19134,30 +19167,30 @@ fn render_access_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> im
             div()
                 .flex()
                 .items_center()
-                .gap(px(8.0))
-                .px(px(10.0))
-                .py(px(7.0))
-                .rounded(px(6.0))
+                .gap(ui::s(8.0))
+                .px(ui::s(10.0))
+                .py(ui::s(7.0))
+                .rounded(ui::s(6.0))
                 .bg(rgb(theme::BG_ELEVATED))
-                .child(div().text_size(px(12.0)).child(icon))
+                .child(div().text_size(ui::TEXT_MD).child(icon))
                 .child(
                     div()
                         .flex_grow()
                         .overflow_hidden()
                         .flex()
                         .flex_col()
-                        .gap(px(1.0))
+                        .gap(ui::s(1.0))
                         .child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(rgb(theme::FG))
                                 .child(primary_label),
                         )
                         .when(show_subtitle, |el| {
                             el.child(
                                 div()
-                                    .text_size(px(9.0))
-                                    .text_color(rgb(theme::FG_FAINT))
+                                    .text_size(ui::TEXT_XS)
+                                    .text_color(rgb(theme::FG_MUTED))
                                     .child(s.share_target.clone()),
                             )
                         }),
@@ -19176,11 +19209,11 @@ fn render_access_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> im
                     let can_promote = s.permission == "view";
                     let busy = state.share_permission_in_flight.contains(&sid);
                     let chip = div()
-                        .px(px(8.0))
-                        .py(px(2.0))
-                        .rounded(px(4.0))
+                        .px(ui::s(8.0))
+                        .py(ui::s(2.0))
+                        .rounded(ui::s(4.0))
                         .bg(rgb(theme::BG_ACTIVE))
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(rgb(if busy { theme::FG_DIM } else { theme::GOLD }))
                         .child(if busy {
                             "granting…".to_string()
@@ -19213,10 +19246,10 @@ fn render_access_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> im
                 .child(
                     div()
                         .id(ElementId::Name(format!("revoke-{}", sid).into()))
-                        .px(px(6.0))
-                        .py(px(2.0))
-                        .rounded(px(4.0))
-                        .text_size(px(12.0))
+                        .px(ui::s(6.0))
+                        .py(ui::s(2.0))
+                        .rounded(ui::s(4.0))
+                        .text_size(ui::TEXT_MD)
                         .text_color(rgb(theme::FG_DIM))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::RED)))
@@ -19276,33 +19309,38 @@ fn render_team_share_section(
         .map(|s| s.share_target.clone())
         .collect();
 
-    let mut container = div().flex().flex_col().gap(px(6.0)).mt(px(8.0)).child(
-        div()
-            .flex()
-            .items_center()
-            .gap(px(8.0))
-            .child(
-                div()
-                    .text_size(px(11.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(theme::FG_DIM))
-                    .child(format!("Share with a team ({})", state.share_teams.len())),
-            )
-            .when(state.share_teams_loading, |el| {
-                el.child(
+    let mut container = div()
+        .flex()
+        .flex_col()
+        .gap(ui::s(6.0))
+        .mt(ui::s(8.0))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(ui::s(8.0))
+                .child(
                     div()
-                        .text_size(px(10.0))
-                        .text_color(rgb(theme::FG_FAINT))
-                        .child("loading…"),
+                        .text_size(ui::TEXT_BASE)
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(theme::FG_DIM))
+                        .child(format!("Share with a team ({})", state.share_teams.len())),
                 )
-            }),
-    );
+                .when(state.share_teams_loading, |el| {
+                    el.child(
+                        div()
+                            .text_size(ui::TEXT_SM)
+                            .text_color(rgb(theme::FG_MUTED))
+                            .child("loading…"),
+                    )
+                }),
+        );
 
     if state.share_teams.is_empty() && !state.share_teams_loading {
         container = container.child(
             div()
-                .text_size(px(10.0))
-                .text_color(rgb(theme::FG_FAINT))
+                .text_size(ui::TEXT_SM)
+                .text_color(rgb(theme::FG_MUTED))
                 .child(
                 "No collaboration teams yet. Create one in the Teams panel to share with a group.",
             ),
@@ -19321,17 +19359,17 @@ fn render_team_share_section(
         let (label, color) = if already_shared {
             (format!("✓ {}", t.name), rgb(theme::GREEN))
         } else if in_flight {
-            (format!("… {}", t.name), rgb(theme::FG_FAINT))
+            (format!("… {}", t.name), rgb(theme::FG_MUTED))
         } else {
             (t.name.clone(), rgb(theme::CYAN))
         };
         let pill = div()
             .id(ElementId::Name(format!("team-share-{}", tid).into()))
-            .px(px(10.0))
-            .py(px(4.0))
-            .rounded(px(12.0))
+            .px(ui::s(10.0))
+            .py(ui::s(4.0))
+            .rounded(ui::s(12.0))
             .bg(rgb(theme::BG_ELEVATED))
-            .text_size(px(11.0))
+            .text_size(ui::TEXT_BASE)
             .text_color(color)
             .child(label);
         if interactive {
@@ -19348,7 +19386,7 @@ fn render_team_share_section(
         }
     });
 
-    container.child(div().flex().flex_wrap().gap(px(6.0)).children(pills))
+    container.child(div().flex().flex_wrap().gap(ui::s(6.0)).children(pills))
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -19407,11 +19445,11 @@ fn render_permission_chip(permission: &str) -> impl IntoElement {
         permission.to_string()
     };
     div()
-        .px(px(8.0))
-        .py(px(2.0))
-        .rounded(px(4.0))
+        .px(ui::s(8.0))
+        .py(ui::s(2.0))
+        .rounded(ui::s(4.0))
         .bg(rgb(theme::BG_ACTIVE))
-        .text_size(px(10.0))
+        .text_size(ui::TEXT_SM)
         .text_color(rgb(theme::GOLD))
         .child(label)
 }
@@ -19442,17 +19480,17 @@ fn render_my_access_line(state: &CockpitState) -> impl IntoElement {
     let row = div()
         .flex()
         .items_center()
-        .gap(px(8.0))
-        .px(px(10.0))
-        .py(px(6.0))
-        .rounded(px(6.0))
+        .gap(ui::s(8.0))
+        .px(ui::s(10.0))
+        .py(ui::s(6.0))
+        .rounded(ui::s(6.0))
         .bg(rgb(theme::BG_ELEVATED));
 
     let Some(summary) = state.access_summary.as_ref() else {
         return row.child(
             div()
-                .text_size(px(10.0))
-                .text_color(rgb(theme::FG_FAINT))
+                .text_size(ui::TEXT_SM)
+                .text_color(rgb(theme::FG_MUTED))
                 .child(if state.access_summary_loading {
                     "Resolving your access…"
                 } else {
@@ -19479,16 +19517,16 @@ fn render_my_access_line(state: &CockpitState) -> impl IntoElement {
 
     row.child(
         div()
-            .text_size(px(10.0))
+            .text_size(ui::TEXT_SM)
             .text_color(rgb(theme::FG_DIM))
             .child("How you have access"),
     )
-    .child(div().text_size(px(12.0)).child(glyph))
+    .child(div().text_size(ui::TEXT_MD).child(glyph))
     .child(
         div()
             .flex_grow()
             .overflow_hidden()
-            .text_size(px(11.0))
+            .text_size(ui::TEXT_BASE)
             .text_color(rgb(theme::FG))
             .child(line),
     )
@@ -19525,11 +19563,11 @@ fn render_team_roster_section(
     div()
         .flex()
         .flex_col()
-        .gap(px(6.0))
-        .mt(px(8.0))
+        .gap(ui::s(6.0))
+        .mt(ui::s(8.0))
         .child(
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(theme::FG_DIM))
                 .child(format!("Team rosters ({})", team_shares.len())),
@@ -19552,17 +19590,17 @@ fn render_team_roster_section(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(4.0))
-                .px(px(10.0))
-                .py(px(7.0))
-                .rounded(px(6.0))
+                .gap(ui::s(4.0))
+                .px(ui::s(10.0))
+                .py(ui::s(7.0))
+                .rounded(ui::s(6.0))
                 .bg(rgb(theme::BG_ELEVATED))
                 .child(
                     div()
                         .id(SharedString::from(format!("team-roster-{}", key)))
                         .flex()
                         .items_center()
-                        .gap(px(8.0))
+                        .gap(ui::s(8.0))
                         .cursor_pointer()
                         .hover(|s| s.opacity(0.8))
                         .on_click(cx.listener({
@@ -19578,28 +19616,28 @@ fn render_team_roster_section(
                         }))
                         .child(
                             div()
-                                .text_size(px(10.0))
+                                .text_size(ui::TEXT_SM)
                                 .text_color(rgb(theme::FG_DIM))
                                 .child(if expanded { "▾" } else { "▸" }),
                         )
-                        .child(div().text_size(px(12.0)).child("👥"))
+                        .child(div().text_size(ui::TEXT_MD).child("👥"))
                         .child(
                             div()
                                 .flex_grow()
                                 .overflow_hidden()
                                 .flex()
                                 .flex_col()
-                                .gap(px(1.0))
+                                .gap(ui::s(1.0))
                                 .child(
                                     div()
-                                        .text_size(px(11.0))
+                                        .text_size(ui::TEXT_BASE)
                                         .text_color(rgb(theme::FG))
                                         .child(team_label),
                                 )
                                 .child(
                                     div()
-                                        .text_size(px(9.0))
-                                        .text_color(rgb(theme::FG_FAINT))
+                                        .text_size(ui::TEXT_XS)
+                                        .text_color(rgb(theme::FG_MUTED))
                                         .child(peek),
                                 ),
                         )
@@ -19609,8 +19647,8 @@ fn render_team_roster_section(
                         .when_some(granted, |el, when| {
                             el.child(
                                 div()
-                                    .text_size(px(9.0))
-                                    .text_color(rgb(theme::FG_FAINT))
+                                    .text_size(ui::TEXT_XS)
+                                    .text_color(rgb(theme::FG_MUTED))
                                     .child(when),
                             )
                         }),
@@ -19620,16 +19658,16 @@ fn render_team_roster_section(
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(2.0))
-                            .pl(px(24.0))
-                            .pt(px(2.0))
+                            .gap(ui::s(2.0))
+                            .pl(ui::s(24.0))
+                            .pt(ui::s(2.0))
                             .children(members.iter().map(|m| {
                                 let is_agent = m.member_type.as_deref() == Some("agent");
                                 div()
                                     .flex()
                                     .items_center()
-                                    .gap(px(6.0))
-                                    .child(div().text_size(px(10.0)).child(if is_agent {
+                                    .gap(ui::s(6.0))
+                                    .child(div().text_size(ui::TEXT_SM).child(if is_agent {
                                         "🤖"
                                     } else {
                                         "🧑"
@@ -19638,7 +19676,7 @@ fn render_team_roster_section(
                                         div()
                                             .flex_grow()
                                             .overflow_hidden()
-                                            .text_size(px(10.0))
+                                            .text_size(ui::TEXT_SM)
                                             // Agents in blue: a bot on the
                                             // roster is a materially
                                             // different disclosure from a
@@ -19653,7 +19691,7 @@ fn render_team_roster_section(
                                     )
                                     .child(
                                         div()
-                                            .text_size(px(9.0))
+                                            .text_size(ui::TEXT_XS)
                                             .text_color(rgb(theme::FG_DIM))
                                             .child(
                                                 m.role.clone().unwrap_or_else(|| "member".into()),
@@ -19665,9 +19703,9 @@ fn render_team_roster_section(
                 .when_some(granted_by, |el, by| {
                     el.child(
                         div()
-                            .pl(px(24.0))
-                            .text_size(px(9.0))
-                            .text_color(rgb(theme::FG_FAINT))
+                            .pl(ui::s(24.0))
+                            .text_size(ui::TEXT_XS)
+                            .text_color(rgb(theme::FG_MUTED))
                             .child(format!("granted by {}", by)),
                     )
                 })
@@ -19697,19 +19735,19 @@ fn render_inherited_shares_section(state: &CockpitState) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
-        .gap(px(6.0))
-        .mt(px(8.0))
+        .gap(ui::s(6.0))
+        .mt(ui::s(8.0))
         .child(
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(theme::FG_DIM))
                 .child(format!("Inherited from portfolios ({})", inherited.len())),
         )
         .child(
             div()
-                .text_size(px(9.0))
-                .text_color(rgb(theme::FG_FAINT))
+                .text_size(ui::TEXT_XS)
+                .text_color(rgb(theme::FG_MUTED))
                 .child("Granted on the portfolio. Revoke it there to remove this access."),
         )
         .children(inherited.into_iter().map(|share| {
@@ -19742,24 +19780,24 @@ fn render_inherited_shares_section(state: &CockpitState) -> impl IntoElement {
             div()
                 .flex()
                 .flex_col()
-                .gap(px(2.0))
-                .px(px(10.0))
-                .py(px(7.0))
-                .rounded(px(6.0))
+                .gap(ui::s(2.0))
+                .px(ui::s(10.0))
+                .py(ui::s(7.0))
+                .rounded(ui::s(6.0))
                 // Flatter than the editable rows above, and marked with a
                 // left rule, so "read-only" is legible before reading the
                 // caption.
                 .bg(rgb(theme::BG))
-                .border_l(px(2.0))
-                .border_color(rgb(theme::FG_FAINT))
+                .border_l(ui::s(2.0))
+                .border_color(rgb(theme::BORDER))
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(6.0))
+                        .gap(ui::s(6.0))
                         .child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(rgb(theme::CYAN))
                                 .child(format!("◈ {}", portfolio)),
                         )
@@ -19767,8 +19805,8 @@ fn render_inherited_shares_section(state: &CockpitState) -> impl IntoElement {
                             div()
                                 .flex_grow()
                                 .overflow_hidden()
-                                .text_size(px(9.0))
-                                .text_color(rgb(theme::FG_FAINT))
+                                .text_size(ui::TEXT_XS)
+                                .text_color(rgb(theme::FG_MUTED))
                                 .child("via portfolio"),
                         )
                         .child(render_permission_chip(
@@ -19779,21 +19817,21 @@ fn render_inherited_shares_section(state: &CockpitState) -> impl IntoElement {
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(6.0))
-                        .child(div().text_size(px(10.0)).child(icon))
+                        .gap(ui::s(6.0))
+                        .child(div().text_size(ui::TEXT_SM).child(icon))
                         .child(
                             div()
                                 .flex_grow()
                                 .overflow_hidden()
-                                .text_size(px(10.0))
+                                .text_size(ui::TEXT_SM)
                                 .text_color(rgb(theme::FG))
                                 .child(target),
                         )
                         .when(!trailing.is_empty(), |el| {
                             el.child(
                                 div()
-                                    .text_size(px(9.0))
-                                    .text_color(rgb(theme::FG_FAINT))
+                                    .text_size(ui::TEXT_XS)
+                                    .text_color(rgb(theme::FG_MUTED))
                                     .child(trailing.join(" · ")),
                             )
                         }),
@@ -19810,12 +19848,12 @@ fn render_inherited_shares_section(state: &CockpitState) -> impl IntoElement {
 /// question directly, hence the count in the header — "11 people" is
 /// itself the finding when you expected three.
 fn render_effective_viewers_section(state: &CockpitState) -> impl IntoElement {
-    let container = div().flex().flex_col().gap(px(4.0)).mt(px(8.0));
+    let container = div().flex().flex_col().gap(ui::s(4.0)).mt(ui::s(8.0));
 
     let Some(summary) = state.access_summary.as_ref() else {
         return container.child(
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(theme::FG_DIM))
                 .child("Who can see this…"),
@@ -19825,7 +19863,7 @@ fn render_effective_viewers_section(state: &CockpitState) -> impl IntoElement {
     container
         .child(
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(theme::FG_DIM))
                 .child(format!("Who can see this ({})", summary.viewers.len())),
@@ -19833,8 +19871,8 @@ fn render_effective_viewers_section(state: &CockpitState) -> impl IntoElement {
         .when(summary.viewers.is_empty(), |el| {
             el.child(
                 div()
-                    .text_size(px(10.0))
-                    .text_color(rgb(theme::FG_FAINT))
+                    .text_size(ui::TEXT_SM)
+                    .text_color(rgb(theme::FG_MUTED))
                     // Not "nobody": public/link visibility is reachable
                     // without being an enumerable principal, so the
                     // honest claim is about named viewers only.
@@ -19850,14 +19888,14 @@ fn render_effective_viewers_section(state: &CockpitState) -> impl IntoElement {
             div()
                 .flex()
                 .items_center()
-                .gap(px(8.0))
-                .px(px(10.0))
-                .py(px(4.0))
-                .rounded(px(4.0))
+                .gap(ui::s(8.0))
+                .px(ui::s(10.0))
+                .py(ui::s(4.0))
+                .rounded(ui::s(4.0))
                 .bg(rgb(theme::BG_ELEVATED))
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(rgb(theme::FG))
                         .child(name),
                 )
@@ -19866,8 +19904,8 @@ fn render_effective_viewers_section(state: &CockpitState) -> impl IntoElement {
                     div()
                         .flex_grow()
                         .overflow_hidden()
-                        .text_size(px(9.0))
-                        .text_color(rgb(theme::FG_FAINT))
+                        .text_size(ui::TEXT_XS)
+                        .text_color(rgb(theme::FG_MUTED))
                         .child(via),
                 )
         }))
@@ -19899,7 +19937,7 @@ fn annotation_status_color(status: &str) -> u32 {
         // objection and rejected it, which is a real answer. Dimmed, not
         // red.
         "declined" => theme::FG_DIM,
-        _ => theme::FG_FAINT,
+        _ => theme::FG_MUTED,
     }
 }
 
@@ -19912,16 +19950,16 @@ fn render_assumptions_tab(
         .id("assumptions-tab")
         .flex()
         .flex_col()
-        .gap(px(10.0))
-        .p(px(16.0));
+        .gap(ui::s(10.0))
+        .p(ui::s(16.0));
 
     // Annotations hang off the server-side forecast row, so a draft has
     // nothing to hang them on.
     if state.forecast_id.is_none() {
         return container.child(
             div()
-                .p(px(8.0))
-                .text_size(px(11.0))
+                .p(ui::s(8.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(rgb(theme::FG_DIM))
                 .child(format!(
                     "Publish this forecast first ({}). Assumptions can be challenged \
@@ -19936,9 +19974,9 @@ fn render_assumptions_tab(
         render_assumptions_error(state, cx).into_any_element()
     } else if state.annotations.is_none() {
         div()
-            .p(px(8.0))
-            .text_size(px(11.0))
-            .text_color(rgb(theme::FG_FAINT))
+            .p(ui::s(8.0))
+            .text_size(ui::TEXT_BASE)
+            .text_color(rgb(theme::FG_MUTED))
             .child(if state.annotations_loading {
                 "Loading…"
             } else {
@@ -19960,10 +19998,10 @@ fn render_assumptions_tab(
             div()
                 .flex()
                 .items_center()
-                .gap(px(8.0))
+                .gap(ui::s(8.0))
                 .child(
                     div()
-                        .text_size(px(13.0))
+                        .text_size(ui::TEXT_LG)
                         .font_weight(FontWeight::BOLD)
                         .text_color(rgb(theme::CYAN))
                         .child("⚖ Assumptions"),
@@ -19971,11 +20009,11 @@ fn render_assumptions_tab(
                 .when(open_total > 0, |el| {
                     el.child(
                         div()
-                            .px(px(6.0))
-                            .py(px(1.0))
-                            .rounded(px(3.0))
+                            .px(ui::s(6.0))
+                            .py(ui::s(1.0))
+                            .rounded(ui::s(3.0))
                             .bg(rgb(theme::BG_ELEVATED))
-                            .text_size(px(9.0))
+                            .text_size(ui::TEXT_XS)
                             .text_color(rgb(theme::GOLD))
                             .child(format!(
                                 "{} open challenge{}",
@@ -19987,7 +20025,7 @@ fn render_assumptions_tab(
         )
         .child(
             div()
-                .text_size(px(10.0))
+                .text_size(ui::TEXT_SM)
                 .text_color(rgb(theme::FG_DIM))
                 .child(
                     "Challenge a specific input rather than the question. Anyone who can \
@@ -19997,13 +20035,13 @@ fn render_assumptions_tab(
         .when(state.annotations_error.is_some() && !fatal, |el| {
             el.child(
                 div()
-                    .px(px(10.0))
-                    .py(px(6.0))
-                    .rounded(px(4.0))
+                    .px(ui::s(10.0))
+                    .py(ui::s(6.0))
+                    .rounded(ui::s(4.0))
                     .bg(rgb(theme::BG_ELEVATED))
                     .border_1()
                     .border_color(rgb(theme::RED))
-                    .text_size(px(10.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(rgb(theme::RED))
                     .child(
                         state
@@ -20031,27 +20069,27 @@ fn render_assumptions_error(
     div()
         .flex()
         .flex_col()
-        .gap(px(8.0))
-        .px(px(12.0))
-        .py(px(10.0))
-        .rounded(px(6.0))
+        .gap(ui::s(8.0))
+        .px(ui::s(12.0))
+        .py(ui::s(10.0))
+        .rounded(ui::s(6.0))
         .bg(rgb(theme::BG_ELEVATED))
         .border_1()
         .border_color(rgb(theme::RED))
         .child(
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(rgb(theme::RED))
                 .child(message),
         )
         .child(
             div()
                 .id("assumptions-retry")
-                .px(px(10.0))
-                .py(px(4.0))
-                .rounded(px(4.0))
+                .px(ui::s(10.0))
+                .py(ui::s(4.0))
+                .rounded(ui::s(4.0))
                 .bg(rgb(theme::BG))
-                .text_size(px(10.0))
+                .text_size(ui::TEXT_SM)
                 .text_color(rgb(theme::FG_DIM))
                 .cursor_pointer()
                 .hover(|s| s.text_color(rgb(theme::FG)))
@@ -20087,13 +20125,13 @@ fn render_assumptions_body(
     div()
         .flex()
         .flex_col()
-        .gap(px(6.0))
+        .gap(ui::s(6.0))
         .when(drivers.is_empty(), |el| {
             el.child(
                 div()
-                    .text_size(px(10.0))
-                    .text_color(rgb(theme::FG_FAINT))
-                    .p(px(8.0))
+                    .text_size(ui::TEXT_SM)
+                    .text_color(rgb(theme::FG_MUTED))
+                    .p(ui::s(8.0))
                     .child(
                         "This program declares no drivers yet. You can still raise a \
                          challenge against the forecast as a whole, below.",
@@ -20110,10 +20148,10 @@ fn render_assumptions_body(
         // hiding it until it has content would make it undiscoverable.
         .child(
             div()
-                .mt(px(6.0))
-                .pt(px(6.0))
+                .mt(ui::s(6.0))
+                .pt(ui::s(6.0))
                 .border_t_1()
-                .border_color(rgb(theme::FG_FAINT))
+                .border_color(rgb(theme::BORDER))
                 .child(
                     render_annotation_group(
                         state,
@@ -20162,10 +20200,10 @@ fn render_annotation_group(
     div()
         .flex()
         .flex_col()
-        .gap(px(4.0))
-        .px(px(8.0))
-        .py(px(6.0))
-        .rounded(px(4.0))
+        .gap(ui::s(4.0))
+        .px(ui::s(8.0))
+        .py(ui::s(6.0))
+        .rounded(ui::s(4.0))
         // Contested drivers are tinted so the eye finds them while
         // scanning the list, which is the whole reason the uncontested
         // ones are rendered too.
@@ -20178,11 +20216,11 @@ fn render_annotation_group(
             div()
                 .flex()
                 .items_center()
-                .gap(px(8.0))
+                .gap(ui::s(8.0))
                 .child(
                     div()
                         .flex_1()
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .font_weight(if open > 0 {
                             FontWeight::BOLD
                         } else {
@@ -20194,11 +20232,11 @@ fn render_annotation_group(
                 .when(open > 0, |el| {
                     el.child(
                         div()
-                            .px(px(5.0))
-                            .py(px(1.0))
-                            .rounded(px(3.0))
+                            .px(ui::s(5.0))
+                            .py(ui::s(1.0))
+                            .rounded(ui::s(3.0))
                             .bg(rgb(theme::BG))
-                            .text_size(px(9.0))
+                            .text_size(ui::TEXT_XS)
                             .text_color(rgb(theme::GOLD))
                             .child(format!("contested ×{}", open)),
                     )
@@ -20206,18 +20244,18 @@ fn render_annotation_group(
                 .when(total > open, |el| {
                     el.child(
                         div()
-                            .text_size(px(9.0))
-                            .text_color(rgb(theme::FG_FAINT))
+                            .text_size(ui::TEXT_XS)
+                            .text_color(rgb(theme::FG_MUTED))
                             .child(format!("{} answered", total - open)),
                     )
                 })
                 .child(
                     div()
                         .id(ElementId::Name(format!("ann-add-{}", key).into()))
-                        .px(px(6.0))
-                        .py(px(2.0))
-                        .rounded(px(3.0))
-                        .text_size(px(10.0))
+                        .px(ui::s(6.0))
+                        .py(ui::s(2.0))
+                        .rounded(ui::s(3.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(rgb(theme::FG_DIM))
                         .cursor_pointer()
                         .hover(|s| s.text_color(rgb(theme::CYAN)))
@@ -20264,33 +20302,33 @@ fn render_annotation_row(
     div()
         .flex()
         .flex_col()
-        .gap(px(2.0))
-        .ml(px(10.0))
-        .pl(px(8.0))
-        .py(px(3.0))
+        .gap(ui::s(2.0))
+        .ml(ui::s(10.0))
+        .pl(ui::s(8.0))
+        .py(ui::s(3.0))
         .border_l_2()
         .border_color(rgb(annotation_status_color(&a.status)))
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(px(6.0))
+                .gap(ui::s(6.0))
                 .child(
                     div()
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(rgb(annotation_status_color(&a.status)))
                         .child(a.kind_glyph()),
                 )
                 .child(
                     div()
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(rgb(theme::FG_DIM))
                         .child(a.author_label().to_string()),
                 )
                 .when(!is_open, |el| {
                     el.child(
                         div()
-                            .text_size(px(9.0))
+                            .text_size(ui::TEXT_XS)
                             .text_color(rgb(annotation_status_color(&a.status)))
                             .child(match a.status.as_str() {
                                 "accepted" => "accepted".to_string(),
@@ -20308,8 +20346,8 @@ fn render_annotation_row(
                     el.child(
                         div()
                             .id(ElementId::Name(format!("ann-answer-{}", id_resolve).into()))
-                            .text_size(px(9.0))
-                            .text_color(rgb(theme::FG_FAINT))
+                            .text_size(ui::TEXT_XS)
+                            .text_color(rgb(theme::FG_MUTED))
                             .cursor_pointer()
                             .hover(|s| s.text_color(rgb(theme::CYAN)))
                             .on_click(cx.listener(move |this, _e, _w, cx| {
@@ -20323,8 +20361,8 @@ fn render_annotation_row(
                     el.child(
                         div()
                             .id(ElementId::Name(format!("ann-del-{}", id_delete).into()))
-                            .text_size(px(9.0))
-                            .text_color(rgb(theme::FG_FAINT))
+                            .text_size(ui::TEXT_XS)
+                            .text_color(rgb(theme::FG_MUTED))
                             .cursor_pointer()
                             .hover(|s| s.text_color(rgb(theme::RED)))
                             .on_click(cx.listener(move |this, _e, _w, cx| {
@@ -20336,14 +20374,14 @@ fn render_annotation_row(
         )
         .child(
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(rgb(if is_open { theme::FG } else { theme::FG_DIM }))
                 .child(a.body.clone()),
         )
         .when_some(a.resolution_note.clone(), |el, note| {
             el.child(
                 div()
-                    .text_size(px(10.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(rgb(theme::FG_DIM))
                     .child(format!("↳ {}", note)),
             )
@@ -20355,17 +20393,17 @@ fn render_annotation_row(
             el.child(
                 div()
                     .flex()
-                    .gap(px(6.0))
-                    .mt(px(2.0))
+                    .gap(ui::s(6.0))
+                    .mt(ui::s(2.0))
                     .child(
                         div()
                             .id(ElementId::Name(format!("ann-acc-{}", id_accept).into()))
-                            .px(px(6.0))
-                            .py(px(2.0))
-                            .rounded(px(3.0))
+                            .px(ui::s(6.0))
+                            .py(ui::s(2.0))
+                            .rounded(ui::s(3.0))
                             .bg(rgb(theme::BG))
-                            .text_size(px(9.0))
-                            .text_color(rgb(if busy { theme::FG_FAINT } else { theme::GREEN }))
+                            .text_size(ui::TEXT_XS)
+                            .text_color(rgb(if busy { theme::FG_MUTED } else { theme::GREEN }))
                             .cursor_pointer()
                             .on_click(cx.listener(move |this, _e, _w, cx| {
                                 this.resolve_annotation(id_accept.clone(), "accepted", cx);
@@ -20375,12 +20413,12 @@ fn render_annotation_row(
                     .child(
                         div()
                             .id(ElementId::Name(format!("ann-dec-{}", id_decline).into()))
-                            .px(px(6.0))
-                            .py(px(2.0))
-                            .rounded(px(3.0))
+                            .px(ui::s(6.0))
+                            .py(ui::s(2.0))
+                            .rounded(ui::s(3.0))
                             .bg(rgb(theme::BG))
-                            .text_size(px(9.0))
-                            .text_color(rgb(if busy { theme::FG_FAINT } else { theme::FG_DIM }))
+                            .text_size(ui::TEXT_XS)
+                            .text_color(rgb(if busy { theme::FG_MUTED } else { theme::FG_DIM }))
                             .cursor_pointer()
                             .on_click(cx.listener(move |this, _e, _w, cx| {
                                 this.resolve_annotation(id_decline.clone(), "declined", cx);
@@ -20411,23 +20449,23 @@ fn render_annotation_composer(
     div()
         .flex()
         .flex_col()
-        .gap(px(4.0))
-        .ml(px(10.0))
-        .mt(px(4.0))
+        .gap(ui::s(4.0))
+        .ml(ui::s(10.0))
+        .mt(ui::s(4.0))
         .child(state.annotation_input.clone())
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(px(6.0))
+                .gap(ui::s(6.0))
                 .child(
                     div()
                         .id("ann-kind-chip")
-                        .px(px(6.0))
-                        .py(px(2.0))
-                        .rounded(px(3.0))
+                        .px(ui::s(6.0))
+                        .py(ui::s(2.0))
+                        .rounded(ui::s(3.0))
                         .bg(rgb(theme::BG))
-                        .text_size(px(9.0))
+                        .text_size(ui::TEXT_XS)
                         .text_color(rgb(theme::FG_DIM))
                         .cursor_pointer()
                         .hover(|s| s.text_color(rgb(theme::CYAN)))
@@ -20452,12 +20490,12 @@ fn render_annotation_composer(
                 .child(
                     div()
                         .id("ann-submit")
-                        .px(px(8.0))
-                        .py(px(2.0))
-                        .rounded(px(3.0))
+                        .px(ui::s(8.0))
+                        .py(ui::s(2.0))
+                        .rounded(ui::s(3.0))
                         .bg(rgb(theme::BG_ELEVATED))
-                        .text_size(px(10.0))
-                        .text_color(rgb(if busy { theme::FG_FAINT } else { theme::CYAN }))
+                        .text_size(ui::TEXT_SM)
+                        .text_color(rgb(if busy { theme::FG_MUTED } else { theme::CYAN }))
                         .cursor_pointer()
                         .on_click(cx.listener(move |this, _e, _w, cx| {
                             this.submit_annotation(driver.clone(), cx);
@@ -20466,8 +20504,8 @@ fn render_annotation_composer(
                 )
                 .child(
                     div()
-                        .text_size(px(9.0))
-                        .text_color(rgb(theme::FG_FAINT))
+                        .text_size(ui::TEXT_XS)
+                        .text_color(rgb(theme::FG_MUTED))
                         .child(match kind.as_str() {
                             "challenge" => "Becomes team coordination work until answered.",
                             "question" => "Visible to everyone; doesn't become team work.",
@@ -20487,12 +20525,17 @@ fn render_annotation_composer(
 // separate pane the operator has to scroll to and correlate by eye.
 // ═══════════════════════════════════════════════════════════════════
 
-/// Width of the actor column in the commit list.
+/// Width of the actor column in the commit list, in design pixels.
 ///
 /// Fixed rather than content-sized so every author name starts at the
 /// same x: the list's main job is letting the eye run down one column
 /// and see who has been working on this.
-const HISTORY_ACTOR_COL: f32 = 130.0;
+///
+/// Widened from 130 alongside the type-scale change. The column is
+/// `overflow_hidden`, so it clips rather than growing — leaving it at a
+/// width measured against the old 11px body text would have silently
+/// truncated a character off every name.
+const HISTORY_ACTOR_COL: f32 = 154.0;
 
 /// How many diff lines are rendered before truncating.
 ///
@@ -20541,16 +20584,16 @@ fn render_history_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> i
         .id("history-tab")
         .flex()
         .flex_col()
-        .gap(px(10.0))
-        .p(px(16.0));
+        .gap(ui::s(10.0))
+        .p(ui::s(16.0));
 
     // History is a property of the server-side forecast row; a draft
     // that has never been saved has nothing to have a history of.
     if state.forecast_id.is_none() {
         return container.child(
             div()
-                .p(px(8.0))
-                .text_size(px(11.0))
+                .p(ui::s(8.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(rgb(theme::FG_DIM))
                 .child(format!(
                     "Publish this forecast first ({}). Its history starts at the first save.",
@@ -20568,9 +20611,9 @@ fn render_history_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> i
         render_history_error(state, cx).into_any_element()
     } else if state.forecast_history.is_none() {
         div()
-            .p(px(8.0))
-            .text_size(px(11.0))
-            .text_color(rgb(theme::FG_FAINT))
+            .p(ui::s(8.0))
+            .text_size(ui::TEXT_BASE)
+            .text_color(rgb(theme::FG_MUTED))
             .child(if state.history_loading {
                 "Reading the log…"
             } else {
@@ -20584,14 +20627,14 @@ fn render_history_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> i
     container
         .child(
             div()
-                .text_size(px(13.0))
+                .text_size(ui::TEXT_LG)
                 .font_weight(FontWeight::BOLD)
                 .text_color(rgb(theme::CYAN))
                 .child("🕒 History"),
         )
         .child(
             div()
-                .text_size(px(10.0))
+                .text_size(ui::TEXT_SM)
                 .text_color(rgb(theme::FG_DIM))
                 .child(
                     "Every save commits the whole forecast — program, drivers, evidence, \
@@ -20614,16 +20657,16 @@ fn render_history_error(state: &CockpitState, cx: &mut Context<CockpitState>) ->
     div()
         .flex()
         .flex_col()
-        .gap(px(8.0))
-        .px(px(12.0))
-        .py(px(10.0))
-        .rounded(px(6.0))
+        .gap(ui::s(8.0))
+        .px(ui::s(12.0))
+        .py(ui::s(10.0))
+        .rounded(ui::s(6.0))
         .bg(rgb(theme::BG_ELEVATED))
         .border_1()
         .border_color(rgb(theme::RED))
         .child(
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(theme::RED))
                 .child("Couldn't load the history"),
@@ -20632,7 +20675,7 @@ fn render_history_error(state: &CockpitState, cx: &mut Context<CockpitState>) ->
         // read, and they carry the only diagnosis available client-side.
         .child(
             div()
-                .text_size(px(10.0))
+                .text_size(ui::TEXT_SM)
                 .text_color(rgb(theme::FG))
                 .child(message),
         )
@@ -20642,11 +20685,11 @@ fn render_history_error(state: &CockpitState, cx: &mut Context<CockpitState>) ->
             div().flex().child(
                 div()
                     .id("history-retry")
-                    .px(px(10.0))
-                    .py(px(4.0))
-                    .rounded(px(4.0))
+                    .px(ui::s(10.0))
+                    .py(ui::s(4.0))
+                    .rounded(ui::s(4.0))
                     .bg(rgb(theme::BG_ACTIVE))
-                    .text_size(px(10.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(rgb(theme::CYAN))
                     .cursor_pointer()
                     .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -20668,20 +20711,20 @@ fn render_history_error(state: &CockpitState, cx: &mut Context<CockpitState>) ->
 fn render_history_error_strip(state: &CockpitState) -> impl IntoElement {
     let message = state.history_error.clone().unwrap_or_default();
     div()
-        .px(px(10.0))
-        .py(px(6.0))
-        .rounded(px(4.0))
+        .px(ui::s(10.0))
+        .py(ui::s(6.0))
+        .rounded(ui::s(4.0))
         .bg(rgb(theme::BG_ELEVATED))
         .border_l_2()
         .border_color(rgb(theme::RED))
-        .text_size(px(10.0))
+        .text_size(ui::TEXT_SM)
         .text_color(rgb(theme::FG))
         .child(message)
 }
 
 /// The log itself, or an honest account of why there isn't one.
 fn render_history_body(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl IntoElement {
-    let container = div().flex().flex_col().gap(px(2.0));
+    let container = div().flex().flex_col().gap(ui::s(2.0));
     let Some(history) = state.forecast_history.as_ref() else {
         return container;
     };
@@ -20694,23 +20737,23 @@ fn render_history_body(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
         });
         return container.child(
             div()
-                .px(px(12.0))
-                .py(px(10.0))
-                .rounded(px(6.0))
+                .px(ui::s(12.0))
+                .py(ui::s(10.0))
+                .rounded(ui::s(6.0))
                 .bg(rgb(theme::BG_ELEVATED))
                 .flex()
                 .flex_col()
-                .gap(px(4.0))
+                .gap(ui::s(4.0))
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(rgb(theme::FG))
                         .child(note),
                 )
                 .child(
                     div()
-                        .text_size(px(10.0))
-                        .text_color(rgb(theme::FG_FAINT))
+                        .text_size(ui::TEXT_SM)
+                        .text_color(rgb(theme::FG_MUTED))
                         .child("Nothing is missing — there is simply nothing recorded yet."),
                 ),
         );
@@ -20723,13 +20766,13 @@ fn render_history_body(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
     if history.commits.is_empty() {
         return container.child(
             div()
-                .px(px(12.0))
-                .py(px(10.0))
-                .rounded(px(6.0))
+                .px(ui::s(12.0))
+                .py(ui::s(10.0))
+                .rounded(ui::s(6.0))
                 .bg(rgb(theme::BG_ELEVATED))
                 .border_l_2()
                 .border_color(rgb(theme::GOLD))
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(rgb(theme::FG_DIM))
                 .child(
                     "This forecast has a repository but the log came back empty. \
@@ -20742,9 +20785,9 @@ fn render_history_body(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
     container
         .child(
             div()
-                .text_size(px(10.0))
+                .text_size(ui::TEXT_SM)
                 .text_color(rgb(theme::FG_DIM))
-                .mb(px(2.0))
+                .mb(ui::s(2.0))
                 .child(format!("{} revisions · newest first", history.count)),
         )
         // Server order is reverse-chronological already. Re-sorting
@@ -20772,9 +20815,9 @@ fn render_commit_row(
     // System commits are cron runs and auto-resolutions. Rendering them
     // at full weight would read as a person having done the work, which
     // is exactly the attribution this feature exists to get right.
-    let actor_color = if system { theme::FG_FAINT } else { theme::FG };
+    let actor_color = if system { theme::FG_MUTED } else { theme::FG };
     let bullet_color = if system {
-        theme::FG_FAINT
+        theme::FG_MUTED
     } else if selected {
         theme::CYAN
     } else {
@@ -20803,10 +20846,10 @@ fn render_commit_row(
                 .id(SharedString::from(format!("history-commit-{}", commit.sha)))
                 .flex()
                 .items_center()
-                .gap(px(8.0))
-                .px(px(8.0))
-                .py(px(5.0))
-                .rounded(px(4.0))
+                .gap(ui::s(8.0))
+                .px(ui::s(8.0))
+                .py(ui::s(5.0))
+                .rounded(ui::s(4.0))
                 .cursor_pointer()
                 .when(selected, |el| el.bg(rgb(theme::BG_ACTIVE)))
                 .hover(|s| s.bg(theme::bg_hover()))
@@ -20815,16 +20858,16 @@ fn render_commit_row(
                 }))
                 .child(
                     div()
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(rgb(bullet_color))
                         .child("●"),
                 )
                 .child(
                     div()
-                        .w(px(HISTORY_ACTOR_COL))
+                        .w(ui::s(HISTORY_ACTOR_COL))
                         .flex_shrink_0()
                         .overflow_hidden()
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .font_weight(if system {
                             FontWeight::NORMAL
                         } else {
@@ -20837,9 +20880,9 @@ fn render_commit_row(
                     div()
                         .flex_grow()
                         .overflow_hidden()
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(rgb(if system {
-                            theme::FG_FAINT
+                            theme::FG_MUTED
                         } else {
                             theme::FG_DIM
                         }))
@@ -20848,8 +20891,8 @@ fn render_commit_row(
                 .child(
                     div()
                         .flex_shrink_0()
-                        .text_size(px(10.0))
-                        .text_color(rgb(theme::FG_FAINT))
+                        .text_size(ui::TEXT_SM)
+                        .text_color(rgb(theme::FG_MUTED))
                         .child(when),
                 ),
         )
@@ -20871,21 +20914,21 @@ fn render_commit_detail(
     div()
         .flex()
         .flex_col()
-        .gap(px(6.0))
-        .ml(px(8.0))
-        .pl(px(10.0))
-        .py(px(6.0))
+        .gap(ui::s(6.0))
+        .ml(ui::s(8.0))
+        .pl(ui::s(10.0))
+        .py(ui::s(6.0))
         .border_l_1()
-        .border_color(rgb(theme::FG_FAINT))
+        .border_color(rgb(theme::BORDER))
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(px(10.0))
+                .gap(ui::s(10.0))
                 .child(
                     div()
-                        .text_size(px(10.0))
-                        .text_color(rgb(theme::FG_FAINT))
+                        .text_size(ui::TEXT_SM)
+                        .text_color(rgb(theme::FG_MUTED))
                         .font_family("Ubuntu Mono, DejaVu Sans Mono, monospace")
                         .child(short.to_string()),
                 )
@@ -20896,8 +20939,8 @@ fn render_commit_detail(
         // be readable *before* the operator decides.
         .child(
             div()
-                .text_size(px(9.0))
-                .text_color(rgb(theme::FG_FAINT))
+                .text_size(ui::TEXT_XS)
+                .text_color(rgb(theme::FG_MUTED))
                 .child(
                     "Reverting writes a new commit — it never rewrites history, \
                      and can itself be reverted.",
@@ -20930,16 +20973,16 @@ fn render_revert_control(
     div()
         .flex()
         .items_center()
-        .gap(px(8.0))
+        .gap(ui::s(8.0))
         .child(
             div()
                 .id(SharedString::from(format!("history-revert-{}", commit.sha)))
-                .px(px(8.0))
-                .py(px(3.0))
-                .rounded(px(4.0))
+                .px(ui::s(8.0))
+                .py(ui::s(3.0))
+                .rounded(ui::s(4.0))
                 .border_1()
                 .border_color(rgb(color))
-                .text_size(px(10.0))
+                .text_size(ui::TEXT_SM)
                 .text_color(rgb(color))
                 .font_weight(FontWeight::SEMIBOLD)
                 // Disabled rather than absent: a missing button reads as
@@ -20958,8 +21001,8 @@ fn render_revert_control(
         .when(!can_edit, |el| {
             el.child(
                 div()
-                    .text_size(px(9.0))
-                    .text_color(rgb(theme::FG_FAINT))
+                    .text_size(ui::TEXT_XS)
+                    .text_color(rgb(theme::FG_MUTED))
                     .child("— needs edit access"),
             )
         })
@@ -20970,18 +21013,18 @@ fn render_diff_pane(state: &CockpitState) -> impl IntoElement {
     let pane = div()
         .flex()
         .flex_col()
-        .px(px(10.0))
-        .py(px(8.0))
-        .rounded(px(4.0))
+        .px(ui::s(10.0))
+        .py(ui::s(8.0))
+        .rounded(ui::s(4.0))
         .bg(rgb(theme::BG))
         .border_1()
-        .border_color(rgb(theme::FG_FAINT));
+        .border_color(rgb(theme::BORDER));
 
     let Some(diff) = state.commit_diff.as_ref() else {
         return pane.child(
             div()
-                .text_size(px(10.0))
-                .text_color(rgb(theme::FG_FAINT))
+                .text_size(ui::TEXT_SM)
+                .text_color(rgb(theme::FG_MUTED))
                 .child(if state.diff_loading {
                     "Computing diff…"
                 } else {
@@ -20993,8 +21036,8 @@ fn render_diff_pane(state: &CockpitState) -> impl IntoElement {
     if diff.diff.trim().is_empty() {
         return pane.child(
             div()
-                .text_size(px(10.0))
-                .text_color(rgb(theme::FG_FAINT))
+                .text_size(ui::TEXT_SM)
+                .text_color(rgb(theme::FG_MUTED))
                 // Real and worth distinguishing from a failed fetch: the
                 // initial commit has no parent to diff against.
                 .child("No textual change against the previous revision."),
@@ -21011,7 +21054,7 @@ fn render_diff_pane(state: &CockpitState) -> impl IntoElement {
     pane.children(lines.iter().take(DIFF_MAX_LINES).map(|line| {
         let (color, emphasised) = diff_line_style(line).unwrap_or((theme::FG_DIM, false));
         div()
-            .text_size(px(10.0))
+            .text_size(ui::TEXT_SM)
             .font_family("Ubuntu Mono, DejaVu Sans Mono, monospace")
             .text_color(rgb(color))
             .when(emphasised, |el| el.font_weight(FontWeight::SEMIBOLD))
@@ -21027,9 +21070,9 @@ fn render_diff_pane(state: &CockpitState) -> impl IntoElement {
     .when(truncated > 0, |el| {
         el.child(
             div()
-                .mt(px(4.0))
-                .text_size(px(9.0))
-                .text_color(rgb(theme::FG_FAINT))
+                .mt(ui::s(4.0))
+                .text_size(ui::TEXT_XS)
+                .text_color(rgb(theme::FG_MUTED))
                 .child(format!("… {} more lines not shown", truncated)),
         )
     })
@@ -21066,21 +21109,21 @@ fn render_readonly_banner(state: &CockpitState) -> impl IntoElement {
     div()
         .flex()
         .items_center()
-        .gap(px(10.0))
-        .px(px(16.0))
-        .py(px(8.0))
+        .gap(ui::s(10.0))
+        .px(ui::s(16.0))
+        .py(ui::s(8.0))
         .bg(rgb(theme::BG_ELEVATED))
         .border_b_1()
         .border_color(rgb(theme::GOLD))
         .child(
             div()
-                .text_size(px(14.0))
+                .text_size(ui::TEXT_XL)
                 .text_color(rgb(theme::GOLD))
                 .child("👁"),
         )
         .child(
             div()
-                .text_size(px(12.0))
+                .text_size(ui::TEXT_MD)
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(theme::GOLD))
                 .child("Read-only"),
@@ -21089,7 +21132,7 @@ fn render_readonly_banner(state: &CockpitState) -> impl IntoElement {
             div()
                 .flex_grow()
                 .overflow_hidden()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(rgb(theme::FG_DIM))
                 .child(format!("{} {}", standing, ask)),
         )
@@ -21111,33 +21154,38 @@ fn render_forecast_invites_section(
         .take(3)
         .collect();
 
-    let mut container = div().flex().flex_col().gap(px(6.0)).mt(px(8.0)).child(
-        div()
-            .flex()
-            .items_center()
-            .gap(px(8.0))
-            .child(
-                div()
-                    .text_size(px(11.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(theme::FG_DIM))
-                    .child(format!("Sent invites ({} pending)", pending.len())),
-            )
-            .when(state.forecast_invites_loading, |el| {
-                el.child(
+    let mut container = div()
+        .flex()
+        .flex_col()
+        .gap(ui::s(6.0))
+        .mt(ui::s(8.0))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(ui::s(8.0))
+                .child(
                     div()
-                        .text_size(px(10.0))
-                        .text_color(rgb(theme::FG_FAINT))
-                        .child("loading…"),
+                        .text_size(ui::TEXT_BASE)
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(theme::FG_DIM))
+                        .child(format!("Sent invites ({} pending)", pending.len())),
                 )
-            }),
-    );
+                .when(state.forecast_invites_loading, |el| {
+                    el.child(
+                        div()
+                            .text_size(ui::TEXT_SM)
+                            .text_color(rgb(theme::FG_MUTED))
+                            .child("loading…"),
+                    )
+                }),
+        );
 
     if pending.is_empty() && recent_terminal.is_empty() && !state.forecast_invites_loading {
         container = container.child(
             div()
-                .text_size(px(10.0))
-                .text_color(rgb(theme::FG_FAINT))
+                .text_size(ui::TEXT_SM)
+                .text_color(rgb(theme::FG_MUTED))
                 .child("No outbound invitations. Add an email above to send one."),
         );
         return container;
@@ -21158,44 +21206,44 @@ fn render_forecast_invites_section(
             "accepted" => rgb(theme::GREEN),
             "declined" => rgb(theme::RED),
             "revoked" => rgb(theme::FG_DIM),
-            "expired" => rgb(theme::FG_FAINT),
+            "expired" => rgb(theme::FG_MUTED),
             _ => rgb(theme::FG_DIM),
         };
         let mut row = div()
             .flex()
             .items_center()
-            .gap(px(8.0))
-            .px(px(10.0))
-            .py(px(6.0))
-            .rounded(px(6.0))
+            .gap(ui::s(8.0))
+            .px(ui::s(10.0))
+            .py(ui::s(6.0))
+            .rounded(ui::s(6.0))
             .bg(rgb(theme::BG_ELEVATED))
-            .child(div().text_size(px(12.0)).child("✉"))
+            .child(div().text_size(ui::TEXT_MD).child("✉"))
             .child(
                 div()
                     .flex_grow()
                     .flex()
                     .flex_col()
-                    .gap(px(1.0))
+                    .gap(ui::s(1.0))
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(rgb(theme::FG))
                             .child(recipient),
                     )
                     .child(
                         div()
-                            .text_size(px(9.0))
-                            .text_color(rgb(theme::FG_FAINT))
+                            .text_size(ui::TEXT_XS)
+                            .text_color(rgb(theme::FG_MUTED))
                             .child(format!("{} access", inv.permission)),
                     ),
             )
             .child(
                 div()
-                    .px(px(8.0))
-                    .py(px(2.0))
-                    .rounded(px(4.0))
+                    .px(ui::s(8.0))
+                    .py(ui::s(2.0))
+                    .rounded(ui::s(4.0))
                     .bg(rgb(theme::BG_ACTIVE))
-                    .text_size(px(10.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(status_color)
                     .child(inv.status.clone()),
             );
@@ -21217,10 +21265,10 @@ fn render_forecast_invites_section(
                 row = row.child(
                     div()
                         .id(ElementId::Name(format!("finv-copy-{}", iid).into()))
-                        .px(px(6.0))
-                        .py(px(2.0))
-                        .rounded(px(4.0))
-                        .text_size(px(11.0))
+                        .px(ui::s(6.0))
+                        .py(ui::s(2.0))
+                        .rounded(ui::s(4.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(rgb(theme::CYAN))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -21245,18 +21293,18 @@ fn render_forecast_invites_section(
                 let url_display = invite_url.clone();
                 row = row.child(
                     div()
-                        .text_size(px(9.0))
-                        .text_color(rgb(theme::FG_FAINT))
+                        .text_size(ui::TEXT_XS)
+                        .text_color(rgb(theme::FG_MUTED))
                         .child(url_display),
                 );
             }
             row = row.child(
                 div()
                     .id(ElementId::Name(format!("finv-revoke-{}", iid).into()))
-                    .px(px(6.0))
-                    .py(px(2.0))
-                    .rounded(px(4.0))
-                    .text_size(px(11.0))
+                    .px(ui::s(6.0))
+                    .py(ui::s(2.0))
+                    .rounded(ui::s(4.0))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(rgb(theme::FG_DIM))
                     .cursor_pointer()
                     .hover(|s| s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::RED)))
@@ -21290,22 +21338,22 @@ fn render_on_demand_agents_list(
 ) -> impl IntoElement {
     let n = on_demand.len();
     let header = div()
-        .px(px(14.0))
-        .py(px(10.0))
+        .px(ui::s(14.0))
+        .py(ui::s(10.0))
         .border_b_1()
-        .border_color(rgb(theme::FG_FAINT))
+        .border_color(rgb(theme::BORDER))
         .flex()
         .items_center()
-        .gap(px(10.0))
+        .gap(ui::s(10.0))
         .child(
             div()
                 .flex_grow()
                 .flex()
                 .flex_col()
-                .gap(px(2.0))
+                .gap(ui::s(2.0))
                 .child(
                     div()
-                        .text_size(px(12.0))
+                        .text_size(ui::TEXT_MD)
                         .text_color(rgb(theme::FG))
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(format!(
@@ -21316,7 +21364,7 @@ fn render_on_demand_agents_list(
                 )
                 .child(
                     div()
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(rgb(theme::FG_DIM))
                         .child(
                             "These agents are hired to drivers but only fire when you \
@@ -21336,39 +21384,39 @@ fn render_on_demand_agents_list(
             let d_now = driver_name.clone();
 
             div()
-                .px(px(14.0))
-                .py(px(8.0))
+                .px(ui::s(14.0))
+                .py(ui::s(8.0))
                 .border_b_1()
-                .border_color(rgb(theme::FG_FAINT))
+                .border_color(rgb(theme::BORDER))
                 .flex()
                 .items_center()
-                .gap(px(10.0))
+                .gap(ui::s(10.0))
                 .child(
-                    div().flex_grow().flex().flex_col().gap(px(2.0)).child(
+                    div().flex_grow().flex().flex_col().gap(ui::s(2.0)).child(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
+                            .gap(ui::s(8.0))
                             .child(
                                 div()
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(rgb(theme::CYAN))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(agent_name.clone()),
                             )
                             .child(
                                 div()
-                                    .text_size(px(10.0))
+                                    .text_size(ui::TEXT_SM)
                                     .text_color(rgb(theme::FG_DIM))
                                     .child(format!("→ {}", driver_name)),
                             )
                             .child(
                                 div()
-                                    .px(px(5.0))
-                                    .py(px(1.0))
-                                    .rounded(px(3.0))
+                                    .px(ui::s(5.0))
+                                    .py(ui::s(1.0))
+                                    .rounded(ui::s(3.0))
                                     .bg(rgb(theme::BG_HOVER))
-                                    .text_size(px(9.0))
+                                    .text_size(ui::TEXT_XS)
                                     .text_color(rgb(theme::FG_DIM))
                                     .child("on-demand"),
                             ),
@@ -21381,12 +21429,12 @@ fn render_on_demand_agents_list(
                             sanitize_name(agent_name),
                             sanitize_name(driver_name)
                         )))
-                        .px(px(8.0))
-                        .py(px(3.0))
-                        .rounded(px(4.0))
+                        .px(ui::s(8.0))
+                        .py(ui::s(3.0))
+                        .rounded(ui::s(4.0))
                         .border_1()
-                        .border_color(rgb(theme::FG_FAINT))
-                        .text_size(px(10.0))
+                        .border_color(rgb(theme::BORDER))
+                        .text_size(ui::TEXT_SM)
                         .text_color(rgb(theme::FG_DIM))
                         .cursor_pointer()
                         .hover(|s| {
@@ -21411,12 +21459,12 @@ fn render_on_demand_agents_list(
                             sanitize_name(agent_name),
                             sanitize_name(driver_name)
                         )))
-                        .px(px(8.0))
-                        .py(px(3.0))
-                        .rounded(px(4.0))
+                        .px(ui::s(8.0))
+                        .py(ui::s(3.0))
+                        .rounded(ui::s(4.0))
                         .border_1()
                         .border_color(rgb(theme::GOLD))
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(rgb(theme::GOLD))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -21440,12 +21488,12 @@ fn render_on_demand_agents_list(
                             sanitize_name(agent_name),
                             sanitize_name(driver_name)
                         )))
-                        .px(px(8.0))
-                        .py(px(3.0))
-                        .rounded(px(4.0))
+                        .px(ui::s(8.0))
+                        .py(ui::s(3.0))
+                        .rounded(ui::s(4.0))
                         .border_1()
                         .border_color(rgb(theme::GOLD))
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(rgb(theme::GOLD))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -21476,8 +21524,8 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
 
     let body = if !has_forecast_id {
         div()
-            .p(px(20.0))
-            .text_size(px(11.0))
+            .p(ui::s(20.0))
+            .text_size(ui::TEXT_BASE)
             .text_color(rgb(theme::FG_DIM))
             .child(format!(
                 "Publish this forecast first ({}) to enable scheduled auto-research.\n\
@@ -21513,8 +21561,8 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
                 .collect();
             if on_demand.is_empty() {
                 div()
-                    .p(px(20.0))
-                    .text_size(px(11.0))
+                    .p(ui::s(20.0))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(rgb(theme::FG_DIM))
                     .child(
                         "No scheduled agents yet.\n\n\
@@ -21529,29 +21577,29 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
         } else {
             let n = drafts.len();
             let header = div()
-                .px(px(14.0))
-                .py(px(10.0))
+                .px(ui::s(14.0))
+                .py(ui::s(10.0))
                 .border_b_1()
-                .border_color(rgb(theme::FG_FAINT))
+                .border_color(rgb(theme::BORDER))
                 .flex()
                 .items_center()
-                .gap(px(10.0))
+                .gap(ui::s(10.0))
                 .child(
                     div()
                         .flex_grow()
                         .flex()
                         .flex_col()
-                        .gap(px(2.0))
+                        .gap(ui::s(2.0))
                         .child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(ui::TEXT_MD)
                                 .text_color(rgb(theme::FG))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child(format!("{} schedule draft{} declared by FPL", n, if n == 1 { "" } else { "s" })),
                         )
                         .child(
                             div()
-                                .text_size(px(10.0))
+                                .text_size(ui::TEXT_SM)
                                 .text_color(rgb(theme::FG_DIM))
                                 .child(
                                     "Each row is an agent×driver pair the FPL ships with a recurring \
@@ -21563,12 +21611,12 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
                 .child(
                     div()
                         .id("save-all-schedules")
-                        .px(px(12.0))
-                        .py(px(5.0))
-                        .rounded(px(5.0))
+                        .px(ui::s(12.0))
+                        .py(ui::s(5.0))
+                        .rounded(ui::s(5.0))
                         .border_1()
                         .border_color(rgb(theme::CYAN))
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(rgb(theme::CYAN))
                         .font_weight(FontWeight::SEMIBOLD)
                         .cursor_pointer()
@@ -21596,53 +21644,53 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
                     );
                     let draft_for_save = draft.clone();
                     div()
-                        .px(px(14.0))
-                        .py(px(8.0))
+                        .px(ui::s(14.0))
+                        .py(ui::s(8.0))
                         .border_b_1()
-                        .border_color(rgb(theme::FG_FAINT))
+                        .border_color(rgb(theme::BORDER))
                         .flex()
                         .items_center()
-                        .gap(px(10.0))
+                        .gap(ui::s(10.0))
                         .child(
                             div()
                                 .flex_grow()
                                 .flex()
                                 .flex_col()
-                                .gap(px(2.0))
+                                .gap(ui::s(2.0))
                                 .child(
                                     div()
                                         .flex()
                                         .items_center()
-                                        .gap(px(8.0))
+                                        .gap(ui::s(8.0))
                                         .child(
                                             div()
-                                                .text_size(px(11.0))
+                                                .text_size(ui::TEXT_BASE)
                                                 .text_color(rgb(theme::CYAN))
                                                 .font_weight(FontWeight::SEMIBOLD)
                                                 .child(draft.agent_id.clone()),
                                         )
                                         .child(
                                             div()
-                                                .text_size(px(9.0))
+                                                .text_size(ui::TEXT_XS)
                                                 .text_color(rgb(theme::FG_DIM))
                                                 .child("→"),
                                         )
                                         .child(
                                             div()
-                                                .text_size(px(10.0))
+                                                .text_size(ui::TEXT_SM)
                                                 .text_color(rgb(theme::FG))
                                                 .child(draft.driver_name.clone()),
                                         )
                                         .child(
                                             div()
-                                                .text_size(px(9.0))
+                                                .text_size(ui::TEXT_XS)
                                                 .text_color(rgb(theme::FG_DIM))
                                                 .child(label_interval),
                                         ),
                                 )
                                 .child(
                                     div()
-                                        .text_size(px(9.0))
+                                        .text_size(ui::TEXT_XS)
                                         .text_color(rgb(theme::FG_DIM))
                                         .child({
                                             let q = &draft.query;
@@ -21660,12 +21708,12 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
                         .child(
                             div()
                                 .id(SharedString::from(row_id))
-                                .px(px(10.0))
-                                .py(px(3.0))
-                                .rounded(px(4.0))
+                                .px(ui::s(10.0))
+                                .py(ui::s(3.0))
+                                .rounded(ui::s(4.0))
                                 .border_1()
                                 .border_color(rgb(theme::GREEN))
-                                .text_size(px(10.0))
+                                .text_size(ui::TEXT_SM)
                                 .text_color(rgb(theme::GREEN))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -21733,26 +21781,26 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(4.0))
-                            .px(px(10.0))
-                            .py(px(8.0))
-                            .rounded(px(4.0))
+                            .gap(ui::s(4.0))
+                            .px(ui::s(10.0))
+                            .py(ui::s(8.0))
+                            .rounded(ui::s(4.0))
                             .bg(rgb(theme::BG_ACTIVE))
                             .child(
                                 div()
                                     .flex()
                                     .items_center()
-                                    .gap(px(8.0))
+                                    .gap(ui::s(8.0))
                                     .child(
                                         div()
-                                            .text_size(px(11.0))
+                                            .text_size(ui::TEXT_BASE)
                                             .text_color(rgb(theme::CYAN))
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .child(sched.agent_id.clone()),
                                     )
                                     .child(
                                         div()
-                                            .text_size(px(9.0))
+                                            .text_size(ui::TEXT_XS)
                                             .text_color(rgb(theme::FG_DIM))
                                             .child(label),
                                     )
@@ -21777,15 +21825,15 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
                                             .id(ElementId::Name(
                                                 format!("schedules-tab-o-{}", sid_o).into(),
                                             ))
-                                            .text_size(px(10.0))
+                                            .text_size(ui::TEXT_SM)
                                             .text_color(if is_active {
                                                 rgb(theme::GOLD)
                                             } else {
                                                 rgb(theme::FG_DIM)
                                             })
-                                            .px(px(6.0))
-                                            .py(px(3.0))
-                                            .rounded(px(3.0))
+                                            .px(ui::s(6.0))
+                                            .py(ui::s(3.0))
+                                            .rounded(ui::s(3.0))
                                             .bg(rgb(theme::BG))
                                             .cursor_pointer()
                                             .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -21803,15 +21851,15 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
                                             .id(ElementId::Name(
                                                 format!("schedules-tab-d-{}", sid_d).into(),
                                             ))
-                                            .text_size(px(10.0))
+                                            .text_size(ui::TEXT_SM)
                                             .text_color(if is_active {
                                                 rgb(theme::GOLD)
                                             } else {
                                                 rgb(theme::FG_DIM)
                                             })
-                                            .px(px(6.0))
-                                            .py(px(3.0))
-                                            .rounded(px(3.0))
+                                            .px(ui::s(6.0))
+                                            .py(ui::s(3.0))
+                                            .rounded(ui::s(3.0))
                                             .bg(rgb(theme::BG))
                                             .cursor_pointer()
                                             .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -21829,15 +21877,15 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
                                             .id(ElementId::Name(
                                                 format!("schedules-tab-w-{}", sid_w).into(),
                                             ))
-                                            .text_size(px(10.0))
+                                            .text_size(ui::TEXT_SM)
                                             .text_color(if is_active {
                                                 rgb(theme::GOLD)
                                             } else {
                                                 rgb(theme::FG_DIM)
                                             })
-                                            .px(px(6.0))
-                                            .py(px(3.0))
-                                            .rounded(px(3.0))
+                                            .px(ui::s(6.0))
+                                            .py(ui::s(3.0))
+                                            .rounded(ui::s(3.0))
                                             .bg(rgb(theme::BG))
                                             .cursor_pointer()
                                             .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -21855,15 +21903,15 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
                                             .id(ElementId::Name(
                                                 format!("schedules-tab-m-{}", sid_m).into(),
                                             ))
-                                            .text_size(px(10.0))
+                                            .text_size(ui::TEXT_SM)
                                             .text_color(if is_active {
                                                 rgb(theme::GOLD)
                                             } else {
                                                 rgb(theme::FG_DIM)
                                             })
-                                            .px(px(6.0))
-                                            .py(px(3.0))
-                                            .rounded(px(3.0))
+                                            .px(ui::s(6.0))
+                                            .py(ui::s(3.0))
+                                            .rounded(ui::s(3.0))
                                             .bg(rgb(theme::BG))
                                             .cursor_pointer()
                                             .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -21879,11 +21927,11 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
                                             .id(ElementId::Name(
                                                 format!("schedules-tab-run-{}", sid_run).into(),
                                             ))
-                                            .text_size(px(10.0))
+                                            .text_size(ui::TEXT_SM)
                                             .text_color(rgb(theme::CYAN))
-                                            .px(px(8.0))
-                                            .py(px(3.0))
-                                            .rounded(px(3.0))
+                                            .px(ui::s(8.0))
+                                            .py(ui::s(3.0))
+                                            .rounded(ui::s(3.0))
                                             .bg(rgb(theme::BG))
                                             .border_1()
                                             .border_color(rgb(theme::CYAN))
@@ -21901,11 +21949,11 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
                                             .id(ElementId::Name(
                                                 format!("schedules-tab-del-{}", sid_del).into(),
                                             ))
-                                            .text_size(px(10.0))
-                                            .text_color(rgb(theme::FG_FAINT))
-                                            .px(px(8.0))
-                                            .py(px(3.0))
-                                            .rounded(px(3.0))
+                                            .text_size(ui::TEXT_SM)
+                                            .text_color(rgb(theme::FG_MUTED))
+                                            .px(ui::s(8.0))
+                                            .py(ui::s(3.0))
+                                            .rounded(ui::s(3.0))
                                             .bg(rgb(theme::BG))
                                             .cursor_pointer()
                                             .hover(|s| s.text_color(rgb(theme::RED)))
@@ -21920,11 +21968,11 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
                             .child(
                                 div()
                                     .flex()
-                                    .gap(px(12.0))
-                                    .text_size(px(9.0))
+                                    .gap(ui::s(12.0))
+                                    .text_size(ui::TEXT_XS)
                                     .child(
                                         div()
-                                            .text_color(rgb(theme::FG_FAINT))
+                                            .text_color(rgb(theme::FG_MUTED))
                                             .child(format!("last: {}", last_str)),
                                     )
                                     .child(div().text_color(next_color).child(format!(
@@ -21935,8 +21983,8 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
                             )
                             .child(
                                 div()
-                                    .text_size(px(9.0))
-                                    .text_color(rgb(theme::FG_FAINT))
+                                    .text_size(ui::TEXT_XS)
+                                    .text_color(rgb(theme::FG_MUTED))
                                     .child(
                                         sched.query.chars().take(120).collect::<String>()
                                             + if sched.query.len() > 120 { "…" } else { "" },
@@ -21949,10 +21997,10 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(6.0))
+                    .gap(ui::s(6.0))
                     .child(
                         div()
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(rgb(theme::FG))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(format!("Driver: {}", driver)),
@@ -21965,8 +22013,8 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
         div()
             .flex()
             .flex_col()
-            .gap(px(14.0))
-            .p(px(14.0))
+            .gap(ui::s(14.0))
+            .p(ui::s(14.0))
             .child(
                 div()
                     .flex()
@@ -21974,7 +22022,7 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
                     .justify_between()
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(rgb(theme::FG_DIM))
                             .child(format!(
                                 "{} active schedule{} • auto-fires on cockpit open when overdue",
@@ -21985,14 +22033,14 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
                     .child(
                         div()
                             .id("schedules-tab-refresh")
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(rgb(theme::CYAN))
-                            .px(px(8.0))
-                            .py(px(3.0))
-                            .rounded(px(3.0))
+                            .px(ui::s(8.0))
+                            .py(ui::s(3.0))
+                            .rounded(ui::s(3.0))
                             .bg(rgb(theme::BG))
                             .border_1()
-                            .border_color(rgb(theme::FG_FAINT))
+                            .border_color(rgb(theme::BORDER))
                             .cursor_pointer()
                             .hover(|s| s.bg(rgb(theme::BG_HOVER)))
                             .on_click(cx.listener(move |this, _event, _window, cx| {
@@ -22056,19 +22104,19 @@ fn render_trajectory_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -
             .flex_col()
             .items_center()
             .justify_center()
-            .gap(px(8.0))
+            .gap(ui::s(8.0))
             .size_full()
             .text_color(rgb(theme::FG_DIM))
             .child(
                 div()
-                    .text_size(px(13.0))
+                    .text_size(ui::TEXT_LG)
                     .text_color(rgb(theme::FG_DIM))
                     .child("Trajectory will appear here."),
             )
             .child(
                 div()
-                    .text_size(px(11.0))
-                    .text_color(rgb(theme::FG_FAINT))
+                    .text_size(ui::TEXT_BASE)
+                    .text_color(rgb(theme::FG_MUTED))
                     .child(format!(
                         "Publish this forecast ({}) to start recording its rate + market history.",
                         crate::keys::chord("P")
@@ -22297,8 +22345,14 @@ fn render_trajectory_body(
     // hit-testing, so the readout can no longer drift off the dots it
     // describes — and nothing touches the sprite atlas, which is what
     // made the old chart flicker under a mouse sweep.
-    let chart_w: f32 = 800.0;
-    let chart_h: f32 = 260.0;
+    //
+    // Sized through `ui::sp` rather than `ui::s`: the plot is painted into
+    // a canvas at coordinates derived from this spec, so the spec and the
+    // wrapper `div` must agree in real pixels. Deferred `rems` would scale
+    // the box without scaling the geometry inside it, and `probe` would
+    // start reporting the wrong value under the cursor.
+    let chart_w: f32 = ui::sp(800.0);
+    let chart_h: f32 = ui::sp(260.0);
 
     let traj_data = crate::viz::trajectory::TrajectoryData {
         model: worm_points.clone(),
@@ -22329,11 +22383,11 @@ fn render_trajectory_body(
     let header = div()
         .flex()
         .flex_col()
-        .gap(px(6.0))
-        .px(px(16.0))
-        .py(px(12.0))
+        .gap(ui::s(6.0))
+        .px(ui::s(16.0))
+        .py(ui::s(12.0))
         .border_b_1()
-        .border_color(rgb(theme::FG_FAINT))
+        .border_color(rgb(theme::BORDER))
         .child(
             // Top row: title + big divergence chip pulled to the right.
             // Divergence is THE headline number — how far off am I from
@@ -22344,7 +22398,7 @@ fn render_trajectory_body(
                 .justify_between()
                 .child(
                     div()
-                        .text_size(px(14.0))
+                        .text_size(ui::TEXT_XL)
                         .font_weight(FontWeight::BOLD)
                         .text_color(rgb(theme::FG))
                         .child("Trajectory"),
@@ -22369,22 +22423,22 @@ fn render_trajectory_body(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(6.0))
-                            .px(px(10.0))
-                            .py(px(4.0))
-                            .rounded(px(4.0))
+                            .gap(ui::s(6.0))
+                            .px(ui::s(10.0))
+                            .py(ui::s(4.0))
+                            .rounded(ui::s(4.0))
                             .bg(theme::bg_elevated())
                             .border_1()
                             .border_color(rgb(color))
                             .child(
                                 div()
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(rgb(color))
                                     .child(format!("{}  {:+.1}pp", arrow, d)),
                             )
                             .child(
                                 div()
-                                    .text_size(px(10.0))
+                                    .text_size(ui::TEXT_SM)
                                     .text_color(rgb(theme::FG_DIM))
                                     .child(label),
                             ),
@@ -22394,8 +22448,8 @@ fn render_trajectory_body(
         .child(
             div()
                 .flex()
-                .gap(px(16.0))
-                .text_size(px(11.0))
+                .gap(ui::s(16.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(rgb(theme::FG_DIM))
                 // Model trend chip — arrow + net-change color for at-a-glance
                 // direction reading.
@@ -22508,8 +22562,8 @@ fn render_trajectory_body(
         }));
 
     let worm = div()
-        .px(px(16.0))
-        .py(px(8.0))
+        .px(ui::s(16.0))
+        .py(ui::s(8.0))
         .flex()
         .justify_center()
         .child(chart_overlay);
@@ -22525,17 +22579,17 @@ fn render_trajectory_body(
     // BayesOps-fit dots and the base-rate dashed line — both shared a
     // colour, so 'gold dot on gold line' was unreadable.
     let legend = div()
-        .px(px(16.0))
-        .pb(px(8.0))
+        .px(ui::s(16.0))
+        .pb(ui::s(8.0))
         .flex()
         .flex_col()
-        .gap(px(3.0))
-        .text_size(px(10.0))
+        .gap(ui::s(3.0))
+        .text_size(ui::TEXT_SM)
         .text_color(rgb(theme::FG_DIM))
         .child(
             div()
                 .flex()
-                .gap(px(14.0))
+                .gap(ui::s(14.0))
                 .child(legend_chip("─", theme::CYAN, "Your model index"))
                 .when(
                     crowd_price_pct.is_some() || !crowd_points.is_empty(),
@@ -22546,7 +22600,7 @@ fn render_trajectory_body(
         .child(
             div()
                 .flex()
-                .gap(px(14.0))
+                .gap(ui::s(14.0))
                 .child(legend_chip("●", theme::CYAN, "Rate revision"))
                 .child(legend_chip("●", theme::ORANGE, "BayesOps refit"))
                 .child(legend_chip("●", theme::PURPLE, "Polymarket tick"))
@@ -22598,7 +22652,7 @@ fn legend_chip(glyph: &str, color: u32, label: &str) -> impl IntoElement {
     div()
         .flex()
         .items_center()
-        .gap(px(4.0))
+        .gap(ui::s(4.0))
         .child(div().text_color(rgb(color)).child(glyph.to_string()))
         .child(label.to_string())
 }
@@ -22623,7 +22677,7 @@ fn render_trajectory_event_with_hover(
     div()
         .border_2()
         .border_color(rgb(theme::GOLD))
-        .rounded(px(6.0))
+        .rounded(ui::s(6.0))
         .child(base)
         .into_any_element()
 }
@@ -22687,9 +22741,9 @@ fn render_trajectory_history_flow(
         .flex_col()
         .flex_grow()
         .overflow_y_scroll()
-        .px(px(16.0))
-        .py(px(8.0))
-        .gap(px(14.0))
+        .px(ui::s(16.0))
+        .py(ui::s(8.0))
+        .gap(ui::s(14.0))
         .children(phases.into_iter().enumerate().map(|(pi, phase)| {
             render_trajectory_phase(phase.revision, &phase.events, pi, hovered).into_any_element()
         }))
@@ -22758,10 +22812,10 @@ fn render_trajectory_phase(
             let mut header_div = div()
                 .flex()
                 .flex_col()
-                .gap(px(3.0))
-                .px(px(12.0))
-                .py(px(8.0))
-                .rounded(px(6.0))
+                .gap(ui::s(3.0))
+                .px(ui::s(12.0))
+                .py(ui::s(8.0))
+                .rounded(ui::s(6.0))
                 .border_l_2()
                 .border_color(rgb(border_color))
                 .bg(rgb(theme::BG_ACTIVE))
@@ -22769,10 +22823,10 @@ fn render_trajectory_phase(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(8.0))
+                        .gap(ui::s(8.0))
                         .child(
                             div()
-                                .text_size(px(13.0))
+                                .text_size(ui::TEXT_LG)
                                 .text_color(rgb(theme::CYAN))
                                 .font_weight(FontWeight::BOLD)
                                 .child(format!("◉ {}", sentence)),
@@ -22780,7 +22834,7 @@ fn render_trajectory_phase(
                         .child(
                             div()
                                 .flex_grow()
-                                .text_size(px(9.0))
+                                .text_size(ui::TEXT_XS)
                                 .text_color(rgb(theme::FG_DIM))
                                 .child(ts_line),
                         ),
@@ -22788,7 +22842,7 @@ fn render_trajectory_phase(
             if !reason.is_empty() {
                 header_div = header_div.child(
                     div()
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(rgb(theme::FG_DIM))
                         .child(reason),
                 );
@@ -22798,16 +22852,16 @@ fn render_trajectory_phase(
         None => div()
             .flex()
             .items_center()
-            .gap(px(8.0))
-            .px(px(12.0))
-            .py(px(6.0))
-            .rounded(px(6.0))
+            .gap(ui::s(8.0))
+            .px(ui::s(12.0))
+            .py(ui::s(6.0))
+            .rounded(ui::s(6.0))
             .border_l_2()
-            .border_color(rgb(theme::FG_FAINT))
+            .border_color(rgb(theme::BORDER))
             .bg(rgb(theme::BG))
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(rgb(theme::FG_DIM))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("◌ Since last revision"),
@@ -22825,11 +22879,11 @@ fn render_trajectory_phase(
     let cards = div()
         .flex()
         .flex_col()
-        .gap(px(4.0))
-        .pl(px(20.0))
-        .ml(px(6.0))
+        .gap(ui::s(4.0))
+        .pl(ui::s(20.0))
+        .ml(ui::s(6.0))
         .border_l_1()
-        .border_color(rgb(theme::FG_FAINT))
+        .border_color(rgb(theme::BORDER))
         .children(
             events
                 .iter()
@@ -22840,13 +22894,13 @@ fn render_trajectory_phase(
         .id(SharedString::from(format!("traj-phase-{}", pi)))
         .flex()
         .flex_col()
-        .gap(px(6.0))
+        .gap(ui::s(6.0))
         .child(header)
         .when(!summary_line.is_empty(), |el| {
             el.child(
                 div()
-                    .px(px(14.0))
-                    .text_size(px(10.0))
+                    .px(ui::s(14.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(rgb(theme::FG_DIM))
                     .child(summary_line),
             )
@@ -23130,21 +23184,21 @@ fn render_trajectory_event(ev: &JsonValue) -> AnyElement {
     let mut card = div()
         .flex()
         .flex_col()
-        .gap(px(2.0))
-        .px(px(10.0))
-        .py(px(6.0))
-        .rounded(px(4.0))
+        .gap(ui::s(2.0))
+        .px(ui::s(10.0))
+        .py(ui::s(6.0))
+        .rounded(ui::s(4.0))
         .border_l_2()
         .border_color(rgb(color))
         .bg(rgb(theme::BG_ELEVATED))
         .child(
             div()
                 .flex()
-                .gap(px(8.0))
+                .gap(ui::s(8.0))
                 .items_center()
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(rgb(color))
                         .font_weight(FontWeight::BOLD)
                         .child(format!("{} {}", glyph, headline)),
@@ -23152,7 +23206,7 @@ fn render_trajectory_event(ev: &JsonValue) -> AnyElement {
                 .child(
                     div()
                         .flex_grow()
-                        .text_size(px(9.0))
+                        .text_size(ui::TEXT_XS)
                         .text_color(rgb(theme::FG_DIM))
                         .child(ts_short),
                 ),
@@ -23161,7 +23215,7 @@ fn render_trajectory_event(ev: &JsonValue) -> AnyElement {
     if !detail.is_empty() {
         card = card.child(
             div()
-                .text_size(px(10.0))
+                .text_size(ui::TEXT_SM)
                 .text_color(rgb(theme::FG_DIM))
                 .child(detail),
         );
@@ -23177,18 +23231,23 @@ fn render_fpl_tab(state: &CockpitState) -> impl IntoElement {
         state.cached_fpl.clone()
     };
 
-    div().p(px(12.0)).flex().flex_col().gap(px(4.0)).child(
-        div()
-            .text_size(px(11.0))
-            .text_color(rgb(theme::FG_DIM))
-            .font_family("Ubuntu Mono, DejaVu Sans Mono, monospace")
-            .min_w(px(0.0))
-            .child(if fpl.is_empty() {
-                "# Empty program".to_string()
-            } else {
-                fpl
-            }),
-    )
+    div()
+        .p(ui::s(12.0))
+        .flex()
+        .flex_col()
+        .gap(ui::s(4.0))
+        .child(
+            div()
+                .text_size(ui::TEXT_BASE)
+                .text_color(rgb(theme::FG_DIM))
+                .font_family("Ubuntu Mono, DejaVu Sans Mono, monospace")
+                .min_w(ui::s(0.0))
+                .child(if fpl.is_empty() {
+                    "# Empty program".to_string()
+                } else {
+                    fpl
+                }),
+        )
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -23235,19 +23294,19 @@ fn render_provenance_tab(
             .flex_col()
             .items_center()
             .justify_center()
-            .gap(px(8.0))
+            .gap(ui::s(8.0))
             .size_full()
             .text_color(rgb(theme::FG_DIM))
             .child(
                 div()
-                    .text_size(px(13.0))
+                    .text_size(ui::TEXT_LG)
                     .text_color(rgb(theme::FG_DIM))
                     .child("Cascade provenance will appear here."),
             )
             .child(
                 div()
-                    .text_size(px(11.0))
-                    .text_color(rgb(theme::FG_FAINT))
+                    .text_size(ui::TEXT_BASE)
+                    .text_color(rgb(theme::FG_MUTED))
                     .child(
                         "Publish this forecast and add it to a relationship group (mutex / at_most_n / implies) to see how upstream resolutions redistribute its probability.",
                     ),
@@ -23306,49 +23365,49 @@ fn render_provenance_body(data: &JsonValue) -> impl IntoElement {
     let header = div()
         .flex()
         .flex_col()
-        .gap(px(6.0))
-        .p(px(16.0))
+        .gap(ui::s(6.0))
+        .p(ui::s(16.0))
         .border_b_1()
-        .border_color(rgb(theme::FG_FAINT))
+        .border_color(rgb(theme::BORDER))
         .child(
             div()
                 .flex()
                 .items_baseline()
-                .gap(px(12.0))
+                .gap(ui::s(12.0))
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(rgb(theme::FG_DIM))
                         .child("Current"),
                 )
                 .child(
                     div()
-                        .text_size(px(24.0))
+                        .text_size(ui::TEXT_6XL)
                         .font_weight(FontWeight::BOLD)
                         .text_color(rgb(theme::CYAN))
                         .child(format!("{:.1}%", current * 100.0)),
                 )
                 .child(
                     div()
-                        .text_size(px(11.0))
-                        .text_color(rgb(theme::FG_FAINT))
+                        .text_size(ui::TEXT_BASE)
+                        .text_color(rgb(theme::FG_MUTED))
                         .child("="),
                 )
                 .child(
                     div()
-                        .text_size(px(14.0))
+                        .text_size(ui::TEXT_XL)
                         .text_color(rgb(theme::FG_DIM))
                         .child(format!("baseline {:.1}%", baseline * 100.0)),
                 )
                 .child(
                     div()
-                        .text_size(px(11.0))
-                        .text_color(rgb(theme::FG_FAINT))
+                        .text_size(ui::TEXT_BASE)
+                        .text_color(rgb(theme::FG_MUTED))
                         .child("+"),
                 )
                 .child(
                     div()
-                        .text_size(px(14.0))
+                        .text_size(ui::TEXT_XL)
                         .font_weight(FontWeight::BOLD)
                         .text_color(rgb(cumulative_color))
                         .child(format!(
@@ -23359,8 +23418,8 @@ fn render_provenance_body(data: &JsonValue) -> impl IntoElement {
         )
         .child(
             div()
-                .text_size(px(11.0))
-                .text_color(rgb(theme::FG_FAINT))
+                .text_size(ui::TEXT_BASE)
+                .text_color(rgb(theme::FG_MUTED))
                 .child(if cascade_count == 0 {
                     "No cascades have fired on this forecast yet.".to_string()
                 } else {
@@ -23380,17 +23439,17 @@ fn render_provenance_body(data: &JsonValue) -> impl IntoElement {
                 .flex_col()
                 .items_center()
                 .justify_center()
-                .gap(px(6.0))
-                .p(px(24.0))
-                .text_color(rgb(theme::FG_FAINT))
+                .gap(ui::s(6.0))
+                .p(ui::s(24.0))
+                .text_color(rgb(theme::FG_MUTED))
                 .child(
                     div()
-                        .text_size(px(12.0))
+                        .text_size(ui::TEXT_MD)
                         .child("This forecast hasn't received any cascade updates."),
                 )
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .child(
                             "When an upstream forecast in the same relationship group resolves, its probability mass will redistribute onto this one and appear here.",
                         ),
@@ -23401,16 +23460,16 @@ fn render_provenance_body(data: &JsonValue) -> impl IntoElement {
     // Table header for the waterfall rows.
     let table_head = div()
         .flex()
-        .px(px(16.0))
-        .py(px(6.0))
-        .gap(px(12.0))
+        .px(ui::s(16.0))
+        .py(ui::s(6.0))
+        .gap(ui::s(12.0))
         .border_b_1()
-        .border_color(rgb(theme::FG_FAINT))
-        .text_size(px(10.0))
-        .text_color(rgb(theme::FG_FAINT))
-        .child(div().w(px(280.0)).child("TRIGGER"))
-        .child(div().w(px(80.0)).child("Δ PP"))
-        .child(div().w(px(120.0)).child("PROB SHIFT"))
+        .border_color(rgb(theme::BORDER))
+        .text_size(ui::TEXT_SM)
+        .text_color(rgb(theme::FG_MUTED))
+        .child(div().w(ui::s(280.0)).child("TRIGGER"))
+        .child(div().w(ui::s(80.0)).child("Δ PP"))
+        .child(div().w(ui::s(120.0)).child("PROB SHIFT"))
         .child(div().flex_grow().child("WHEN"));
 
     // One row per cascade contribution.
@@ -23479,20 +23538,25 @@ fn render_provenance_row(c: &JsonValue) -> impl IntoElement {
     div()
         .flex()
         .items_center()
-        .px(px(16.0))
-        .py(px(6.0))
-        .gap(px(12.0))
+        .px(ui::s(16.0))
+        .py(ui::s(6.0))
+        .gap(ui::s(12.0))
         .border_b_1()
         .border_color(rgb(theme::BG_ELEVATED))
         .hover(|s| s.bg(rgb(theme::BG_ELEVATED)))
-        .text_size(px(12.0))
+        .text_size(ui::TEXT_MD)
         .child(
             div()
-                .w(px(280.0))
+                .w(ui::s(280.0))
                 .flex()
                 .items_center()
-                .gap(px(6.0))
-                .child(div().text_color(rgb(delta_color)).w(px(12.0)).child(glyph))
+                .gap(ui::s(6.0))
+                .child(
+                    div()
+                        .text_color(rgb(delta_color))
+                        .w(ui::s(12.0))
+                        .child(glyph),
+                )
                 .child(
                     div()
                         .flex_grow()
@@ -23503,10 +23567,10 @@ fn render_provenance_row(c: &JsonValue) -> impl IntoElement {
         )
         .child(
             div()
-                .w(px(80.0))
+                .w(ui::s(80.0))
                 .flex()
                 .items_center()
-                .gap(px(6.0))
+                .gap(ui::s(6.0))
                 .child(
                     div()
                         .font_weight(FontWeight::BOLD)
@@ -23515,23 +23579,23 @@ fn render_provenance_row(c: &JsonValue) -> impl IntoElement {
                 )
                 .child(
                     div()
-                        .h(px(6.0))
-                        .w(px(bar_w))
-                        .rounded(px(2.0))
+                        .h(ui::s(6.0))
+                        .w(ui::s(bar_w))
+                        .rounded(ui::s(2.0))
                         .bg(rgb(delta_color)),
                 ),
         )
         .child(
             div()
-                .w(px(120.0))
+                .w(ui::s(120.0))
                 .text_color(rgb(theme::FG_DIM))
                 .child(format!("{:.1}% → {:.1}%", prev_p * 100.0, new_p * 100.0)),
         )
         .child(
             div()
                 .flex_grow()
-                .text_size(px(11.0))
-                .text_color(rgb(theme::FG_FAINT))
+                .text_size(ui::TEXT_BASE)
+                .text_color(rgb(theme::FG_MUTED))
                 .child(shorten_ts(&ts)),
         )
 }
@@ -24037,11 +24101,11 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
     let total_agents = agents.iter().filter(|a| !a.driver_refs.is_empty()).count();
 
     div()
-        .p(px(16.0))
+        .p(ui::s(16.0))
         .flex()
         .flex_col()
-        .gap(px(12.0))
-        .min_w(px(0.0))
+        .gap(ui::s(12.0))
+        .min_w(ui::s(0.0))
         // ── Export button ─────────────────────────────────────────
         .child(
             div().flex().justify_end().child(
@@ -24049,14 +24113,14 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                     .id("export-wiki-md")
                     .flex()
                     .items_center()
-                    .gap(px(6.0))
-                    .px(px(12.0))
-                    .py(px(6.0))
-                    .rounded(px(4.0))
+                    .gap(ui::s(6.0))
+                    .px(ui::s(12.0))
+                    .py(ui::s(6.0))
+                    .rounded(ui::s(4.0))
                     .bg(rgb(theme::BG_ELEVATED))
                     .border_1()
                     .border_color(rgb(theme::CYAN))
-                    .text_size(px(11.0))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(rgb(theme::CYAN))
                     .cursor_pointer()
                     .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -24071,23 +24135,23 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
             div()
                 .flex()
                 .flex_col()
-                .gap(px(6.0))
-                .pb(px(12.0))
+                .gap(ui::s(6.0))
+                .pb(ui::s(12.0))
                 .border_b_1()
-                .border_color(rgb(theme::FG_FAINT))
+                .border_color(rgb(theme::BORDER))
                 .child(
                     div()
-                        .text_size(px(16.0))
+                        .text_size(ui::TEXT_2XL)
                         .text_color(rgb(theme::FG))
                         .font_weight(FontWeight::BOLD)
-                        .min_w(px(0.0))
+                        .min_w(ui::s(0.0))
                         .child(question_text),
                 )
                 .child(
                     div()
                         .flex()
-                        .gap(px(16.0))
-                        .text_size(px(11.0))
+                        .gap(ui::s(16.0))
+                        .text_size(ui::TEXT_BASE)
                         .child(
                             div()
                                 .text_color(rgb(theme::CYAN))
@@ -24115,7 +24179,7 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                 state.forecast_confidence * 100.0
                             )))
                         })
-                        .child(div().text_color(rgb(theme::FG_FAINT)).child(format!(
+                        .child(div().text_color(rgb(theme::FG_MUTED)).child(format!(
                             "{} drivers · {} evidence · {} agents",
                             total_drivers, total_evidence, total_agents
                         ))),
@@ -24123,8 +24187,8 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                 .when(state.current_version > 0, |el| {
                     el.child(
                         div()
-                            .text_size(px(9.0))
-                            .text_color(rgb(theme::FG_FAINT))
+                            .text_size(ui::TEXT_XS)
+                            .text_color(rgb(theme::FG_MUTED))
                             .child(format!(
                                 "v{} · Last saved: {}",
                                 state.current_version,
@@ -24145,10 +24209,10 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(6.0))
-                    .px(px(12.0))
-                    .py(px(10.0))
-                    .rounded(px(6.0))
+                    .gap(ui::s(6.0))
+                    .px(ui::s(12.0))
+                    .py(ui::s(10.0))
+                    .rounded(ui::s(6.0))
                     .bg(rgb(0x1A2332))
                     .border_1()
                     .border_color(rgb(theme::CYAN))
@@ -24156,17 +24220,17 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
+                            .gap(ui::s(8.0))
                             .child(
                                 div()
-                                    .text_size(px(12.0))
+                                    .text_size(ui::TEXT_MD)
                                     .text_color(rgb(theme::CYAN))
                                     .font_weight(FontWeight::BOLD)
                                     .child("Inside View"),
                             )
                             .child(
                                 div()
-                                    .text_size(px(14.0))
+                                    .text_size(ui::TEXT_XL)
                                     .text_color(rgb(theme::CYAN))
                                     .font_weight(FontWeight::BOLD)
                                     .child(format!("{:.1}%", state.predicted_probability * 100.0)),
@@ -24174,9 +24238,9 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                     )
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(rgb(theme::FG))
-                            .min_w(px(0.0))
+                            .min_w(ui::s(0.0))
                             .child(state.inside_view_explanation.clone()),
                     ),
             )
@@ -24208,10 +24272,10 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                     div()
                         .flex()
                         .flex_col()
-                        .gap(px(6.0))
-                        .px(px(12.0))
-                        .py(px(10.0))
-                        .rounded(px(6.0))
+                        .gap(ui::s(6.0))
+                        .px(ui::s(12.0))
+                        .py(ui::s(10.0))
+                        .rounded(ui::s(6.0))
                         .bg(rgb(theme::BG_ELEVATED))
                         .border_1()
                         .border_color(rgb(theme::GOLD))
@@ -24219,22 +24283,22 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                             div()
                                 .flex()
                                 .items_center()
-                                .gap(px(8.0))
+                                .gap(ui::s(8.0))
                                 .child(
                                     div()
-                                        .text_size(px(12.0))
+                                        .text_size(ui::TEXT_MD)
                                         .text_color(rgb(theme::GOLD))
                                         .font_weight(FontWeight::BOLD)
                                         .child("Outside View (Base Rate)"),
                                 )
                                 .child(
                                     div()
-                                        .text_size(px(14.0))
+                                        .text_size(ui::TEXT_XL)
                                         .text_color(rgb(theme::GOLD))
                                         .font_weight(FontWeight::BOLD)
                                         .child(format!("{:.1}%", br.historical_frequency * 100.0)),
                                 )
-                                .child(div().text_size(px(10.0)).text_color(rgb(div_color)).child(
+                                .child(div().text_size(ui::TEXT_SM).text_color(rgb(div_color)).child(
                                     format!(
                                         "divergence: {}{:.0}pp",
                                         if divergence > 0.0 { "+" } else { "" },
@@ -24244,9 +24308,9 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                         )
                         .child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(rgb(theme::FG))
-                                .min_w(px(0.0))
+                                .min_w(ui::s(0.0))
                                 .child(format!(
                                     "Reference class: {}{}",
                                     br.reference_class,
@@ -24258,9 +24322,9 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                         .when(br.reasoning.is_some(), |el| {
                             el.child(
                                 div()
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(rgb(theme::FG_DIM))
-                                    .min_w(px(0.0))
+                                    .min_w(ui::s(0.0))
                                     .child(br.reasoning.as_deref().unwrap_or("").to_string()),
                             )
                         }),
@@ -24290,10 +24354,10 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(6.0))
-                    .px(px(12.0))
-                    .py(px(10.0))
-                    .rounded(px(6.0))
+                    .gap(ui::s(6.0))
+                    .px(ui::s(12.0))
+                    .py(ui::s(10.0))
+                    .rounded(ui::s(6.0))
                     .bg(rgb(theme::BG_ELEVATED))
                     .border_1()
                     .border_color(rgb(theme::PURPLE))
@@ -24301,22 +24365,22 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
+                            .gap(ui::s(8.0))
                             .child(
                                 div()
-                                    .text_size(px(12.0))
+                                    .text_size(ui::TEXT_MD)
                                     .text_color(rgb(theme::PURPLE))
                                     .font_weight(FontWeight::BOLD)
                                     .child("Crowd View (Prediction Market)"),
                             )
                             .child(
                                 div()
-                                    .text_size(px(14.0))
+                                    .text_size(ui::TEXT_XL)
                                     .text_color(rgb(theme::PURPLE))
                                     .font_weight(FontWeight::BOLD)
                                     .child(format!("{:.1}%", pm_price * 100.0)),
                             )
-                            .child(div().text_size(px(10.0)).text_color(rgb(div_color)).child(
+                            .child(div().text_size(ui::TEXT_SM).text_color(rgb(div_color)).child(
                                 format!(
                                     "model − crowd: {}{:.1}pp",
                                     if div_ic > 0.0 { "+" } else { "" },
@@ -24327,9 +24391,9 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                     .when(state.pm_question.is_some(), |el| {
                         el.child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(rgb(theme::FG))
-                                .min_w(px(0.0))
+                                .min_w(ui::s(0.0))
                                 .child(
                                     state
                                         .pm_question
@@ -24344,8 +24408,8 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                         let mut meta_row = div()
                             .flex()
                             .flex_wrap()
-                            .gap(px(10.0))
-                            .text_size(px(10.0))
+                            .gap(ui::s(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(rgb(theme::FG_DIM));
                         if let Some(vol) = state.pm_volume_24h {
                             meta_row = meta_row.child(div().child(format!(
@@ -24376,8 +24440,8 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                     .when(state.pm_url.is_some(), |el| {
                         el.child(
                             div()
-                                .text_size(px(10.0))
-                                .text_color(rgb(theme::FG_FAINT))
+                                .text_size(ui::TEXT_SM)
+                                .text_color(rgb(theme::FG_MUTED))
                                 .child(format!(
                                     "↗ {}",
                                     state.pm_url.as_deref().unwrap_or("")
@@ -24404,11 +24468,11 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                             div()
                                 .flex()
                                 .flex_col()
-                                .gap(px(2.0))
+                                .gap(ui::s(2.0))
                                 .child(
                                     div()
-                                        .text_size(px(9.0))
-                                        .text_color(rgb(theme::FG_FAINT))
+                                        .text_size(ui::TEXT_XS)
+                                        .text_color(rgb(theme::FG_MUTED))
                                         .child(format!(
                                             "Simulation Distribution ({}k iterations) — hover bars for details",
                                             sim.iterations / 1000
@@ -24434,11 +24498,11 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(2.0))
+                            .gap(ui::s(2.0))
                             .child(
                                 div()
-                                    .text_size(px(9.0))
-                                    .text_color(rgb(theme::FG_FAINT))
+                                    .text_size(ui::TEXT_XS)
+                                    .text_color(rgb(theme::FG_MUTED))
                                     .child("Model (cyan) · Base rate (gold) · Crowd (purple) — hover any version for details"),
                             )
                             .child(render_interactive_index_chart(
@@ -24462,10 +24526,10 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(8.0))
-                            .px(px(8.0))
-                            .py(px(10.0))
-                            .rounded(px(6.0))
+                            .gap(ui::s(8.0))
+                            .px(ui::s(8.0))
+                            .py(ui::s(10.0))
+                            .rounded(ui::s(6.0))
                             .bg(rgb(theme::BG_ELEVATED))
                             .children(chart_children),
                     )
@@ -24541,35 +24605,35 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
             div()
                 .flex()
                 .flex_col()
-                .gap(px(6.0))
-                .px(px(8.0))
-                .py(px(10.0))
-                .rounded(px(6.0))
+                .gap(ui::s(6.0))
+                .px(ui::s(8.0))
+                .py(ui::s(10.0))
+                .rounded(ui::s(6.0))
                 .bg(rgb(theme::BG_ELEVATED))
                 // Driver header
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(8.0))
+                        .gap(ui::s(8.0))
                         .child(
                             div()
-                                .text_size(px(13.0))
+                                .text_size(ui::TEXT_LG)
                                 .text_color(rgb(theme::GREEN))
                                 .font_weight(FontWeight::BOLD)
                                 .child(display.to_string()),
                         )
                         .child(
                             div()
-                                .text_size(px(9.0))
+                                .text_size(ui::TEXT_XS)
                                 .text_color(rgb(match driver.driver_type {
                                     DriverType::Continuous => theme::GREEN,
                                     DriverType::Binary => theme::GOLD,
                                     _ => theme::FG_DIM,
                                 }))
-                                .px(px(4.0))
-                                .py(px(1.0))
-                                .rounded(px(2.0))
+                                .px(ui::s(4.0))
+                                .py(ui::s(1.0))
+                                .rounded(ui::s(2.0))
                                 .bg(rgb(theme::BG))
                                 .child(match driver.driver_type {
                                     DriverType::Continuous => "continuous",
@@ -24579,11 +24643,11 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                         )
                         .child(
                             div()
-                                .text_size(px(9.0))
+                                .text_size(ui::TEXT_XS)
                                 .text_color(rgb(quality_color))
-                                .px(px(4.0))
-                                .py(px(1.0))
-                                .rounded(px(2.0))
+                                .px(ui::s(4.0))
+                                .py(ui::s(1.0))
+                                .rounded(ui::s(2.0))
                                 .bg(rgb(theme::BG))
                                 .child(format!("{} evidence ({})", quality_label, ev_count)),
                         ),
@@ -24592,7 +24656,7 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                 .when(!dist_summary.is_empty(), |el| {
                     el.child(
                         div()
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(rgb(theme::CYAN))
                             .font_family("Ubuntu Mono, DejaVu Sans Mono, monospace")
                             .child(dist_summary),
@@ -24602,15 +24666,15 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                 .when(driver.rationale.is_some(), |el| {
                     el.child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(rgb(theme::FG_DIM))
-                            .min_w(px(0.0))
+                            .min_w(ui::s(0.0))
                             .child(driver.rationale.as_deref().unwrap_or("").to_string()),
                     )
                 })
                 // Agent assignments with query info
                 .when(!driver_agents.is_empty(), |el| {
-                    el.child(div().flex().flex_col().gap(px(2.0)).mt(px(2.0)).children(
+                    el.child(div().flex().flex_col().gap(ui::s(2.0)).mt(ui::s(2.0)).children(
                         driver_agents.iter().map(|agent_name| {
                             let agent_stmt = agents.iter().find(|a| a.name == *agent_name);
                             let query_preview = agent_stmt
@@ -24625,24 +24689,24 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                             div()
                                 .flex()
                                 .items_center()
-                                .gap(px(6.0))
+                                .gap(ui::s(6.0))
                                 .child(
                                     div()
-                                        .text_size(px(9.0))
+                                        .text_size(ui::TEXT_XS)
                                         .text_color(rgb(theme::BLUE))
-                                        .px(px(4.0))
-                                        .py(px(1.0))
-                                        .rounded(px(2.0))
+                                        .px(ui::s(4.0))
+                                        .py(ui::s(1.0))
+                                        .rounded(ui::s(2.0))
                                         .bg(rgb(theme::BG))
                                         .child(base_agent_name(agent_name).to_string()),
                                 )
                                 .when(!query_preview.is_empty(), |el| {
                                     el.child(
                                         div()
-                                            .text_size(px(9.0))
-                                            .text_color(rgb(theme::FG_FAINT))
+                                            .text_size(ui::TEXT_XS)
+                                            .text_color(rgb(theme::FG_MUTED))
                                             .flex_grow()
-                                            .min_w(px(0.0))
+                                            .min_w(ui::s(0.0))
                                             .child(format!("→ {}", query_preview)),
                                     )
                                 })
@@ -24671,29 +24735,29 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                     div()
                         .flex()
                         .flex_col()
-                        .gap(px(4.0))
-                        .px(px(10.0))
-                        .py(px(8.0))
-                        .rounded(px(4.0))
+                        .gap(ui::s(4.0))
+                        .px(ui::s(10.0))
+                        .py(ui::s(8.0))
+                        .rounded(ui::s(4.0))
                         .bg(rgb(theme::BG))
-                        .mt(px(4.0))
+                        .mt(ui::s(4.0))
                         .border_l_2()
                         .border_color(rgb(if ev.relevance.unwrap_or(0.0) > 0.7 {
                             theme::GREEN
                         } else if ev.relevance.unwrap_or(0.0) > 0.4 {
                             theme::GOLD
                         } else {
-                            theme::FG_FAINT
+                            theme::FG_MUTED
                         }))
                         // Source + date + relevance header
                         .child(
                             div()
                                 .flex()
                                 .items_center()
-                                .gap(px(8.0))
+                                .gap(ui::s(8.0))
                                 .child(
                                     div()
-                                        .text_size(px(10.0))
+                                        .text_size(ui::TEXT_SM)
                                         .text_color(rgb(theme::FG))
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .child(ev.source.clone()),
@@ -24701,8 +24765,8 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                 .when(ev.date.is_some(), |el| {
                                     el.child(
                                         div()
-                                            .text_size(px(9.0))
-                                            .text_color(rgb(theme::FG_FAINT))
+                                            .text_size(ui::TEXT_XS)
+                                            .text_color(rgb(theme::FG_MUTED))
                                             .child(ev.date.as_deref().unwrap_or("").to_string()),
                                     )
                                 })
@@ -24713,15 +24777,15 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                     } else if r > 0.4 {
                                         theme::GOLD
                                     } else {
-                                        theme::FG_FAINT
+                                        theme::FG_MUTED
                                     };
                                     el.child(
                                         div()
-                                            .text_size(px(9.0))
+                                            .text_size(ui::TEXT_XS)
                                             .text_color(rgb(r_color))
-                                            .px(px(4.0))
-                                            .py(px(1.0))
-                                            .rounded(px(2.0))
+                                            .px(ui::s(4.0))
+                                            .py(ui::s(1.0))
+                                            .rounded(ui::s(2.0))
                                             .bg(rgb(theme::BG_ELEVATED))
                                             .child(format!("relevance {:.0}%", r * 100.0)),
                                     )
@@ -24729,11 +24793,11 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                 // Quality badge
                                 .child(
                                     div()
-                                        .text_size(px(8.0))
+                                        .text_size(ui::TEXT_MICRO)
                                         .text_color(rgb(eq_color))
-                                        .px(px(4.0))
-                                        .py(px(1.0))
-                                        .rounded(px(2.0))
+                                        .px(ui::s(4.0))
+                                        .py(ui::s(1.0))
+                                        .rounded(ui::s(2.0))
                                         .bg(rgb(theme::BG_ELEVATED))
                                         .child(format!("{} {:.0}%", eq_label, eq_score * 100.0)),
                                 ),
@@ -24741,14 +24805,14 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                         // Quality bar (thin colored strip)
                         .child(
                             div()
-                                .h(px(2.0))
+                                .h(ui::s(2.0))
                                 .w_full()
-                                .rounded(px(1.0))
+                                .rounded(ui::s(1.0))
                                 .bg(rgb(theme::BG_ELEVATED))
                                 .child(
                                     div()
-                                        .h(px(2.0))
-                                        .rounded(px(1.0))
+                                        .h(ui::s(2.0))
+                                        .rounded(ui::s(1.0))
                                         .bg(rgb(eq_color))
                                         .w(gpui::px((eq_score * 200.0).min(200.0) as f32)),
                                 ),
@@ -24757,9 +24821,9 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                         .when(!display_summary.is_empty(), |el| {
                             el.child(
                                 div()
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(rgb(theme::FG))
-                                    .min_w(px(0.0))
+                                    .min_w(ui::s(0.0))
                                     .child(display_summary),
                             )
                         })
@@ -24769,15 +24833,15 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                 div()
                                     .flex()
                                     .flex_col()
-                                    .gap(px(3.0))
-                                    .mt(px(4.0))
-                                    .pt(px(4.0))
+                                    .gap(ui::s(3.0))
+                                    .mt(ui::s(4.0))
+                                    .pt(ui::s(4.0))
                                     .border_t_1()
-                                    .border_color(rgb(theme::FG_FAINT))
+                                    .border_color(rgb(theme::BORDER))
                                     .child(
                                         div()
-                                            .text_size(px(9.0))
-                                            .text_color(rgb(theme::FG_FAINT))
+                                            .text_size(ui::TEXT_XS)
+                                            .text_color(rgb(theme::FG_MUTED))
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .child(format!(
                                                 "Key Findings ({})",
@@ -24787,20 +24851,20 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                     .children(ev.key_findings.iter().take(8).map(|f| {
                                         div()
                                             .flex()
-                                            .gap(px(6.0))
+                                            .gap(ui::s(6.0))
                                             .child(
                                                 div()
-                                                    .text_size(px(10.0))
+                                                    .text_size(ui::TEXT_SM)
                                                     .text_color(rgb(theme::CYAN))
-                                                    .w(px(12.0))
+                                                    .w(ui::s(12.0))
                                                     .child("▸"),
                                             )
                                             .child(
                                                 div()
-                                                    .text_size(px(10.0))
+                                                    .text_size(ui::TEXT_SM)
                                                     .text_color(rgb(theme::FG))
                                                     .flex_grow()
-                                                    .min_w(px(0.0))
+                                                    .min_w(ui::s(0.0))
                                                     .child(f.clone()),
                                             )
                                     })),
@@ -24817,16 +24881,16 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                             if urls.is_empty() {
                                 el
                             } else {
-                                el.child(div().flex().flex_col().gap(px(2.0)).mt(px(4.0)).children(
+                                el.child(div().flex().flex_col().gap(ui::s(2.0)).mt(ui::s(4.0)).children(
                                     urls.iter().map(|url| {
                                         // Trim trailing punctuation
                                         let clean = url.trim_end_matches(|c: char| {
                                             c == ',' || c == '.' || c == ')' || c == ']' || c == '"'
                                         });
                                         div()
-                                            .text_size(px(9.0))
+                                            .text_size(ui::TEXT_XS)
                                             .text_color(rgb(theme::BLUE))
-                                            .min_w(px(0.0))
+                                            .min_w(ui::s(0.0))
                                             .child(format!("🔗 {}", clean))
                                     }),
                                 ))
@@ -24839,21 +24903,21 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(6.0))
-                            .px(px(8.0))
-                            .py(px(6.0))
-                            .rounded(px(4.0))
+                            .gap(ui::s(6.0))
+                            .px(ui::s(8.0))
+                            .py(ui::s(6.0))
+                            .rounded(ui::s(4.0))
                             .bg(rgb(0x2D1F1F))
-                            .mt(px(4.0))
+                            .mt(ui::s(4.0))
                             .child(
                                 div()
-                                    .text_size(px(10.0))
+                                    .text_size(ui::TEXT_SM)
                                     .text_color(rgb(theme::RED))
                                     .child("⚠"),
                             )
                             .child(
                                 div()
-                                    .text_size(px(10.0))
+                                    .text_size(ui::TEXT_SM)
                                     .text_color(rgb(theme::FG_DIM))
                                     .child(
                                         "No evidence yet — assign an agent to research this driver",
@@ -24880,14 +24944,14 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                     div()
                         .flex()
                         .flex_col()
-                        .gap(px(6.0))
-                        .px(px(8.0))
-                        .py(px(10.0))
-                        .rounded(px(6.0))
+                        .gap(ui::s(6.0))
+                        .px(ui::s(8.0))
+                        .py(ui::s(10.0))
+                        .rounded(ui::s(6.0))
                         .bg(rgb(theme::BG_ELEVATED))
                         .child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(ui::TEXT_MD)
                                 .text_color(rgb(theme::FG_DIM))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child(format!("General Evidence ({})", unlinked.len())),
@@ -24896,16 +24960,16 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                             div()
                                 .flex()
                                 .flex_col()
-                                .gap(px(3.0))
-                                .px(px(10.0))
-                                .py(px(6.0))
-                                .rounded(px(4.0))
+                                .gap(ui::s(3.0))
+                                .px(ui::s(10.0))
+                                .py(ui::s(6.0))
+                                .rounded(ui::s(4.0))
                                 .bg(rgb(theme::BG))
                                 .border_l_2()
-                                .border_color(rgb(theme::FG_FAINT))
+                                .border_color(rgb(theme::BORDER))
                                 .child(
                                     div()
-                                        .text_size(px(10.0))
+                                        .text_size(ui::TEXT_SM)
                                         .text_color(rgb(theme::FG))
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .child(ev.source.clone()),
@@ -24925,9 +24989,9 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                     };
                                     el.child(
                                         div()
-                                            .text_size(px(10.0))
+                                            .text_size(ui::TEXT_SM)
                                             .text_color(rgb(theme::FG_DIM))
-                                            .min_w(px(0.0))
+                                            .min_w(ui::s(0.0))
                                             .child(display),
                                     )
                                 })
@@ -24935,20 +24999,20 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                     el.children(ev.key_findings.iter().take(4).map(|f| {
                                         div()
                                             .flex()
-                                            .gap(px(6.0))
+                                            .gap(ui::s(6.0))
                                             .child(
                                                 div()
-                                                    .text_size(px(9.0))
-                                                    .text_color(rgb(theme::FG_FAINT))
-                                                    .w(px(12.0))
+                                                    .text_size(ui::TEXT_XS)
+                                                    .text_color(rgb(theme::FG_MUTED))
+                                                    .w(ui::s(12.0))
                                                     .child("▸"),
                                             )
                                             .child(
                                                 div()
-                                                    .text_size(px(9.0))
+                                                    .text_size(ui::TEXT_XS)
                                                     .text_color(rgb(theme::FG_DIM))
                                                     .flex_grow()
-                                                    .min_w(px(0.0))
+                                                    .min_w(ui::s(0.0))
                                                     .child(f.clone()),
                                             )
                                     }))
@@ -25117,7 +25181,7 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                 }
 
                 if changes.len() <= 1 {
-                    changes.push((theme::FG_FAINT, "No structural changes detected".to_string()));
+                    changes.push((theme::FG_MUTED, "No structural changes detected".to_string()));
                 }
 
                 let ver_num = ver.version;
@@ -25125,10 +25189,10 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                     div()
                         .flex()
                         .flex_col()
-                        .gap(px(6.0))
-                        .px(px(8.0))
-                        .py(px(10.0))
-                        .rounded(px(6.0))
+                        .gap(ui::s(6.0))
+                        .px(ui::s(8.0))
+                        .py(ui::s(10.0))
+                        .rounded(ui::s(6.0))
                         .bg(rgb(0x1A1E2E))
                         .border_1()
                         .border_color(rgb(theme::PURPLE))
@@ -25140,7 +25204,7 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                 .justify_between()
                                 .child(
                                     div()
-                                        .text_size(px(12.0))
+                                        .text_size(ui::TEXT_MD)
                                         .text_color(rgb(theme::PURPLE))
                                         .font_weight(FontWeight::BOLD)
                                         .child(format!(
@@ -25158,20 +25222,20 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                 .child(
                                     div()
                                         .flex()
-                                        .gap(px(6.0))
+                                        .gap(ui::s(6.0))
                                         // Restore button
                                         .child(
                                             div()
                                                 .id(ElementId::Name(
                                                     format!("restore-v{}", ver.version).into(),
                                                 ))
-                                                .px(px(8.0))
-                                                .py(px(3.0))
-                                                .rounded(px(4.0))
+                                                .px(ui::s(8.0))
+                                                .py(ui::s(3.0))
+                                                .rounded(ui::s(4.0))
                                                 .bg(rgb(theme::BG))
                                                 .border_1()
                                                 .border_color(rgb(theme::GOLD))
-                                                .text_size(px(9.0))
+                                                .text_size(ui::TEXT_XS)
                                                 .text_color(rgb(theme::GOLD))
                                                 .cursor_pointer()
                                                 .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -25223,10 +25287,10 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                         .child(
                                             div()
                                                 .id("close-version-diff")
-                                                .px(px(8.0))
-                                                .py(px(3.0))
-                                                .rounded(px(4.0))
-                                                .text_size(px(9.0))
+                                                .px(ui::s(8.0))
+                                                .py(ui::s(3.0))
+                                                .rounded(ui::s(4.0))
+                                                .text_size(ui::TEXT_XS)
                                                 .text_color(rgb(theme::FG_DIM))
                                                 .cursor_pointer()
                                                 .hover(|s| s.text_color(rgb(theme::FG)))
@@ -25241,8 +25305,8 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                         // Version metadata
                         .child(
                             div()
-                                .text_size(px(9.0))
-                                .text_color(rgb(theme::FG_FAINT))
+                                .text_size(ui::TEXT_XS)
+                                .text_color(rgb(theme::FG_MUTED))
                                 .child(format!(
                                     "{} — {}",
                                     ver.timestamp, ver.change_summary
@@ -25253,22 +25317,22 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                             div()
                                 .flex()
                                 .flex_col()
-                                .gap(px(3.0))
-                                .mt(px(4.0))
+                                .gap(ui::s(3.0))
+                                .mt(ui::s(4.0))
                                 .children(changes.iter().map(|(color, text)| {
                                     div()
                                         .flex()
                                         .items_center()
-                                        .gap(px(6.0))
-                                        .px(px(6.0))
-                                        .py(px(3.0))
-                                        .rounded(px(3.0))
+                                        .gap(ui::s(6.0))
+                                        .px(ui::s(6.0))
+                                        .py(ui::s(3.0))
+                                        .rounded(ui::s(3.0))
                                         .bg(rgb(theme::BG))
                                         .child(
                                             div()
-                                                .text_size(px(10.0))
+                                                .text_size(ui::TEXT_SM)
                                                 .text_color(rgb(*color))
-                                                .min_w(px(0.0))
+                                                .min_w(ui::s(0.0))
                                                 .child(text.clone()),
                                         )
                                 })),
@@ -25284,14 +25348,14 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(4.0))
-                    .px(px(8.0))
-                    .py(px(10.0))
-                    .rounded(px(6.0))
+                    .gap(ui::s(4.0))
+                    .px(ui::s(8.0))
+                    .py(ui::s(10.0))
+                    .rounded(ui::s(6.0))
                     .bg(rgb(theme::BG_ELEVATED))
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(ui::TEXT_MD)
                             .text_color(rgb(theme::PURPLE))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(format!("Version History ({})", state.versions.len())),
@@ -25325,10 +25389,10 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                             .id(ElementId::Name(format!("version-{}", v.version).into()))
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
-                            .py(px(4.0))
-                            .px(px(4.0))
-                            .rounded(px(3.0))
+                            .gap(ui::s(8.0))
+                            .py(ui::s(4.0))
+                            .px(ui::s(4.0))
+                            .rounded(ui::s(3.0))
                             .cursor_pointer()
                             .bg(if is_selected {
                                 rgb(theme::BG_ACTIVE)
@@ -25346,45 +25410,45 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                             }))
                             .child(
                                 div()
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(if is_selected {
                                         rgb(theme::PURPLE)
                                     } else {
                                         rgb(theme::FG_DIM)
                                     })
-                                    .w(px(28.0))
+                                    .w(ui::s(28.0))
                                     .child(format!("v{}", v.version)),
                             )
                             .child(
                                 div()
-                                    .text_size(px(12.0))
+                                    .text_size(ui::TEXT_MD)
                                     .text_color(rgb(theme::CYAN))
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .w(px(55.0))
+                                    .w(ui::s(55.0))
                                     .child(format!("{:.1}%", v.probability * 100.0)),
                             )
                             .when(prob_change.is_some(), |el| {
                                 let (text, color) = prob_change.unwrap();
                                 el.child(
                                     div()
-                                        .text_size(px(9.0))
+                                        .text_size(ui::TEXT_XS)
                                         .text_color(rgb(color))
-                                        .w(px(50.0))
+                                        .w(ui::s(50.0))
                                         .child(text),
                                 )
                             })
                             .child(
                                 div()
                                     .flex_grow()
-                                    .min_w(px(0.0))
-                                    .text_size(px(9.0))
-                                    .text_color(rgb(theme::FG_FAINT))
+                                    .min_w(ui::s(0.0))
+                                    .text_size(ui::TEXT_XS)
+                                    .text_color(rgb(theme::FG_MUTED))
                                     .child(format!("{} — {}", v.timestamp, v.change_summary)),
                             )
                             .when(is_selected, |el| {
                                 el.child(
                                     div()
-                                        .text_size(px(9.0))
+                                        .text_size(ui::TEXT_XS)
                                         .text_color(rgb(theme::PURPLE))
                                         .child("▾"),
                                 )
@@ -25397,20 +25461,20 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
 fn render_fpl_source(fpl: &str) -> impl IntoElement {
     div()
         .flex_grow()
-        .p(px(12.0))
+        .p(ui::s(12.0))
         .bg(rgb(theme::BG))
         .border_t_1()
         .border_color(rgb(theme::PURPLE))
         .child(
             div()
-                .text_size(px(10.0))
+                .text_size(ui::TEXT_SM)
                 .text_color(rgb(theme::PURPLE))
                 .font_weight(FontWeight::SEMIBOLD)
                 .child("FPL Source"),
         )
         .child(
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(rgb(theme::FG_DIM))
                 .font_family("Ubuntu Mono, DejaVu Sans Mono, monospace")
                 .child(if fpl.is_empty() {

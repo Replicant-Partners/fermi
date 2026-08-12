@@ -12,9 +12,10 @@
 //! testing belongs in `fermi-activity`.
 
 use gpui::prelude::*;
-use gpui::{div, px, rgb, Div};
+use gpui::{div, rgb, Div};
 
 use crate::theme;
+use crate::ui;
 
 // Re-exported so the rest of the console can keep referring to
 // `activity_log::LogEvent`, `activity_log::Severity`, etc. without
@@ -27,7 +28,7 @@ pub use fermi_activity::{ActivityLog, LogEvent, LogFilter, LogSource, Remedy, Se
 /// so the model crate stays free of any UI dependency.
 fn severity_color(severity: Severity) -> u32 {
     match severity {
-        Severity::Trace => theme::FG_FAINT,
+        Severity::Trace => theme::FG_MUTED,
         Severity::Info => theme::FG_DIM,
         Severity::Success => theme::GREEN,
         Severity::Warn => theme::GOLD,
@@ -81,30 +82,30 @@ pub fn render_event(event: &LogEvent, expanded: bool) -> Div {
     let mut header = div()
         .flex()
         .items_start()
-        .gap(px(6.0))
+        .gap(ui::s(6.0))
         .child(
             div()
                 .flex_shrink_0()
-                .w(px(52.0))
-                .text_size(px(9.0))
-                .text_color(theme::fg_faint())
+                .w(ui::s(64.0))
+                .text_size(ui::TEXT_XS)
+                .text_color(theme::fg_muted())
                 .child(format_clock(&event.last_at)),
         )
         .child(
             div()
                 .flex_shrink_0()
-                .w(px(10.0))
-                .text_size(px(10.0))
+                .w(ui::s(12.0))
+                .text_size(ui::TEXT_SM)
                 .text_color(rgb(color))
                 .child(event.severity.glyph()),
         )
         .child(
             div()
                 .flex_shrink_0()
-                .px(px(4.0))
-                .rounded(px(3.0))
+                .px(ui::s(4.0))
+                .rounded(ui::s(3.0))
                 .bg(theme::bg_elevated())
-                .text_size(px(9.0))
+                .text_size(ui::TEXT_XS)
                 .text_color(theme::fg_dim())
                 .child(event.source.label()),
         )
@@ -114,8 +115,8 @@ pub fn render_event(event: &LogEvent, expanded: bool) -> Div {
             // which chopped every message at 120–150 chars.
             div()
                 .flex_grow()
-                .min_w(px(0.0))
-                .text_size(px(11.0))
+                .min_w(ui::s(0.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(rgb(color))
                 .child(event.summary.clone()),
         );
@@ -124,10 +125,10 @@ pub fn render_event(event: &LogEvent, expanded: bool) -> Div {
         header = header.child(
             div()
                 .flex_shrink_0()
-                .px(px(4.0))
-                .rounded(px(3.0))
+                .px(ui::s(4.0))
+                .rounded(ui::s(3.0))
                 .bg(rgb(theme::BG_ACTIVE))
-                .text_size(px(9.0))
+                .text_size(ui::TEXT_XS)
                 .text_color(rgb(theme::GOLD))
                 .child(format!("x{}", event.count)),
         );
@@ -137,8 +138,8 @@ pub fn render_event(event: &LogEvent, expanded: bool) -> Div {
         header = header.child(
             div()
                 .flex_shrink_0()
-                .text_size(px(9.0))
-                .text_color(theme::fg_faint())
+                .text_size(ui::TEXT_XS)
+                .text_color(theme::fg_muted())
                 .child(if expanded { "⌃" } else { "⌄" }),
         );
     }
@@ -146,10 +147,10 @@ pub fn render_event(event: &LogEvent, expanded: bool) -> Div {
     let row = div()
         .flex()
         .flex_col()
-        .gap(px(4.0))
-        .px(px(8.0))
-        .py(px(6.0))
-        .rounded(px(4.0))
+        .gap(ui::s(4.0))
+        .px(ui::s(8.0))
+        .py(ui::s(6.0))
+        .rounded(ui::s(4.0))
         .border_l_2()
         .border_color(rgb(color))
         .bg(if event.severity.is_problem() {
@@ -167,15 +168,15 @@ pub fn render_event(event: &LogEvent, expanded: bool) -> Div {
     let mut body = div()
         .flex()
         .flex_col()
-        .gap(px(6.0))
-        .ml(px(62.0))
-        .mt(px(2.0));
+        .gap(ui::s(6.0))
+        .ml(ui::s(62.0))
+        .mt(ui::s(2.0));
 
     if let Some(node) = &event.node {
         body = body.child(
             div()
-                .text_size(px(9.0))
-                .text_color(theme::fg_faint())
+                .text_size(ui::TEXT_XS)
+                .text_color(theme::fg_muted())
                 .child(format!("node: {}", node)),
         );
     }
@@ -183,8 +184,8 @@ pub fn render_event(event: &LogEvent, expanded: bool) -> Div {
     if event.count > 1 {
         body = body.child(
             div()
-                .text_size(px(9.0))
-                .text_color(theme::fg_faint())
+                .text_size(ui::TEXT_XS)
+                .text_color(theme::fg_muted())
                 .child(format!(
                     "first seen {} · last seen {} · {} occurrences",
                     format_clock(&event.at),
@@ -195,25 +196,25 @@ pub fn render_event(event: &LogEvent, expanded: bool) -> Div {
     }
 
     if !event.context.is_empty() {
-        let mut table = div().flex().flex_col().gap(px(2.0));
+        let mut table = div().flex().flex_col().gap(ui::s(2.0));
         for (k, v) in &event.context {
             table = table.child(
                 div()
                     .flex()
-                    .gap(px(6.0))
+                    .gap(ui::s(6.0))
                     .child(
                         div()
                             .flex_shrink_0()
-                            .w(px(88.0))
-                            .text_size(px(9.0))
-                            .text_color(theme::fg_faint())
+                            .w(ui::s(108.0))
+                            .text_size(ui::TEXT_XS)
+                            .text_color(theme::fg_muted())
                             .child(k.clone()),
                     )
                     .child(
                         div()
                             .flex_grow()
-                            .min_w(px(0.0))
-                            .text_size(px(10.0))
+                            .min_w(ui::s(0.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(theme::fg())
                             .child(v.clone()),
                     ),
@@ -225,13 +226,13 @@ pub fn render_event(event: &LogEvent, expanded: bool) -> Div {
     if let Some(detail) = &event.detail {
         body = body.child(
             div()
-                .px(px(8.0))
-                .py(px(6.0))
-                .rounded(px(4.0))
+                .px(ui::s(8.0))
+                .py(ui::s(6.0))
+                .rounded(ui::s(4.0))
                 .bg(rgb(theme::BG_DEEP))
                 .border_1()
-                .border_color(theme::fg_faint())
-                .text_size(px(10.0))
+                .border_color(theme::border())
+                .text_size(ui::TEXT_SM)
                 .text_color(theme::fg())
                 .child(detail.clone()),
         );
@@ -240,7 +241,7 @@ pub fn render_event(event: &LogEvent, expanded: bool) -> Div {
     if let Some(remedy) = &event.remedy {
         body = body.child(
             div()
-                .text_size(px(9.0))
+                .text_size(ui::TEXT_XS)
                 .text_color(theme::fg_dim())
                 .child(format!("→ {}", remedy.rationale())),
         );
@@ -258,13 +259,13 @@ pub fn render_event(event: &LogEvent, expanded: bool) -> Div {
         };
         body = body.child(
             div()
-                .px(px(8.0))
-                .py(px(6.0))
-                .rounded(px(4.0))
+                .px(ui::s(8.0))
+                .py(ui::s(6.0))
+                .rounded(ui::s(4.0))
                 .bg(rgb(theme::BG_DEEP))
                 .border_1()
-                .border_color(theme::fg_faint())
-                .text_size(px(9.0))
+                .border_color(theme::border())
+                .text_size(ui::TEXT_XS)
                 .text_color(theme::fg_dim())
                 .child(shown),
         );
