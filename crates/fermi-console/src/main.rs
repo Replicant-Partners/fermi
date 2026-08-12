@@ -7546,10 +7546,23 @@ impl FermiConsole {
                 div().h(ui::s(1.0)).mx(ui::s(12.0)).bg(theme::border()),
             )
             .child(
-                // Navigation items
+                // Navigation items.
+                //
+                // Scrollable, and allowed to shrink below its content
+                // height (`min_h(0)`, which flexbox otherwise refuses to
+                // do). The sidebar is a fixed-height column with a footer
+                // pinned at the end; if the nav list can't give ground
+                // when space runs short, the overflow comes off the
+                // bottom instead and takes the footer — status, wallet,
+                // text size, shortcuts — off-screen with it. This is the
+                // region that should lose space, because it is the one
+                // that can scroll to get it back.
                 div()
+                    .id("sidebar-nav")
                     .flex()
                     .flex_col()
+                    .overflow_y_scroll()
+                    .min_h(px(0.0))
                     .gap(ui::s(2.0))
                     .mt(ui::s(12.0))
                     .px(ui::s(8.0))
@@ -7677,8 +7690,12 @@ impl FermiConsole {
                 div().flex_grow(),
             )
             .child(
-                // Bottom status
+                // Bottom status. `flex_shrink_0` because this block is the
+                // console's status surface and its escape hatches — the
+                // text-size stepper included. It must never be the thing
+                // that gets compressed away when the column is tight.
                 div()
+                    .flex_shrink_0()
                     .px(ui::s(16.0))
                     .py(ui::s(12.0))
                     .border_t_1()
@@ -9507,10 +9524,24 @@ impl FermiConsole {
     // and the copy under "Sign up" tells them what they'll get.
     fn render_auth_gate(&self, cx: &Context<Self>) -> impl IntoElement {
         div()
+            .id("auth-gate")
             .flex()
             .flex_col()
             .items_center()
-            .justify_center()
+            // Scroll, and centre with `my_auto` rather than
+            // `justify_center`.
+            //
+            // A centred flex column whose content outgrows it overflows
+            // *both* ends equally, and the part above the top edge cannot
+            // be scrolled back to — the wordmark and the sign-in button
+            // simply disappear. `my_auto` centres only while there is
+            // slack and collapses to zero once there isn't, so the splash
+            // stays centred in a roomy window and becomes an ordinary
+            // scrollable column in a short one.
+            //
+            // Reachable at a large text size, but not caused by it: the
+            // same thing happened to anyone who made the window short.
+            .overflow_y_scroll()
             .size_full()
             .bg(theme::bg())
             .child(
@@ -9518,6 +9549,8 @@ impl FermiConsole {
                     .flex()
                     .flex_col()
                     .items_center()
+                    .my_auto()
+                    .py(ui::s(24.0))
                     .gap(ui::s(28.0))
                     .w(ui::s(520.0))
                     .child(
