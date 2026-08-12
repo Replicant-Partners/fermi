@@ -233,7 +233,14 @@ pub async fn execute_agent_handler(
     let _ = state.registry.record_execution(&agent_id, &output);
 
     // 5. Store as ADM episode (with embedding + Spec 22 provenance)
-    let episode = agent_output_to_episode(db_agent.agent_id, &body.query, &output);
+    let mut episode = agent_output_to_episode(db_agent.agent_id, &body.query, &output);
+    // Stamp the (agent, human) dyad so the social tracker can accumulate
+    // rapport/trust/reciprocity for this pair. Without this the episode is
+    // invisible to the companion loop.
+    let dyad_id = agent_bestiary_memory::dyad_id(db_agent.agent_id, &caller_id);
+    episode.dyad_id = Some(dyad_id.clone());
+    // Fold this exchange into the running relationship state.
+    crate::spawn_dyad_observation(&state, db_agent.agent_id, dyad_id, &body.query, &output);
 
     // Build the embedded text ONCE and pass the same string to both the embedder
     // and the storage layer — `generate_provenanced` returns the source_text

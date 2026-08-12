@@ -40,6 +40,7 @@
 pub mod aggregator;
 pub mod error;
 pub mod judge;
+pub mod llm_json;
 pub mod model;
 pub mod prelude;
 pub mod projection_scoring;
@@ -54,6 +55,7 @@ mod tests;
 pub use aggregator::{AggregatedSignal, Aggregator, ConflictFlag, DimensionAggregate};
 pub use error::EvalError;
 pub use judge::{JudgeOutcome, LlmJudge, LlmJudgeConfig, LlmJudgeEvaluator, NoopLlmJudge};
+pub use llm_json::{extract_json_object, parse_llm_json};
 pub use model::EvalModel;
 pub use projection_scoring::{ProjectionLookup, ProjectionObservation, ProjectionScoringEvaluator};
 pub use registry::{EvaluatorRegistry, RegistryOutcome};

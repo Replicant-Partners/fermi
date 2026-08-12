@@ -690,6 +690,9 @@ pub async fn ingest_observations_handler(
 
                     if let Some(row) = db_id {
                         let agent_uuid: Uuid = row.get("agent_id");
+                        // No dyad_id: this is a system-spawned platform agent
+                        // with no human counterpart, so it must not accrue
+                        // relationship state.
                         let episode = agent_output_to_episode(agent_uuid, &prompt, &output);
 
                         let embed_text = format!(

@@ -3920,6 +3920,36 @@ impl MemoryStore {
         row.map(|r| row_to_dyad_state(&r)).transpose()
     }
 
+    /// Minimal per-episode facts needed to replay a dyad's relationship
+    /// history, oldest-first. Deliberately narrow — replay needs outcome,
+    /// timing and prompt size, not embeddings or full context blobs, and
+    /// some dyads have hundreds of episodes.
+    pub async fn list_dyad_interactions(
+        &self,
+        agent_id: Uuid,
+    ) -> Result<Vec<(String, chrono::DateTime<chrono::Utc>, String, usize)>> {
+        let rows = sqlx::query(
+            r#"SELECT dyad_id, timestamp_ref, execution_status, char_length(query) AS query_chars
+               FROM episodes
+               WHERE agent_id = $1 AND dyad_id IS NOT NULL
+               ORDER BY timestamp_ref ASC"#,
+        )
+        .bind(agent_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let dyad_id: String = r.try_get("dyad_id").ok()?;
+                let ts: chrono::DateTime<chrono::Utc> = r.try_get("timestamp_ref").ok()?;
+                let status: String = r.try_get("execution_status").ok()?;
+                let chars: i32 = r.try_get("query_chars").unwrap_or(0);
+                Some((dyad_id, ts, status, chars.max(0) as usize))
+            })
+            .collect())
+    }
+
     pub async fn list_dyads_for_agent(&self, agent_id: Uuid) -> Result<Vec<DyadState>> {
         let rows = sqlx::query(
             r#"SELECT dyad_id, agent_id, human_id, rapport, trust, reciprocity,

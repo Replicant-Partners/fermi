@@ -225,8 +225,18 @@ pub async fn execute_agent_stream_handler(
                 let _ = state_clone.registry.record_execution(&agent_id_clone, &output);
 
                 // Store as ADM episode (with embedding + Spec 22 provenance)
-                let episode = agent_output_to_episode(
+                let mut episode = agent_output_to_episode(
                     agent_db_id,
+                    &query,
+                    &output,
+                );
+                // Stamp the (agent, human) dyad — see execution.rs.
+                let dyad_id = agent_bestiary_memory::dyad_id(agent_db_id, &caller_clone);
+                episode.dyad_id = Some(dyad_id.clone());
+                crate::spawn_dyad_observation(
+                    &state_clone,
+                    agent_db_id,
+                    dyad_id,
                     &query,
                     &output,
                 );

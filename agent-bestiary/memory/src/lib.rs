@@ -13,6 +13,7 @@
 pub mod bundle;
 pub mod clustering;
 pub mod consolidation;
+pub mod dyad;
 pub mod embeddings;
 pub mod error;
 pub mod llm;
@@ -24,6 +25,9 @@ pub mod types;
 pub use bundle::{AgentCardSnapshot, EpisodeBundle, TranscriptRole, TranscriptTurn};
 pub use clustering::{DBSCANClustering, EpisodeCluster};
 pub use consolidation::{ConsolidationResult, ConsolidationWorker};
+pub use dyad::{
+    agent_id_from_dyad, dyad_id, eval_dyad_id, human_id_from_dyad, is_eval_dyad, is_real_dyad,
+};
 pub use embeddings::{
     AnthropicEmbeddings, EmbeddingGenerator, MistralEmbeddings, MockEmbeddings, NomicEmbeddings,
     OpenAIEmbeddings, ProvenancedEmbedding, QwenEmbeddings,

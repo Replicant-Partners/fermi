@@ -375,10 +375,15 @@ pub async fn dispatch_rabble_action(
         let response_bg = response_text.clone();
         let action_bg = action_type.to_string();
         let agent_name_bg = agent_name.to_string();
+        let user_id_bg = user_id.to_string();
 
         tokio::spawn(async move {
             // 1. Episode with embedding + Spec 22 provenance
-            let episode = agent_output_to_episode(agent_id_bg, &query_bg, &output_bg);
+            let mut episode = agent_output_to_episode(agent_id_bg, &query_bg, &output_bg);
+            // Stamp the (agent, human) dyad — see execution.rs.
+            let dyad_id = agent_bestiary_memory::dyad_id(agent_id_bg, &user_id_bg);
+            episode.dyad_id = Some(dyad_id.clone());
+            crate::spawn_dyad_observation(&state_bg, agent_id_bg, dyad_id, &query_bg, &output_bg);
             let embed_text = format!("{} {}", query_bg, &response_bg);
             let t_embed = tokio::time::Instant::now();
             let provenance = match state_bg.embedder.generate_provenanced(&embed_text).await {

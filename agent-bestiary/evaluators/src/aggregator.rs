@@ -59,6 +59,14 @@ pub struct AggregatedSignal {
     /// Names of evaluators that errored. The registry never aborts on
     /// a single evaluator's failure; failures land here for visibility.
     pub failed_evaluators: Vec<String>,
+    /// Why each failed evaluator failed, as `[evaluator, reason]` pairs.
+    ///
+    /// Without this the failure was unattributable: `failed_evaluators`
+    /// recorded that e.g. `sotopia` broke on every run for two months while
+    /// discarding the error, leaving no way to tell a provider timeout from a
+    /// malformed response short of redeploying with extra logging.
+    #[serde(default)]
+    pub failure_reasons: Vec<(String, String)>,
 }
 
 /// Aggregator with a configurable conflict threshold.
@@ -89,6 +97,7 @@ impl Aggregator {
         let mut active_evaluators: Vec<String> = Vec::new();
         let mut inapplicable_evaluators: Vec<String> = Vec::new();
         let mut failed_evaluators: Vec<String> = Vec::new();
+        let mut failure_reasons: Vec<(String, String)> = Vec::new();
 
         for r in results {
             match &r.outcome {
@@ -110,8 +119,9 @@ impl Aggregator {
                 Err(e) if e.is_inapplicable() => {
                     inapplicable_evaluators.push(r.evaluator_name.clone());
                 }
-                Err(_) => {
+                Err(e) => {
                     failed_evaluators.push(r.evaluator_name.clone());
+                    failure_reasons.push((r.evaluator_name.clone(), e.to_string()));
                 }
             }
         }
@@ -144,6 +154,7 @@ impl Aggregator {
         active_evaluators.sort();
         inapplicable_evaluators.sort();
         failed_evaluators.sort();
+        failure_reasons.sort();
 
         AggregatedSignal {
             per_dimension,
@@ -152,6 +163,7 @@ impl Aggregator {
             active_evaluators,
             inapplicable_evaluators,
             failed_evaluators,
+            failure_reasons,
         }
     }
 }

@@ -178,6 +178,27 @@ pub async fn trigger_agent_scan_handler(
     Ok(Json(json!({ "report": report })))
 }
 
+// ─── POST /api/observatory/agents/:id/backfill-social ──────────────────────
+
+/// Replay the social pass over an agent's full timeline.
+///
+/// Needed once per agent whose history predates the social pass — those
+/// entries sit behind the scan checkpoint and would otherwise never be
+/// scored. Idempotent; safe to re-run.
+pub async fn backfill_social_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = require_owner_or_admin(&state, &principal, &agent_id).await?;
+    let worker = ObservabilityWorker::new(Arc::clone(&state.memory_store));
+    let report = worker
+        .backfill_social(db_agent.agent_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(json!({ "report": report })))
+}
+
 // ─── GET /api/observatory/hitl ──────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -949,12 +970,17 @@ pub async fn auto_form_dyads_handler(
             "message": "dyad_profiles table not yet created — migration 133 pending. Will resolve on next deploy.",
         })));
     }
+    // Every eligible pair, whether or not a profile already exists. The
+    // upsert below refreshes interaction counts on existing profiles, and
+    // counting both lets us tell "nothing to do" apart from "already done"
+    // in the response — the previous version filtered out existing profiles
+    // and then reported "Auto-formed 0", which read as a failure.
     let pairs = sqlx::query(
         r#"SELECT e.agent_id, e.dyad_id, COUNT(*) as cnt,
-                  MIN(e.timestamp_ref) as first_at, MAX(e.timestamp_ref) as last_at
+                  MIN(e.timestamp_ref) as first_at, MAX(e.timestamp_ref) as last_at,
+                  EXISTS(SELECT 1 FROM dyad_profiles dp WHERE dp.dyad_id=e.dyad_id) AS existing
            FROM episodes e JOIN agents a ON a.agent_id=e.agent_id
            WHERE a.user_id=$1 AND e.dyad_id IS NOT NULL
-             AND e.dyad_id NOT IN (SELECT dyad_id FROM dyad_profiles)
            GROUP BY e.agent_id, e.dyad_id HAVING COUNT(*)>=3"#,
     )
     .bind(&user_id)
@@ -963,13 +989,22 @@ pub async fn auto_form_dyads_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let mut formed = 0usize;
+    let mut refreshed = 0usize;
+    let mut skipped_malformed = 0usize;
     for row in &pairs {
         let aid: Uuid = row.get("agent_id");
         let did: String = row.get("dyad_id");
         let cnt: i64 = row.get("cnt");
         let fa: chrono::DateTime<Utc> = row.get("first_at");
         let la: chrono::DateTime<Utc> = row.get("last_at");
-        let human_id = did.splitn(3, ':').nth(2).unwrap_or(&did).to_string();
+        let existing: bool = row.try_get("existing").unwrap_or(false);
+        // Skip ids we cannot parse a human out of rather than storing the
+        // whole dyad_id as the human_id, which is what the old fallback did.
+        let Some(human_id) = agent_bestiary_memory::human_id_from_dyad(&did) else {
+            skipped_malformed += 1;
+            continue;
+        };
+        let human_id = human_id.to_string();
         let _ = sqlx::query(
             r#"INSERT INTO dyad_profiles(dyad_id,agent_id,human_id,auto_formed,formed_at,
                 first_interaction_at,last_interaction_at,total_interactions)
@@ -986,11 +1021,35 @@ pub async fn auto_form_dyads_handler(
         .bind(cnt as i32)
         .execute(&state.db)
         .await;
-        formed += 1;
+        if existing {
+            refreshed += 1;
+        } else {
+            formed += 1;
+        }
     }
-    Ok(Json(
-        serde_json::json!({"formed":formed,"message":format!("Auto-formed {} dyad profile(s).",formed)}),
-    ))
+
+    let message = if formed > 0 && refreshed > 0 {
+        format!(
+            "Auto-formed {} new dyad profile(s); refreshed {}.",
+            formed, refreshed
+        )
+    } else if formed > 0 {
+        format!("Auto-formed {} new dyad profile(s).", formed)
+    } else if refreshed > 0 {
+        format!(
+            "No new dyads — {} existing profile(s) already cover every pair with 3+ interactions.",
+            refreshed
+        )
+    } else {
+        "No dyads eligible yet — a pair needs 3+ interactions before a profile forms.".to_string()
+    };
+
+    Ok(Json(serde_json::json!({
+        "formed": formed,
+        "refreshed": refreshed,
+        "skipped_malformed": skipped_malformed,
+        "message": message,
+    })))
 }
 
 pub async fn agent_relationships_handler(
@@ -999,12 +1058,70 @@ pub async fn agent_relationships_handler(
     Path(agent_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db_agent = require_owner_or_admin(&state, &principal, &agent_id).await?;
+
+    // A dyad is visible if ANY of three sources knows about it:
+    //   1. `dyad_state`   — scored relationship (written by the social pass)
+    //   2. `episodes`     — conversations happened, scan may not have run yet
+    //   3. `dyad_profiles`— operator named it
+    //
+    // Previously this handler listed only (1), so a dyad with real
+    // conversation history and an operator-assigned name still rendered as
+    // "No dyads formed yet" until the social pass had run. Sourcing the id
+    // set from the union means history shows up immediately and gains its
+    // rapport/trust scores once scanned.
     let dyads = state
         .memory_store
         .list_dyads_for_agent(db_agent.agent_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let dyad_ids: Vec<String> = dyads.iter().map(|d| d.dyad_id.clone()).collect();
+    let state_by_id: std::collections::HashMap<String, _> =
+        dyads.iter().map(|d| (d.dyad_id.clone(), d)).collect();
+
+    // Episode-derived ground truth: how many exchanges actually happened.
+    let ep_rows = sqlx::query(
+        r#"SELECT dyad_id, COUNT(*)::int AS ep_count,
+                  MIN(timestamp_ref) AS first_at, MAX(timestamp_ref) AS last_at
+           FROM episodes
+           WHERE agent_id = $1 AND dyad_id IS NOT NULL
+           GROUP BY dyad_id"#,
+    )
+    .bind(db_agent.agent_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let episode_stats: std::collections::HashMap<
+        String,
+        (
+            i32,
+            Option<chrono::DateTime<Utc>>,
+            Option<chrono::DateTime<Utc>>,
+        ),
+    > = ep_rows
+        .iter()
+        .map(|r| {
+            let did: String = r.get("dyad_id");
+            (
+                did,
+                (
+                    r.try_get::<i32, _>("ep_count").unwrap_or(0),
+                    r.try_get::<Option<chrono::DateTime<Utc>>, _>("first_at")
+                        .ok()
+                        .flatten(),
+                    r.try_get::<Option<chrono::DateTime<Utc>>, _>("last_at")
+                        .ok()
+                        .flatten(),
+                ),
+            )
+        })
+        .collect();
+
+    let mut dyad_ids: Vec<String> = state_by_id.keys().cloned().collect();
+    for k in episode_stats.keys() {
+        if !state_by_id.contains_key(k) {
+            dyad_ids.push(k.clone());
+        }
+    }
+
     // dyad_profiles may not exist yet (migration 133 pending) — fall back gracefully
     let profiles: std::collections::HashMap<String, serde_json::Value> = if !dyad_ids.is_empty() {
         sqlx::query("SELECT dyad_id,display_name,notes,tags,total_interactions,first_interaction_at,last_interaction_at FROM dyad_profiles WHERE dyad_id=ANY($1)")
@@ -1024,21 +1141,117 @@ pub async fn agent_relationships_handler(
         std::collections::HashMap::new()
     };
 
-    let relationships: Vec<Value> = dyads.iter().map(|d|{
-        let profile=profiles.get(&d.dyad_id).cloned().unwrap_or(serde_json::json!({}));
-        let display_name=profile["display_name"].as_str().map(|s|s.to_string())
-            .unwrap_or_else(||d.dyad_id.splitn(3,':').nth(2).unwrap_or(&d.dyad_id).to_string());
-        let health=(d.rapport+d.trust+d.reciprocity)/3.0;
-        let status=if health>=0.75{"strong"}else if health>=0.5{"developing"}else if d.episode_count<3{"new"}else{"needs_attention"};
-        serde_json::json!({"dyad_id":d.dyad_id,"display_name":display_name,"human_id":d.human_id,
-            "rapport":d.rapport,"trust":d.trust,"reciprocity":d.reciprocity,
-            "episode_count":d.episode_count,"health":(health*100.0).round()/100.0,
-            "relationship_status":status,"last_updated_at":d.last_updated_at,"profile":profile})
-    }).collect();
+    let mut relationships: Vec<Value> = dyad_ids
+        .iter()
+        .map(|did| {
+            let profile = profiles.get(did).cloned().unwrap_or(serde_json::json!({}));
+            let scored = state_by_id.get(did);
+            let (ep_count, first_at, last_at) =
+                episode_stats.get(did).cloned().unwrap_or((0, None, None));
 
-    Ok(Json(
-        serde_json::json!({"agent_id":db_agent.agent_name,"relationship_count":relationships.len(),"relationships":relationships}),
-    ))
+            let human_id = agent_bestiary_memory::human_id_from_dyad(did)
+                .unwrap_or(did.as_str())
+                .to_string();
+            let display_name = profile["display_name"]
+                .as_str()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| human_id.clone());
+
+            // Prefer the episode count — it is ground truth. `dyad_state`
+            // only counts episodes the social pass has folded in.
+            let episode_count = ep_count.max(scored.map(|d| d.episode_count).unwrap_or(0));
+
+            // Days since the last exchange. The three stored axes only move
+            // when an episode arrives, so a relationship that has gone silent
+            // keeps whatever scores it last earned — reciprocity in
+            // particular would read ~1.0 ("always comes back") for someone
+            // who has not been seen in months. Absence is a first-class
+            // relationship signal, so it is reported explicitly here rather
+            // than being invisible.
+            let days_since = last_at.map(|t| (Utc::now() - t).num_seconds() as f64 / 86_400.0);
+            let stale = days_since.map(|d| d > 30.0).unwrap_or(false);
+
+            // Only report health when the relationship has actually been
+            // scored. Emitting a default 0.5 for unscanned dyads would be
+            // indistinguishable from a genuinely neutral relationship.
+            let (rapport, trust, reciprocity, health, status) = match scored {
+                Some(d) => {
+                    let health = (d.rapport + d.trust + d.reciprocity) / 3.0;
+                    let status = if stale {
+                        // Deliberately outranks "strong": a warm relationship
+                        // nobody has touched in a month needs attention more
+                        // than a lukewarm active one.
+                        "cooling"
+                    } else if health >= 0.75 {
+                        "strong"
+                    } else if health >= 0.5 {
+                        "developing"
+                    } else if d.episode_count < 3 {
+                        "new"
+                    } else {
+                        "needs_attention"
+                    };
+                    (
+                        Some(d.rapport),
+                        Some(d.trust),
+                        Some(d.reciprocity),
+                        Some((health * 100.0).round() / 100.0),
+                        status,
+                    )
+                }
+                None => (None, None, None, None, "pending_scan"),
+            };
+
+            serde_json::json!({
+                "dyad_id": did,
+                "display_name": display_name,
+                "human_id": human_id,
+                // `eval` dyads are synthetic history from the regression
+                // pipeline; `dyad` dyads are real conversations.
+                "origin": if agent_bestiary_memory::is_eval_dyad(did) { "eval" } else { "dyad" },
+                "rapport": rapport,
+                "trust": trust,
+                "reciprocity": reciprocity,
+                "episode_count": episode_count,
+                "health": health,
+                "relationship_status": status,
+                "days_since_last_interaction": days_since.map(|d| (d * 10.0).round() / 10.0),
+                "stale": stale,
+                "first_interaction_at": first_at,
+                "last_interaction_at": last_at,
+                "last_updated_at": scored.map(|d| d.last_updated_at),
+                "profile": profile,
+            })
+        })
+        .collect();
+
+    // Most-recently-active first.
+    relationships.sort_by(|a, b| {
+        let key = |v: &Value| {
+            v["last_interaction_at"]
+                .as_str()
+                .or_else(|| v["last_updated_at"].as_str())
+                .unwrap_or("")
+                .to_string()
+        };
+        key(b).cmp(&key(a))
+    });
+
+    let scored_count = relationships
+        .iter()
+        .filter(|r| r["health"].is_number())
+        .count();
+    let pending_count = relationships.len() - scored_count;
+
+    Ok(Json(serde_json::json!({
+        "agent_id": db_agent.agent_name,
+        "relationship_count": relationships.len(),
+        "scored_count": scored_count,
+        // Surfaced so the UI can say "N awaiting scan" instead of implying
+        // the relationships do not exist.
+        "pending_scan_count": pending_count,
+        "relationships": relationships,
+    })))
 }
 
 pub async fn patch_dyad_profile_handler(

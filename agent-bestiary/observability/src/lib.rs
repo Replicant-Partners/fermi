@@ -41,9 +41,9 @@ pub use anomaly::{AnomalyDetector, AnomalyKind, DetectedAnomaly};
 pub use drift::{DriftThreshold, DriftVector, PersonaDriftMonitor};
 pub use error::ObservabilityError;
 pub use scorer::EpisodeScorer;
-pub use social::{SocialInteractionTracker, SocialUpdate};
+pub use social::{AxisTargets, InteractionObservation, SocialInteractionTracker, SocialUpdate};
 pub use trend::{TrendAnalyzer, TrendSeries, TrendWindow};
-pub use worker::{ObservabilityWorker, ScanReport};
+pub use worker::{BackfillReport, ObservabilityWorker, ScanReport, SOCIAL_OBSERVED_FLAG};
 
 // Re-export the storage shape consumers will most often touch.
 pub use agent_bestiary_memory::{AgentObservabilityState, AnomalyEvent, DyadState, TimelineEntry};

@@ -570,9 +570,14 @@ pub async fn run_eval_cases(
                 // can compare embeddings across persona versions.
                 ep.persona_version_at_write = Some(db_agent.persona_version);
                 // Q1 (a) — populate dyad_id from triggered_by for eval-pipeline
-                // executions so the social tracker has something to scope
-                // to. Workspace handlers will populate from sender_id later.
-                ep.dyad_id = Some(format!("eval:{}:{}", db_agent.agent_id, user_id));
+                // executions so the social tracker has something to scope to.
+                // Kept on the `eval:` origin so synthetic regression history
+                // stays distinguishable from real companion conversations,
+                // which the runtime handlers stamp with the `dyad:` origin.
+                ep.dyad_id = Some(agent_bestiary_memory::eval_dyad_id(
+                    db_agent.agent_id,
+                    &user_id,
+                ));
                 // Generate embedding bundled with Spec 22 provenance.
                 let embed_text = format!(
                     "{} {}",
@@ -1031,6 +1036,7 @@ fn aggregate_run_signals(signals: &[AggregatedSignal]) -> AggregatedSignal {
             active_evaluators: vec![],
             inapplicable_evaluators: vec![],
             failed_evaluators: vec![],
+            failure_reasons: vec![],
         };
     }
 
@@ -1040,6 +1046,9 @@ fn aggregate_run_signals(signals: &[AggregatedSignal]) -> AggregatedSignal {
     let mut active = std::collections::BTreeSet::new();
     let mut inapplicable = std::collections::BTreeSet::new();
     let mut failed = std::collections::BTreeSet::new();
+    // Deduplicated across cases: the same evaluator failing on all nine test
+    // cases for the same reason should read as one problem, not nine.
+    let mut failure_reasons = std::collections::BTreeSet::new();
     let mut all_flags = Vec::new();
 
     for sig in signals {
@@ -1074,6 +1083,9 @@ fn aggregate_run_signals(signals: &[AggregatedSignal]) -> AggregatedSignal {
         for e in &sig.failed_evaluators {
             failed.insert(e.clone());
         }
+        for r in &sig.failure_reasons {
+            failure_reasons.insert(r.clone());
+        }
         for f in &sig.flags {
             all_flags.push(f.clone());
         }
@@ -1105,6 +1117,7 @@ fn aggregate_run_signals(signals: &[AggregatedSignal]) -> AggregatedSignal {
         flags: all_flags,
         active_evaluators: active.into_iter().collect(),
         inapplicable_evaluators: inapplicable.into_iter().collect(),
+        failure_reasons: failure_reasons.into_iter().collect(),
         failed_evaluators: failed.into_iter().collect(),
     }
 }

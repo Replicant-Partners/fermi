@@ -258,7 +258,7 @@ Return ONLY valid JSON:
         .as_str()
         .ok_or_else(|| EvalError::Malformed("no text in LLM response".into()))?;
 
-    let moderation: ModerationResponse = serde_json::from_str(content)
+    let moderation: ModerationResponse = agent_bestiary_evaluators::parse_llm_json(content)
         .map_err(|e| EvalError::Malformed(format!("JSON parse: {e}")))?;
 
     let p_unsafe = moderation.p_unsafe.clamp(0.0, 1.0);

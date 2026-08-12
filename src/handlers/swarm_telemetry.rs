@@ -470,6 +470,8 @@ pub async fn ingest_telemetry_handler(
 
                     if let Some(row) = db_id {
                         let agent_uuid: Uuid = row.get("agent_id");
+                        // No dyad_id: system-spawned coordinator agent with no
+                        // human counterpart — see observations.rs.
                         let episode = agent_output_to_episode(agent_uuid, &summary_prompt, &output);
 
                         // Embedding + Spec 22 provenance

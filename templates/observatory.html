@@ -149,6 +149,9 @@
   .rcs-developing{color:var(--aqua);border-color:var(--aqua);}
   .rcs-new{color:var(--fg4);border-color:var(--bg3);}
   .rcs-needs_attention{color:var(--yellow);border-color:var(--yellow);}
+  .rcs-pending_scan{color:var(--fg4);border-color:var(--bg3);}
+  .rcs-cooling{color:var(--orange,var(--yellow));border-color:var(--orange,var(--yellow));}
+  .rc-origin{font-size:0.6rem;color:var(--fg4);border:1px solid var(--bg3);padding:1px 4px;margin-left:6px;}
   .rc-name-input{background:var(--bg0);border:1px solid var(--bg3);color:var(--fg2);padding:3px 6px;font-family:inherit;font-size:0.75rem;width:100%;margin-top:6px;}
   .rc-save{font-size:0.68rem;color:var(--aqua);cursor:pointer;background:none;border:none;font-family:inherit;padding:2px 0;}
 
@@ -629,7 +632,7 @@ async function autoFormDyads() {
   try {
     const r = await fetchJson("/api/observatory/dyads/auto-form", {method:"POST"});
     setStatus(r.message, "done");
-    if (r.formed > 0 && _agent) await loadAgentData();
+    if ((r.formed > 0 || r.refreshed > 0) && _agent) await loadAgentData();
   } catch(e) { setStatus("Auto-form failed: "+e.message, "error"); }
 }
 
@@ -773,7 +776,19 @@ function renderEvalCards() {
     setText("scores-meta","");
     return;
   }
-  setText("scores-meta", `latest run ${timeSince(runs[0].started_at)} · ${runs.length} total`);
+  // The cards below are a snapshot of the run that produced them, not live
+  // state. Loop 5a on the Loops tab reads /calibration live, so a stale run
+  // here can legitimately disagree with it (a months-old `brier: inactive`
+  // card sitting next to a live "closed" loop). Stamp the age so that
+  // contradiction is legible instead of alarming.
+  const meta = document.getElementById("scores-meta");
+  const ageDays = runs[0]?.started_at
+    ? (Date.now() - new Date(runs[0].started_at)) / 86400000 : null;
+  meta.innerHTML =
+    `latest run ${escHtml(timeSince(runs[0].started_at))} · ${runs.length} total`
+    + (ageDays != null && ageDays > 7
+        ? ` · <span style="color:var(--yellow)">snapshot of that run, not live — the Loops tab reads calibration live</span>`
+        : "");
 
   const signals = _evalSignals?.signals || [];
   const inapplicable = runs[0]?.aggregated_signal?.inapplicable_evaluators || [];
@@ -815,8 +830,30 @@ function renderEvalCards() {
       <div style="font-size:0.68rem;color:var(--fg4)">${inapplicableHint(name)}</div>
     </div>`);
 
-  el.innerHTML = [...activeCards,...inapplCards].join("") ||
-    '<div style="color:var(--fg4);font-size:0.75rem;">Signals written — reload to see breakdown.</div>';
+  // Failed evaluators, with the actual reason. Previously a failure showed
+  // only as an absent card, so an evaluator could break for months unnoticed.
+  const reasons = runs[0]?.aggregated_signal?.failure_reasons || [];
+  const failed = runs[0]?.aggregated_signal?.failed_evaluators || [];
+  const reasonFor = (n) => {
+    const hit = reasons.find(r => Array.isArray(r) && r[0] === n);
+    return hit ? hit[1] : "failed — reason not recorded (pre-dates failure capture)";
+  };
+  const failedCards = failed.map(name => `
+    <div class="eval-card" style="border-color:var(--red);">
+      <div class="ec-name" style="color:var(--red)">${name}<span class="ec-tier">failed</span></div>
+      <div style="font-size:0.68rem;color:var(--fg4);word-break:break-word;">${escHtml(reasonFor(name))}</div>
+    </div>`);
+
+  // Empty grid means the run recorded nothing at all: no signal rows, and an
+  // aggregated_signal with empty active/failed/inapplicable lists. The old
+  // copy here ("Signals written — reload to see breakdown") asserted the
+  // opposite and sent people reloading a page that had nothing to show.
+  el.innerHTML = [...activeCards,...failedCards,...inapplCards].join("") ||
+    `<div style="color:var(--fg4);font-size:0.75rem;grid-column:1/-1;">
+       Latest run (${escHtml(timeSince(runs[0].started_at))}) recorded no evaluator
+       results — no scores, no failures, no inactive evaluators. The run row exists
+       but its aggregated signal is empty. Click ▶ Eval to re-run.
+     </div>`;
 }
 
 // ── History ───────────────────────────────────────────────────────────
@@ -918,20 +955,34 @@ function renderRelationshipsTab() {
   const el = document.getElementById("relationships-grid");
   const rels = _rels?.relationships || [];
   if (!rels.length) {
-    el.innerHTML = '<div style="color:var(--fg4);font-size:0.75rem;">No dyads formed yet. Dyads auto-form after 3 interactions with the same user. Click ⟳ Auto-form dyads to check.</div>';
+    el.innerHTML = '<div style="color:var(--fg4);font-size:0.75rem;">No dyads yet. A dyad forms once the same user and agent have interacted 3+ times. Click ⟳ Auto-form dyads to check.</div>';
     return;
   }
-  el.innerHTML = rels.map(r => {
+  const pending = _rels?.pending_scan_count || 0;
+  const banner = pending
+    ? `<div style="color:var(--fg4);font-size:0.7rem;margin-bottom:8px;">${pending} relationship(s) have conversation history but no rapport scores yet — run ⊙ Scan to score them.</div>`
+    : "";
+  el.innerHTML = banner + rels.map(r => {
     const statusCls = `rcs-${r.relationship_status}`;
     const name = r.display_name || r.human_id || r.dyad_id;
+    // health is null until the social pass has scored this dyad; show "—"
+    // rather than a misleading 0%.
+    const scored = r.health !== null && r.health !== undefined;
+    const vital = (label, v) => scored
+      ? `<div><div class="rcv-label">${label}</div><div class="rcv-value" style="color:${colorFor(v)}">${pct(v)}%</div></div>`
+      : `<div><div class="rcv-label">${label}</div><div class="rcv-value" style="color:var(--fg4)">—</div></div>`;
+    const origin = r.origin === "eval"
+      ? '<span class="rc-origin" title="Synthetic history from the eval pipeline, not a real conversation">eval</span>'
+      : "";
     return `<div class="rel-card">
-      <div class="rc-name" id="rcn-${r.dyad_id}">${escHtml(name)}</div>
+      <div class="rc-name" id="rcn-${r.dyad_id}">${escHtml(name)}${origin}</div>
       <div class="rc-id">${r.dyad_id}</div>
       <div class="rc-vitals">
-        <div><div class="rcv-label">Rapport</div><div class="rcv-value" style="color:${colorFor(r.rapport)}">${pct(r.rapport)}%</div></div>
-        <div><div class="rcv-label">Trust</div><div class="rcv-value" style="color:${colorFor(r.trust)}">${pct(r.trust)}%</div></div>
+        ${vital("Rapport", r.rapport)}
+        ${vital("Trust", r.trust)}
         <div><div class="rcv-label">Sessions</div><div class="rcv-value">${r.episode_count}</div></div>
       </div>
+      ${r.days_since_last_interaction!=null?`<div style="font-size:0.65rem;color:${r.stale?"var(--yellow)":"var(--fg4)"};margin-top:4px;">last seen ${Math.round(r.days_since_last_interaction)}d ago</div>`:""}
       <span class="rc-status ${statusCls}">${r.relationship_status.replace("_"," ")}</span>
       <div style="margin-top:8px;">
         <input class="rc-name-input" id="rci-${r.dyad_id}" placeholder="Give this relationship a name…" value="${escHtml(r.display_name||"")}" onkeydown="if(event.key==='Enter')saveDyadName('${r.dyad_id}')"/>
@@ -1082,8 +1133,14 @@ async function triggerScan() {
   btn.disabled=true; btn.textContent="Scanning…";
   setStatus("Running scan…","scanning");
   try {
+    // Backfill first: folds any pre-existing timeline entries into dyad
+    // state (they sit behind the scan checkpoint, so the scan alone would
+    // skip them). Idempotent — already-observed entries are no-ops.
+    const b=await fetchJson(`/api/observatory/agents/${enc(_agent.agent_id)}/backfill-social`,{method:"POST"}).catch(()=>null);
     const r=await fetchJson(`/api/observatory/agents/${enc(_agent.agent_id)}/scan`,{method:"POST"});
-    setStatus(`Scan: ${r.report?.entries_scanned} entries · ${r.report?.anomalies_detected} anomalies · ${r.report?.duration_ms}ms`,"done");
+    const dy=b?.report?.dyads_rebuilt||0;
+    const eps=b?.report?.episodes_replayed||0;
+    setStatus(`Scan: ${r.report?.entries_scanned} entries · ${r.report?.anomalies_detected} anomalies · ${dy} relationship(s) rebuilt from ${eps} episodes · ${r.report?.duration_ms}ms`,"done");
     await loadAgentData();
   } catch(e){setStatus("Scan failed: "+e.message,"error");}
   finally{btn.disabled=false;btn.textContent="⊙ Scan";}

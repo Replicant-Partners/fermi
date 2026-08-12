@@ -506,8 +506,20 @@ pub async fn post_workspace_message_handler(
                         let _ = state2.registry.record_execution(&agent_name2, &output);
 
                         // Store episode with Spec 22 provenance
-                        let episode =
+                        let mut episode =
                             agent_output_to_episode(db_agent.agent_id, &query2, &output);
+                        // Stamp the (agent, human) dyad from the message sender so
+                        // workspace conversations feed the companion loop.
+                        let dyad_id =
+                            agent_bestiary_memory::dyad_id(db_agent.agent_id, &user_id2);
+                        episode.dyad_id = Some(dyad_id.clone());
+                        crate::spawn_dyad_observation(
+                            &state2,
+                            db_agent.agent_id,
+                            dyad_id,
+                            &query2,
+                            &output,
+                        );
                         let embed_text = format!(
                             "{} {}",
                             query2,

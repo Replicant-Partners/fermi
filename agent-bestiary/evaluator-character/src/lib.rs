@@ -381,8 +381,8 @@ Return ONLY valid JSON:
         .as_str()
         .ok_or_else(|| EvalError::Malformed("no text in response".into()))?;
 
-    let scores: CharacterScores =
-        serde_json::from_str(content).map_err(|e| EvalError::Malformed(format!("JSON: {e}")))?;
+    let scores: CharacterScores = agent_bestiary_evaluators::parse_llm_json(content)
+        .map_err(|e| EvalError::Malformed(format!("JSON: {e}")))?;
 
     let norm = |v: f64| ((v - 1.0) / 9.0).clamp(0.0, 1.0);
 

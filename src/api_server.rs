@@ -2290,6 +2290,10 @@ async fn main() {
             get(handlers::observatory::list_hitl_queue_handler),
         )
         .route(
+            "/api/observatory/agents/:agent_id/backfill-social",
+            post(handlers::observatory::backfill_social_handler),
+        )
+        .route(
             "/api/observatory/hitl/:event_id/action",
             post(handlers::observatory::record_hitl_action_handler),
         )
@@ -5453,6 +5457,60 @@ pub(crate) fn resolve_agent_card(state: &AppState, db_agent: &Agent) -> AgentCar
     card
 }
 
+/// Fold one live human↔agent exchange into the dyad's running relationship
+/// state, in the background.
+///
+/// Call this wherever a real conversation turn completes. It is the live
+/// counterpart to the eval pipeline's evaluator-driven path: live turns
+/// never reach `agent_timeline_entries` (only `run_eval_cases` writes
+/// those), so the background `ObservabilityWorker` social pass would never
+/// see them and every real relationship would stay frozen at its defaults.
+///
+/// Fire-and-forget by design — two cheap queries (`get_dyad_state` +
+/// `upsert_dyad_state`) that must never delay or fail a user's response.
+pub(crate) fn spawn_dyad_observation(
+    state: &AppState,
+    agent_db_id: uuid::Uuid,
+    dyad_id: String,
+    query: &str,
+    output: &AgentOutput,
+) {
+    let obs = agent_bestiary_observability::InteractionObservation {
+        succeeded: matches!(output.status, AgentStatus::Success),
+        partial: matches!(output.status, AgentStatus::BelowConfidenceThreshold),
+        confidence: output.confidence,
+        user_chars: query.chars().count(),
+        occurred_at: output.timestamp,
+    };
+    let store = Arc::clone(&state.memory_store);
+    tokio::spawn(async move {
+        let tracker = agent_bestiary_observability::SocialInteractionTracker::new(store);
+        match tracker
+            .observe_interaction(agent_db_id, &dyad_id, &obs)
+            .await
+        {
+            Ok(u) => {
+                if u.rupture_detected {
+                    tracing::warn!(
+                        dyad = %dyad_id,
+                        max_rapport_drop = u.max_rapport_drop,
+                        "dyad rupture detected"
+                    );
+                }
+                tracing::debug!(
+                    dyad = %dyad_id,
+                    rapport = u.state.rapport,
+                    trust = u.state.trust,
+                    reciprocity = u.state.reciprocity,
+                    episodes = u.state.episode_count,
+                    "dyad state updated"
+                );
+            }
+            Err(e) => tracing::warn!(dyad = %dyad_id, error = %e, "dyad observation failed"),
+        }
+    });
+}
+
 pub(crate) fn agent_output_to_episode(
     agent_db_id: uuid::Uuid,
     query: &str,
@@ -5577,6 +5635,14 @@ pub(crate) fn agent_output_to_episode(
         tags,
         provenance: agent_bestiary_memory::Provenance::AutoPass,
         authority_weight: 0.5,
+        // Left unset here because this constructor has no notion of *who*
+        // the agent was talking to. Call sites that represent a real
+        // human↔agent exchange must stamp this with
+        // `agent_bestiary_memory::dyad_id(agent_id, user_id)` immediately
+        // after construction, otherwise the episode is invisible to the
+        // companion loop (social tracker, dyad_state, relationships tab).
+        // System-spawned platform agents (observations, swarm telemetry)
+        // legitimately leave it `None` — there is no human counterpart.
         dyad_id: None,
         persona_version_at_write: None,
         // Phase 2: tag execution provenance so the observatory can filter

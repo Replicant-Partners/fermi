@@ -10,6 +10,7 @@ use crate::anomaly::{detect_in_window_with_window, AnomalyKind};
 use crate::drift::{cosine_similarity, DriftThreshold};
 use crate::social::detect_rupture;
 use crate::trend::compute_series;
+use crate::worker::SOCIAL_OBSERVED_FLAG;
 use agent_bestiary_memory::TimelineEntry;
 
 fn entry(
@@ -33,6 +34,51 @@ fn entry(
         anomaly_flags: flags,
         created_at: Utc::now(),
     }
+}
+
+/// The social pass stamps every entry it folds into `dyad_state` with
+/// `social:observed`. That flag shares the `anomaly_flags` column with the
+/// real signals, so it must be inert to the detector — otherwise every
+/// scored episode would raise a spurious anomaly.
+#[test]
+fn social_observed_flag_raises_no_anomaly() {
+    let entries = vec![
+        entry(
+            1,
+            serde_json::json!({ "rapport": 0.8 }),
+            serde_json::json!([SOCIAL_OBSERVED_FLAG]),
+            None,
+        ),
+        entry(
+            1,
+            serde_json::json!({ "rapport": 0.8 }),
+            serde_json::json!([SOCIAL_OBSERVED_FLAG]),
+            None,
+        ),
+    ];
+    let found = detect_in_window_with_window(Uuid::new_v4(), &entries, 3);
+    assert!(
+        found.is_empty(),
+        "social:observed must not be treated as an anomaly signal, got {:?}",
+        found.iter().map(|a| a.kind).collect::<Vec<_>>()
+    );
+}
+
+/// A rupture flag written alongside the observed marker must still surface,
+/// i.e. adding the marker does not mask real signals on the same entry.
+#[test]
+fn social_observed_flag_does_not_mask_rupture() {
+    let dyad = "dyad:a20c239d-c35b-4e18-b45c-a2e2ae1c4372:user-42";
+    let entries = vec![entry(
+        1,
+        serde_json::json!({ "rapport": 0.4 }),
+        serde_json::json!([SOCIAL_OBSERVED_FLAG, format!("rupture:{}", dyad)]),
+        None,
+    )];
+    let found = detect_in_window_with_window(Uuid::new_v4(), &entries, 3);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].kind, AnomalyKind::Rupture);
+    assert_eq!(found[0].dyad_id.as_deref(), Some(dyad));
 }
 
 #[test]

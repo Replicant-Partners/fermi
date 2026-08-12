@@ -30,7 +30,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use agent_bestiary_evaluators::{
-    Dimension, EpisodeBundle, EvalError, EvalModel, EvalResult, EvalTier, TranscriptRole,
+    parse_llm_json, Dimension, EpisodeBundle, EvalError, EvalFlag, EvalModel, EvalResult, EvalTier,
+    TranscriptRole,
 };
 
 /// Optional LLM provider configuration.
@@ -102,7 +103,33 @@ impl EvalModel for SotopiaEvaluator {
         }
 
         if let Some(llm) = &self.llm {
-            return llm_score(llm, bundle, self.name(), self.version(), t0).await;
+            match llm_score(llm, bundle, self.name(), self.version(), t0).await {
+                Ok(r) => return Ok(r),
+                Err(e) => {
+                    // Degrade rather than disappear.
+                    //
+                    // Sotopia is the only producer of `rapport`,
+                    // `social_capital` and `goal_completion`. Hard-failing on
+                    // a provider hiccup removed the entire social axis from
+                    // the platform — which is exactly what happened: zero
+                    // sotopia signals were ever recorded, because a failed
+                    // LLM call yielded nothing at all instead of the
+                    // heuristic that was already sitting right here.
+                    //
+                    // A weaker signal that keeps the relationship loop moving
+                    // beats a perfect one that never arrives. The flag and
+                    // lowered confidence keep the degradation visible.
+                    let mut fallback = heuristic_score(bundle, self.name(), self.version(), t0)?;
+                    fallback = fallback
+                        .with_confidence(0.40)
+                        .with_flag(EvalFlag::new("sotopia", "llm_fallback"));
+                    fallback.rationale = Some(match fallback.rationale.take() {
+                        Some(r) => format!("LLM unavailable ({e}); {r}"),
+                        None => format!("LLM unavailable ({e}); heuristic scoring"),
+                    });
+                    return Ok(fallback);
+                }
+            }
         }
 
         // Heuristic fallback.
@@ -265,7 +292,7 @@ Return ONLY valid JSON:
         .ok_or_else(|| EvalError::Malformed("no text in response".into()))?;
 
     let scores: SotopiaScores =
-        serde_json::from_str(content).map_err(|e| EvalError::Malformed(format!("JSON: {e}")))?;
+        parse_llm_json(content).map_err(|e| EvalError::Malformed(format!("JSON: {e}")))?;
 
     // Normalise 1–10 → 0–1.
     let norm = |v: f64| ((v - 1.0) / 9.0).clamp(0.0, 1.0);
@@ -341,6 +368,57 @@ mod tests {
         let ev = SotopiaEvaluator::new();
         let b = bundle(Some(serde_json::json!({"goal": "make a friend"})), vec![]);
         assert!(ev.evaluate(&b).await.unwrap_err().is_inapplicable());
+    }
+
+    /// The regression that mattered: an unreachable or misbehaving LLM used to
+    /// make Sotopia fail outright, which silently removed `rapport`,
+    /// `social_capital` and `goal_completion` from the entire platform. It must
+    /// now degrade to the heuristic and still emit all three dimensions.
+    #[tokio::test]
+    async fn llm_failure_degrades_to_heuristic_instead_of_failing() {
+        // Unroutable endpoint — guarantees a provider error without a network
+        // dependency or an API key.
+        let ev = SotopiaEvaluator::with_llm(LlmConfig {
+            endpoint: "http://127.0.0.1:1/v1/messages".into(),
+            api_key: "not-a-key".into(),
+            model: "test-model".into(),
+        });
+        let b = bundle(
+            Some(serde_json::json!({"goal": "discuss the weather forecast"})),
+            vec![
+                ("What is the weather forecast?", TranscriptRole::User),
+                (
+                    "The forecast shows sunny skies for outdoor activities.",
+                    TranscriptRole::Agent,
+                ),
+            ],
+        );
+
+        let result = ev
+            .evaluate(&b)
+            .await
+            .expect("must degrade to heuristic, not fail");
+
+        for dim in ["goal_completion", "social_capital", "rapport"] {
+            assert!(
+                result.dimension_scores.contains_key(&Dimension::new(dim)),
+                "missing {dim} after fallback"
+            );
+        }
+        // Degradation must be visible, not silent.
+        assert!(
+            result.confidence < 0.55,
+            "fallback confidence should be low"
+        );
+        assert!(
+            result.flags.iter().any(|f| f.value == "llm_fallback"),
+            "fallback must be flagged"
+        );
+        assert!(result
+            .rationale
+            .as_deref()
+            .unwrap_or_default()
+            .contains("LLM unavailable"));
     }
 
     #[tokio::test]
