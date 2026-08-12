@@ -23,10 +23,29 @@
 //! the corpus (267 distinct values, 234 of them appearing once), and only
 //! three cards declare a typed `output_contract`.
 //!
-//! So `SeamStatus::Matched` carries how it was established, and the API says
+//! So `SeamStatus` carries how the match was established, and the API says
 //! `matched_by_label`. Presenting an asserted match as a verified one is the
 //! error this whole audit line has been chasing: a check whose failure is
 //! indistinguishable from success.
+//!
+//! # The entry contract
+//!
+//! Not every input comes from an upstream stage. A pipeline also has inputs
+//! the *caller* supplies, and those stay available for the whole run:
+//! `rabble_curator` takes a `location` and does not need it until stage 3.
+//!
+//! They are passed to [`plan`] as `entry_inputs` — in practice the card's
+//! top-level `accepts`. An input satisfied that way is a materially weaker
+//! claim than one produced upstream, because it holds only if the caller
+//! actually supplies it. So it gets its own [`SeamStatus`] rather than an
+//! easily-overlooked empty field on the matched one.
+//!
+//! An input that is neither produced upstream nor in the entry contract is
+//! [`SeamStatus::Unmatched`], and blocks. Note what that makes checkable: a
+//! caller reading the card cannot know to supply an input the card does not
+//! advertise, so such a pipeline is **not invocable from its own
+//! declaration**. That was the corpus's most common declaration defect — nine
+//! sites across six cards the first time this ran.
 
 use crate::agent_backend::agent_card::WorkflowTemplate;
 use serde::{Deserialize, Serialize};
@@ -35,11 +54,19 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum SeamStatus {
-    /// Upstream declares something downstream accepts. By label only — see
-    /// the module docs. `on` names the labels that lined up.
+    /// Every input this stage accepts is produced by some upstream stage. By
+    /// label only — see the module docs. `on` names the labels that lined up.
     MatchedByLabel { on: Vec<String> },
-    /// Downstream needs inputs nothing upstream produces. `missing` names
-    /// them. A pipeline with an unmatched seam should not be started.
+    /// Every input is accounted for, but some arrive from the caller rather
+    /// than from any stage. Weaker than [`SeamStatus::MatchedByLabel`]: it
+    /// holds only for callers that actually supply `from_entry`.
+    MatchedWithEntryInputs {
+        produced: Vec<String>,
+        from_entry: Vec<String>,
+    },
+    /// Downstream needs inputs that no upstream stage produces and the entry
+    /// contract does not offer. `missing` names them. A pipeline with an
+    /// unmatched seam should not be started.
     Unmatched { missing: Vec<String> },
     /// The downstream stage declares no inputs, so nothing can fail to
     /// arrive. Distinguished from a match because there is no evidence of
@@ -79,6 +106,14 @@ pub struct PipelinePlan {
     pub open_slots: Vec<OpenSlot>,
     /// Stage names in execution order, bound agents only.
     pub runnable_stages: Vec<String>,
+    /// Inputs some stage needs that no stage produces, in first-use order.
+    /// This is the pipeline's *computed* entry contract — what a caller must
+    /// actually hand it — whether or not the card declares them.
+    pub required_entry_inputs: Vec<String>,
+    /// The subset of `required_entry_inputs` absent from the declared
+    /// `entry_inputs`. Each is an input a caller could not know to supply, so
+    /// these block.
+    pub undeclared_entry_inputs: Vec<String>,
     /// True when every seam is satisfied and every stage has an agent.
     pub runnable: bool,
     /// Why not, in one line, when `runnable` is false.
@@ -86,7 +121,11 @@ pub struct PipelinePlan {
 }
 
 /// Plan a declared pipeline. Pure: reads declarations, touches nothing.
-pub fn plan(template: &WorkflowTemplate) -> PipelinePlan {
+///
+/// `entry_inputs` is what a caller may hand the pipeline — in practice the
+/// card's top-level `accepts`. Pass an empty slice to check the stages in
+/// isolation.
+pub fn plan(template: &WorkflowTemplate, entry_inputs: &[String]) -> PipelinePlan {
     let stages = &template.stages;
 
     if stages.is_empty() {
@@ -95,6 +134,8 @@ pub fn plan(template: &WorkflowTemplate) -> PipelinePlan {
             seams: vec![],
             open_slots: vec![],
             runnable_stages: vec![],
+            required_entry_inputs: vec![],
+            undeclared_entry_inputs: vec![],
             runnable: false,
             blocked_reason: Some("the template declares no stages".into()),
         };
@@ -113,23 +154,45 @@ pub fn plan(template: &WorkflowTemplate) -> PipelinePlan {
         })
         .collect();
 
-    // Availability starts with the pipeline's EXTERNAL inputs, then
-    // accumulates what each stage produces.
+    // `produced` accumulates what stages make as we walk forward; anything in
+    // `entry_inputs` is available throughout. An input in neither is missing.
     //
-    // The first stage's `accepts` are supplied by the caller — they are the
-    // pipeline's entry contract, not something an upstream stage makes. Later
-    // stages routinely need them again: ar_card_producer's Intake takes a
-    // `logo` and its Marker Generation stage takes that same `logo` alongside
-    // the brief Intake produced.
-    //
-    // Omitting this was the planner's first bug, and running it over the real
-    // corpus is what caught it: 9 of 12 declared pipelines reported unmatched
-    // seams that were nothing of the kind. A validator that fails on correct
-    // input is worse than none — it teaches people to ignore it.
-    let mut available: Vec<String> = stages[0].accepts.clone();
+    // Treating *only stage 0's* `accepts` as the entry contract was this
+    // planner's first bug, and running it over the real corpus is what caught
+    // it: 9 of 12 declared pipelines reported unmatched seams that were
+    // nothing of the kind. A validator that fails on correct input is worse
+    // than none — it teaches people to ignore it.
+    let mut produced: Vec<String> = Vec::new();
     let mut seams: Vec<Seam> = Vec::new();
+    let mut required_entry_inputs: Vec<String> = Vec::new();
+    let mut undeclared_entry_inputs: Vec<String> = Vec::new();
 
     for (i, stage) in stages.iter().enumerate() {
+        // Partition this stage's inputs by provenance. Done for *every*
+        // stage, including the first, so an input the card never advertises
+        // is caught even when there is no seam to hang it on.
+        let mut from_upstream: Vec<String> = Vec::new();
+        let mut from_entry: Vec<String> = Vec::new();
+        let mut missing: Vec<String> = Vec::new();
+
+        for label in &stage.accepts {
+            if produced.contains(label) {
+                from_upstream.push(label.clone());
+                continue;
+            }
+            if !required_entry_inputs.contains(label) {
+                required_entry_inputs.push(label.clone());
+            }
+            if entry_inputs.contains(label) {
+                from_entry.push(label.clone());
+            } else {
+                missing.push(label.clone());
+                if !undeclared_entry_inputs.contains(label) {
+                    undeclared_entry_inputs.push(label.clone());
+                }
+            }
+        }
+
         if i > 0 {
             let upstream = &stages[i - 1];
             let status = if upstream.agent.is_none() {
@@ -142,24 +205,15 @@ pub fn plan(template: &WorkflowTemplate) -> PipelinePlan {
                 }
             } else if stage.accepts.is_empty() {
                 SeamStatus::NothingRequired
-            } else {
-                let matched: Vec<String> = stage
-                    .accepts
-                    .iter()
-                    .filter(|a| available.iter().any(|p| p == *a))
-                    .cloned()
-                    .collect();
-                let missing: Vec<String> = stage
-                    .accepts
-                    .iter()
-                    .filter(|a| !available.iter().any(|p| p == *a))
-                    .cloned()
-                    .collect();
-                if missing.is_empty() {
-                    SeamStatus::MatchedByLabel { on: matched }
-                } else {
-                    SeamStatus::Unmatched { missing }
+            } else if !missing.is_empty() {
+                SeamStatus::Unmatched { missing }
+            } else if !from_entry.is_empty() {
+                SeamStatus::MatchedWithEntryInputs {
+                    produced: from_upstream,
+                    from_entry,
                 }
+            } else {
+                SeamStatus::MatchedByLabel { on: from_upstream }
             };
             seams.push(Seam {
                 upstream: upstream.name.clone(),
@@ -167,18 +221,30 @@ pub fn plan(template: &WorkflowTemplate) -> PipelinePlan {
                 status,
             });
         }
+
         for p in &stage.produces {
-            if !available.contains(p) {
-                available.push(p.clone());
+            if !produced.contains(p) {
+                produced.push(p.clone());
             }
         }
     }
 
-    let unmatched: Vec<&Seam> = seams
+    let unmatched: Vec<String> = seams
         .iter()
-        .filter(|s| matches!(s.status, SeamStatus::Unmatched { .. }))
+        .filter_map(|s| match &s.status {
+            SeamStatus::Unmatched { missing } => Some(format!(
+                "{} → {} ({})",
+                s.upstream,
+                s.downstream,
+                missing.join(", ")
+            )),
+            _ => None,
+        })
         .collect();
 
+    // Open slots are reported first: with a hole in the pipeline the seam
+    // analysis around it is not yet meaningful, and "fill the slot" is the
+    // actionable instruction.
     let blocked_reason = if !open_slots.is_empty() {
         Some(format!(
             "{} unfilled stage(s): {}",
@@ -193,11 +259,15 @@ pub fn plan(template: &WorkflowTemplate) -> PipelinePlan {
         Some(format!(
             "{} unmatched seam(s): {}",
             unmatched.len(),
-            unmatched
-                .iter()
-                .map(|s| format!("{} → {}", s.upstream, s.downstream))
-                .collect::<Vec<_>>()
-                .join(", ")
+            unmatched.join(", ")
+        ))
+    } else if !undeclared_entry_inputs.is_empty() {
+        // Reachable when the gap is on stage 0, which has no seam.
+        Some(format!(
+            "{} undeclared entry input(s): {} — no stage produces them and \
+             the card does not accept them",
+            undeclared_entry_inputs.len(),
+            undeclared_entry_inputs.join(", ")
         ))
     } else {
         None
@@ -212,6 +282,8 @@ pub fn plan(template: &WorkflowTemplate) -> PipelinePlan {
             .filter(|s| s.agent.is_some())
             .map(|s| s.name.clone())
             .collect(),
+        required_entry_inputs,
+        undeclared_entry_inputs,
         runnable: blocked_reason.is_none(),
         blocked_reason,
     }
@@ -245,25 +317,41 @@ mod tests {
         }
     }
 
+    /// Plan with a declared entry contract.
+    fn plan_with(t: &WorkflowTemplate, entry: &[&str]) -> PipelinePlan {
+        let entry: Vec<String> = entry.iter().map(|s| s.to_string()).collect();
+        plan(t, &entry)
+    }
+
     #[test]
     fn a_well_formed_pipeline_is_runnable() {
-        let p = plan(&tmpl(vec![
-            stage("Intake", Some("a"), &[], &["brief"]),
-            stage("Analyse", Some("b"), &["brief"], &["findings"]),
-            stage("Report", Some("c"), &["findings"], &["report"]),
-        ]));
+        let p = plan_with(
+            &tmpl(vec![
+                stage("Intake", Some("a"), &[], &["brief"]),
+                stage("Analyse", Some("b"), &["brief"], &["findings"]),
+                stage("Report", Some("c"), &["findings"], &["report"]),
+            ]),
+            &[],
+        );
         assert!(p.runnable, "{:?}", p.blocked_reason);
         assert_eq!(p.stage_count, 3);
         assert_eq!(p.seams.len(), 2, "n stages produce n-1 seams");
         assert_eq!(p.runnable_stages, vec!["Intake", "Analyse", "Report"]);
+        assert!(
+            p.required_entry_inputs.is_empty(),
+            "a pipeline that makes everything it needs asks the caller for nothing"
+        );
     }
 
     #[test]
     fn an_unmatched_seam_blocks_before_anything_is_spent() {
-        let p = plan(&tmpl(vec![
-            stage("Intake", Some("a"), &[], &["brief"]),
-            stage("Analyse", Some("b"), &["market-data"], &["findings"]),
-        ]));
+        let p = plan_with(
+            &tmpl(vec![
+                stage("Intake", Some("a"), &[], &["brief"]),
+                stage("Analyse", Some("b"), &["market-data"], &["findings"]),
+            ]),
+            &[],
+        );
         assert!(!p.runnable);
         assert!(p
             .blocked_reason
@@ -284,11 +372,14 @@ mod tests {
     /// unmatched seam on a pipeline that runs correctly.
     #[test]
     fn an_artefact_carries_past_intermediate_stages() {
-        let p = plan(&tmpl(vec![
-            stage("Intake", Some("a"), &[], &["logo", "brief"]),
-            stage("Analyse", Some("b"), &["brief"], &["findings"]),
-            stage("Render", Some("c"), &["logo", "findings"], &["image"]),
-        ]));
+        let p = plan_with(
+            &tmpl(vec![
+                stage("Intake", Some("a"), &[], &["logo", "brief"]),
+                stage("Analyse", Some("b"), &["brief"], &["findings"]),
+                stage("Render", Some("c"), &["logo", "findings"], &["image"]),
+            ]),
+            &[],
+        );
         assert!(p.runnable, "{:?}", p.blocked_reason);
         assert!(matches!(
             p.seams[1].status,
@@ -296,50 +387,93 @@ mod tests {
         ));
     }
 
-    /// The first stage's `accepts` are the pipeline's entry contract, supplied
-    /// by the caller. Later stages may need them again.
+    /// A caller-supplied input stays available for the whole run, not just
+    /// the first stage.
     ///
-    /// Regression: omitting this reported 9 of 12 real declared pipelines as
-    /// having unmatched seams they did not have. `ar_card_producer` is the
-    /// canonical case — Intake takes a `logo`, and Marker Generation takes
-    /// that same `logo` alongside the brief Intake produced.
+    /// Regression: seeding availability from stage 0 alone reported 9 of 12
+    /// real declared pipelines as having unmatched seams they did not have.
+    /// `rabble_curator` is the canonical case — the caller passes a
+    /// `location`, and nothing needs it until stage 3.
     #[test]
-    fn external_inputs_stay_available_to_later_stages() {
-        let p = plan(&tmpl(vec![
-            stage(
-                "Intake",
-                Some("a"),
-                &["logo", "brand-guidelines"],
-                &["structured-brief"],
-            ),
-            stage(
-                "Marker",
-                Some("a"),
-                &["logo", "structured-brief"],
-                &["ar-marker"],
-            ),
-        ]));
+    fn an_entry_input_reaches_a_late_stage() {
+        let p = plan_with(
+            &tmpl(vec![
+                stage("Resolve", Some("a"), &["species-name"], &["species-card"]),
+                stage("Mint", Some("b"), &["species-card"], &["creature-record"]),
+                stage(
+                    "Fly",
+                    Some("c"),
+                    &["creature-record", "location"],
+                    &["beacon"],
+                ),
+            ]),
+            &["species-name", "location"],
+        );
         assert!(
             p.runnable,
             "a caller-supplied input must not read as an unmatched seam: {:?}",
             p.blocked_reason
         );
+        assert_eq!(
+            p.required_entry_inputs,
+            vec!["species-name", "location"],
+            "the computed entry contract, in first-use order"
+        );
+        assert!(p.undeclared_entry_inputs.is_empty());
     }
 
-    /// But an input that is neither external nor produced upstream is still a
-    /// real gap. The fix above must not become "assume anything missing was
-    /// supplied externally", which would make the validator useless.
+    /// The weaker claim gets its own status. A seam satisfied only because
+    /// the caller promised an input is not the same evidence as a seam fed by
+    /// the stage before it, and collapsing the two is the overclaim this
+    /// module exists to avoid.
+    #[test]
+    fn a_caller_supplied_match_is_distinguishable_from_a_produced_one() {
+        let p = plan_with(
+            &tmpl(vec![
+                stage(
+                    "Brief",
+                    Some("a"),
+                    &["creative-brief"],
+                    &["structured-brief"],
+                ),
+                stage(
+                    "Create",
+                    Some("b"),
+                    &["structured-brief", "style-reference"],
+                    &["image"],
+                ),
+            ]),
+            &["creative-brief", "style-reference"],
+        );
+        assert!(p.runnable, "{:?}", p.blocked_reason);
+        assert_eq!(
+            p.seams[0].status,
+            SeamStatus::MatchedWithEntryInputs {
+                produced: vec!["structured-brief".into()],
+                from_entry: vec!["style-reference".into()],
+            },
+            "the report must say which half of the match rests on the caller"
+        );
+    }
+
+    /// But an input that is neither produced upstream nor declared is still a
+    /// real gap. The entry-contract fix must not become "assume anything
+    /// missing was supplied externally", which would make the validator
+    /// useless.
     #[test]
     fn a_genuinely_absent_input_is_still_unmatched() {
-        let p = plan(&tmpl(vec![
-            stage(
-                "Brief",
-                Some("a"),
-                &["creative-brief"],
-                &["structured-brief"],
-            ),
-            stage("Create", Some("b"), &["style-reference"], &["image"]),
-        ]));
+        let p = plan_with(
+            &tmpl(vec![
+                stage(
+                    "Brief",
+                    Some("a"),
+                    &["creative-brief"],
+                    &["structured-brief"],
+                ),
+                stage("Create", Some("b"), &["style-reference"], &["image"]),
+            ]),
+            &["creative-brief"],
+        );
         assert!(!p.runnable);
         assert_eq!(
             p.seams[0].status,
@@ -347,20 +481,51 @@ mod tests {
                 missing: vec!["style-reference".into()]
             }
         );
+        assert_eq!(p.undeclared_entry_inputs, vec!["style-reference"]);
+    }
+
+    /// Stage 0 has no seam, so a gap there has nothing to attach to. It must
+    /// still block: an undeclared input on the first stage is exactly as
+    /// uninvocable as one in the middle.
+    #[test]
+    fn an_undeclared_input_on_the_first_stage_still_blocks() {
+        let p = plan_with(
+            &tmpl(vec![
+                stage("Intake", Some("a"), &["brand-guidelines"], &["brief"]),
+                stage("Write", Some("b"), &["brief"], &["copy"]),
+            ]),
+            &[],
+        );
+        assert!(!p.runnable, "stage 0 is not exempt from the entry contract");
+        assert_eq!(p.undeclared_entry_inputs, vec!["brand-guidelines"]);
+        assert!(p
+            .blocked_reason
+            .as_ref()
+            .unwrap()
+            .contains("undeclared entry input"));
+        assert!(
+            p.seams
+                .iter()
+                .all(|s| !matches!(s.status, SeamStatus::Unmatched { .. })),
+            "there is no seam to blame — the gap is at the pipeline's mouth"
+        );
     }
 
     #[test]
     fn an_open_slot_is_a_typed_vacancy_not_an_error() {
-        let p = plan(&tmpl(vec![
-            stage("Crux", Some("debate_strategist"), &["claim"], &["crux"]),
-            stage("Exchange", None, &["crux"], &["transcript"]),
-            stage(
-                "Judge",
-                Some("debate_strategist"),
-                &["transcript"],
-                &["verdict"],
-            ),
-        ]));
+        let p = plan_with(
+            &tmpl(vec![
+                stage("Crux", Some("debate_strategist"), &["claim"], &["crux"]),
+                stage("Exchange", None, &["crux"], &["transcript"]),
+                stage(
+                    "Judge",
+                    Some("debate_strategist"),
+                    &["transcript"],
+                    &["verdict"],
+                ),
+            ]),
+            &["claim"],
+        );
         assert!(!p.runnable, "cannot run with a hole in it");
         assert_eq!(p.open_slots.len(), 1);
         let slot = &p.open_slots[0];
@@ -376,10 +541,13 @@ mod tests {
     fn a_stage_requiring_nothing_is_not_reported_as_a_match() {
         // No evidence of compatibility either way — saying "matched" would
         // overclaim.
-        let p = plan(&tmpl(vec![
-            stage("A", Some("a"), &[], &["x"]),
-            stage("B", Some("b"), &[], &["y"]),
-        ]));
+        let p = plan_with(
+            &tmpl(vec![
+                stage("A", Some("a"), &[], &["x"]),
+                stage("B", Some("b"), &[], &["y"]),
+            ]),
+            &[],
+        );
         assert_eq!(p.seams[0].status, SeamStatus::NothingRequired);
         assert!(p.runnable);
     }
@@ -388,10 +556,13 @@ mod tests {
     fn partial_matches_still_block() {
         // Two of three inputs available is not runnable, and the report must
         // name only the genuinely missing one.
-        let p = plan(&tmpl(vec![
-            stage("A", Some("a"), &[], &["x", "y"]),
-            stage("B", Some("b"), &["x", "y", "z"], &["out"]),
-        ]));
+        let p = plan_with(
+            &tmpl(vec![
+                stage("A", Some("a"), &[], &["x", "y"]),
+                stage("B", Some("b"), &["x", "y", "z"], &["out"]),
+            ]),
+            &[],
+        );
         assert!(!p.runnable);
         assert_eq!(
             p.seams[0].status,
@@ -403,7 +574,7 @@ mod tests {
 
     #[test]
     fn an_empty_template_is_blocked_not_runnable() {
-        let p = plan(&tmpl(vec![]));
+        let p = plan_with(&tmpl(vec![]), &[]);
         assert!(!p.runnable);
         assert_eq!(p.stage_count, 0);
         assert!(p.blocked_reason.unwrap().contains("no stages"));
@@ -411,9 +582,13 @@ mod tests {
 
     #[test]
     fn a_single_stage_pipeline_has_no_seams_and_runs() {
-        let p = plan(&tmpl(vec![stage("Only", Some("a"), &["in"], &["out"])]));
+        let p = plan_with(
+            &tmpl(vec![stage("Only", Some("a"), &["in"], &["out"])]),
+            &["in"],
+        );
         assert!(p.runnable);
         assert!(p.seams.is_empty());
+        assert_eq!(p.required_entry_inputs, vec!["in"]);
     }
 
     /// Open slots are reported ahead of unmatched seams. With a hole in the
@@ -421,12 +596,28 @@ mod tests {
     /// "fill the slot" is the actionable instruction.
     #[test]
     fn open_slots_are_reported_before_seam_problems() {
-        let p = plan(&tmpl(vec![
-            stage("A", Some("a"), &[], &["x"]),
-            stage("B", None, &["x"], &["y"]),
-            stage("C", Some("c"), &["nonexistent"], &["z"]),
-        ]));
+        let p = plan_with(
+            &tmpl(vec![
+                stage("A", Some("a"), &[], &["x"]),
+                stage("B", None, &["x"], &["y"]),
+                stage("C", Some("c"), &["nonexistent"], &["z"]),
+            ]),
+            &[],
+        );
         assert!(!p.runnable);
         assert!(p.blocked_reason.as_ref().unwrap().contains("unfilled"));
+    }
+
+    /// An entry input declared but never used is not an error — cards
+    /// advertise inputs their non-pipeline paths use too. It simply must not
+    /// appear in the computed contract.
+    #[test]
+    fn an_unused_entry_input_is_not_reported_as_required() {
+        let p = plan_with(
+            &tmpl(vec![stage("Only", Some("a"), &["in"], &["out"])]),
+            &["in", "never-used"],
+        );
+        assert!(p.runnable);
+        assert_eq!(p.required_entry_inputs, vec!["in"]);
     }
 }

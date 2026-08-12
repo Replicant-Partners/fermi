@@ -274,7 +274,8 @@
   "accepts": [
     "creative-brief",
     "image",
-    "brand-guidelines"
+    "brand-guidelines",
+    "style-reference"
   ],
   "produces": [
     "social-post",

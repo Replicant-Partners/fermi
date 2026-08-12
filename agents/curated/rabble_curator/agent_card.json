@@ -157,7 +157,8 @@
     "species-name",
     "location",
     "collection-query",
-    "swarm-config"
+    "swarm-config",
+    "flight-style"
   ],
   "produces": [
     "collection-view",

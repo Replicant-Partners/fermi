@@ -198,7 +198,8 @@
   "accepts": [
     "workspace-state",
     "coherence-scores",
-    "intention-signal"
+    "intention-signal",
+    "consolidated-memory"
   ],
   "produces": [
     "coordination-plan",

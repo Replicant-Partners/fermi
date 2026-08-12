@@ -144,7 +144,7 @@
   },
   "accepts": [
     "beacon-id",
-    "quadrant-name",
+    "quadrant-names",
     "action",
     "motion-description",
     "keyframes",

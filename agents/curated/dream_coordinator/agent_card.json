@@ -134,8 +134,8 @@
     "optional": []
   },
   "workflow_template": {
-    "description": "4-stage dreaming (consolidation) pipeline",
-    "mermaid": "sequenceDiagram\n    participant User\n    participant dream_coordinator\n    participant EmbedCluster\n    participant ontologist\n    participant dream_narrator\n    User->>dream_coordinator: dream(agent)\n    dream_coordinator->>EmbedCluster: embed + DBSCAN unconsolidated episodes\n    EmbedCluster-->>dream_coordinator: clusters\n    dream_coordinator->>ontologist: extract entities + rules per cluster\n    ontologist-->>dream_coordinator: ontology delta (KG)\n    dream_coordinator->>dream_narrator: narrate synopsis\n    dream_narrator-->>dream_coordinator: dream synopsis\n    dream_coordinator-->>User: consolidation report + synopsis",
+    "description": "5-stage dreaming (consolidation) pipeline",
+    "mermaid": "sequenceDiagram\n    participant User\n    participant dream_coordinator\n    participant EmbedCluster\n    participant ontologist\n    participant dream_narrator\n    User->>dream_coordinator: dream(agent)\n    dream_coordinator->>EmbedCluster: embed + DBSCAN unconsolidated episodes\n    EmbedCluster-->>dream_coordinator: clusters\n    dream_coordinator->>ontologist: extract entities + rules per cluster\n    ontologist-->>dream_coordinator: ontology delta (KG)\n    dream_coordinator->>dream_coordinator: tally run statistics into a consolidation summary\n    dream_coordinator->>dream_narrator: narrate synopsis\n    dream_narrator-->>dream_coordinator: dream synopsis\n    dream_coordinator-->>User: consolidation report + synopsis",
     "stages": [
       {
         "name": "Embed",
@@ -157,6 +157,13 @@
         "accepts": ["episode-cluster"],
         "produces": ["entities", "semantic-rules", "ontology-delta"],
         "description": "Extract durable entities + rules into the agent's knowledge graph (Loop 1 learning step)"
+      },
+      {
+        "name": "Summarise",
+        "agent": "dream_coordinator",
+        "accepts": ["ontology-delta"],
+        "produces": ["consolidation-summary"],
+        "description": "Tally the run — episodes processed, clusters, rules extracted and verified, entities and facts created — into the summary the narrator is given"
       },
       {
         "name": "Narrate",
