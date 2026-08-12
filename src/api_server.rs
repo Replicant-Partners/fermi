@@ -969,6 +969,12 @@ async fn run_migrations(db: &PgPool) {
         // counterfactual subset re-runs that exact Shapley attribution needs
         // (src/attribution/).
         "migrations/187_forecast_agent_claims.sql",
+        // Persisted per-agent Shapley credit + pairwise interaction indices.
+        // efficiency_residual and reconstruction_error are validity gates, not
+        // metadata: a row with either far from zero describes a forecast that
+        // was not actually measured. See
+        // docs/architecture/COMBINATORIAL_CREDIT_ASSIGNMENT.md
+        "migrations/188_forecast_attributions.sql",
     ];
 
     for file in &migration_files {
@@ -2033,7 +2039,7 @@ async fn main() {
     // Brier was computed, and Loop 5 went cold. Paced and bounded; see
     // handlers::polymarket::spawn_resolution_sweeper. Disable with
     // PM_RESOLUTION_SWEEP_SECS=0.
-    handlers::polymarket::spawn_resolution_sweeper(state.db.clone());
+    handlers::polymarket::spawn_resolution_sweeper(state.db.clone(), state.workspace_git.clone());
 
     // Spec 31: catch forecast state changes that bypassed the commit hook.
     //
@@ -2255,10 +2261,41 @@ async fn main() {
             "/api/observatory/fleet/agents",
             get(handlers::observatory::fleet_agents_handler),
         )
+        // Loop 5a mechanism probe — asks whether the Brier chain moves a
+        // signal correctly, which is a different question from whether the
+        // resulting score is good. Admin-only: counts span all tenants.
+        .route(
+            "/api/observatory/loops/brier/mechanism",
+            get(handlers::observatory::loop5_mechanism_handler),
+        )
+        // Loop 1 maturity — has an agent actually dreamt, and did the
+        // ontologist build anything? Separates "the cycle ran" from "the agent
+        // learned", which every previous surface conflated.
+        .route(
+            "/api/observatory/loops/dreaming/maturity",
+            get(handlers::dreaming_maturity::fleet_dreaming_maturity_handler),
+        )
+        // Loop 4 — composition proposals derived from Shapley attribution.
+        // `composition_versions` has had an accept/reject flow since mig-113
+        // but nothing ever generated a proposal, so the loop was structurally
+        // complete and permanently empty. GET computes; POST files one for a
+        // human to decide on.
+        .route(
+            "/api/workspaces/:workspace_id/composition/suggestions",
+            get(handlers::composition_evolution::composition_suggestions_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/composition/suggestions/materialise",
+            post(handlers::composition_evolution::materialise_composition_proposal_handler),
+        )
         // Dyads
         .route(
             "/api/observatory/dyads/auto-form",
             post(handlers::observatory::auto_form_dyads_handler),
+        )
+        .route(
+            "/api/observatory/agents/:agent_id/backfill-social",
+            post(handlers::observatory::backfill_social_handler),
         )
         .route(
             "/api/observatory/dyads/:dyad_id",
@@ -2288,10 +2325,6 @@ async fn main() {
         .route(
             "/api/observatory/hitl",
             get(handlers::observatory::list_hitl_queue_handler),
-        )
-        .route(
-            "/api/observatory/agents/:agent_id/backfill-social",
-            post(handlers::observatory::backfill_social_handler),
         )
         .route(
             "/api/observatory/hitl/:event_id/action",
@@ -2798,6 +2831,10 @@ async fn main() {
         .route(
             "/api/agents/:agent_id/consolidate",
             post(handlers::consolidation::consolidate_agent_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/dreaming",
+            get(handlers::dreaming_maturity::agent_dreaming_maturity_handler),
         )
         .route(
             "/api/agents/:agent_id/consolidation/jobs/:job_id",

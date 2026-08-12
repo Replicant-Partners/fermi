@@ -16,7 +16,7 @@ use crate::distributions::{
 use crate::evaluator::{evaluate, EvaluationContext};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 pub type ExecutionResult2<T> = Result<T, ExecutionError>;
 
@@ -282,13 +282,32 @@ impl Executor {
         // resolution log is published alongside the simulation results so the
         // caller (and UI) can see exactly which drivers used a fit vs the
         // static prior. See `DriverStmt.learnable` and `BAYESOPS_CONTRACT.md`.
-        let mut continuous_drivers: HashMap<String, Distribution> = HashMap::new();
+        //
+        // BTreeMap, not HashMap, and that choice is load-bearing: the per-
+        // iteration loops below draw samples while iterating these maps, so
+        // iteration order determines the order in which the RNG stream is
+        // consumed. Under HashMap that order varies between `Executor`
+        // instances, which meant `Executor::with_seed` did NOT actually
+        // reproduce a run — two executors built with the same seed and the same
+        // program could return different results. Anything relying on seeded
+        // reproducibility was relying on luck.
+        //
+        // This surfaced through Shapley attribution
+        // (src/attribution/counterfactual.rs), where subsets must be compared
+        // under identical randomness or Monte Carlo noise is misread as agent
+        // credit: a dummy agent that changed nothing picked up ~1e-4 of
+        // spurious credit. Sorted iteration makes the seed authoritative.
+        //
+        // Note this changes the sample sequence for a given seed versus prior
+        // builds. Nothing regresses, because no prior sequence was reproducible
+        // in the first place.
+        let mut continuous_drivers: BTreeMap<String, Distribution> = BTreeMap::new();
         // Binary driver runtime config — see BinaryDriverConfig docs.
         // The Beta variant carries (alpha, beta) so we can sample a fresh
         // success probability each iteration, propagating BayesOps epistemic
         // uncertainty into the outcome distribution.
-        let mut binary_drivers: HashMap<String, BinaryDriverConfig> = HashMap::new();
-        let mut discrete_drivers: HashMap<String, (Vec<f64>, Vec<f64>)> = HashMap::new();
+        let mut binary_drivers: BTreeMap<String, BinaryDriverConfig> = BTreeMap::new();
+        let mut discrete_drivers: BTreeMap<String, (Vec<f64>, Vec<f64>)> = BTreeMap::new();
         let mut learnable_driver_log: Vec<LearnableDriverResolution> = Vec::new();
         let mut model_expr = None;
         let mut base_rate: Option<f64> = None;

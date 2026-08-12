@@ -1733,9 +1733,17 @@
       function renderLoop1(l) {
         const agents = l.agents || [];
         const flagged = agents.filter((a) => a.needs_attention);
-        const summary = flagged.length === 0
-          ? `${agents.length} agent${agents.length === 1 ? "" : "s"} consolidating cleanly`
-          : `${flagged.length} of ${agents.length} need dreaming attention`;
+        // An agent whose cycles complete but extract nothing is the failure
+        // this summary used to hide: its backlog is 0 and its last-dreamt date
+        // is fresh, so by every previous measure it looked healthy. Call it out
+        // ahead of the generic backlog count.
+        const unproductive = agents.filter((a) => a.maturity === "unproductive");
+        const mature = agents.filter((a) => a.maturity === "mature");
+        const summary = unproductive.length > 0
+          ? `${unproductive.length} dreaming but learning nothing · ${mature.length} mature`
+          : flagged.length === 0
+            ? `${agents.length} agent${agents.length === 1 ? "" : "s"} consolidating cleanly · ${mature.length} mature`
+            : `${flagged.length} of ${agents.length} need dreaming attention`;
 
         // Header batch button — only when there are flagged agents
         const batchBtn = flagged.length > 0
@@ -1751,6 +1759,14 @@
         const items = (flagged.length > 0 ? flagged : agents.slice(0, 5))
           .map((a) => {
             const meta = [];
+            // Maturity first: it is the answer to "has this agent actually
+            // learned anything", which backlog and recency cannot give.
+            if (a.maturity) {
+              const size = a.ontology_size != null ? ` (${a.ontology_size})` : "";
+              meta.push(a.maturity === "unproductive"
+                ? "learning nothing"
+                : `${a.maturity}${a.maturity === "mature" || a.maturity === "developing" ? size : ""}`);
+            }
             if (a.unconsolidated_episodes > 0)
               meta.push(`${a.unconsolidated_episodes} unconsolidated`);
             if (a.budget_exhausted) meta.push("budget exhausted");
@@ -1900,12 +1916,38 @@
         const items = agents
           .slice(0, 8)
           .map((a) => {
+            // `calibration_score` is a TEAM number: the mean Brier of forecasts
+            // this agent participated in. On a composition that cites every
+            // member on every forecast it is identical across members, which is
+            // why four football agents all read "99% · n=48" — one score shown
+            // four times, not four measurements.
+            //
+            // Prefer the per-agent Shapley contribution when it exists. Fall
+            // back to the team number, but label it and show whether it
+            // represents any skill over simply predicting the base rate.
             const cal = a.calibration_score != null
               ? `${(a.calibration_score * 100).toFixed(0)}%`
               : "—";
+            let metric;
+            if (a.mean_contribution != null) {
+              const sign = a.mean_contribution >= 0 ? "+" : "";
+              metric = `<span title="Mean Shapley credit: this agent's own contribution">`
+                + `φ ${sign}${a.mean_contribution.toFixed(4)} · n=${a.n_attributed}</span>`;
+            } else if (a.brier_skill_score != null) {
+              const sign = a.brier_skill_score >= 0 ? "+" : "";
+              metric = `<span title="Team calibration; skill is versus a base-rate forecaster">`
+                + `${cal} team · skill ${sign}${a.brier_skill_score.toFixed(2)} · n=${a.n_resolved}</span>`;
+            } else {
+              metric = `<span title="Team calibration, not per-agent skill">${cal} team · n=${a.n_resolved}</span>`;
+            }
+            // A flattering raw score with no skill is the trap this card fell
+            // into. Label it rather than celebrate it.
+            const skillFlag = a.beats_base_rate === false
+              ? `<span class="loop-item-flag" title="${escHtml(a.warning || "")}">no skill</span>`
+              : "";
             const flag = a.status === "cold"
               ? `<span class="loop-item-flag">cold</span>`
-              : "";
+              : skillFlag;
             const href = a.agent_name
               ? `/agent/${encodeURIComponent(a.agent_name)}`
               : "#";
@@ -1913,7 +1955,7 @@
               <a href="${href}" class="loop-item-link" ${STOP}>
                 <div class="loop-item">
                   <span class="loop-item-name">${loopAgentLabel(a)}</span>
-                  <span class="loop-item-meta">${cal} · n=${a.n_resolved}</span>
+                  <span class="loop-item-meta">${metric}</span>
                   ${flag}
                 </div>
               </a>`;

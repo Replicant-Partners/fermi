@@ -1389,19 +1389,29 @@ impl MemoryStore {
         Ok(result.rows_affected() as usize)
     }
 
-    /// Creates a new consolidation job
-    pub async fn create_consolidation_job(
+    /// Creates a new consolidation job with a caller-supplied id.
+    ///
+    /// Exists because an async API needs to hand the client a job id *before*
+    /// the work starts, and that id has to be the one the row is keyed on.
+    /// Previously the HTTP handler minted its own UUID for the client while the
+    /// worker independently created a row under a different one, so every
+    /// status poll looked up an id that had never existed — the work completed
+    /// but the receipt was unfindable.
+    ///
+    /// Idempotent on job_id so a caller that pre-creates the row and a worker
+    /// that would otherwise create its own cannot produce a duplicate.
+    pub async fn create_consolidation_job_with_id(
         &self,
+        job_id: Uuid,
         agent_id: Uuid,
         episode_range_start: Uuid,
         episode_range_end: Uuid,
     ) -> Result<Uuid> {
-        let job_id = Uuid::new_v4();
-
         sqlx::query(
             "INSERT INTO consolidation_jobs
              (job_id, agent_id, status, started_at, episode_range_start, episode_range_end)
-             VALUES ($1, $2, 'running', NOW(), $3, $4)",
+             VALUES ($1, $2, 'running', NOW(), $3, $4)
+             ON CONFLICT (job_id) DO NOTHING",
         )
         .bind(job_id)
         .bind(agent_id)
@@ -1411,6 +1421,22 @@ impl MemoryStore {
         .await?;
 
         Ok(job_id)
+    }
+
+    /// Creates a new consolidation job, generating its own id.
+    pub async fn create_consolidation_job(
+        &self,
+        agent_id: Uuid,
+        episode_range_start: Uuid,
+        episode_range_end: Uuid,
+    ) -> Result<Uuid> {
+        self.create_consolidation_job_with_id(
+            Uuid::new_v4(),
+            agent_id,
+            episode_range_start,
+            episode_range_end,
+        )
+        .await
     }
 
     /// Updates consolidation job statistics

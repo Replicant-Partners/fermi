@@ -2326,6 +2326,9 @@ fn collect_changed_fields(updates: &AgentUpdate) -> Vec<&'static str> {
     if updates.education_budget_credits.is_some() {
         fields.push("education_budget_credits");
     }
+    if updates.taxonomy.is_some() {
+        fields.push("taxonomy");
+    }
     fields
 }
 
@@ -2679,6 +2682,169 @@ pub async fn get_agent_dependencies_handler(
 
 // ─── Calibration endpoint (Loop 5) ──────────────────────────────────────────
 
+/// Brier skill score against a base-rate ("climatological") reference.
+///
+/// Returns `(outcome_base_rate, baseline_brier, skill_score)`.
+///
+/// A raw Brier mean is not interpretable on its own, and surfacing it as
+/// "calibration" overstates what has been measured. On a question set where
+/// nearly every outcome resolves NO, a forecaster that simply predicts the base
+/// rate on every question scores near-perfectly while demonstrating no skill at
+/// all. The 48 World Cup tournament-winner forecasts are exactly that shape —
+/// 47 NO, one YES — where a zero-knowledge flat `p = 1/48` earns a mean Brier of
+/// 0.0204, i.e. "98% calibrated". Loop 5a was reporting that as a closed loop.
+///
+/// The reference forecaster predicts the observed base rate `b` on every
+/// question. Its mean Brier reduces exactly to `b(1-b)`:
+///
+/// ```text
+///   mean (b - y)^2  =  b(b-1)^2 + (1-b)b^2  =  b(1-b)      for y ∈ {0,1}
+/// ```
+///
+/// `skill = 1 - brier/baseline`. Positive beats the base rate; `<= 0` does not,
+/// however flattering the raw score looks. Consumers should gate on skill rather
+/// than on `calibration_score` alone.
+///
+/// Skill is `None` when there are no resolved forecasts, or when every outcome
+/// resolved the same way — a degenerate set has `baseline == 0`, leaving no
+/// reference to score against (undefined, not infinite).
+/// How much the Loop 5 signal currently means, as a machine-readable class.
+///
+/// Loop 5a closed recently, so every score it emits is provisional. Consumers
+/// (notably `moe_router_strategist`, which turns these into routing weights)
+/// need that stated rather than inferred from `confidence`, which is a bare
+/// ratio and reads as authoritative. Mirrors the `verdict` column in
+/// `scripts/loop5_brier_mechanical_check.sql` so the API and the probe agree.
+///
+/// Deliberately independent of whether the *mechanism* works: a mechanically
+/// perfect loop with n=3 is still `provisional`. Use the probe for mechanism.
+// Argument order deliberately mirrors the derivation order (count → baseline →
+// skill) and the match tuple below: two adjacent `Option<f64>` parameters are
+// trivial to transpose at a call site, and doing so silently changes the class.
+fn evidence_class(n_resolved: usize, baseline: Option<f64>, skill: Option<f64>) -> &'static str {
+    match (n_resolved, baseline, skill) {
+        (0, _, _) => "none",
+        // One-sided outcomes: no reference to score against, so the raw number
+        // is uninformative however large n gets.
+        (_, Some(b), _) if b <= 1e-9 => "undiscriminating",
+        (_, _, Some(s)) if s <= 0.0 => "no_skill",
+        (n, _, _) if n < 5 => "provisional",
+        (n, _, _) if n < 20 => "thin",
+        _ => "usable",
+    }
+}
+
+fn brier_skill(
+    brier_mean: Option<f64>,
+    n_yes: usize,
+    n_resolved: usize,
+) -> (Option<f64>, Option<f64>, Option<f64>) {
+    let base_rate: Option<f64> = if n_resolved > 0 {
+        Some(n_yes as f64 / n_resolved as f64)
+    } else {
+        None
+    };
+    let baseline: Option<f64> = base_rate.map(|b| b * (1.0 - b));
+    let skill: Option<f64> = match (brier_mean, baseline) {
+        (Some(b), Some(base)) if base > 1e-9 => Some(1.0 - b / base),
+        _ => None,
+    };
+    (base_rate, baseline, skill)
+}
+
+#[cfg(test)]
+mod brier_skill_tests {
+    use super::{brier_skill, evidence_class};
+
+    /// Thin data must never read as authoritative, and "mechanically fine but
+    /// informationally empty" must be distinguishable from "actually bad".
+    #[test]
+    fn evidence_class_separates_thinness_from_badness() {
+        // (n_resolved, baseline, skill)
+        assert_eq!(evidence_class(0, None, None), "none");
+        // One-sided outcome set: baseline 0, so the raw score means nothing
+        // no matter how many forecasts accumulate.
+        assert_eq!(evidence_class(500, Some(0.0), None), "undiscriminating");
+        // Real evidence, genuinely bad performance.
+        assert_eq!(evidence_class(50, Some(0.25), Some(-0.3)), "no_skill");
+        // Skilled but too little of it to lean on — the current situation.
+        assert_eq!(evidence_class(3, Some(0.25), Some(0.8)), "provisional");
+        assert_eq!(evidence_class(12, Some(0.25), Some(0.8)), "thin");
+        assert_eq!(evidence_class(40, Some(0.25), Some(0.8)), "usable");
+    }
+
+    /// The World Cup case that motivated this: 48 tournament-winner forecasts,
+    /// 47 resolving NO and one YES. A flat, zero-knowledge p = 1/48 across all
+    /// 48 scores a mean Brier equal to the baseline exactly — so skill is 0,
+    /// even though the raw score displays as ~98% "calibrated".
+    #[test]
+    fn uniform_prior_on_skewed_set_has_zero_skill() {
+        let b = 1.0 / 48.0;
+        // Mean Brier of the flat-1/48 forecaster: 47 misses at b^2, one hit at (1-b)^2.
+        let brier = (47.0 * b * b + (1.0 - b) * (1.0 - b)) / 48.0;
+
+        let (base_rate, baseline, skill) = brier_skill(Some(brier), 1, 48);
+
+        assert!((base_rate.unwrap() - b).abs() < 1e-12);
+        // Baseline b(1-b) = 0.0204 — i.e. "98%" on the display scale.
+        assert!(
+            (baseline.unwrap() - 0.020399).abs() < 1e-5,
+            "{:?}",
+            baseline
+        );
+        assert!(
+            skill.unwrap().abs() < 1e-12,
+            "a flat base-rate prior must score exactly zero skill, got {:?}",
+            skill
+        );
+    }
+
+    /// A genuinely skilled forecaster on the same skewed set clears zero.
+    #[test]
+    fn confident_correct_forecaster_has_positive_skill() {
+        // Brier well below the 0.0204 baseline.
+        let (_, _, skill) = brier_skill(Some(0.005), 1, 48);
+        assert!(skill.unwrap() > 0.7, "{:?}", skill);
+    }
+
+    /// Worse than the base rate must read as negative skill, not as a high
+    /// raw score. This is the case the Loops tab now refuses to call "closed".
+    #[test]
+    fn worse_than_base_rate_has_negative_skill() {
+        let (_, _, skill) = brier_skill(Some(0.04), 1, 48);
+        assert!(skill.unwrap() < 0.0, "{:?}", skill);
+    }
+
+    /// Degenerate set: every outcome resolved NO. Baseline is 0, so skill is
+    /// undefined rather than infinite — the endpoint reports null and the UI
+    /// says "skill undefined" instead of claiming a closed loop.
+    #[test]
+    fn all_outcomes_alike_leaves_skill_undefined() {
+        let (base_rate, baseline, skill) = brier_skill(Some(0.001), 0, 30);
+        assert_eq!(base_rate, Some(0.0));
+        assert_eq!(baseline, Some(0.0));
+        assert_eq!(skill, None);
+
+        let (_, _, skill_all_yes) = brier_skill(Some(0.001), 30, 30);
+        assert_eq!(skill_all_yes, None);
+    }
+
+    /// No resolved forecasts at all — everything undefined, nothing inferred.
+    #[test]
+    fn no_forecasts_yields_no_baseline() {
+        assert_eq!(brier_skill(None, 0, 0), (None, None, None));
+    }
+
+    /// A balanced set has baseline 0.25, the familiar coin-flip reference.
+    #[test]
+    fn balanced_set_baseline_is_one_quarter() {
+        let (base_rate, baseline, skill) = brier_skill(Some(0.125), 25, 50);
+        assert_eq!(base_rate, Some(0.5));
+        assert!((baseline.unwrap() - 0.25).abs() < 1e-12);
+        assert!((skill.unwrap() - 0.5).abs() < 1e-12);
+    }
+}
+
 /// GET /api/agents/:id/calibration
 ///
 /// Returns the agent's measured calibration profile — how accurately its
@@ -2687,7 +2853,13 @@ pub async fn get_agent_dependencies_handler(
 /// Sources:
 /// - `eval_signals` where `dimension = "forecast_calibration"` (Brier scores
 ///   from the BrierEvaluator, inverted so 1.0 = perfect calibration)
-/// - `fermi_forecasts` where `agents_used @> [{agent_id}]` and `brier_score IS NOT NULL`
+/// - `fermi_forecasts` resolved rows citing this agent in `agents_used` (all
+///   three element shapes — `agent_id`, `agent_name`, `name`) with a non-null
+///   `brier_score`
+///
+/// Alongside the raw score it returns `brier_skill_score` — performance against
+/// a base-rate reference forecaster. Gate "is this loop closed?" on skill, not
+/// on `calibration_score`, which is inflated by outcome-skewed question sets.
 ///
 /// Domain decomposition: derived from the agent's `fermi_contract.kg_fact_categories`
 /// and `tags` to give per-domain calibration scores where available.
@@ -2754,16 +2926,31 @@ pub async fn get_agent_calibration_handler(
     };
 
     // ── fermi_forecasts direct Brier scores ───────────────────────────────────
+    //
+    // Attribution matches all three `agents_used` element shapes, mirroring
+    // `handlers::eval_brier::BrierLookupSqlx::latest_for_agent` (which carries
+    // the full shape inventory). Keep the two predicates in sync: when this
+    // endpoint and the BrierEvaluator disagree about which forecasts belong to
+    // an agent, the Observatory reports Loop 5a as closed on one tab and
+    // inactive on another. Matching only `agent_id` — the previous behaviour —
+    // relied on mig-170's one-shot backfill and so missed every forecast
+    // written by the live path after that backfill ran.
     let forecast_rows = sqlx::query(
-        "SELECT brier_score, tags, question_text, created_at
+        "SELECT brier_score, tags, question_text, actual_outcome, created_at
          FROM fermi_forecasts
-         WHERE agents_used @> $1::jsonb
+         WHERE (
+                agents_used @> $1::jsonb
+             OR agents_used @> $2::jsonb
+             OR agents_used @> $3::jsonb
+           )
            AND brier_score IS NOT NULL
            AND status = 'resolved'
          ORDER BY created_at DESC
          LIMIT 100",
     )
     .bind(json!([{"agent_id": aid.to_string()}]))
+    .bind(json!([{"agent_name": db_agent.agent_name}]))
+    .bind(json!([{"name": db_agent.agent_name}]))
     .fetch_all(&state.db)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -2780,6 +2967,19 @@ pub async fn get_agent_calibration_handler(
     } else {
         None
     };
+
+    // ── Brier skill score against the base-rate reference ───────────────────
+    let n_yes = forecast_rows
+        .iter()
+        .filter(|r| {
+            r.try_get::<Option<bool>, _>("actual_outcome")
+                .ok()
+                .flatten()
+                .unwrap_or(false)
+        })
+        .count();
+    let (outcome_base_rate, brier_baseline, brier_skill_score) =
+        brier_skill(brier_mean, n_yes, n_resolved);
 
     // ── Domain decomposition via agent tags ───────────────────────────────────
     // Group forecasts by matching against agent's tag categories.
@@ -2895,6 +3095,95 @@ pub async fn get_agent_calibration_handler(
         .collect::<serde_json::Map<_, _>>()
         .into();
 
+    // ── Loop 5 contribution: exact Shapley credit (mig-188) ────────────────
+    //
+    // This is the per-AGENT signal. Everything above it is a per-TEAM signal:
+    // `brier_mean` averages the Brier of forecasts this agent participated in,
+    // which is a property of the composition, not of the agent. When every
+    // member is cited on every forecast those team numbers are identical across
+    // members by construction and can never rank them — the failure that
+    // motivated all of this.
+    //
+    // Shapley credit measures how much this agent moved each forecast toward
+    // its realised outcome, via counterfactual subset re-runs. It is reported
+    // ALONGSIDE the team numbers rather than replacing them: they answer
+    // different questions, `moe_router_strategist` already consumes
+    // `calibration_score`, and silently redefining a live field is how a
+    // measurement problem becomes a routing problem.
+    //
+    // Gated on both validity checks. An ungated read can act on credit derived
+    // from Monte Carlo noise (efficiency_residual) or from a reconstruction of
+    // a forecast that never existed (reconstruction_error).
+    // Cluster key: what counts as one *independent* group of forecasts.
+    //
+    // Domain alone is too coarse — an entire World Cup is one domain, so every
+    // forecast lands in a single cluster and no interval can ever be estimated.
+    // Resolution month splits a long-running domain into genuinely separate
+    // episodes of the world, which is the replication a cluster bootstrap needs.
+    // Falling back to forecast_id treats an unclassifiable forecast as its own
+    // cluster, which is the conservative choice (more clusters = narrower
+    // interval), so it is used only when there is nothing better.
+    let credit_rows = sqlx::query(
+        "SELECT c.shapley_value,
+                COALESCE(
+                  NULLIF(f.domain, '') || ':' ||
+                    to_char(COALESCE(f.resolved_at, f.created_at), 'YYYY-MM'),
+                  c.forecast_id
+                ) AS cluster_key
+           FROM forecast_agent_credit c
+           JOIN forecast_attributions a
+             ON a.forecast_id = c.forecast_id
+            AND a.neutralisation = c.neutralisation
+           JOIN fermi_forecasts f ON f.id = c.forecast_id
+          WHERE (c.agent_id = $1 OR c.agent_name = $2)
+            AND c.neutralisation = 'identity'
+            AND a.efficiency_residual < 1e-6
+            AND (a.reconstruction_error IS NULL OR a.reconstruction_error < 0.01)",
+    )
+    .bind(aid)
+    .bind(&db_agent.agent_name)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let mut credits: Vec<f64> = Vec::with_capacity(credit_rows.len());
+    let mut clusters: Vec<String> = Vec::with_capacity(credit_rows.len());
+    for r in &credit_rows {
+        if let Ok(v) = r.try_get::<f64, _>("shapley_value") {
+            credits.push(v);
+            clusters.push(r.try_get::<String, _>("cluster_key").unwrap_or_default());
+        }
+    }
+
+    let n_credit = credits.len();
+    let contribution_mean: Option<f64> = if n_credit > 0 {
+        Some(credits.iter().sum::<f64>() / n_credit as f64)
+    } else {
+        None
+    };
+    // Share of forecasts the agent actually helped on. A positive mean driven by
+    // one lucky forecast reads very differently from a consistent small edge.
+    let positive_rate: Option<f64> = if n_credit > 0 {
+        Some(credits.iter().filter(|v| **v > 0.0).count() as f64 / n_credit as f64)
+    } else {
+        None
+    };
+    let n_clusters = clusters
+        .iter()
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    // Cluster bootstrap, seeded on the agent so the response is reproducible.
+    // Returns None below 3 clusters: forecasts from a single tournament carry no
+    // information about between-tournament variability, and a tight interval
+    // computed from within-cluster spread would be false precision.
+    let ci = fermi::attribution::cluster_bootstrap_ci(
+        &credits,
+        &clusters,
+        2000,
+        fermi::attribution::stable_seed(&db_agent.agent_name),
+        0.10,
+    );
+
     // ── Composite calibration score ───────────────────────────────────────────
     // Priority order (most authoritative first):
     //   1. Direct Brier from resolved fermi_forecasts
@@ -3001,6 +3290,79 @@ pub async fn get_agent_calibration_handler(
         "eval_calibration_mean": eval_mean,           // LLM-judged signals (higher = better)
         "projection_accuracy_mean": projection_mean,  // hard-verified SOSA delta (higher = better)
 
+        // ── Scope warning for every field above ──────────────────────────
+        // `calibration_score`, `brier_mean` and `brier_skill_score` are TEAM
+        // measurements: they describe the forecasts this agent participated in,
+        // not this agent's own contribution. On a composition that cites every
+        // member on every forecast they are identical across members and cannot
+        // rank them. Use `contribution.mean_shapley` for per-agent skill.
+        "score_scope": "team",
+        "score_scope_note": "calibration_score/brier_mean/brier_skill_score describe the forecasts this agent participated in, not its individual contribution. For per-agent credit read `contribution`.",
+
+        // Skill decomposition — is `calibration_score` informative, or just
+        // base-rate skew? `brier_skill_score` > 0 means the agent beat a
+        // forecaster that predicts `outcome_base_rate` on every question.
+        // Null when there are no resolved forecasts, or when every outcome
+        // resolved the same way (no reference to score against).
+        "outcome_base_rate": outcome_base_rate,
+        "brier_baseline": brier_baseline,
+        "brier_skill_score": brier_skill_score,
+        "beats_base_rate": brier_skill_score.map(|s| s > 0.0),
+
+        // How much this signal currently means:
+        //   none | undiscriminating | no_skill | provisional | thin | usable
+        // Loop 5a closed recently, so most agents sit at provisional/thin.
+        // Mechanism soundness is a separate question — verify it with
+        // scripts/loop5_brier_mechanical_check.sql.
+        "evidence_class": evidence_class(n_resolved, brier_baseline, brier_skill_score),
+
+        // ── Per-agent contribution (Loop 5's real signal) ────────────────
+        // Exact Shapley credit from counterfactual subset re-runs, averaged over
+        // resolved forecasts that passed both validity gates. Positive means the
+        // agent moved forecasts toward their realised outcomes.
+        //
+        // Only populated for forecasts resolved after the claim ledger
+        // (mig-187) shipped: attribution needs to know what each agent
+        // individually claimed, and historical claims were overwritten rather
+        // than retained, so they cannot be reconstructed.
+        "contribution": {
+            "scope": "agent",
+            "neutralisation": "identity",
+            "mean_shapley": contribution_mean,
+            "n_forecasts": n_credit,
+            // Distinct correlated groups behind those forecasts. The interval
+            // below is estimated across these, not across forecasts.
+            "n_clusters": n_clusters,
+            "positive_rate": positive_rate,
+            "ci_low": ci.map(|c| c.0),
+            "ci_high": ci.map(|c| c.1),
+            "ci_method": "cluster_bootstrap_p90",
+            // Actionable rather than merely negative: say how many more
+            // independent groups are needed, and what "independent" means here.
+            "clusters_required": fermi::attribution::MIN_BOOTSTRAP_CLUSTERS,
+            "clusters_needed": fermi::attribution::MIN_BOOTSTRAP_CLUSTERS
+                .saturating_sub(n_clusters),
+            "cluster_key": "domain + resolution month",
+            "how_to_unblock": if n_clusters >= fermi::attribution::MIN_BOOTSTRAP_CLUSTERS {
+                Value::Null
+            } else {
+                json!(format!(
+                    "Resolve forecasts in {} more distinct (domain, month) group(s). Volume \
+                     within one group does not help: 48 forecasts from a single tournament \
+                     are one observation of the world, not 48.",
+                    fermi::attribution::MIN_BOOTSTRAP_CLUSTERS.saturating_sub(n_clusters)
+                ))
+            },
+            "ci_note": if n_credit == 0 {
+                "No attributed forecasts yet."
+            } else if ci.is_none() {
+                "Interval undefined: fewer than 3 independent clusters. All evidence comes from one correlated group (e.g. a single tournament), which carries no information about between-group variability. Treat the mean as a point observation, not an estimate."
+            } else {
+                "90% cluster bootstrap over correlated forecast groups."
+            },
+            "gates_applied": "efficiency_residual < 1e-6 AND (reconstruction_error IS NULL OR < 0.01)",
+        },
+
         // Per-domain decomposition (requires forecast tags to match agent tags)
         "domain_calibration": domain_calibration,
 
@@ -3021,6 +3383,8 @@ pub async fn get_agent_calibration_handler(
         },
         "note": if n_resolved < 5 && n_projection < 5 {
             Some("Fewer than 5 hard-verified observations — calibration estimate is preliminary.")
+        } else if matches!(brier_skill_score, Some(s) if s <= 0.0) {
+            Some("Raw calibration is not skill: this agent does not beat a forecaster that predicts the base rate on every question. Treat calibration_score as uninformative here.")
         } else {
             None
         },
@@ -3048,11 +3412,26 @@ pub async fn loop_health_handler(
     // `unconsolidated` drops to 0 and `last_consolidated_at = NOW`,
     // so needs_attention flips to false and the row drops out of
     // the flagged subset that the JS shows by default.
+    //
+    // Maturity columns (entities/facts/rules/cycles) are correlated subqueries
+    // rather than extra LEFT JOINs on purpose: joining episodes AND entities AND
+    // facts multiplies rows, so an agent with 20 entities and 30 facts would
+    // report 600 of each. The existing episode join is already a GROUP BY, and
+    // adding siblings to it is the classic way these counts silently inflate.
     let loop1_rows = sqlx::query(
         "SELECT a.agent_id, a.agent_name, a.display_alias,
                 a.dreaming_budget_credits, a.dreaming_credits_used,
                 a.last_consolidated_at,
-                COUNT(e.episode_id) FILTER (WHERE e.consolidated = false) AS unconsolidated
+                COUNT(e.episode_id) FILTER (WHERE e.consolidated = false) AS unconsolidated,
+                (SELECT COUNT(*) FROM consolidation_jobs j
+                  WHERE j.agent_id = a.agent_id AND j.status = 'completed') AS completed_cycles,
+                (SELECT COUNT(*) FROM consolidation_jobs j
+                  WHERE j.agent_id = a.agent_id AND j.status = 'failed') AS failed_cycles,
+                (SELECT COALESCE(SUM(j.rules_rejected), 0) FROM consolidation_jobs j
+                  WHERE j.agent_id = a.agent_id) AS rules_rejected,
+                (SELECT COUNT(*) FROM entities x       WHERE x.agent_id = a.agent_id) AS entities,
+                (SELECT COUNT(*) FROM facts x          WHERE x.agent_id = a.agent_id) AS facts,
+                (SELECT COUNT(*) FROM semantic_rules x WHERE x.agent_id = a.agent_id) AS rules
          FROM agents a
          LEFT JOIN episodes e ON e.agent_id = a.agent_id
          WHERE a.user_id = $1 AND a.status != 'archived'
@@ -3074,6 +3453,26 @@ pub async fn loop_health_handler(
         let days_since = last_consolidated
             .map(|t| (chrono::Utc::now() - t).num_days())
             .unwrap_or(999);
+
+        // Did the dreaming actually teach the agent anything? A cycle that ran
+        // and extracted nothing advances `last_consolidated_at` exactly like a
+        // productive one, so backlog and recency alone cannot tell a healthy
+        // agent from a loop that is burning credits and learning nothing.
+        let gi = |k: &str| -> i64 { r.try_get::<i64, _>(k).unwrap_or(0) };
+        let (band, diagnosis) = crate::handlers::dreaming_maturity::classify_maturity(
+            crate::handlers::dreaming_maturity::MaturityInputs {
+                completed_cycles: gi("completed_cycles"),
+                failed_cycles: gi("failed_cycles"),
+                entities: gi("entities"),
+                facts: gi("facts"),
+                rules: gi("rules"),
+                rules_rejected: gi("rules_rejected"),
+                unconsolidated_episodes: unconsolidated,
+            },
+        );
+        let unproductive =
+            band == crate::handlers::dreaming_maturity::DreamMaturity::Unproductive;
+
         json!({
             "agent_id": r.try_get::<uuid::Uuid,_>("agent_id").ok(),
             "agent_name": r.try_get::<String,_>("agent_name").unwrap_or_default(),
@@ -3081,7 +3480,14 @@ pub async fn loop_health_handler(
             "unconsolidated_episodes": unconsolidated,
             "budget_exhausted": budget > 0 && used >= budget,
             "days_since_dreaming": days_since,
-            "needs_attention": unconsolidated > 20 || days_since > 14 || (budget > 0 && used >= budget),
+            "maturity": band.as_str(),
+            "diagnosis": diagnosis,
+            "completed_cycles": gi("completed_cycles"),
+            "failed_cycles": gi("failed_cycles"),
+            "ontology_size": gi("entities") + gi("facts") + gi("rules"),
+            // An unproductive agent always needs attention, however fresh its
+            // last cycle looks — that freshness is precisely the illusion.
+            "needs_attention": unproductive || unconsolidated > 20 || days_since > 14 || (budget > 0 && used >= budget),
         })
     }).collect();
 
@@ -3214,10 +3620,42 @@ pub async fn loop_health_handler(
         .collect();
 
     // ── Loop 5: calibration ──────────────────────────────────────────────────
+    // `calibration_score` here is a TEAM number: the mean Brier of the
+    // forecasts an agent participated in. On a composition that cites every
+    // member on every forecast it is identical across members by construction,
+    // which is why the dashboard showed four football agents at an identical
+    // "99% · n=48" — one team score rendered four times, not four measurements.
+    //
+    // Worse, 99% was itself an artefact: on a 48-team tournament where 47
+    // resolve NO, a forecaster that knows nothing scores ~98%. So the card was
+    // presenting base-rate skew as near-perfect per-agent calibration.
+    //
+    // Two corrections here. `brier_skill_score` measures performance against a
+    // forecaster that predicts the base rate on every question (<= 0 means no
+    // skill, however flattering the raw number). `mean_contribution` is the
+    // real per-agent signal — exact Shapley credit from counterfactual subset
+    // re-runs — gated on both validity checks, and null until attributed
+    // forecasts exist.
     let cal_rows = sqlx::query(
         "SELECT a.agent_id, a.agent_name, a.display_alias,
                 COUNT(f.id) FILTER (WHERE f.brier_score IS NOT NULL) AS n_resolved,
-                AVG(f.brier_score) FILTER (WHERE f.brier_score IS NOT NULL) AS avg_brier
+                AVG(f.brier_score) FILTER (WHERE f.brier_score IS NOT NULL) AS avg_brier,
+                AVG(CASE WHEN f.actual_outcome THEN 1.0 ELSE 0.0 END)
+                    FILTER (WHERE f.brier_score IS NOT NULL) AS base_rate,
+                (SELECT AVG(c.shapley_value)
+                   FROM forecast_agent_credit c
+                   JOIN forecast_attributions at
+                     ON at.forecast_id = c.forecast_id
+                    AND at.neutralisation = c.neutralisation
+                  WHERE c.agent_id = a.agent_id
+                    AND c.neutralisation = 'identity'
+                    AND at.efficiency_residual < 1e-6
+                    AND (at.reconstruction_error IS NULL OR at.reconstruction_error < 0.01)
+                ) AS mean_contribution,
+                (SELECT COUNT(*)
+                   FROM forecast_agent_credit c2
+                  WHERE c2.agent_id = a.agent_id AND c2.neutralisation = 'identity'
+                ) AS n_attributed
          FROM agents a
          LEFT JOIN fermi_forecasts f ON f.agents_used @> jsonb_build_array(jsonb_build_object('agent_id', a.agent_id::text))
            AND f.status = 'resolved'
@@ -3237,14 +3675,37 @@ pub async fn loop_health_handler(
         let avg_brier: Option<f64> = r.try_get("avg_brier").unwrap_or(None);
         let calibration = avg_brier.map(|b| 1.0 - b.clamp(0.0, 1.0));
         let confidence = (n as f64 / 20.0).min(1.0);
+        let base_rate: Option<f64> = r.try_get("base_rate").unwrap_or(None);
+        let n_yes = base_rate.map(|b| (b * n as f64).round() as usize).unwrap_or(0);
+        let (_, baseline, skill) = brier_skill(avg_brier, n_yes, n as usize);
+        let contribution: Option<f64> = r.try_get("mean_contribution").unwrap_or(None);
+        let n_attributed: i64 = r.try_get("n_attributed").unwrap_or(0);
         json!({
             "agent_id": r.try_get::<uuid::Uuid,_>("agent_id").ok(),
             "agent_name": r.try_get::<String,_>("agent_name").unwrap_or_default(),
             "display_alias": r.try_get::<Option<String>,_>("display_alias").unwrap_or(None),
             "n_resolved": n,
+            // Team-scoped. Kept for continuity; do not read as agent skill.
             "calibration_score": calibration,
+            "calibration_scope": "team",
             "confidence": confidence,
+            // Is that team number informative, or base-rate skew?
+            "brier_baseline": baseline,
+            "brier_skill_score": skill,
+            "beats_base_rate": skill.map(|s| s > 0.0),
+            // Agent-scoped: the real Loop 5 signal.
+            "mean_contribution": contribution,
+            "n_attributed": n_attributed,
             "status": if n == 0 { "cold" } else if confidence < 0.5 { "warming" } else { "warm" },
+            // A high calibration_score with no skill is the trap this card fell
+            // into; surface it so the UI can label rather than celebrate it.
+            "warning": match (skill, n) {
+                (Some(s), _) if s <= 0.0 =>
+                    Some("Raw calibration is base-rate skew, not skill — this agent does not beat always predicting the base rate."),
+                (None, x) if x > 0 =>
+                    Some("All outcomes resolved the same way; skill is undefined and the raw score is uninformative."),
+                _ => None,
+            },
         })
     }).collect();
 
@@ -3683,14 +4144,15 @@ mod tests {
             valence: Some(json!({})),
             output_contract: Some(json!({})),
             version: Some("1.0.0".into()),
+            taxonomy: Some(json!({})),
         };
         let fields = collect_changed_fields(&updates);
-        // 25 fields on AgentUpdate today — if the count drifts here,
+        // 26 fields on AgentUpdate today — if the count drifts here,
         // either a field was added (good — wire it up above) or a
         // maintainer wired one twice (bad — dedupe).
         assert_eq!(
             fields.len(),
-            25,
+            26,
             "AgentUpdate has fields that collect_changed_fields doesn't cover: got {:?}",
             fields
         );

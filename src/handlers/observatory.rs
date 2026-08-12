@@ -1275,3 +1275,312 @@ pub async fn patch_dyad_profile_handler(
     .map_err(|e|(StatusCode::SERVICE_UNAVAILABLE, format!("dyad_profiles unavailable (migration pending?): {}", e)))?;
     Ok(Json(serde_json::json!({"updated":true})))
 }
+
+// ─── Loop 5a mechanism probe (GET /api/observatory/loops/brier/mechanism) ────
+//
+// The in-product twin of `scripts/loop5_brier_mechanical_check.sql`. Same nine
+// MECHANISM checks, same SQL, same IDs — see that file for the full rationale
+// behind each one.
+//
+// WHY THIS EXISTS SEPARATELY FROM /api/agents/:id/calibration
+//
+// Calibration answers "what is this agent's score". This answers "is the
+// machinery that produced that score actually working". They fail
+// independently, and conflating them is what let Loop 5a report itself closed
+// while the BrierEvaluator could not see a single forecast.
+//
+// The distinction that makes this usable on a young loop: MECHANISM checks are
+// sample-size independent. They must be clean at n=1. A thin loop is expected
+// to produce weak *numbers* (that is `evidence_class` on the calibration
+// endpoint) but it must never produce a dropped, duplicated, mis-attributed or
+// mis-transformed signal. So a green verdict here means "sound, just needs
+// volume" and a red verdict means "do not trust any Loop 5 number yet".
+//
+// Every check is a bare COUNT with no parameters, so they live in one table and
+// run in a loop. Keep the IDs and SQL identical to the .sql probe; if they
+// diverge, the two tools will disagree and neither can be trusted.
+
+/// One MECHANISM check: `(id, severity, description, count_sql)`.
+/// A non-zero count is a violation.
+const LOOP5_MECHANISM_CHECKS: &[(&str, &str, &str, &str)] = &[
+    (
+        "L5-M01",
+        "CRITICAL",
+        "Resolved forecasts with an outcome but no brier_score — resolution never scored them, so Loop 5 can never receive a signal for them.",
+        "SELECT count(*) FROM fermi_forecasts
+          WHERE status='resolved' AND actual_outcome IS NOT NULL AND brier_score IS NULL",
+    ),
+    (
+        "L5-M02",
+        "CRITICAL",
+        "brier_score not reproducible from the frozen (scored_probability, actual_outcome) pair — mig-174's audit anchor is broken, so no downstream number is verifiable.",
+        "SELECT count(*) FROM fermi_forecasts
+          WHERE status='resolved' AND brier_score IS NOT NULL AND scored_probability IS NOT NULL
+            AND abs(brier_score::float8
+                    - power(scored_probability::float8
+                            - (CASE WHEN actual_outcome THEN 1.0 ELSE 0.0 END), 2)) > 1e-4",
+    ),
+    (
+        "L5-M03",
+        "HIGH",
+        "Scored forecasts attributable to no agent at all — the Brier exists but no agent's calibration can ever include it.",
+        "SELECT count(*) FROM fermi_forecasts f
+          WHERE f.status='resolved' AND f.brier_score IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM jsonb_array_elements(
+                       CASE WHEN jsonb_typeof(f.agents_used)='array'
+                            THEN f.agents_used ELSE '[]'::jsonb END) e
+                JOIN agents a ON a.agent_id::text = e->>'agent_id'
+                              OR a.agent_name     = e->>'agent_name'
+                              OR a.agent_name     = e->>'name')",
+    ),
+    (
+        "L5-M04",
+        "HIGH",
+        "Roster entries naming an agent that does not exist — partial credit loss, usually a rename that skipped the agents_used backfill.",
+        "SELECT count(*) FROM fermi_forecasts f
+          CROSS JOIN LATERAL jsonb_array_elements(
+                 CASE WHEN jsonb_typeof(f.agents_used)='array'
+                      THEN f.agents_used ELSE '[]'::jsonb END) e
+          WHERE f.status='resolved' AND f.brier_score IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM agents a
+                             WHERE a.agent_id::text = e->>'agent_id'
+                                OR a.agent_name     = e->>'agent_name'
+                                OR a.agent_name     = e->>'name')",
+    ),
+    (
+        "L5-M05",
+        "CRITICAL",
+        "PARTIAL emission: the emitter demonstrably ran for a forecast (some roster agents have signals) but skipped others. Not explainable by backfill history — a genuine drop.",
+        "WITH pairs AS (
+           SELECT DISTINCT f.id AS forecast_id, a.agent_id
+             FROM fermi_forecasts f
+             CROSS JOIN LATERAL jsonb_array_elements(
+                    CASE WHEN jsonb_typeof(f.agents_used)='array'
+                         THEN f.agents_used ELSE '[]'::jsonb END) e
+             JOIN agents a ON a.agent_id::text = e->>'agent_id'
+                           OR a.agent_name     = e->>'agent_name'
+                           OR a.agent_name     = e->>'name'
+            WHERE f.status='resolved' AND f.brier_score IS NOT NULL
+         ), emitted AS (
+           SELECT p.*, EXISTS (
+                    SELECT 1 FROM eval_signals s
+                     WHERE s.agent_id = p.agent_id
+                       AND s.dimension = 'forecast_calibration'
+                       AND s.rationale LIKE 'forecast ' || p.forecast_id || ' resolved%'
+                  ) AS has_signal
+             FROM pairs p
+         )
+         SELECT count(*) FROM emitted e
+          WHERE NOT e.has_signal
+            AND EXISTS (SELECT 1 FROM emitted o
+                         WHERE o.forecast_id = e.forecast_id AND o.has_signal)",
+    ),
+    (
+        "L5-M06",
+        "HIGH",
+        "Stored signal score does not equal 1 - clamp(brier) — the inversion, clamp or forecast->signal binding is wrong, and every derived calibration_score is wrong with it.",
+        "SELECT count(*)
+           FROM eval_signals s
+           JOIN fermi_forecasts f ON s.rationale LIKE 'forecast ' || f.id || ' resolved%'
+          WHERE s.dimension='forecast_calibration'
+            AND f.brier_score IS NOT NULL
+            AND abs(s.score - (1.0 - least(greatest(f.brier_score::float8,0.0),1.0))) > 1e-3",
+    ),
+    (
+        "L5-M07",
+        "MEDIUM",
+        "Signals citing a forecast that is not resolved-and-scored — a signal outlived an un-resolve, void or delete, so the mean averages over evidence that no longer exists.",
+        "SELECT count(*) FROM eval_signals s
+          WHERE s.dimension='forecast_calibration'
+            AND s.evaluator_name='brier_forecast_resolver'
+            AND substring(s.rationale from 'forecast ([0-9a-fA-F-]{36})') IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM fermi_forecasts f
+               WHERE f.id = substring(s.rationale from 'forecast ([0-9a-fA-F-]{36})')
+                 AND f.status='resolved' AND f.brier_score IS NOT NULL)",
+    ),
+    (
+        "L5-M08",
+        "MEDIUM",
+        "Duplicate (agent, forecast) signals — the emitter's NOT EXISTS guard was bypassed, and each duplicate double-weights one forecast in the calibration mean.",
+        "SELECT count(*) FROM (
+           SELECT s.agent_id, s.rationale
+             FROM eval_signals s
+            WHERE s.dimension='forecast_calibration' AND s.rationale LIKE 'forecast %'
+            GROUP BY s.agent_id, s.rationale
+           HAVING count(*) > 1
+         ) x",
+    ),
+    (
+        "L5-M09",
+        "HIGH",
+        "Forecasts reachable by agent name but not by agent_id — invisible to any reader matching agent_id alone. Non-zero means mig-170's one-shot backfill is stale and grows with every new forecast until the write path stamps agent_id at creation.",
+        "WITH per_agent AS (
+           SELECT a.agent_id,
+                  count(*) FILTER (WHERE f.agents_used @> jsonb_build_array(
+                            jsonb_build_object('agent_id', a.agent_id::text))) AS via_id,
+                  count(*) AS via_any
+             FROM agents a
+             JOIN fermi_forecasts f
+               ON f.agents_used @> jsonb_build_array(jsonb_build_object('agent_id', a.agent_id::text))
+               OR f.agents_used @> jsonb_build_array(jsonb_build_object('agent_name', a.agent_name))
+               OR f.agents_used @> jsonb_build_array(jsonb_build_object('name', a.agent_name))
+            WHERE f.status='resolved' AND f.brier_score IS NOT NULL
+            GROUP BY a.agent_id
+         )
+         SELECT COALESCE(sum(via_any - via_id), 0)::bigint FROM per_agent",
+    ),
+];
+
+/// INFORMATIONAL context: never a failure, only a measure of how much the
+/// signal currently means. Expected to look weak on a young loop.
+const LOOP5_INFO_CHECKS: &[(&str, &str, &str)] = &[
+    (
+        "L5-I01",
+        "Scored forecasts with no calibration signal for ANY agent — the backfill backlog (resolved before the emitter shipped), not a bug. Re-emitting these is the cheapest way to thicken Loop 5.",
+        "SELECT count(*) FROM fermi_forecasts f
+          WHERE f.status='resolved' AND f.brier_score IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM eval_signals s
+                             WHERE s.dimension='forecast_calibration'
+                               AND s.rationale LIKE 'forecast ' || f.id || ' resolved%')",
+    ),
+    (
+        "L5-I02",
+        "Total scored forecasts — the ceiling on all Loop 5 evidence. Per-agent confidence saturates at n=20.",
+        "SELECT count(*) FROM fermi_forecasts WHERE status='resolved' AND brier_score IS NOT NULL",
+    ),
+    (
+        "L5-I03",
+        "Agents whose attributed forecast set is identical to another agent's. These can never be ranked against each other by Loop 5, at any sample size — a composition that cites every member on every forecast cannot discriminate between its members.",
+        "WITH pairs AS (
+           SELECT DISTINCT f.id AS forecast_id, a.agent_id
+             FROM fermi_forecasts f
+             CROSS JOIN LATERAL jsonb_array_elements(
+                    CASE WHEN jsonb_typeof(f.agents_used)='array'
+                         THEN f.agents_used ELSE '[]'::jsonb END) e
+             JOIN agents a ON a.agent_id::text = e->>'agent_id'
+                           OR a.agent_name     = e->>'agent_name'
+                           OR a.agent_name     = e->>'name'
+            WHERE f.status='resolved' AND f.brier_score IS NOT NULL
+         ), fingerprints AS (
+           SELECT agent_id, md5(string_agg(forecast_id, ',' ORDER BY forecast_id)) AS fp
+             FROM pairs GROUP BY agent_id
+         )
+         SELECT count(*) FROM fingerprints f
+          WHERE EXISTS (SELECT 1 FROM fingerprints o
+                         WHERE o.fp = f.fp AND o.agent_id <> f.agent_id)",
+    ),
+    (
+        "L5-I04",
+        "Agents whose outcome set is so one-sided that the base-rate baseline b(1-b) is under 0.01. On such a set a zero-knowledge forecaster still scores ~99%, so only brier_skill_score is meaningful.",
+        "WITH pairs AS (
+           SELECT DISTINCT f.id AS forecast_id, f.actual_outcome, a.agent_id
+             FROM fermi_forecasts f
+             CROSS JOIN LATERAL jsonb_array_elements(
+                    CASE WHEN jsonb_typeof(f.agents_used)='array'
+                         THEN f.agents_used ELSE '[]'::jsonb END) e
+             JOIN agents a ON a.agent_id::text = e->>'agent_id'
+                           OR a.agent_name     = e->>'agent_name'
+                           OR a.agent_name     = e->>'name'
+            WHERE f.status='resolved' AND f.brier_score IS NOT NULL
+         )
+         SELECT count(*) FROM (
+           SELECT agent_id, avg(CASE WHEN actual_outcome THEN 1.0 ELSE 0.0 END) AS b
+             FROM pairs GROUP BY agent_id
+         ) x WHERE b * (1.0 - b) < 0.01",
+    ),
+];
+
+/// GET /api/observatory/loops/brier/mechanism
+///
+/// Structured verdict on whether the Loop 5a chain moves a signal correctly,
+/// independent of whether the resulting numbers are impressive.
+///
+/// Admin-only: the checks aggregate across every tenant's forecasts, so the
+/// counts are not owner-scoped and must not leak to a normal caller.
+pub async fn loop5_mechanism_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    if !principal.can_admin() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Loop 5 mechanism probe is admin-only (counts span all tenants)".into(),
+        ));
+    }
+
+    let mut checks: Vec<Value> = Vec::new();
+    let mut violations = 0usize;
+    let mut ok = 0usize;
+    let mut errored = 0usize;
+
+    for (id, severity, description, sql) in LOOP5_MECHANISM_CHECKS {
+        // A failing probe query must never 500 the probe: an errored check is
+        // itself a finding, and reporting it as INCONCLUSIVE is more honest
+        // than either hiding it or pretending the loop is sound.
+        match sqlx::query_scalar::<_, i64>(sql).fetch_one(&state.db).await {
+            Ok(n) => {
+                let status = if n == 0 { "OK" } else { "VIOLATION" };
+                if n == 0 {
+                    ok += 1;
+                } else {
+                    violations += 1;
+                }
+                checks.push(json!({
+                    "id": id, "class": "MECHANISM", "severity": severity,
+                    "status": status, "count": n, "description": description,
+                }));
+            }
+            Err(e) => {
+                errored += 1;
+                checks.push(json!({
+                    "id": id, "class": "MECHANISM", "severity": severity,
+                    "status": "ERROR", "count": null, "description": description,
+                    "error": e.to_string(),
+                }));
+            }
+        }
+    }
+
+    for (id, description, sql) in LOOP5_INFO_CHECKS {
+        match sqlx::query_scalar::<_, i64>(sql).fetch_one(&state.db).await {
+            Ok(n) => checks.push(json!({
+                "id": id, "class": "INFO", "severity": "INFO",
+                "status": "OK", "count": n, "description": description,
+            })),
+            Err(e) => {
+                errored += 1;
+                checks.push(json!({
+                    "id": id, "class": "INFO", "severity": "INFO",
+                    "status": "ERROR", "count": null, "description": description,
+                    "error": e.to_string(),
+                }));
+            }
+        }
+    }
+
+    let verdict = if errored > 0 {
+        "inconclusive"
+    } else if violations == 0 {
+        "sound"
+    } else {
+        "broken"
+    };
+
+    Ok(Json(json!({
+        "loop": "5a",
+        "label": "Brier calibration",
+        "verdict": verdict,
+        "verdict_detail": match verdict {
+            "sound" => "The chain moves signals correctly. Any weakness in the numbers is thin data or skew, not wiring.",
+            "broken" => "Do not trust any Loop 5 number until the MECHANISM violations are resolved.",
+            _ => "A probe query errored — fix it before drawing conclusions either way.",
+        },
+        "mechanism_violations": violations,
+        "mechanism_ok": ok,
+        "errored": errored,
+        "checks": checks,
+        "note": "MECHANISM checks are sample-size independent and must be clean at n=1. INFO checks measure how much the signal currently means and are never failures. Full rationale per check: scripts/loop5_brier_mechanical_check.sql",
+    })))
+}

@@ -1080,6 +1080,37 @@ function renderLoopsTab(fa) {
   const calib=_calib;
   const series=_tl?.trend?.series||{};
 
+  // Loop 5a: "closed" requires demonstrated skill over the base-rate
+  // reference, not just a high raw score on n>=5 forecasts. On a question set
+  // where nearly every outcome resolves NO (e.g. the 48 World Cup
+  // tournament-winner forecasts: 47 NO, one YES), a forecaster that knows
+  // nothing scores ~98% raw. Gating on the raw number alone reported
+  // base-rate skew as a closed loop. `brier_skill_score` comes from
+  // GET /api/agents/:id/calibration: > 0 beats the base-rate forecaster.
+  const loop5a = (() => {
+    if (calib?.calibration_score == null)
+      return {status:"open", detail:"No resolved forecasts yet."};
+    const n    = calib.n_resolved_forecasts || 0;
+    const bss  = calib.brier_skill_score;
+    const base = calib.outcome_base_rate;
+    const raw  = `${pct(calib.calibration_score)}% raw · n=${n}`;
+    if (n < 5)
+      return {status:"partial", detail:`${raw} — needs ≥5 resolved forecasts.`};
+    if (bss == null)
+      return {status:"partial", detail:`${raw} — no base-rate reference (all outcomes resolved alike); skill undefined.`};
+    if (bss > 0.05) {
+      // Mechanically sound + skilled, but say how much evidence backs it.
+      // "closed" is about the loop turning, not about the number being final;
+      // evidence_class (none|provisional|thin|usable) carries that separately.
+      const ev = calib.evidence_class;
+      const caveat = (ev === "provisional" || ev === "thin") ? ` · ${ev} evidence` : "";
+      return {status:"closed",
+              detail:`${raw} · skill +${bss.toFixed(2)} vs ${pct(base)}% base rate${caveat}`};
+    }
+    return {status:"partial",
+            detail:`${raw} but skill ${bss.toFixed(2)} — no better than always predicting the ${pct(base)}% base rate. Raw score is base-rate skew, not calibration.`};
+  })();
+
   const loops=[
     {n:"1a",name:"Individual learning",
      status:runs.length>0?"closed":Object.keys(series).length>0?"partial":"open",
@@ -1092,9 +1123,7 @@ function renderLoopsTab(fa) {
      detail:anoms.filter(a=>a.requires_review&&!a.resolved_at).length>0?`${anoms.filter(a=>a.requires_review&&!a.resolved_at).length} pending — visit Review queue`:anoms.some(a=>a.resolved_at)?"Corrections applied":"No anomalies detected."},
     {n:"3a",name:"Coherence (inner)",status:"partial",detail:"Auto-attached to workspaces · outer loop needs session history."},
     {n:"4",name:"Composition evolution",status:"open",detail:"Needs accumulated session patterns."},
-    {n:"5a",name:"Brier calibration",
-     status:calib?.calibration_score!=null&&(calib.n_resolved_forecasts||0)>=5?"closed":calib?.calibration_score!=null?"partial":"open",
-     detail:calib?.calibration_score!=null?`${pct(calib.calibration_score)}% · n=${calib.n_resolved_forecasts||0} · ${calib.trend||"—"}`:"No resolved forecasts yet."},
+    {n:"5a",name:"Brier calibration",status:loop5a.status,detail:loop5a.detail},
   ];
 
   const ICONS={closed:"✓",partial:"◑",open:"○"};
@@ -1253,7 +1282,7 @@ function escHtml(s){return(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").rep
 function setText(id,t){const e=document.getElementById(id);if(e)e.textContent=t;}
 function sevColor(s){const n=parseFloat(s);if(isNaN(n))return"var(--fg4)";return n>=0.7?"var(--red)":n>=0.4?"var(--yellow)":"var(--fg4)";}
 function inapplicableHint(name){
-  const h={sotopia:"Needs a rubric — click ✦ Generate rubrics.",lifelongbench:"Needs ≥5 prior episodes.",brier:"Needs resolved fermi_forecasts.",projection:"Only for simops_dynamics_runner.",faithfulness:"Fires when agent uses tools."};
+  const h={sotopia:"Needs a rubric — click ✦ Generate rubrics.",lifelongbench:"Needs ≥5 prior episodes.",brier:"Needs resolved fermi_forecasts citing this agent in agents_used.",projection:"Only for simops_dynamics_runner.",faithfulness:"Fires when agent uses tools."};
   for(const[k,v] of Object.entries(h)){if(name.toLowerCase().replace(/[_-]/g,"").includes(k.replace(/[_-]/g,"")))return v;}
   return "Check test case configuration.";
 }

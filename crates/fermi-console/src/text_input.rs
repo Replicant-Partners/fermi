@@ -19,6 +19,7 @@ use gpui::*;
 use std::ops::Range;
 
 use crate::theme;
+use crate::ui;
 
 // ─── Actions ──────────────────────────────────────────────────────
 
@@ -672,7 +673,7 @@ impl Render for TextInput {
         let border_color = if is_focused {
             rgb(theme::CYAN)
         } else {
-            rgb(theme::FG_FAINT)
+            rgb(theme::FG_MUTED)
         };
 
         let field = div()
@@ -700,7 +701,7 @@ impl Render for TextInput {
             .bg(rgb(theme::BG))
             .border_1()
             .border_color(border_color)
-            .rounded(px(4.0))
+            .rounded(ui::s(4.0))
             .text_size(font_size)
             .text_color(rgb(theme::FG))
             .font_family("Ubuntu Mono, DejaVu Sans Mono, Liberation Mono, monospace")
@@ -710,7 +711,7 @@ impl Render for TextInput {
                     .h(line_h)
                     .w_full()
                     .px(pad)
-                    .py(px(2.0))
+                    .py(ui::s(2.0))
                     .overflow_hidden()
                     .child(TextInputElement { input: cx.entity() }),
             );
@@ -719,14 +720,14 @@ impl Render for TextInput {
             div()
                 .flex()
                 .flex_col()
-                .gap(px(4.0))
+                .gap(ui::s(4.0))
                 .w_full()
                 // min_w(0) so the outer wrapper can shrink below the
                 // label's intrinsic width without leaking that width
                 // requirement out to the flex parent (which would
                 // otherwise squeeze siblings and force this label to
                 // break per-character).
-                .min_w(px(0.0))
+                .min_w(ui::s(0.0))
                 .child(
                     div()
                         // flex_none + overflow_hidden on the label div so
@@ -740,7 +741,7 @@ impl Render for TextInput {
                         .flex_none()
                         .overflow_hidden()
                         .whitespace_nowrap()
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(rgb(theme::FG_DIM))
                         .child(label.clone()),
                 )

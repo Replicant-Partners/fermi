@@ -83,6 +83,63 @@ pub async fn apply_agent_multipliers(
         None => return Ok(false),
     };
 
+    // ── Retain the claim itself (mig-187) ─────────────────────────────────
+    //
+    // The params UPSERT below is CURRENT STATE: the next agent's write, or the
+    // next run, overwrites it. That made every resolved forecast permanently
+    // unattributable at the agent level, because the per-agent inputs that
+    // produced it no longer existed.
+    //
+    // This ledger is what makes per-agent credit possible at all: knowing what
+    // each agent individually claimed lets the attribution engine synthesise
+    // the forecast for any SUBSET of agents (applying that subset's claims,
+    // neutralising the rest) and so compute exact Shapley credit from a single
+    // real forecast — no need for real-world composition permutations. See
+    // src/attribution/ and migrations/187_forecast_agent_claims.sql.
+    //
+    // Append-only and best-effort: a failure here must never fail the agent
+    // run, but it is logged at warn because a silent gap here is unrecoverable
+    // later — claims cannot be reconstructed after the fact.
+    let claim_agent_id: Option<Uuid> =
+        sqlx::query_scalar::<_, Uuid>("SELECT agent_id FROM agents WHERE agent_name = $1 LIMIT 1")
+            .bind(agent_name)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+
+    let raw_evidence: Option<&str> = evidence
+        .iter()
+        .filter_map(|e| e.summary.as_deref())
+        .find(|s| extract_multiplier(s).is_some());
+
+    for prefix in driver_prefixes {
+        let res = sqlx::query(
+            "INSERT INTO forecast_agent_claims
+                 (workspace_id, agent_id, agent_name, driver,
+                  p5, p50, p95, neutral_value, source, raw_evidence)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 1.0, 'multiplier_hook', $8)",
+        )
+        .bind(workspace_id)
+        .bind(claim_agent_id)
+        .bind(agent_name)
+        .bind(prefix)
+        .bind(p5 as f32)
+        .bind(p50 as f32)
+        .bind(p95 as f32)
+        .bind(raw_evidence)
+        .execute(pool)
+        .await;
+
+        if let Err(e) = res {
+            tracing::warn!(
+                workspace = %workspace_id, agent = %agent_name, driver = %prefix, error = %e,
+                "[claims] failed to record agent claim — this forecast will not be \
+                 attributable per-agent and cannot be backfilled"
+            );
+        }
+    }
+
     // Build the update: { <driver>_p5, <driver>_p50, <driver>_p95 } for each driver.
     let mut update = JsonValue::Object(serde_json::Map::new());
     for prefix in driver_prefixes {

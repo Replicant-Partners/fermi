@@ -314,6 +314,35 @@ pub async fn consolidate_agent_handler(
     // Phase 3.1 (Spec 21): spawn consolidation as background job, return 202 immediately.
     // Gas is charged before spawn so a job that never starts still has a visible charge.
     let job_id = uuid::Uuid::new_v4();
+
+    // Create the job row NOW, under the id we are about to hand the client.
+    //
+    // This used to be missing entirely, and the consequence was the most
+    // confusing possible failure: consolidation worked perfectly — episodes
+    // consolidated, rules extracted, a job row created, updated and completed
+    // — but the worker did all of that under an id it generated internally,
+    // while the client was handed this fabricated one. Every status poll and
+    // every refresh looked up a row that had never existed, so the UI reported
+    // success and then showed nothing. Both writes below were `let _ =`, so
+    // "0 rows affected" was invisible.
+    //
+    // Creating it here also means the job is visible as `running` the instant
+    // the client gets its 202, instead of only appearing once the work ends.
+    state
+        .memory_store
+        .create_consolidation_job_with_id(
+            job_id,
+            db_agent.agent_id,
+            episodes[0].episode_id,
+            episodes[episodes.len() - 1].episode_id,
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to create consolidation job: {}", e),
+            )
+        })?;
     let spawn_state = state.clone();
     let spawn_agent_id = db_agent.agent_id;
     let spawn_agent_name = agent_id.clone();
@@ -341,35 +370,36 @@ pub async fn consolidate_agent_handler(
             ),
         };
 
-        match worker.consolidate_agent(spawn_agent_id, 0.5, 2).await {
+        // Pass the client's job_id through so the worker's own statistics and
+        // completion land on the row the client is polling.
+        match worker
+            .consolidate_agent_with_job(spawn_agent_id, 0.5, 2, Some(job_id))
+            .await
+        {
             Ok(result) => {
-                // Debit dreaming credit
-                let _ = sqlx::query(
+                // Debit dreaming credit. Logged rather than swallowed: silently
+                // failing to debit means the budget shown to the operator drifts
+                // from what was actually spent, and `last_consolidated_at` is
+                // what the maturity view reads to say when an agent last dreamt.
+                if let Err(e) = sqlx::query(
                     "UPDATE agents SET dreaming_credits_used = dreaming_credits_used + 1, \
                      last_consolidated_at = NOW() WHERE agent_id = $1",
                 )
                 .bind(spawn_agent_id)
                 .execute(&spawn_state.db)
-                .await;
+                .await
+                {
+                    tracing::error!(
+                        agent_id = %spawn_agent_id, error = %e,
+                        "[consolidation] failed to debit dreaming credit / stamp \
+                         last_consolidated_at — budget and maturity will read stale"
+                    );
+                }
 
-                // Update job record if it exists
-                let _ = spawn_state
-                    .memory_store
-                    .update_consolidation_job(
-                        job_id,
-                        result.episodes_processed as i32,
-                        result.clusters_identified as i32,
-                        result.rules_extracted as i32,
-                        result.rules_verified as i32,
-                        result.rules_rejected as i32,
-                        result.entities_created as i32,
-                        result.facts_created as i32,
-                    )
-                    .await;
-                let _ = spawn_state
-                    .memory_store
-                    .complete_consolidation_job(job_id, "completed", None)
-                    .await;
+                // The worker already recorded statistics and marked the job
+                // completed against this same job_id, so there is nothing to
+                // update here. Re-completing it would only risk clobbering the
+                // worker's numbers with a second write.
 
                 // Spawn dream narrator
                 let ep = result.episodes_processed;

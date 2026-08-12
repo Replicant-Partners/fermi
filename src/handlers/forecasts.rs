@@ -1503,6 +1503,13 @@ pub async fn resolve_forecast_handler(
     // idempotent per (agent, forecast) and cheap.
     record_forecast_calibration_signals(pool, &forecast_id, brier_score).await;
 
+    // Per-agent Shapley credit from counterfactual subset re-runs. Unlike the
+    // calibration signal above — which is a TEAM score copied onto every roster
+    // member, and so cannot distinguish them — this attributes the forecast's
+    // improvement to individual agents. Spawned rather than awaited: it costs
+    // 2^n model runs and must not delay the resolution response.
+    crate::handlers::attribution::spawn_attribution(pool, &forecast_id);
+
     // Retrospectively fill the trajectory's calibration columns now that
     // ground truth exists. See fn docs — these columns had no writer at
     // all before this.

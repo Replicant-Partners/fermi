@@ -16,6 +16,7 @@ use gpui::prelude::*;
 use gpui::*;
 
 use crate::theme;
+use crate::ui;
 
 // ═══════════════════════════════════════════════════════════════════
 // Driver types (mirror the FPL AST but UI-friendly)
@@ -386,8 +387,8 @@ pub fn render_composer(state: &ComposerState) -> impl IntoElement {
         .flex()
         .flex_col()
         .size_full()
-        .p(px(24.0))
-        .gap(px(16.0))
+        .p(ui::s(24.0))
+        .gap(ui::s(16.0))
         .child(
             // Header
             div()
@@ -396,7 +397,7 @@ pub fn render_composer(state: &ComposerState) -> impl IntoElement {
                 .justify_between()
                 .child(
                     div()
-                        .text_size(px(22.0))
+                        .text_size(ui::TEXT_5XL)
                         .text_color(theme::fg())
                         .font_weight(FontWeight::BOLD)
                         .child("Forecast Composer"),
@@ -404,16 +405,16 @@ pub fn render_composer(state: &ComposerState) -> impl IntoElement {
                 .child(
                     div()
                         .flex()
-                        .gap(px(8.0))
+                        .gap(ui::s(8.0))
                         .child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(theme::fg_dim())
                                 .child("⌘R to simulate"),
                         )
                         .child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(theme::fg_dim())
                                 .child("⌘Enter to publish"),
                         ),
@@ -451,7 +452,7 @@ fn render_question_section(state: &ComposerState) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
-            .gap(px(8.0))
+            .gap(ui::s(8.0))
             .child(render_field_display(
                 "What are you forecasting?",
                 if state.question.is_empty() {
@@ -464,7 +465,7 @@ fn render_question_section(state: &ComposerState) -> impl IntoElement {
             .child(
                 div()
                     .flex()
-                    .gap(px(16.0))
+                    .gap(ui::s(16.0))
                     .child(render_field_display(
                         "Domain",
                         if state.domain.is_empty() {
@@ -497,16 +498,16 @@ fn render_question_section(state: &ComposerState) -> impl IntoElement {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(12.0))
+                    .gap(ui::s(12.0))
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(theme::fg_dim())
                             .child("Predicted probability:"),
                     )
                     .child(
                         div()
-                            .text_size(px(18.0))
+                            .text_size(ui::TEXT_3XL)
                             .text_color(theme::cyan())
                             .font_weight(FontWeight::BOLD)
                             .child(format!("{:.0}%", state.predicted_probability * 100.0)),
@@ -522,13 +523,13 @@ fn render_drivers_section(state: &ComposerState) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
-            .gap(px(4.0))
+            .gap(ui::s(4.0))
             .when(state.drivers.is_empty(), |el: Div| {
                 el.child(
                     div()
-                        .text_size(px(12.0))
+                        .text_size(ui::TEXT_MD)
                         .text_color(theme::fg_dim())
-                        .py(px(8.0))
+                        .py(ui::s(8.0))
                         .child("No drivers yet — add continuous or binary drivers below"),
                 )
             })
@@ -543,8 +544,8 @@ fn render_drivers_section(state: &ComposerState) -> impl IntoElement {
                 // Add driver buttons
                 div()
                     .flex()
-                    .gap(px(8.0))
-                    .mt(px(8.0))
+                    .gap(ui::s(8.0))
+                    .mt(ui::s(8.0))
                     .child(render_button("+ Continuous", theme::GREEN))
                     .child(render_button("+ Binary", theme::GOLD)),
             ),
@@ -555,24 +556,24 @@ fn render_driver_row(index: usize, driver: &Driver) -> impl IntoElement {
     div()
         .flex()
         .items_center()
-        .gap(px(12.0))
-        .px(px(8.0))
-        .py(px(6.0))
-        .rounded(px(4.0))
+        .gap(ui::s(12.0))
+        .px(ui::s(8.0))
+        .py(ui::s(6.0))
+        .rounded(ui::s(4.0))
         .hover(|style| style.bg(theme::bg_hover()))
         .child(
             // Index
             div()
-                .w(px(24.0))
-                .text_size(px(11.0))
-                .text_color(theme::fg_faint())
+                .w(ui::s(28.0))
+                .text_size(ui::TEXT_BASE)
+                .text_color(theme::fg_muted())
                 .child(format!("{}.", index + 1)),
         )
         .child(
             // Name
             div()
-                .w(px(120.0))
-                .text_size(px(13.0))
+                .w(ui::s(120.0))
+                .text_size(ui::TEXT_LG)
                 .text_color(theme::fg())
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(driver.name.clone()),
@@ -580,14 +581,14 @@ fn render_driver_row(index: usize, driver: &Driver) -> impl IntoElement {
         .child(
             // Kind badge
             div()
-                .text_size(px(10.0))
+                .text_size(ui::TEXT_SM)
                 .text_color(match &driver.kind {
                     DriverKind::Continuous { .. } => theme::green(),
                     DriverKind::Binary { .. } => theme::gold(),
                 })
-                .px(px(6.0))
-                .py(px(2.0))
-                .rounded(px(3.0))
+                .px(ui::s(6.0))
+                .py(ui::s(2.0))
+                .rounded(ui::s(3.0))
                 .bg(theme::bg_active())
                 .child(driver.kind_label()),
         )
@@ -595,16 +596,16 @@ fn render_driver_row(index: usize, driver: &Driver) -> impl IntoElement {
             // Summary
             div()
                 .flex_grow()
-                .text_size(px(12.0))
+                .text_size(ui::TEXT_MD)
                 .text_color(theme::fg_dim())
                 .child(driver.summary()),
         )
         .child(
             // Rationale (truncated)
             div()
-                .w(px(200.0))
-                .text_size(px(11.0))
-                .text_color(theme::fg_faint())
+                .w(ui::s(200.0))
+                .text_size(ui::TEXT_BASE)
+                .text_color(theme::fg_muted())
                 .child(if driver.rationale.is_empty() {
                     "—".to_string()
                 } else {
@@ -620,26 +621,26 @@ fn render_model_section(state: &ComposerState) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
-            .gap(px(8.0))
+            .gap(ui::s(8.0))
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(theme::fg_dim())
                     .child("How do drivers combine to produce the forecast?"),
             )
             .child(
                 div()
                     .w_full()
-                    .px(px(12.0))
-                    .py(px(8.0))
-                    .rounded(px(4.0))
+                    .px(ui::s(12.0))
+                    .py(ui::s(8.0))
+                    .rounded(ui::s(4.0))
                     .bg(theme::bg())
                     .border_1()
-                    .border_color(theme::fg_faint())
-                    .text_size(px(13.0))
+                    .border_color(theme::border())
+                    .text_size(ui::TEXT_LG)
                     .font_family("Ubuntu Mono, DejaVu Sans Mono, Liberation Mono, monospace")
                     .text_color(if state.model_expression.is_empty() {
-                        theme::fg_faint()
+                        theme::fg_muted()
                     } else {
                         theme::fg()
                     })
@@ -653,12 +654,12 @@ fn render_model_section(state: &ComposerState) -> impl IntoElement {
             .child(
                 div()
                     .flex()
-                    .gap(px(8.0))
+                    .gap(ui::s(8.0))
                     .child(render_button("Auto-generate", theme::FG_DIM))
                     .child(
-                        div().flex().items_center().gap(px(8.0)).child(
+                        div().flex().items_center().gap(ui::s(8.0)).child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(theme::fg_dim())
                                 .child(format!("{} iterations", state.iterations)),
                         ),
@@ -674,12 +675,12 @@ fn render_results_section(results: &SimulationResults) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
-            .gap(px(12.0))
+            .gap(ui::s(12.0))
             // Stats row
             .child(
                 div()
                     .flex()
-                    .gap(px(16.0))
+                    .gap(ui::s(16.0))
                     .child(render_stat("Mean", &format!("{:.2}", results.mean)))
                     .child(render_stat("Median", &format!("{:.2}", results.median)))
                     .child(render_stat("Std Dev", &format!("{:.2}", results.std_dev)))
@@ -693,8 +694,8 @@ fn render_results_section(results: &SimulationResults) -> impl IntoElement {
             // Footer
             .child(
                 div()
-                    .text_size(px(10.0))
-                    .text_color(theme::fg_faint())
+                    .text_size(ui::TEXT_SM)
+                    .text_color(theme::fg_muted())
                     .child(format!(
                         "{} iterations in {}ms",
                         results.iterations, results.execution_time_ms
@@ -724,25 +725,25 @@ fn render_histogram(histogram: &[(f64, usize)]) -> impl IntoElement {
             div()
                 .flex()
                 .items_center()
-                .gap(px(8.0))
+                .gap(ui::s(8.0))
                 .child(
                     div()
-                        .w(px(60.0))
-                        .text_size(px(10.0))
+                        .w(ui::s(72.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(theme::fg_dim())
                         .child(label),
                 )
                 .child(
                     div()
-                        .h(px(12.0))
-                        .w(px(bar_width as f32))
+                        .h(ui::s(12.0))
+                        .w(ui::s(bar_width as f32))
                         .bg(theme::cyan())
-                        .rounded(px(2.0)),
+                        .rounded(ui::s(2.0)),
                 )
                 .child(
                     div()
-                        .text_size(px(10.0))
-                        .text_color(theme::fg_faint())
+                        .text_size(ui::TEXT_SM)
+                        .text_color(theme::fg_muted())
                         .child(count_str),
                 )
         })
@@ -751,12 +752,12 @@ fn render_histogram(histogram: &[(f64, usize)]) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
-        .gap(px(1.0))
+        .gap(ui::s(1.0))
         .child(
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(theme::fg_dim())
-                .mb(px(4.0))
+                .mb(ui::s(4.0))
                 .child("Distribution"),
         )
         .children(bars)
@@ -766,24 +767,24 @@ fn render_histogram(histogram: &[(f64, usize)]) -> impl IntoElement {
 fn render_error_section(error: &str) -> impl IntoElement {
     div()
         .bg(rgb(0x3D1F1F))
-        .rounded(px(8.0))
+        .rounded(ui::s(8.0))
         .border_1()
         .border_color(theme::red())
-        .p(px(16.0))
+        .p(ui::s(16.0))
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(px(8.0))
+                .gap(ui::s(8.0))
                 .child(
                     div()
-                        .text_size(px(14.0))
+                        .text_size(ui::TEXT_XL)
                         .text_color(theme::red())
                         .child("✗"),
                 )
                 .child(
                     div()
-                        .text_size(px(13.0))
+                        .text_size(ui::TEXT_LG)
                         .text_color(theme::red())
                         .font_weight(FontWeight::SEMIBOLD)
                         .child("Simulation Error"),
@@ -791,9 +792,9 @@ fn render_error_section(error: &str) -> impl IntoElement {
         )
         .child(
             div()
-                .text_size(px(12.0))
+                .text_size(ui::TEXT_MD)
                 .text_color(rgb(0xFFAAAA))
-                .mt(px(8.0))
+                .mt(ui::s(8.0))
                 .font_family("Ubuntu Mono, DejaVu Sans Mono, Liberation Mono, monospace")
                 .child(error.to_string()),
         )
@@ -807,13 +808,13 @@ fn render_fpl_source_section(state: &ComposerState) -> impl IntoElement {
         theme::FG_DIM,
         div()
             .w_full()
-            .px(px(12.0))
-            .py(px(8.0))
-            .rounded(px(4.0))
+            .px(ui::s(12.0))
+            .py(ui::s(8.0))
+            .rounded(ui::s(4.0))
             .bg(theme::bg())
             .border_1()
-            .border_color(theme::fg_faint())
-            .text_size(px(12.0))
+            .border_color(theme::border())
+            .text_size(ui::TEXT_MD)
             .font_family("Ubuntu Mono, DejaVu Sans Mono, Liberation Mono, monospace")
             .text_color(theme::fg_dim())
             .child(if fpl.is_empty() {
@@ -830,25 +831,25 @@ fn render_empty_hint() -> impl IntoElement {
         .flex_col()
         .items_center()
         .justify_center()
-        .py(px(40.0))
-        .gap(px(12.0))
+        .py(ui::s(40.0))
+        .gap(ui::s(12.0))
         .child(
             div()
-                .text_size(px(36.0))
-                .text_color(theme::fg_faint())
+                .text_size(ui::TEXT_9XL)
+                .text_color(theme::fg_muted())
                 .child("✎"),
         )
         .child(
             div()
-                .text_size(px(16.0))
+                .text_size(ui::TEXT_2XL)
                 .text_color(theme::fg_dim())
                 .child("Create a new forecast"),
         )
         .child(
             div()
-                .text_size(px(13.0))
-                .text_color(theme::fg_faint())
-                .max_w(px(400.0))
+                .text_size(ui::TEXT_LG)
+                .text_color(theme::fg_muted())
+                .max_w(ui::s(400.0))
                 .text_center()
                 .child(
                     "Start by entering a question, then add drivers with probability \
@@ -859,18 +860,18 @@ fn render_empty_hint() -> impl IntoElement {
         .child(
             div()
                 .flex()
-                .gap(px(16.0))
-                .mt(px(8.0))
+                .gap(ui::s(16.0))
+                .mt(ui::s(8.0))
                 .child(
                     div()
-                        .text_size(px(11.0))
-                        .text_color(theme::fg_faint())
+                        .text_size(ui::TEXT_BASE)
+                        .text_color(theme::fg_muted())
                         .child("⌘E toggle FPL source"),
                 )
                 .child(
                     div()
-                        .text_size(px(11.0))
-                        .text_color(theme::fg_faint())
+                        .text_size(ui::TEXT_BASE)
+                        .text_color(theme::fg_muted())
                         .child("⌘R run simulation"),
                 ),
         )
@@ -885,47 +886,47 @@ fn render_card(title: &str, accent: u32, content: impl IntoElement) -> impl Into
         .flex()
         .flex_col()
         .bg(theme::bg_elevated())
-        .rounded(px(8.0))
+        .rounded(ui::s(8.0))
         .border_1()
-        .border_color(theme::fg_faint())
+        .border_color(theme::border())
         .child(
             div()
-                .px(px(16.0))
-                .py(px(10.0))
+                .px(ui::s(16.0))
+                .py(ui::s(10.0))
                 .border_b_1()
-                .border_color(theme::fg_faint())
-                .text_size(px(13.0))
+                .border_color(theme::border())
+                .text_size(ui::TEXT_LG)
                 .text_color(rgb(accent))
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(title.to_string()),
         )
-        .child(div().p(px(16.0)).child(content))
+        .child(div().p(ui::s(16.0)).child(content))
 }
 
 fn render_field_display(label: &str, value: &str, is_placeholder: bool) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
-        .gap(px(4.0))
+        .gap(ui::s(4.0))
         .flex_grow()
         .child(
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(theme::fg_dim())
                 .child(label.to_string()),
         )
         .child(
             div()
                 .w_full()
-                .px(px(10.0))
-                .py(px(6.0))
-                .rounded(px(4.0))
+                .px(ui::s(10.0))
+                .py(ui::s(6.0))
+                .rounded(ui::s(4.0))
                 .bg(theme::bg())
                 .border_1()
-                .border_color(theme::fg_faint())
-                .text_size(px(13.0))
+                .border_color(theme::border())
+                .text_size(ui::TEXT_LG)
                 .text_color(if is_placeholder {
-                    theme::fg_faint()
+                    theme::fg_muted()
                 } else {
                     theme::fg()
                 })
@@ -938,16 +939,16 @@ fn render_stat(label: &str, value: &str) -> impl IntoElement {
         .flex()
         .flex_col()
         .items_center()
-        .gap(px(2.0))
+        .gap(ui::s(2.0))
         .child(
             div()
-                .text_size(px(10.0))
+                .text_size(ui::TEXT_SM)
                 .text_color(theme::fg_dim())
                 .child(label.to_string()),
         )
         .child(
             div()
-                .text_size(px(14.0))
+                .text_size(ui::TEXT_XL)
                 .text_color(theme::fg())
                 .font_weight(FontWeight::BOLD)
                 .child(value.to_string()),
@@ -956,11 +957,11 @@ fn render_stat(label: &str, value: &str) -> impl IntoElement {
 
 fn render_button(label: &str, color: u32) -> impl IntoElement {
     div()
-        .px(px(12.0))
-        .py(px(6.0))
-        .rounded(px(4.0))
+        .px(ui::s(12.0))
+        .py(ui::s(6.0))
+        .rounded(ui::s(4.0))
         .bg(theme::bg_active())
-        .text_size(px(12.0))
+        .text_size(ui::TEXT_MD)
         .text_color(rgb(color))
         .cursor_pointer()
         .hover(|style| style.bg(theme::bg_hover()))

@@ -31,6 +31,7 @@ pub mod agents;
 /// See docs/specs/SPEC_32_DRIVER_ANNOTATIONS.md.
 pub mod annotations;
 pub mod apps;
+pub mod attribution;
 pub mod auth;
 pub mod bayesops;
 pub mod beacons;
@@ -39,9 +40,11 @@ pub mod billing;
 /// activity feeds. See docs/specs/SPEC_26_TEAM_COLLABORATION.md.
 pub mod collab;
 pub mod composition;
+pub mod composition_evolution;
 pub mod consolidation;
 pub mod creatures;
 pub mod dashboard;
+pub mod dreaming_maturity;
 /// Ecology — population, habitats, niches and governance provenance.
 /// The "what lives here" lens, sibling to the Observatory's clinical one.
 pub mod ecology;

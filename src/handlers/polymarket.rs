@@ -27,6 +27,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 use sqlx::Row;
 
+use agent_bestiary_ontology::WorkspaceGitManager;
+
 use crate::AppState;
 use fermi::polymarket::{
     compute_divergence_pp, format_probability, format_volume, interpret_divergence,
@@ -1172,8 +1174,15 @@ pub async fn check_resolutions_handler(
         // Check if resolved
         if market_match.closed && market_match.resolved {
             if let Some(ref outcome_str) = market_match.outcome {
-                match apply_settlement(&state.db, &forecast_id, &user_id, fermi_prob, &market_match)
-                    .await
+                match apply_settlement(
+                    &state.db,
+                    &state.workspace_git,
+                    &forecast_id,
+                    &user_id,
+                    fermi_prob,
+                    &market_match,
+                )
+                .await
                 {
                     Some(s) => {
                         resolved_count += 1;
@@ -1249,6 +1258,7 @@ pub(crate) struct Settlement {
 /// The `WHERE status = 'active'` guard makes this idempotent.
 pub(crate) async fn apply_settlement(
     db: &sqlx::PgPool,
+    git: &WorkspaceGitManager,
     forecast_id: &str,
     owner_id: &str,
     fermi_prob: f32,
@@ -1352,6 +1362,11 @@ pub(crate) async fn apply_settlement(
     // moe_router_strategist Stage 0 consumes.
     crate::handlers::forecasts::record_forecast_calibration_signals(db, forecast_id, brier).await;
 
+    // Per-agent Shapley credit. The signal above is a team score copied onto
+    // every roster member; this one distinguishes them. Spawned — 2^n model runs
+    // must not stall the oracle batch.
+    crate::handlers::attribution::spawn_attribution(db, forecast_id);
+
     // Fill the trajectory's retrospective calibration columns
     // (brier_at_this_point per revision + loop5_calibration snapshot).
     crate::handlers::forecasts::backfill_spacetime_calibration(
@@ -1359,6 +1374,41 @@ pub(crate) async fn apply_settlement(
         forecast_id,
         actual_outcome,
         brier,
+    )
+    .await;
+
+    // Spec 31: record the terminal state in the forecast's history.
+    //
+    // This used to be the one resolution path that didn't commit — the
+    // operator paths (`resolve_forecast_handler`, `void_forecast_handler`)
+    // both do. The omission was invisible for active forecasts, because
+    // lazy provisioning is self-healing: a forecast that misses the hook
+    // gets its repo minted by the next hooked write. Resolution is the
+    // write after which there is no next one (`Cannot update a resolved
+    // forecast`, forecasts.rs), so skipping the hook *here* didn't delay
+    // the history — it made it permanently impossible. A forecast that
+    // reached settlement without ever being edited through a hooked path
+    // ended up frozen with an empty log and a final Brier score that
+    // nothing recorded the state of.
+    //
+    // Attributed to the system, because that is the truth: a market
+    // settled and a price heuristic read it. No human decided it.
+    //
+    // This does not weaken the post-resolution write lock. The hook only
+    // *reads* forecast state to materialise the commit; the sole column it
+    // can write is `workspace_id` (via `ensure_forecast_repo`, guarded
+    // `WHERE workspace_id IS NULL`), which is repo plumbing and not part
+    // of the scoring tuple that mig-174's `trg_fermi_forecasts_freeze_resolved`
+    // protects.
+    crate::handlers::forecast_git::commit_forecast_state(
+        db,
+        git,
+        forecast_id,
+        None,
+        &format!(
+            "auto-resolved {} via settled market · Brier {:.3}",
+            outcome_str, brier
+        ),
     )
     .await;
 
@@ -1407,7 +1457,7 @@ const SWEEP_PACING_MS: u64 = 750;
 ///   (PM routes sit in `protected_routes`, which gets `auth_middleware`
 ///   but no rate-limit layer) and Gamma is a third party.
 /// - **Disable with `PM_RESOLUTION_SWEEP_SECS=0`.**
-pub fn spawn_resolution_sweeper(db: sqlx::PgPool) {
+pub fn spawn_resolution_sweeper(db: sqlx::PgPool, git: std::sync::Arc<WorkspaceGitManager>) {
     let interval_secs = std::env::var("PM_RESOLUTION_SWEEP_SECS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
@@ -1426,7 +1476,7 @@ pub fn spawn_resolution_sweeper(db: sqlx::PgPool) {
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
 
         loop {
-            match sweep_resolutions_once(&db).await {
+            match sweep_resolutions_once(&db, &git).await {
                 Ok((checked, resolved)) if checked > 0 => {
                     println!("[pm-sweep] checked {checked}, resolved {resolved}");
                 }
@@ -1442,7 +1492,10 @@ pub fn spawn_resolution_sweeper(db: sqlx::PgPool) {
 ///
 /// Separated from the spawn loop so it is directly testable and can be
 /// driven from an admin endpoint later.
-pub async fn sweep_resolutions_once(db: &sqlx::PgPool) -> Result<(usize, usize), sqlx::Error> {
+pub async fn sweep_resolutions_once(
+    db: &sqlx::PgPool,
+    git: &WorkspaceGitManager,
+) -> Result<(usize, usize), sqlx::Error> {
     // Oldest-target-date first: those are the most likely to have
     // settled, so a bounded batch converges rather than starving.
     let rows = sqlx::query(
@@ -1505,7 +1558,7 @@ pub async fn sweep_resolutions_once(db: &sqlx::PgPool) -> Result<(usize, usize),
             continue;
         }
 
-        if apply_settlement(db, &forecast_id, &owner_id, fermi_prob, &market_match)
+        if apply_settlement(db, git, &forecast_id, &owner_id, fermi_prob, &market_match)
             .await
             .is_some()
         {

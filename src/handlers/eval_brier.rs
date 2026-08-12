@@ -21,12 +21,15 @@ pub trait AgentNameResolver: Send + Sync {
 
 /// Database-backed implementation of BrierLookup.
 ///
-/// Reads from `fermi_forecasts` — finds forecasts owned by the agent's
-/// associated user, filters to resolved forecasts, and returns the most
-/// recent rolling Brier score.
+/// Reads from `fermi_forecasts` — finds resolved forecasts that *cite this
+/// agent* in `agents_used`, and returns the rolling mean Brier over them.
+/// Attribution is strictly per-agent: an agent that contributed to no
+/// resolved forecast returns `None` (→ `Inapplicable`) rather than
+/// inheriting its owner's aggregate.
 ///
-/// Uses an AgentNameResolver to map agent_id → agent name, which is the
-/// key stored in fermi_forecasts.agents_used metadata.
+/// Uses an AgentNameResolver to map agent_id → agent name, because two of
+/// the three `agents_used` element shapes are keyed by name rather than id.
+/// See `latest_for_agent` for the full shape inventory.
 pub struct BrierLookupSqlx {
     pool: PgPool,
     agent_name_resolver: Option<Arc<dyn AgentNameResolver>>,
@@ -70,73 +73,90 @@ impl BrierLookup for BrierLookupSqlx {
         &self,
         agent_id: Uuid,
     ) -> Result<Option<BrierObservation>, EvalError> {
-        // Resolve agent_id → agent_name for matching against forecast metadata.
+        // Resolve agent_id → agent_name: two of the three `agents_used`
+        // element shapes are keyed by name, not id.
         let agent_name = self.resolve_agent_name(agent_id).await;
 
-        // We search for forecasts using two strategies:
-        // 1. By agent name in the agents_used JSONB metadata
-        // 2. By owner_id relationship (agent's creator)
+        // `agents_used` elements exist in three shapes in production, and a
+        // forecast may carry any one of them:
         //
-        // Strategy 1 is preferred when we have the agent name.
-        let row = if let Some(ref name) = agent_name {
-            sqlx::query_as::<_, (f64, i64, chrono::DateTime<chrono::Utc>)>(
-                // v0.10.15: `agents.owner_id` never existed — the
-                // column is `agents.user_id` (mig-006). This subquery
-                // was silently 500'ing whenever the agent_name lookup
-                // succeeded but no forecast carried the name in
-                // `agents_used`. Flagged in v0.10.13 as a v0.10.14
-                // candidate; v0.10.14 shipped the chip-publish UX
-                // instead. Both `f.owner_id` (mig-165) and
-                // `agents.user_id` (mig-006) are TEXT.
-                r#"SELECT
-                     AVG(f.brier_score) AS avg_brier,
-                     COUNT(*)::int8    AS n_resolved,
-                     MAX(f.resolved_at) AS last_resolved
-                   FROM fermi_forecasts f
-                   WHERE f.status = 'resolved'
-                     AND f.brier_score IS NOT NULL
-                     AND (f.agents_used @> $2::jsonb
-                          OR f.owner_id IN (
-                            SELECT user_id FROM agents WHERE agent_id = $1
-                          ))"#,
-            )
-            .bind(agent_id)
-            .bind(serde_json::json!([{"agent_name": name}]))
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| EvalError::Provider(e.to_string()))?
-        } else {
-            // Fallback: just use owner_id relationship
-            // v0.10.15: same fix as above — `agents.owner_id` doesn't
-            // exist; the owner column on agents is `user_id`. This
-            // fallback branch fires when we can't resolve the agent
-            // name at all, so it's the path that gets hit for
-            // orphan-owner or freshly-created agents. Type parity:
-            // both sides TEXT after mig-006 / mig-165.
-            sqlx::query_as::<_, (f64, i64, chrono::DateTime<chrono::Utc>)>(
-                r#"SELECT
-                     AVG(f.brier_score) AS avg_brier,
-                     COUNT(*)::int8    AS n_resolved,
-                     MAX(f.resolved_at) AS last_resolved
-                   FROM fermi_forecasts f
-                   JOIN agents a ON a.user_id = f.owner_id
-                   WHERE a.agent_id = $1
-                     AND f.status = 'resolved'
-                     AND f.brier_score IS NOT NULL"#,
-            )
-            .bind(agent_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| EvalError::Provider(e.to_string()))?
-        };
+        //   {"name": "football_analyst", ...}   ← the live forecast/orchestra
+        //                                         write path (forecasts.rs
+        //                                         :1727), which is what every
+        //                                         World Cup row uses
+        //   {"agent_name": ..., "agent_id": ...} ← scripts/brier_backtest_seed.rs
+        //   {"agent_id": "<uuid>", ...}          ← added by mig-170's one-shot
+        //                                         backfill (not a trigger, so
+        //                                         it does not cover new writes)
+        //
+        // Matching only `agent_name` — the previous behaviour — made every
+        // forecast written by the live path invisible here, while
+        // `GET /api/agents/:id/calibration` (which matches `agent_id`) saw
+        // them fine. That split is why the Observatory could show Loop 5a
+        // "closed" on the Loops tab and `brier: inactive` on the Overview for
+        // the same agent at the same moment. Matching all three closes the
+        // gap; all three predicates use `@>` so the mig-168 GIN index still
+        // serves the lookup.
+        //
+        // The former `OR f.owner_id IN (SELECT user_id FROM agents ...)`
+        // fallback is deliberately gone. It sat inside a single un-grouped
+        // aggregate, so whenever the name match missed, `AVG(brier_score)`
+        // silently spanned every resolved forecast belonging to the agent's
+        // OWNER — forecasts this agent never contributed to — and that
+        // owner-wide mean was then written into the agent's
+        // `forecast_calibration` dimension as if it were agent-specific. An
+        // agent with no attributed forecasts must report "no data" rather
+        // than borrow its owner's track record.
+        let by_agent_id = serde_json::json!([{ "agent_id": agent_id.to_string() }]);
+        let by_agent_name = agent_name
+            .as_ref()
+            .map(|n| serde_json::json!([{ "agent_name": n }]));
+        let by_name = agent_name
+            .as_ref()
+            .map(|n| serde_json::json!([{ "name": n }]));
 
-        match row {
-            Some((brier, n, resolved_at)) => Ok(Some(BrierObservation {
+        // Aggregates are decoded as `Option`: a no-GROUP-BY aggregate always
+        // returns exactly one row, so a zero-match lookup yields
+        // `(NULL, 0, NULL)`. Decoding that into non-Option `f64`/`DateTime`
+        // (the previous signature) failed and surfaced as
+        // `EvalError::Provider` — which made `BrierEvaluator`'s `Inapplicable`
+        // branch unreachable and reported "this agent has no forecasts" as a
+        // hard evaluator failure.
+        //
+        // The `IS NOT NULL` guards keep `@> NULL` (which evaluates to NULL,
+        // not false) out of the OR chain when the name didn't resolve.
+        let (avg_brier, n_resolved, last_resolved) =
+            sqlx::query_as::<_, (Option<f64>, i64, Option<chrono::DateTime<chrono::Utc>>)>(
+                r#"SELECT
+                 AVG(f.brier_score)::float8 AS avg_brier,
+                 COUNT(*)::int8             AS n_resolved,
+                 MAX(f.resolved_at)         AS last_resolved
+               FROM fermi_forecasts f
+               WHERE f.status = 'resolved'
+                 AND f.brier_score IS NOT NULL
+                 AND (
+                      f.agents_used @> $1::jsonb
+                   OR ($2::jsonb IS NOT NULL AND f.agents_used @> $2::jsonb)
+                   OR ($3::jsonb IS NOT NULL AND f.agents_used @> $3::jsonb)
+                 )"#,
+            )
+            .bind(by_agent_id)
+            .bind(by_agent_name)
+            .bind(by_name)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| EvalError::Provider(e.to_string()))?;
+
+        // No attributed forecasts → genuinely no observation. `BrierEvaluator`
+        // turns this into `Inapplicable`, which the aggregator skips rather
+        // than recording as a failure.
+        match avg_brier {
+            Some(brier) if n_resolved > 0 => Ok(Some(BrierObservation {
                 brier_score: brier,
-                n_forecasts: Some(n as u32),
-                computed_at: Some(resolved_at),
+                n_forecasts: Some(n_resolved as u32),
+                computed_at: last_resolved,
             })),
-            None => Ok(None),
+            _ => Ok(None),
         }
     }
 }
