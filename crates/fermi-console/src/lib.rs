@@ -40,11 +40,18 @@
 //! things someone eyeballs at 2am. The binary's `viz` module does the
 //! painting and owns all the `gpui` types.
 //!
+//! [`uiscale`] holds the UI scale factor and the type scale as plain
+//! numbers. Clamping, percent-snapping and the monotonicity of the type
+//! scale are arithmetic with a wrong answer, so they get assertions rather
+//! than a squint at a screenshot. The binary's `ui` module wraps these in
+//! GPUI's `Rems` and is what feature code actually calls.
+//!
 //! Candidates to migrate here as they're decoupled from GPUI: the FPL
 //! action-marker parser in `chat.rs` and the Anthropic error extractor
 //! in `cockpit.rs`, both of which currently have tests that can't run.
 
 pub mod plot;
 pub mod roster;
+pub mod uiscale;
 pub mod updater;
 pub mod wire;

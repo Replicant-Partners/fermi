@@ -17,6 +17,10 @@ mod chat;
 mod cockpit;
 mod composer;
 mod text_input;
+// Design tokens — the type scale and the `s()` design-pixel unit that
+// every length in the UI goes through. See `ui.rs` for why lengths are
+// `rems` rather than `px`.
+mod ui;
 // Vector chart elements. Replaced the former `charts` plotters→bitmap
 // pipeline entirely; see `viz/mod.rs` for why bitmaps flickered.
 mod viz;
@@ -24,7 +28,8 @@ mod viz;
 // `updater` lives in the lib target (src/lib.rs), not here, so its
 // tests can actually run — rustc segfaults expanding this binary's
 // GPUI element chains under `--test`. Same module, one definition.
-use fermi_console::updater;
+// `uiscale` is there for the same reason: it backs `mod ui` above.
+use fermi_console::{uiscale, updater};
 
 use api::client::{
     AccessSummary, ActivityEvent, ApiClient, ApiConfig, CalibrationData, CreatePortfolioRequest,
@@ -121,6 +126,13 @@ fn build_menus() -> Vec<Menu> {
                 MenuItem::action(keys::menu_row("Teams", "6"), ShowTeams),
                 MenuItem::separator(),
                 MenuItem::action(keys::menu_row("Toggle FPL Source", "E"), ToggleFplSource),
+                MenuItem::separator(),
+                // Text-size controls, named the way every other app names
+                // them. "Zoom" would be wrong: this rescales the whole
+                // interface, it doesn't magnify a viewport.
+                MenuItem::action(keys::menu_row("Larger Text", "+"), IncreaseUiScale),
+                MenuItem::action(keys::menu_row("Smaller Text", "-"), DecreaseUiScale),
+                MenuItem::action(keys::menu_row("Default Text Size", "0"), ResetUiScale),
             ],
         },
         // ── Forecast menu ─────────────────────────────────────────
@@ -176,9 +188,35 @@ mod theme {
     pub const BG_HOVER: u32 = 0x303845; // hover state
     pub const BG_ACTIVE: u32 = 0x3D4455; // active/selected state
 
-    pub const FG: u32 = 0xCBCCC6; // primary text
-    pub const FG_DIM: u32 = 0x5C6773; // muted text, labels
-    pub const FG_FAINT: u32 = 0x3E4B59; // very muted (borders, separators)
+    // ── Text ────────────────────────────────────────────
+    //
+    // Three tiers. Each carries its contrast ratio against `BG`, because
+    // these are not free aesthetic choices — WCAG AA wants 4.5:1 for body
+    // text, and the palette these replaced was nowhere near it.
+    //
+    // What was here before: `FG_DIM = 0x5C6773` at 2.7:1, and
+    // `FG_FAINT = 0x3E4B59` at **1.7:1** — which was used as a *text*
+    // colour in 111 places. 1.7:1 is not "subtle", it is illegible, and no
+    // amount of scaling the font fixes a colour the eye cannot resolve
+    // from its background. Enlarging the type without this change would
+    // have left half the secondary labels exactly as unreadable.
+    //
+    // The fix separates two jobs that `FG_FAINT` was doing at once:
+    // de-emphasised *text*, which has a contrast floor, and hairline
+    // *borders*, which do not. `BORDER` keeps the old dark value.
+
+    pub const FG: u32 = 0xCBCCC6; // primary text                    9.6:1
+    pub const FG_DIM: u32 = 0xA6ACB8; // secondary text, labels      6.8:1
+    pub const FG_MUTED: u32 = 0x939BA6; // tertiary text, metadata   5.5:1
+
+    /// Hairlines, dividers, inactive outlines. **Never text** — at 1.7:1
+    /// against `BG` it is invisible as a glyph. Use [`FG_MUTED`] for the
+    /// most de-emphasised text the design calls for.
+    ///
+    /// This is the old `FG_FAINT` value under a name that says what it is
+    /// for. The rename is the point: `FG_FAINT` read as "a very quiet
+    /// foreground", which is why it kept ending up in `text_color`.
+    pub const BORDER: u32 = 0x3E4B59;
 
     pub const CYAN: u32 = 0x5CCFE6; // primary accent (links, active tab)
     pub const GREEN: u32 = 0xBAE67E; // success, positive Brier
@@ -209,8 +247,11 @@ mod theme {
     pub fn fg_dim() -> gpui::Hsla {
         rgb(FG_DIM).into()
     }
-    pub fn fg_faint() -> gpui::Hsla {
-        rgb(FG_FAINT).into()
+    pub fn fg_muted() -> gpui::Hsla {
+        rgb(FG_MUTED).into()
+    }
+    pub fn border() -> gpui::Hsla {
+        rgb(BORDER).into()
     }
     pub fn cyan() -> gpui::Hsla {
         rgb(CYAN).into()
@@ -316,6 +357,9 @@ actions!(
         ToggleFermiChat,
         SendFermiChat,
         ShowActivity,
+        IncreaseUiScale,
+        DecreaseUiScale,
+        ResetUiScale,
     ]
 );
 
@@ -2492,21 +2536,26 @@ impl FermiConsole {
                 .flex_col()
                 .items_center()
                 .justify_center()
-                .gap(px(10.0))
-                .px(px(20.0))
-                .child(div().text_size(px(28.0)).child("🔮"))
+                .gap(ui::s(10.0))
+                .px(ui::s(20.0))
+                .child(div().text_size(ui::TEXT_7XL).child("🔮"))
                 .child(
                     div()
-                        .text_size(px(14.0))
+                        .text_size(ui::TEXT_XL)
                         .text_color(rgb(theme::PURPLE))
                         .font_weight(FontWeight::BOLD)
                         .child("Ask Fermi"),
                 )
-                .child(div().text_size(px(11.0)).text_color(theme::fg_dim()).child(
-                    "Decompose a forecast, pick agents for drivers, ask about the FPL \
+                .child(
+                    div()
+                        .text_size(ui::TEXT_BASE)
+                        .text_color(theme::fg_dim())
+                        .child(
+                            "Decompose a forecast, pick agents for drivers, ask about the FPL \
                              language, or get a base-rate suggestion. Fermi sees the forecast \
                              you have open.",
-                ))
+                        ),
+                )
                 .into_any_element()
         } else {
             let mut list = div()
@@ -2514,9 +2563,9 @@ impl FermiConsole {
                 .flex_grow()
                 .flex()
                 .flex_col()
-                .gap(px(8.0))
-                .px(px(10.0))
-                .py(px(10.0))
+                .gap(ui::s(8.0))
+                .px(ui::s(10.0))
+                .py(ui::s(10.0))
                 .overflow_y_scroll();
             for (msg_index, m) in self.fermi_chat.messages.iter().enumerate() {
                 // Message bubble (pure render).
@@ -2531,13 +2580,13 @@ impl FermiConsole {
             if is_loading {
                 list = list.child(
                     div()
-                        .px(px(10.0))
-                        .py(px(8.0))
-                        .rounded(px(6.0))
+                        .px(ui::s(10.0))
+                        .py(ui::s(8.0))
+                        .rounded(ui::s(6.0))
                         .bg(rgb(0x1A1A2E))
                         .border_1()
                         .border_color(rgb(theme::PURPLE))
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(rgb(theme::PURPLE))
                         .child("🔮 Fermi is thinking…"),
                 );
@@ -2556,13 +2605,13 @@ impl FermiConsole {
 
         div()
             .absolute()
-            .top(px(0.0))
-            .bottom(px(0.0))
-            .right(px(0.0))
+            .top(ui::s(0.0))
+            .bottom(ui::s(0.0))
+            .right(ui::s(0.0))
             // Wider on Activity: rows carry a timestamp, a source
             // chip, and untruncated summaries, which 380px squeezes
             // into unreadable ribbons.
-            .w(px(if on_activity { 460.0 } else { 380.0 }))
+            .w(ui::s(if on_activity { 460.0 } else { 380.0 }))
             // The drawer floats over a live panel, so every hitbox it
             // covers is still hoverable unless we block them: GPUI's
             // `Hitbox::is_hovered` is true for anything under the
@@ -2585,38 +2634,38 @@ impl FermiConsole {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .px(px(12.0))
-                    .py(px(10.0))
+                    .px(ui::s(12.0))
+                    .py(ui::s(10.0))
                     .border_b_1()
-                    .border_color(rgb(theme::FG_FAINT))
+                    .border_color(rgb(theme::BORDER))
                     .bg(rgb(0x1A1A2E))
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(6.0))
-                            .child(div().text_size(px(14.0)).child("🔮"))
+                            .gap(ui::s(6.0))
+                            .child(div().text_size(ui::TEXT_XL).child("🔮"))
                             .child(
                                 div()
-                                    .text_size(px(13.0))
+                                    .text_size(ui::TEXT_LG)
                                     .text_color(rgb(theme::PURPLE))
                                     .font_weight(FontWeight::BOLD)
                                     .child("Fermi"),
                             )
                             .child(
                                 div()
-                                    .text_size(px(9.0))
-                                    .text_color(theme::fg_faint())
+                                    .text_size(ui::TEXT_XS)
+                                    .text_color(theme::fg_muted())
                                     .child(format!("{} · {}", keys::chord(";"), keys::chord("'"))),
                             ),
                     )
                     .child(
                         div()
                             .id("fermi-chat-close")
-                            .px(px(8.0))
-                            .py(px(2.0))
-                            .rounded(px(4.0))
-                            .text_size(px(12.0))
+                            .px(ui::s(8.0))
+                            .py(ui::s(2.0))
+                            .rounded(ui::s(4.0))
+                            .text_size(ui::TEXT_MD)
                             .text_color(theme::fg_dim())
                             .cursor_pointer()
                             .hover(|s| s.bg(theme::bg_hover()))
@@ -2637,11 +2686,11 @@ impl FermiConsole {
                     div()
                         .flex()
                         .flex_col()
-                        .gap(px(6.0))
-                        .px(px(10.0))
-                        .py(px(10.0))
+                        .gap(ui::s(6.0))
+                        .px(ui::s(10.0))
+                        .py(ui::s(10.0))
                         .border_t_1()
-                        .border_color(rgb(theme::FG_FAINT))
+                        .border_color(rgb(theme::BORDER))
                         .child(self.fermi_chat.input.clone())
                         .child(
                             div()
@@ -2650,8 +2699,8 @@ impl FermiConsole {
                                 .justify_between()
                                 .child(
                                     div()
-                                        .text_size(px(9.0))
-                                        .text_color(theme::fg_faint())
+                                        .text_size(ui::TEXT_XS)
+                                        .text_color(theme::fg_muted())
                                         .child(if is_loading {
                                             "Waiting for Fermi…".to_string()
                                         } else {
@@ -2661,16 +2710,16 @@ impl FermiConsole {
                                 .child(
                                     div()
                                         .id("fermi-chat-send")
-                                        .px(px(12.0))
-                                        .py(px(6.0))
-                                        .rounded(px(4.0))
+                                        .px(ui::s(12.0))
+                                        .py(ui::s(6.0))
+                                        .rounded(ui::s(4.0))
                                         .bg(if is_loading {
-                                            rgb(theme::FG_FAINT)
+                                            rgb(theme::FG_MUTED)
                                         } else {
                                             rgb(theme::PURPLE)
                                         })
                                         .text_color(rgb(theme::BG_DEEP))
-                                        .text_size(px(11.0))
+                                        .text_size(ui::TEXT_BASE)
                                         .font_weight(FontWeight::BOLD)
                                         .cursor_pointer()
                                         .hover(|s| s.opacity(0.85))
@@ -2701,9 +2750,9 @@ impl FermiConsole {
                 .id(id)
                 .flex()
                 .items_center()
-                .gap(px(5.0))
-                .px(px(12.0))
-                .py(px(6.0))
+                .gap(ui::s(5.0))
+                .px(ui::s(12.0))
+                .py(ui::s(6.0))
                 .cursor_pointer()
                 .border_b_2()
                 .border_color(if is_active {
@@ -2711,7 +2760,7 @@ impl FermiConsole {
                 } else {
                     rgb(theme::BG)
                 })
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(if is_active {
                     rgb(theme::PURPLE)
                 } else {
@@ -2724,10 +2773,10 @@ impl FermiConsole {
             if let Some(badge) = badge {
                 el = el.child(
                     div()
-                        .px(px(4.0))
-                        .rounded(px(6.0))
+                        .px(ui::s(4.0))
+                        .rounded(ui::s(6.0))
                         .bg(rgb(theme::RED))
-                        .text_size(px(8.0))
+                        .text_size(ui::TEXT_MICRO)
                         .text_color(rgb(theme::BG_DEEP))
                         .font_weight(FontWeight::BOLD)
                         .child(badge),
@@ -2740,7 +2789,7 @@ impl FermiConsole {
             .flex()
             .items_center()
             .border_b_1()
-            .border_color(rgb(theme::FG_FAINT))
+            .border_color(rgb(theme::BORDER))
             .child(tab(
                 "Chat",
                 "fermi-tab-chat",
@@ -2778,16 +2827,16 @@ impl FermiConsole {
                 let is_active = active_filter == which;
                 div()
                     .id(id)
-                    .px(px(8.0))
-                    .py(px(2.0))
-                    .rounded(px(3.0))
+                    .px(ui::s(8.0))
+                    .py(ui::s(2.0))
+                    .rounded(ui::s(3.0))
                     .cursor_pointer()
                     .bg(if is_active {
                         rgb(theme::BG_ACTIVE)
                     } else {
                         rgb(theme::BG_ELEVATED)
                     })
-                    .text_size(px(9.0))
+                    .text_size(ui::TEXT_XS)
                     .text_color(if is_active {
                         rgb(theme::CYAN)
                     } else {
@@ -2804,11 +2853,11 @@ impl FermiConsole {
         let toolbar = div()
             .flex()
             .items_center()
-            .gap(px(6.0))
-            .px(px(10.0))
-            .py(px(6.0))
+            .gap(ui::s(6.0))
+            .px(ui::s(10.0))
+            .py(ui::s(6.0))
             .border_b_1()
-            .border_color(rgb(theme::FG_FAINT))
+            .border_color(rgb(theme::BORDER))
             .child(filter_chip(
                 format!("All {}", total),
                 "activity-filter-all",
@@ -2825,11 +2874,11 @@ impl FermiConsole {
             .child(
                 div()
                     .id("activity-copy-all")
-                    .px(px(6.0))
-                    .py(px(2.0))
-                    .rounded(px(3.0))
+                    .px(ui::s(6.0))
+                    .py(ui::s(2.0))
+                    .rounded(ui::s(3.0))
                     .cursor_pointer()
-                    .text_size(px(9.0))
+                    .text_size(ui::TEXT_XS)
                     .text_color(rgb(theme::FG_DIM))
                     .hover(|s| s.bg(theme::bg_hover()).text_color(theme::cyan()))
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -2842,11 +2891,11 @@ impl FermiConsole {
             .child(
                 div()
                     .id("activity-clear")
-                    .px(px(6.0))
-                    .py(px(2.0))
-                    .rounded(px(3.0))
+                    .px(ui::s(6.0))
+                    .py(ui::s(2.0))
+                    .rounded(ui::s(3.0))
                     .cursor_pointer()
-                    .text_size(px(9.0))
+                    .text_size(ui::TEXT_XS)
                     .text_color(rgb(theme::FG_DIM))
                     .hover(|s| s.bg(theme::bg_hover()).text_color(theme::red()))
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -2863,17 +2912,20 @@ impl FermiConsole {
                 .flex_col()
                 .items_center()
                 .justify_center()
-                .gap(px(8.0))
-                .px(px(20.0))
-                .child(div().text_size(px(24.0)).child("📜"))
-                .child(div().text_size(px(12.0)).text_color(theme::fg_dim()).child(
-                    if active_filter == LogFilter::Problems && total > 0 {
-                        "No warnings or errors — switch to All to see everything."
-                    } else {
-                        "Nothing yet. Saves, agent runs, API calls and errors \
+                .gap(ui::s(8.0))
+                .px(ui::s(20.0))
+                .child(div().text_size(ui::TEXT_6XL).child("📜"))
+                .child(
+                    div()
+                        .text_size(ui::TEXT_MD)
+                        .text_color(theme::fg_dim())
+                        .child(if active_filter == LogFilter::Problems && total > 0 {
+                            "No warnings or errors — switch to All to see everything."
+                        } else {
+                            "Nothing yet. Saves, agent runs, API calls and errors \
                              will appear here as they happen."
-                    },
-                ))
+                        }),
+                )
                 .into_any_element()
         } else {
             let mut list = div()
@@ -2881,9 +2933,9 @@ impl FermiConsole {
                 .flex_grow()
                 .flex()
                 .flex_col()
-                .gap(px(3.0))
-                .px(px(8.0))
-                .py(px(8.0))
+                .gap(ui::s(3.0))
+                .px(ui::s(8.0))
+                .py(ui::s(8.0))
                 .overflow_y_scroll();
             for event in events {
                 let seq = event.seq;
@@ -2916,7 +2968,7 @@ impl FermiConsole {
             .flex_grow()
             .flex()
             .flex_col()
-            .min_h(px(0.0))
+            .min_h(ui::s(0.0))
             .child(toolbar)
             .child(list)
     }
@@ -2935,9 +2987,9 @@ impl FermiConsole {
         let mut strip = div()
             .flex()
             .flex_wrap()
-            .gap(px(4.0))
-            .ml(px(62.0))
-            .mt(px(6.0));
+            .gap(ui::s(4.0))
+            .ml(ui::s(62.0))
+            .mt(ui::s(6.0));
 
         // The classifier's suggested fix, promoted from prose to a
         // button. Rendered first and accented so it reads as the
@@ -2946,14 +2998,14 @@ impl FermiConsole {
             strip = strip.child(
                 div()
                     .id(SharedString::from(format!("activity-remedy-{}", seq)))
-                    .px(px(8.0))
-                    .py(px(3.0))
-                    .rounded(px(3.0))
+                    .px(ui::s(8.0))
+                    .py(ui::s(3.0))
+                    .rounded(ui::s(3.0))
                     .cursor_pointer()
                     .bg(rgb(0x1A1A2E))
                     .border_1()
                     .border_color(rgb(theme::PURPLE))
-                    .text_size(px(10.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(rgb(theme::PURPLE))
                     .hover(|s| s.bg(theme::bg_hover()))
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -2967,14 +3019,14 @@ impl FermiConsole {
             .child(
                 div()
                     .id(SharedString::from(format!("activity-copy-{}", seq)))
-                    .px(px(8.0))
-                    .py(px(3.0))
-                    .rounded(px(3.0))
+                    .px(ui::s(8.0))
+                    .py(ui::s(3.0))
+                    .rounded(ui::s(3.0))
                     .cursor_pointer()
                     .bg(rgb(theme::BG_ELEVATED))
                     .border_1()
-                    .border_color(rgb(theme::FG_FAINT))
-                    .text_size(px(10.0))
+                    .border_color(rgb(theme::BORDER))
+                    .text_size(ui::TEXT_SM)
                     .text_color(rgb(theme::FG_DIM))
                     .hover(|s| s.text_color(theme::cyan()))
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -2991,14 +3043,14 @@ impl FermiConsole {
             .child(
                 div()
                     .id(SharedString::from(format!("activity-ask-{}", seq)))
-                    .px(px(8.0))
-                    .py(px(3.0))
-                    .rounded(px(3.0))
+                    .px(ui::s(8.0))
+                    .py(ui::s(3.0))
+                    .rounded(ui::s(3.0))
                     .cursor_pointer()
                     .bg(rgb(theme::BG_ELEVATED))
                     .border_1()
-                    .border_color(rgb(theme::FG_FAINT))
-                    .text_size(px(10.0))
+                    .border_color(rgb(theme::BORDER))
+                    .text_size(ui::TEXT_SM)
                     .text_color(rgb(theme::FG_DIM))
                     .hover(|s| s.text_color(theme::purple()))
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -3021,7 +3073,12 @@ impl FermiConsole {
         message: &chat::ChatMessage,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let mut strip = div().flex().flex_col().gap(px(4.0)).ml(px(8.0)).mr(px(8.0));
+        let mut strip = div()
+            .flex()
+            .flex_col()
+            .gap(ui::s(4.0))
+            .ml(ui::s(8.0))
+            .mr(ui::s(8.0));
         for (action_index, action) in message.actions.iter().enumerate() {
             let label = format_action_label(action);
             let subtitle = action.reason.clone();
@@ -3039,7 +3096,7 @@ impl FermiConsole {
             let chip_border = if executed {
                 theme::GREEN
             } else if dismissed {
-                theme::FG_FAINT
+                theme::FG_MUTED
             } else {
                 theme::PURPLE
             };
@@ -3053,10 +3110,10 @@ impl FermiConsole {
             let action_button = {
                 let mut b = div()
                     .id(chip_id)
-                    .px(px(10.0))
-                    .py(px(4.0))
-                    .rounded(px(4.0))
-                    .text_size(px(10.0))
+                    .px(ui::s(10.0))
+                    .py(ui::s(4.0))
+                    .rounded(ui::s(4.0))
+                    .text_size(ui::TEXT_SM)
                     .font_weight(FontWeight::BOLD)
                     .text_color(rgb(if idle {
                         theme::PURPLE
@@ -3066,7 +3123,7 @@ impl FermiConsole {
                         theme::FG_DIM
                     }))
                     .border_1()
-                    .border_color(rgb(if idle { theme::PURPLE } else { theme::FG_FAINT }))
+                    .border_color(rgb(if idle { theme::PURPLE } else { theme::FG_MUTED }))
                     .child(if executed {
                         "✓ Done"
                     } else if dismissed {
@@ -3088,10 +3145,10 @@ impl FermiConsole {
             let dismiss_button = if idle {
                 div()
                     .id(dismiss_id)
-                    .px(px(6.0))
-                    .py(px(4.0))
-                    .rounded(px(4.0))
-                    .text_size(px(10.0))
+                    .px(ui::s(6.0))
+                    .py(ui::s(4.0))
+                    .rounded(ui::s(4.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(theme::fg_dim())
                     .cursor_pointer()
                     .hover(|s| s.text_color(theme::red()))
@@ -3107,10 +3164,10 @@ impl FermiConsole {
             let mut chip = div()
                 .flex()
                 .flex_col()
-                .gap(px(3.0))
-                .px(px(8.0))
-                .py(px(6.0))
-                .rounded(px(6.0))
+                .gap(ui::s(3.0))
+                .px(ui::s(8.0))
+                .py(ui::s(6.0))
+                .rounded(ui::s(6.0))
                 .bg(rgb(chip_bg))
                 .border_1()
                 .border_color(rgb(chip_border))
@@ -3121,7 +3178,7 @@ impl FermiConsole {
                         .justify_between()
                         .child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(rgb(if dismissed { theme::FG_DIM } else { theme::FG }))
                                 .child(label),
                         )
@@ -3129,7 +3186,7 @@ impl FermiConsole {
                             div()
                                 .flex()
                                 .items_center()
-                                .gap(px(4.0))
+                                .gap(ui::s(4.0))
                                 .child(action_button)
                                 .child(dismiss_button),
                         ),
@@ -3138,8 +3195,8 @@ impl FermiConsole {
             if let Some(reason) = subtitle {
                 chip = chip.child(
                     div()
-                        .text_size(px(9.0))
-                        .text_color(theme::fg_faint())
+                        .text_size(ui::TEXT_XS)
+                        .text_color(theme::fg_muted())
                         .child(reason),
                 );
             }
@@ -4929,31 +4986,31 @@ impl FermiConsole {
         let mut container = div()
             .flex()
             .flex_col()
-            .gap(px(6.0))
-            .px(px(14.0))
-            .py(px(8.0))
+            .gap(ui::s(6.0))
+            .px(ui::s(14.0))
+            .py(ui::s(8.0))
             .border_b_1()
-            .border_color(theme::fg_faint())
+            .border_color(theme::border())
             // Header row — title + counts + toggle chevron + declare button.
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(8.0))
+                    .gap(ui::s(8.0))
                     .child(
                         div()
                             .id("relationships-toggle")
                             .cursor_pointer()
                             .flex()
                             .items_center()
-                            .gap(px(6.0))
+                            .gap(ui::s(6.0))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.relationships_showing = !this.relationships_showing;
                                 cx.notify();
                             }))
                             .child(
                                 div()
-                                    .text_size(px(10.0))
+                                    .text_size(ui::TEXT_SM)
                                     .text_color(if self.relationships_showing {
                                         theme::cyan()
                                     } else {
@@ -4967,8 +5024,8 @@ impl FermiConsole {
                             )
                             .child(
                                 div()
-                                    .text_size(px(11.0))
-                                    .text_color(theme::fg_faint())
+                                    .text_size(ui::TEXT_BASE)
+                                    .text_color(theme::fg_muted())
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(format!("⛓ RELATIONSHIPS ({})", n_relevant)),
                             ),
@@ -4978,12 +5035,12 @@ impl FermiConsole {
                         el.child(
                             div()
                                 .id("rel-declare-toggle")
-                                .px(px(10.0))
-                                .py(px(3.0))
-                                .rounded(px(4.0))
+                                .px(ui::s(10.0))
+                                .py(ui::s(3.0))
+                                .rounded(ui::s(4.0))
                                 .border_1()
                                 .border_color(rgb(theme::CYAN))
-                                .text_size(px(10.0))
+                                .text_size(ui::TEXT_SM)
                                 .text_color(rgb(theme::CYAN))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(theme::bg_hover()))
@@ -5023,9 +5080,9 @@ impl FermiConsole {
         if relevant.is_empty() {
             container = container.child(
                 div()
-                    .text_size(px(10.0))
-                    .text_color(theme::fg_faint())
-                    .py(px(6.0))
+                    .text_size(ui::TEXT_SM)
+                    .text_color(theme::fg_muted())
+                    .py(ui::s(6.0))
                     .child(
                         "No cascades declared yet. Use + Declare to link forecasts — \
                          e.g. mutex on all group-stage sim forecasts so an elimination \
@@ -5123,10 +5180,10 @@ impl FermiConsole {
         div()
             .flex()
             .flex_col()
-            .gap(px(2.0))
-            .px(px(10.0))
-            .py(px(6.0))
-            .rounded(px(4.0))
+            .gap(ui::s(2.0))
+            .px(ui::s(10.0))
+            .py(ui::s(6.0))
+            .rounded(ui::s(4.0))
             .border_l_2()
             .border_color(rgb(accent))
             .bg(theme::bg_elevated())
@@ -5134,17 +5191,17 @@ impl FermiConsole {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(8.0))
+                    .gap(ui::s(8.0))
                     .child(
                         div()
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(rgb(accent))
                             .font_weight(FontWeight::BOLD)
                             .child(format!("{}{}", kind_label, param_str)),
                     )
                     .child(
                         div()
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(theme::fg_dim())
                             .child(format!("{} forecasts", n_total)),
                     )
@@ -5152,10 +5209,10 @@ impl FermiConsole {
                     .child(
                         div()
                             .id(SharedString::from(format!("rel-del-{}", id)))
-                            .px(px(6.0))
-                            .py(px(1.0))
-                            .rounded(px(3.0))
-                            .text_size(px(10.0))
+                            .px(ui::s(6.0))
+                            .py(ui::s(1.0))
+                            .rounded(ui::s(3.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(theme::fg_dim())
                             .cursor_pointer()
                             .hover(|s| s.text_color(theme::red()))
@@ -5167,15 +5224,15 @@ impl FermiConsole {
             )
             .child(
                 div()
-                    .text_size(px(10.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(theme::fg())
                     .child(preview_str),
             )
             .when(!description.is_empty(), |el| {
                 el.child(
                     div()
-                        .text_size(px(9.0))
-                        .text_color(theme::fg_faint())
+                        .text_size(ui::TEXT_XS)
+                        .text_color(theme::fg_muted())
                         .child(description),
                 )
             })
@@ -5223,10 +5280,10 @@ impl FermiConsole {
         let n_selected = self.relationship_create_forecast_ids.len();
 
         // Kind chip row.
-        let mut kind_row = div().flex().flex_wrap().gap(px(4.0)).child(
+        let mut kind_row = div().flex().flex_wrap().gap(ui::s(4.0)).child(
             div()
-                .text_size(px(9.0))
-                .text_color(theme::fg_faint())
+                .text_size(ui::TEXT_XS)
+                .text_color(theme::fg_muted())
                 .child("KIND:"),
         );
         for (key, label, _desc) in kinds {
@@ -5235,21 +5292,21 @@ impl FermiConsole {
             kind_row = kind_row.child(
                 div()
                     .id(SharedString::from(format!("rel-kind-{}", key)))
-                    .px(px(8.0))
-                    .py(px(2.0))
-                    .rounded(px(10.0))
+                    .px(ui::s(8.0))
+                    .py(ui::s(2.0))
+                    .rounded(ui::s(10.0))
                     .border_1()
                     .border_color(if is_on {
                         theme::cyan()
                     } else {
-                        theme::fg_faint()
+                        theme::fg_muted()
                     })
                     .bg(if is_on {
                         theme::bg_active()
                     } else {
                         theme::bg_elevated()
                     })
-                    .text_size(px(10.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(if is_on {
                         theme::cyan()
                     } else {
@@ -5273,10 +5330,10 @@ impl FermiConsole {
             .unwrap_or("");
 
         // Forecast picker — all portfolio forecasts as toggleable chips.
-        let mut forecast_picker = div().flex().flex_wrap().gap(px(4.0)).child(
+        let mut forecast_picker = div().flex().flex_wrap().gap(ui::s(4.0)).child(
             div()
-                .text_size(px(9.0))
-                .text_color(theme::fg_faint())
+                .text_size(ui::TEXT_XS)
+                .text_color(theme::fg_muted())
                 .child(format!("FORECASTS ({} selected):", n_selected)),
         );
         for f in portfolio_forecasts {
@@ -5286,21 +5343,21 @@ impl FermiConsole {
             forecast_picker = forecast_picker.child(
                 div()
                     .id(SharedString::from(format!("rel-fpick-{}", f.id)))
-                    .px(px(6.0))
-                    .py(px(2.0))
-                    .rounded(px(3.0))
+                    .px(ui::s(6.0))
+                    .py(ui::s(2.0))
+                    .rounded(ui::s(3.0))
                     .border_1()
                     .border_color(if is_on {
                         theme::cyan()
                     } else {
-                        theme::fg_faint()
+                        theme::fg_muted()
                     })
                     .bg(if is_on {
                         theme::bg_active()
                     } else {
                         theme::bg_elevated()
                     })
-                    .text_size(px(9.0))
+                    .text_size(ui::TEXT_XS)
                     .text_color(if is_on {
                         theme::cyan()
                     } else {
@@ -5332,23 +5389,23 @@ impl FermiConsole {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(6.0))
+                    .gap(ui::s(6.0))
                     .child(
                         div()
-                            .text_size(px(9.0))
-                            .text_color(theme::fg_faint())
+                            .text_size(ui::TEXT_XS)
+                            .text_color(theme::fg_muted())
                             .child("n:"),
                     )
                     // Simple stepper: - / value / +.
                     .child(
                         div()
                             .id("rel-n-dec")
-                            .px(px(6.0))
-                            .py(px(1.0))
-                            .rounded(px(3.0))
+                            .px(ui::s(6.0))
+                            .py(ui::s(1.0))
+                            .rounded(ui::s(3.0))
                             .border_1()
-                            .border_color(theme::fg_faint())
-                            .text_size(px(11.0))
+                            .border_color(theme::border())
+                            .text_size(ui::TEXT_BASE)
                             .text_color(theme::fg_dim())
                             .cursor_pointer()
                             .hover(|s| s.bg(theme::bg_hover()))
@@ -5362,9 +5419,9 @@ impl FermiConsole {
                     )
                     .child(
                         div()
-                            .px(px(8.0))
-                            .py(px(1.0))
-                            .text_size(px(11.0))
+                            .px(ui::s(8.0))
+                            .py(ui::s(1.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(theme::cyan())
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(current),
@@ -5372,12 +5429,12 @@ impl FermiConsole {
                     .child(
                         div()
                             .id("rel-n-inc")
-                            .px(px(6.0))
-                            .py(px(1.0))
-                            .rounded(px(3.0))
+                            .px(ui::s(6.0))
+                            .py(ui::s(1.0))
+                            .rounded(ui::s(3.0))
                             .border_1()
-                            .border_color(theme::fg_faint())
-                            .text_size(px(11.0))
+                            .border_color(theme::border())
+                            .text_size(ui::TEXT_BASE)
                             .text_color(theme::fg_dim())
                             .cursor_pointer()
                             .hover(|s| s.bg(theme::bg_hover()))
@@ -5398,17 +5455,17 @@ impl FermiConsole {
         div()
             .flex()
             .flex_col()
-            .gap(px(6.0))
-            .px(px(10.0))
-            .py(px(8.0))
-            .rounded(px(6.0))
+            .gap(ui::s(6.0))
+            .px(ui::s(10.0))
+            .py(ui::s(8.0))
+            .rounded(ui::s(6.0))
             .bg(theme::bg())
             .border_1()
             .border_color(rgb(theme::CYAN))
             .child(kind_row)
             .child(
                 div()
-                    .text_size(px(9.0))
+                    .text_size(ui::TEXT_XS)
                     .text_color(theme::fg_dim())
                     .child(kind_desc.to_string()),
             )
@@ -5418,20 +5475,20 @@ impl FermiConsole {
             .when(self.relationship_create_error.is_some(), |el| {
                 el.child(
                     div()
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(theme::red())
                         .child(self.relationship_create_error.clone().unwrap_or_default()),
                 )
             })
             .child(
-                div().flex().justify_end().gap(px(6.0)).child(
+                div().flex().justify_end().gap(ui::s(6.0)).child(
                     div()
                         .id("rel-submit")
-                        .px(px(14.0))
-                        .py(px(5.0))
-                        .rounded(px(6.0))
+                        .px(ui::s(14.0))
+                        .py(ui::s(5.0))
+                        .rounded(ui::s(6.0))
                         .bg(rgb(theme::CYAN))
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(rgb(theme::BG))
                         .font_weight(FontWeight::SEMIBOLD)
                         .cursor_pointer()
@@ -5454,15 +5511,15 @@ impl FermiConsole {
         div()
             .flex()
             .flex_col()
-            .gap(px(8.0))
-            .px(px(14.0))
-            .py(px(10.0))
+            .gap(ui::s(8.0))
+            .px(ui::s(14.0))
+            .py(ui::s(10.0))
             .border_b_1()
-            .border_color(theme::fg_faint())
+            .border_color(theme::border())
             .bg(theme::bg())
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(ui::TEXT_BASE)
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme::cyan())
                     .child("🔗 Access"),
@@ -5472,16 +5529,16 @@ impl FermiConsole {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(8.0))
+                    .gap(ui::s(8.0))
                     .child(div().flex_grow().child(self.portfolio_share_input.clone()))
                     .child(
                         div()
                             .id("pf-share-perm")
-                            .px(px(10.0))
-                            .py(px(6.0))
-                            .rounded(px(4.0))
+                            .px(ui::s(10.0))
+                            .py(ui::s(6.0))
+                            .rounded(ui::s(4.0))
                             .bg(rgb(theme::BG_ACTIVE))
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(theme::gold())
                             .cursor_pointer()
                             .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -5500,11 +5557,11 @@ impl FermiConsole {
                     .child(
                         div()
                             .id("pf-share-add")
-                            .px(px(12.0))
-                            .py(px(6.0))
-                            .rounded(px(4.0))
+                            .px(ui::s(12.0))
+                            .py(ui::s(6.0))
+                            .rounded(ui::s(4.0))
                             .bg(rgb(theme::BLUE))
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(rgb(theme::BG))
                             .font_weight(FontWeight::SEMIBOLD)
                             .cursor_pointer()
@@ -5518,18 +5575,21 @@ impl FermiConsole {
             .when(self.portfolio_share_error.is_some(), |el| {
                 el.child(
                     div()
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(theme::red())
                         .child(self.portfolio_share_error.clone().unwrap_or_default()),
                 )
             })
-            .child(div().text_size(px(10.0)).text_color(theme::fg_dim()).child(
-                if self.portfolio_shares_loading {
-                    "Loading shares…".to_string()
-                } else {
-                    format!("Shared with ({})", self.portfolio_shares.len())
-                },
-            ))
+            .child(
+                div()
+                    .text_size(ui::TEXT_SM)
+                    .text_color(theme::fg_dim())
+                    .child(if self.portfolio_shares_loading {
+                        "Loading shares…".to_string()
+                    } else {
+                        format!("Shared with ({})", self.portfolio_shares.len())
+                    }),
+            )
             .children(self.portfolio_shares.iter().map(|s| {
                 let sid = s.id.clone();
                 let icon = if s.share_type == "team" {
@@ -5545,51 +5605,51 @@ impl FermiConsole {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(8.0))
-                    .px(px(10.0))
-                    .py(px(6.0))
-                    .rounded(px(6.0))
+                    .gap(ui::s(8.0))
+                    .px(ui::s(10.0))
+                    .py(ui::s(6.0))
+                    .rounded(ui::s(6.0))
                     .bg(theme::bg_elevated())
-                    .child(div().text_size(px(12.0)).child(icon))
+                    .child(div().text_size(ui::TEXT_MD).child(icon))
                     .child(
                         div()
                             .flex_grow()
                             .overflow_hidden()
                             .flex()
                             .flex_col()
-                            .gap(px(1.0))
+                            .gap(ui::s(1.0))
                             .child(
                                 div()
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(theme::fg())
                                     .child(primary_label),
                             )
                             .when(show_subtitle, |el| {
                                 el.child(
                                     div()
-                                        .text_size(px(9.0))
-                                        .text_color(theme::fg_faint())
+                                        .text_size(ui::TEXT_XS)
+                                        .text_color(theme::fg_muted())
                                         .child(short_user_label(&s.share_target)),
                                 )
                             }),
                     )
                     .child(
                         div()
-                            .px(px(8.0))
-                            .py(px(2.0))
-                            .rounded(px(4.0))
+                            .px(ui::s(8.0))
+                            .py(ui::s(2.0))
+                            .rounded(ui::s(4.0))
                             .bg(theme::bg_active())
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(theme::gold())
                             .child(s.permission.clone()),
                     )
                     .child(
                         div()
                             .id(SharedString::from(format!("pf-share-rm-{}", sid)))
-                            .px(px(6.0))
-                            .py(px(2.0))
-                            .rounded(px(4.0))
-                            .text_size(px(12.0))
+                            .px(ui::s(6.0))
+                            .py(ui::s(2.0))
+                            .rounded(ui::s(4.0))
+                            .text_size(ui::TEXT_MD)
                             .text_color(theme::fg_dim())
                             .cursor_pointer()
                             .hover(|s| s.bg(theme::bg_hover()).text_color(theme::red()))
@@ -5619,32 +5679,37 @@ impl FermiConsole {
             .map(|(t, _)| t.clone())
             .collect();
 
-        let mut container = div().flex().flex_col().gap(px(6.0)).mt(px(8.0)).child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(8.0))
-                .child(
-                    div()
-                        .text_size(px(11.0))
-                        .text_color(theme::fg_faint())
-                        .child(format!("OR SHARE WITH A TEAM ({})", self.teams.len())),
-                )
-                .when(self.teams_loading, |el| {
-                    el.child(
+        let mut container = div()
+            .flex()
+            .flex_col()
+            .gap(ui::s(6.0))
+            .mt(ui::s(8.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(ui::s(8.0))
+                    .child(
                         div()
-                            .text_size(px(10.0))
-                            .text_color(theme::fg_faint())
-                            .child("loading…"),
+                            .text_size(ui::TEXT_BASE)
+                            .text_color(theme::fg_muted())
+                            .child(format!("OR SHARE WITH A TEAM ({})", self.teams.len())),
                     )
-                }),
-        );
+                    .when(self.teams_loading, |el| {
+                        el.child(
+                            div()
+                                .text_size(ui::TEXT_SM)
+                                .text_color(theme::fg_muted())
+                                .child("loading…"),
+                        )
+                    }),
+            );
 
         if self.teams.is_empty() && !self.teams_loading {
             container = container.child(
                 div()
-                    .text_size(px(10.0))
-                    .text_color(theme::fg_faint())
+                    .text_size(ui::TEXT_SM)
+                    .text_color(theme::fg_muted())
                     .child(
                         "No collaboration teams yet. Create one in the Teams panel to share with a group.",
                     ),
@@ -5662,15 +5727,15 @@ impl FermiConsole {
             };
             div()
                 .id(SharedString::from(format!("commit-team-share-{}", tid)))
-                .px(px(10.0))
-                .py(px(4.0))
-                .rounded(px(12.0))
+                .px(ui::s(10.0))
+                .py(ui::s(4.0))
+                .rounded(ui::s(12.0))
                 .bg(if selected {
                     theme::bg_active()
                 } else {
                     theme::bg_elevated()
                 })
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(color)
                 .cursor_pointer()
                 .hover(|s| s.bg(theme::bg_hover()))
@@ -5684,7 +5749,7 @@ impl FermiConsole {
         });
 
         container
-            .child(div().flex().flex_wrap().gap(px(6.0)).children(pills))
+            .child(div().flex().flex_wrap().gap(ui::s(6.0)).children(pills))
             .into_any_element()
     }
 
@@ -5700,33 +5765,38 @@ impl FermiConsole {
             .map(|s| s.share_target.clone())
             .collect();
 
-        let mut container = div().flex().flex_col().gap(px(6.0)).mt(px(8.0)).child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(8.0))
-                .child(
-                    div()
-                        .text_size(px(11.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(theme::fg_dim())
-                        .child(format!("Share with a team ({})", self.teams.len())),
-                )
-                .when(self.teams_loading, |el| {
-                    el.child(
+        let mut container = div()
+            .flex()
+            .flex_col()
+            .gap(ui::s(6.0))
+            .mt(ui::s(8.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(ui::s(8.0))
+                    .child(
                         div()
-                            .text_size(px(10.0))
-                            .text_color(theme::fg_faint())
-                            .child("loading…"),
+                            .text_size(ui::TEXT_BASE)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme::fg_dim())
+                            .child(format!("Share with a team ({})", self.teams.len())),
                     )
-                }),
-        );
+                    .when(self.teams_loading, |el| {
+                        el.child(
+                            div()
+                                .text_size(ui::TEXT_SM)
+                                .text_color(theme::fg_muted())
+                                .child("loading…"),
+                        )
+                    }),
+            );
 
         if self.teams.is_empty() && !self.teams_loading {
             container = container.child(
                 div()
-                    .text_size(px(10.0))
-                    .text_color(theme::fg_faint())
+                    .text_size(ui::TEXT_SM)
+                    .text_color(theme::fg_muted())
                     .child(
                         "No collaboration teams yet. Create one in the Teams panel to share with a group.",
                     ),
@@ -5742,17 +5812,17 @@ impl FermiConsole {
             let (label, color) = if already_shared {
                 (format!("✓ {}", t.name), rgb(theme::GREEN))
             } else if in_flight {
-                (format!("… {}", t.name), rgb(theme::FG_FAINT))
+                (format!("… {}", t.name), rgb(theme::FG_MUTED))
             } else {
                 (t.name.clone(), rgb(theme::CYAN))
             };
             let pill = div()
                 .id(SharedString::from(format!("pf-team-share-{}", tid)))
-                .px(px(10.0))
-                .py(px(4.0))
-                .rounded(px(12.0))
+                .px(ui::s(10.0))
+                .py(ui::s(4.0))
+                .rounded(ui::s(12.0))
                 .bg(theme::bg_elevated())
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(color)
                 .child(label);
             if interactive {
@@ -5770,7 +5840,7 @@ impl FermiConsole {
         });
 
         container
-            .child(div().flex().flex_wrap().gap(px(6.0)).children(pills))
+            .child(div().flex().flex_wrap().gap(ui::s(6.0)).children(pills))
             .into_any_element()
     }
 
@@ -6389,10 +6459,10 @@ impl FermiConsole {
         let _ = cx;
         let Some(access) = self.portfolio_access.get(pid) else {
             return div()
-                .px(px(14.0))
-                .py(px(4.0))
-                .text_size(px(10.0))
-                .text_color(theme::fg_faint())
+                .px(ui::s(14.0))
+                .py(ui::s(4.0))
+                .text_size(ui::TEXT_SM)
+                .text_color(theme::fg_muted())
                 .child(if self.portfolio_access_in_flight.contains(pid) {
                     "⟳ resolving access…"
                 } else {
@@ -6427,15 +6497,15 @@ impl FermiConsole {
             .count();
 
         div()
-            .px(px(14.0))
-            .py(px(6.0))
+            .px(ui::s(14.0))
+            .py(ui::s(6.0))
             .border_b_1()
-            .border_color(theme::fg_faint())
+            .border_color(theme::border())
             .flex()
             .flex_wrap()
             .items_center()
-            .gap(px(10.0))
-            .text_size(px(10.0))
+            .gap(ui::s(10.0))
+            .text_size(ui::TEXT_SM)
             // Owner / how-you-have-it
             .child(
                 div()
@@ -6508,27 +6578,35 @@ impl FermiConsole {
     /// has a single answer. Reuses `render_activity_event_row` so an
     /// event reads identically here and in the Teams panel.
     fn render_portfolio_activity_body(&self, pid: &str, cx: &Context<Self>) -> AnyElement {
-        let container = div().flex().flex_col().px(px(14.0)).py(px(10.0));
+        let container = div().flex().flex_col().px(ui::s(14.0)).py(ui::s(10.0));
 
         let Some(events) = self.portfolio_activity.get(pid) else {
             return container
-                .child(div().text_size(px(11.0)).text_color(theme::fg_dim()).child(
-                    if self.portfolio_activity_in_flight.contains(pid) {
-                        "⟳ Loading portfolio activity…"
-                    } else {
-                        "Could not load portfolio activity."
-                    },
-                ))
+                .child(
+                    div()
+                        .text_size(ui::TEXT_BASE)
+                        .text_color(theme::fg_dim())
+                        .child(if self.portfolio_activity_in_flight.contains(pid) {
+                            "⟳ Loading portfolio activity…"
+                        } else {
+                            "Could not load portfolio activity."
+                        }),
+                )
                 .into_any_element();
         };
 
         if events.is_empty() {
             return container
-                .child(div().text_size(px(11.0)).text_color(theme::fg_dim()).child(
-                    "No activity in this portfolio yet. Adding, revising, \
+                .child(
+                    div()
+                        .text_size(ui::TEXT_BASE)
+                        .text_color(theme::fg_dim())
+                        .child(
+                            "No activity in this portfolio yet. Adding, revising, \
                              resolving or sharing anything in it shows up here — \
                              attributed to whoever did it.",
-                ))
+                        ),
+                )
                 .into_any_element();
         }
 
@@ -6550,9 +6628,9 @@ impl FermiConsole {
                         } else {
                             px(0.0)
                         })
-                        .pb(px(2.0))
-                        .text_size(px(10.0))
-                        .text_color(theme::fg_faint())
+                        .pb(ui::s(2.0))
+                        .text_size(ui::TEXT_SM)
+                        .text_color(theme::fg_muted())
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(humanise_day(&day))
                         .into_any_element(),
@@ -7009,7 +7087,9 @@ impl FermiConsole {
         }
     }
 
-    /// Ctrl+S — Save FPL to disk with version snapshot.
+    /// Ctrl+O — Import an `.fpl` the operator picks from a file dialog
+    /// into the Composer. This is the only remaining read from disk;
+    /// saving goes to the server, not to a local file.
     fn on_import_forecast(
         &mut self,
         _: &ImportForecast,
@@ -7249,6 +7329,79 @@ impl FermiConsole {
         window.toggle_fullscreen();
     }
 
+    // ── UI scale ─────────────────────────────────────────────
+    //
+    // The console renders every length in `rems`, so changing the scale is
+    // just changing one number and asking for a repaint — `Render` pushes
+    // it to the window at the top of the next frame.
+
+    /// Apply a new scale, confirm it, and remember it.
+    ///
+    /// The toast is not decoration: at the clamp boundaries nothing on
+    /// screen changes, and without a readout the keystroke looks broken.
+    fn apply_ui_scale(&mut self, next: f32, cx: &mut Context<Self>) {
+        let before = uiscale::scale();
+        let after = uiscale::set_scale(next);
+
+        if (after - before).abs() < f32::EPSILON {
+            let edge = if uiscale::at_max() {
+                "largest"
+            } else {
+                "smallest"
+            };
+            self.show_toast(
+                format!(
+                    "UI scale {} — already the {edge} size",
+                    uiscale::scale_label()
+                ),
+                "⚠",
+                theme::GOLD,
+                cx,
+            );
+            return;
+        }
+
+        // Persisted on every change rather than at shutdown: the console
+        // is long-lived and frequently killed rather than quit, and a
+        // preference that only survives a clean exit is one the operator
+        // will have to set again.
+        uiscale::save_scale();
+        self.show_toast(
+            format!("UI scale {}", uiscale::scale_label()),
+            "🔍",
+            theme::CYAN,
+            cx,
+        );
+        cx.notify();
+    }
+
+    fn on_increase_ui_scale(
+        &mut self,
+        _: &IncreaseUiScale,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_ui_scale(uiscale::scale() + uiscale::SCALE_STEP, cx);
+    }
+
+    fn on_decrease_ui_scale(
+        &mut self,
+        _: &DecreaseUiScale,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_ui_scale(uiscale::scale() - uiscale::SCALE_STEP, cx);
+    }
+
+    fn on_reset_ui_scale(
+        &mut self,
+        _: &ResetUiScale,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_ui_scale(uiscale::SCALE_DEFAULT, cx);
+    }
+
     /// Reset the cockpit to a fresh state (new forecast).
     fn on_new_forecast(&mut self, _: &NewForecast, _window: &mut Window, cx: &mut Context<Self>) {
         let api = self.api.clone();
@@ -7296,31 +7449,31 @@ impl FermiConsole {
         div()
             .flex()
             .flex_col()
-            .w(px(220.0))
+            .w(ui::s(220.0))
             .h_full()
             .bg(theme::bg_deep())
             .border_r_1()
-            .border_color(theme::fg_faint())
+            .border_color(theme::border())
             .child(
                 // Logo / title + window controls
                 div()
-                    .px(px(16.0))
-                    .py(px(14.0))
+                    .px(ui::s(16.0))
+                    .py(ui::s(14.0))
                     .flex()
                     .flex_col()
-                    .gap(px(8.0))
+                    .gap(ui::s(8.0))
                     // Window control buttons row
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
+                            .gap(ui::s(8.0))
                             // Close
                             .child(
                                 div()
                                     .id("win-close")
-                                    .w(px(12.0))
-                                    .h(px(12.0))
+                                    .w(ui::s(12.0))
+                                    .h(ui::s(12.0))
                                     .rounded_full()
                                     .bg(rgb(theme::RED))
                                     .cursor_pointer()
@@ -7333,8 +7486,8 @@ impl FermiConsole {
                             .child(
                                 div()
                                     .id("win-minimize")
-                                    .w(px(12.0))
-                                    .h(px(12.0))
+                                    .w(ui::s(12.0))
+                                    .h(ui::s(12.0))
                                     .rounded_full()
                                     .bg(rgb(theme::GOLD))
                                     .cursor_pointer()
@@ -7347,8 +7500,8 @@ impl FermiConsole {
                             .child(
                                 div()
                                     .id("win-zoom")
-                                    .w(px(12.0))
-                                    .h(px(12.0))
+                                    .w(ui::s(12.0))
+                                    .h(ui::s(12.0))
                                     .rounded_full()
                                     .bg(rgb(theme::GREEN))
                                     .cursor_pointer()
@@ -7363,8 +7516,8 @@ impl FermiConsole {
                             .child(
                                 div()
                                     .id("win-fullscreen")
-                                    .text_size(px(10.0))
-                                    .text_color(theme::fg_faint())
+                                    .text_size(ui::TEXT_SM)
+                                    .text_color(theme::fg_muted())
                                     .cursor_pointer()
                                     .hover(|s| s.text_color(theme::fg_dim()))
                                     .on_click(cx.listener(|_this, _event, window, _cx| {
@@ -7376,30 +7529,30 @@ impl FermiConsole {
                     // Title
                     .child(
                         div()
-                            .text_size(px(18.0))
+                            .text_size(ui::TEXT_3XL)
                             .text_color(theme::cyan())
                             .font_weight(FontWeight::BOLD)
                             .child("⟐ Fermi Console"),
                     )
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(theme::fg_dim())
                             .child("Forecasting Command Center"),
                     ),
             )
             .child(
                 // Separator
-                div().h(px(1.0)).mx(px(12.0)).bg(theme::fg_faint()),
+                div().h(ui::s(1.0)).mx(ui::s(12.0)).bg(theme::border()),
             )
             .child(
                 // Navigation items
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(2.0))
-                    .mt(px(12.0))
-                    .px(px(8.0))
+                    .gap(ui::s(2.0))
+                    .mt(ui::s(12.0))
+                    .px(ui::s(8.0))
                     .children(
                         Panel::all()
                             .iter()
@@ -7414,17 +7567,17 @@ impl FermiConsole {
                 el.child(
                     div()
                         .id("pending-cascades-badge")
-                        .mt(px(8.0))
-                        .mx(px(8.0))
-                        .px(px(10.0))
-                        .py(px(8.0))
-                        .rounded(px(6.0))
+                        .mt(ui::s(8.0))
+                        .mx(ui::s(8.0))
+                        .px(ui::s(10.0))
+                        .py(ui::s(8.0))
+                        .rounded(ui::s(6.0))
                         .border_1()
                         .border_color(rgb(theme::GOLD))
                         .bg(rgb(theme::BG_ELEVATED))
                         .flex()
                         .items_center()
-                        .gap(px(8.0))
+                        .gap(ui::s(8.0))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(theme::BG_HOVER)))
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -7436,7 +7589,7 @@ impl FermiConsole {
                         }))
                         .child(
                             div()
-                                .text_size(px(14.0))
+                                .text_size(ui::TEXT_XL)
                                 .text_color(rgb(theme::GOLD))
                                 .child("⚠"),
                         )
@@ -7445,10 +7598,10 @@ impl FermiConsole {
                                 .flex_grow()
                                 .flex()
                                 .flex_col()
-                                .gap(px(1.0))
+                                .gap(ui::s(1.0))
                                 .child(
                                     div()
-                                        .text_size(px(11.0))
+                                        .text_size(ui::TEXT_BASE)
                                         .text_color(rgb(theme::FG))
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .child(format!(
@@ -7459,7 +7612,7 @@ impl FermiConsole {
                                 )
                                 .child(
                                     div()
-                                        .text_size(px(9.0))
+                                        .text_size(ui::TEXT_XS)
                                         .text_color(theme::fg_dim())
                                         .child("Review · Apply / Dismiss"),
                                 ),
@@ -7474,21 +7627,21 @@ impl FermiConsole {
                 el.child(
                     div()
                         .id("inbox-badge")
-                        .mt(px(8.0))
-                        .mx(px(8.0))
-                        .px(px(10.0))
-                        .py(px(8.0))
-                        .rounded(px(6.0))
+                        .mt(ui::s(8.0))
+                        .mx(ui::s(8.0))
+                        .px(ui::s(10.0))
+                        .py(ui::s(8.0))
+                        .rounded(ui::s(6.0))
                         .border_1()
                         .border_color(if has {
                             rgb(theme::CYAN)
                         } else {
-                            rgb(theme::FG_FAINT)
+                            rgb(theme::FG_MUTED)
                         })
                         .bg(rgb(theme::BG_ELEVATED))
                         .flex()
                         .items_center()
-                        .gap(px(8.0))
+                        .gap(ui::s(8.0))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(theme::BG_HOVER)))
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -7498,7 +7651,7 @@ impl FermiConsole {
                         }))
                         .child(
                             div()
-                                .text_size(px(14.0))
+                                .text_size(ui::TEXT_XL)
                                 .text_color(if has {
                                     rgb(theme::CYAN)
                                 } else {
@@ -7509,7 +7662,7 @@ impl FermiConsole {
                         .child(
                             div()
                                 .flex_grow()
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(rgb(theme::FG))
                                 .child(if has {
                                     format!("Inbox · {} pending", n)
@@ -7526,13 +7679,13 @@ impl FermiConsole {
             .child(
                 // Bottom status
                 div()
-                    .px(px(16.0))
-                    .py(px(12.0))
+                    .px(ui::s(16.0))
+                    .py(ui::s(12.0))
                     .border_t_1()
-                    .border_color(theme::fg_faint())
+                    .border_color(theme::border())
                     .child(
                         div()
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(if self.connected {
                                 theme::green()
                             } else {
@@ -7568,9 +7721,9 @@ impl FermiConsole {
                             };
                         div()
                             .id("sidebar-version-chip")
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(rgb(color))
-                            .mt(px(2.0))
+                            .mt(ui::s(2.0))
                             .cursor_pointer()
                             .hover(|s| s.text_color(rgb(theme::FG)))
                             .on_click(cx.listener(move |this, _, _w, cx| {
@@ -7605,17 +7758,98 @@ impl FermiConsole {
                         el.child(
                             div()
                                 .id("sidebar-wallet-chip")
-                                .mt(px(6.0))
-                                .px(px(8.0))
-                                .py(px(4.0))
-                                .rounded(px(4.0))
+                                .mt(ui::s(6.0))
+                                .px(ui::s(8.0))
+                                .py(ui::s(4.0))
+                                .rounded(ui::s(4.0))
                                 .bg(theme::bg_hover())
                                 .border_1()
-                                .border_color(theme::fg_faint())
-                                .text_size(px(10.0))
+                                .border_color(theme::border())
+                                .text_size(ui::TEXT_SM)
                                 .text_color(color)
                                 .child(label),
                         )
+                    })
+                    // Text-size stepper. A chord and a menu item are not
+                    // enough on their own: someone who finds the console
+                    // unreadable is, by definition, having trouble reading
+                    // the places we'd document the fix. So the control is
+                    // on screen, it shows the current value, and the
+                    // buttons grey out at the clamp instead of no-opping
+                    // silently.
+                    .child({
+                        let step = |glyph: &'static str,
+                                    id: &'static str,
+                                    delta: f32,
+                                    disabled: bool,
+                                    cx: &Context<Self>| {
+                            div()
+                                .id(id)
+                                .w(ui::s(22.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(ui::s(3.0))
+                                .text_size(ui::TEXT_SM)
+                                .text_color(if disabled {
+                                    theme::fg_muted()
+                                } else {
+                                    theme::fg_dim()
+                                })
+                                .when(!disabled, |s| {
+                                    s.cursor_pointer()
+                                        .hover(|s| s.bg(theme::bg_active()).text_color(theme::fg()))
+                                        .on_click(cx.listener(move |this, _, _w, cx| {
+                                            this.apply_ui_scale(uiscale::scale() + delta, cx);
+                                        }))
+                                })
+                                .child(glyph)
+                        };
+
+                        div()
+                            .mt(ui::s(6.0))
+                            .px(ui::s(8.0))
+                            .py(ui::s(4.0))
+                            .rounded(ui::s(4.0))
+                            .bg(theme::bg_hover())
+                            .border_1()
+                            .border_color(theme::border())
+                            .flex()
+                            .items_center()
+                            .gap(ui::s(4.0))
+                            .text_size(ui::TEXT_XS)
+                            .text_color(theme::fg_muted())
+                            .child(div().child("Text"))
+                            .child(div().flex_grow())
+                            .child(step(
+                                "−",
+                                "sidebar-text-smaller",
+                                -uiscale::SCALE_STEP,
+                                uiscale::at_min(),
+                                cx,
+                            ))
+                            // Clicking the readout returns to the default —
+                            // the same escape hatch as Ctrl+0, for people
+                            // who found this widget instead of the chord.
+                            .child(
+                                div()
+                                    .id("sidebar-text-reset")
+                                    .min_w(ui::s(34.0))
+                                    .text_color(theme::fg_dim())
+                                    .cursor_pointer()
+                                    .hover(|s| s.text_color(theme::cyan()))
+                                    .on_click(cx.listener(|this, _, _w, cx| {
+                                        this.apply_ui_scale(uiscale::SCALE_DEFAULT, cx);
+                                    }))
+                                    .child(uiscale::scale_label()),
+                            )
+                            .child(step(
+                                "+",
+                                "sidebar-text-larger",
+                                uiscale::SCALE_STEP,
+                                uiscale::at_max(),
+                                cx,
+                            ))
                     })
                     // Shortcuts help chip — the discoverability entry
                     // point for operators who don't know the console's
@@ -7624,14 +7858,14 @@ impl FermiConsole {
                     .child(
                         div()
                             .id("sidebar-shortcuts-chip")
-                            .mt(px(6.0))
-                            .px(px(8.0))
-                            .py(px(4.0))
-                            .rounded(px(4.0))
+                            .mt(ui::s(6.0))
+                            .px(ui::s(8.0))
+                            .py(ui::s(4.0))
+                            .rounded(ui::s(4.0))
                             .bg(theme::bg_hover())
                             .border_1()
-                            .border_color(theme::fg_faint())
-                            .text_size(px(10.0))
+                            .border_color(theme::border())
+                            .text_size(ui::TEXT_SM)
                             .text_color(theme::fg_dim())
                             .cursor_pointer()
                             .hover(|s| s.bg(theme::bg_active()).text_color(theme::fg()))
@@ -7656,13 +7890,13 @@ impl FermiConsole {
                         el.child(
                             div()
                                 .id("sidebar-fermi-chat-chip")
-                                .mt(px(6.0))
-                                .px(px(8.0))
-                                .py(px(4.0))
-                                .rounded(px(4.0))
+                                .mt(ui::s(6.0))
+                                .px(ui::s(8.0))
+                                .py(ui::s(4.0))
+                                .rounded(ui::s(4.0))
                                 .flex()
                                 .items_center()
-                                .gap(px(5.0))
+                                .gap(ui::s(5.0))
                                 .bg(rgb(if is_open { 0x1A1A2E } else { theme::BG_HOVER }))
                                 .border_1()
                                 .border_color(rgb(if unseen > 0 {
@@ -7670,9 +7904,9 @@ impl FermiConsole {
                                 } else if is_open {
                                     theme::PURPLE
                                 } else {
-                                    theme::FG_FAINT
+                                    theme::FG_MUTED
                                 }))
-                                .text_size(px(10.0))
+                                .text_size(ui::TEXT_SM)
                                 .text_color(rgb(if is_open {
                                     theme::PURPLE
                                 } else {
@@ -7693,10 +7927,10 @@ impl FermiConsole {
                                 .when(unseen > 0, |el| {
                                     el.child(
                                         div()
-                                            .px(px(4.0))
-                                            .rounded(px(6.0))
+                                            .px(ui::s(4.0))
+                                            .rounded(ui::s(6.0))
                                             .bg(rgb(theme::RED))
-                                            .text_size(px(8.0))
+                                            .text_size(ui::TEXT_MICRO)
                                             .text_color(rgb(theme::BG_DEEP))
                                             .font_weight(FontWeight::BOLD)
                                             .child(unseen.to_string()),
@@ -7717,14 +7951,14 @@ impl FermiConsole {
                         el.child(
                             div()
                                 .id("sidebar-update-badge")
-                                .mt(px(6.0))
-                                .px(px(8.0))
-                                .py(px(4.0))
-                                .rounded(px(4.0))
+                                .mt(ui::s(6.0))
+                                .px(ui::s(8.0))
+                                .py(ui::s(4.0))
+                                .rounded(ui::s(4.0))
                                 .bg(theme::bg_hover())
                                 .border_1()
                                 .border_color(rgb(theme::CYAN))
-                                .text_size(px(10.0))
+                                .text_size(ui::TEXT_SM)
                                 .text_color(theme::cyan())
                                 .cursor_pointer()
                                 .hover(|s| s.bg(theme::bg_active()))
@@ -7745,10 +7979,10 @@ impl FermiConsole {
             .id(SharedString::from(format!("nav-{}", panel.label())))
             .flex()
             .items_center()
-            .gap(px(10.0))
-            .px(px(12.0))
-            .py(px(8.0))
-            .rounded(px(6.0))
+            .gap(ui::s(10.0))
+            .px(ui::s(12.0))
+            .py(ui::s(8.0))
+            .rounded(ui::s(6.0))
             .cursor_pointer()
             .on_mouse_down(
                 MouseButton::Left,
@@ -7765,8 +7999,8 @@ impl FermiConsole {
             })
             .child(
                 div()
-                    .text_size(px(16.0))
-                    .w(px(20.0))
+                    .text_size(ui::TEXT_2XL)
+                    .w(ui::s(20.0))
                     .text_color(if is_active {
                         theme::cyan()
                     } else {
@@ -7774,11 +8008,16 @@ impl FermiConsole {
                     })
                     .child(panel.icon()),
             )
-            .child(div().flex_grow().text_size(px(13.0)).child(panel.label()))
             .child(
                 div()
-                    .text_size(px(10.0))
-                    .text_color(theme::fg_faint())
+                    .flex_grow()
+                    .text_size(ui::TEXT_LG)
+                    .child(panel.label()),
+            )
+            .child(
+                div()
+                    .text_size(ui::TEXT_SM)
+                    .text_color(theme::fg_muted())
                     .child(panel.shortcut_hint()),
             )
     }
@@ -7800,12 +8039,12 @@ impl FermiConsole {
                 .id(id)
                 .flex()
                 .flex_col()
-                .gap(px(2.0))
-                .px(px(16.0))
-                .py(px(12.0))
-                .min_w(px(200.0))
+                .gap(ui::s(2.0))
+                .px(ui::s(16.0))
+                .py(ui::s(12.0))
+                .min_w(ui::s(200.0))
                 .flex_grow()
-                .rounded(px(8.0))
+                .rounded(ui::s(8.0))
                 .border_1()
                 .border_color(rgb(accent))
                 .bg(theme::bg_elevated())
@@ -7815,16 +8054,16 @@ impl FermiConsole {
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(8.0))
+                        .gap(ui::s(8.0))
                         .child(
                             div()
-                                .text_size(px(18.0))
+                                .text_size(ui::TEXT_3XL)
                                 .text_color(rgb(accent))
                                 .child(icon),
                         )
                         .child(
                             div()
-                                .text_size(px(13.0))
+                                .text_size(ui::TEXT_LG)
                                 .text_color(theme::fg())
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child(title),
@@ -7832,7 +8071,7 @@ impl FermiConsole {
                 )
                 .child(
                     div()
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(theme::fg_dim())
                         .child(subtitle),
                 )
@@ -7841,7 +8080,7 @@ impl FermiConsole {
         div()
             .flex()
             .flex_wrap()
-            .gap(px(12.0))
+            .gap(ui::s(12.0))
             .child(
                 hero_btn(
                     "dash-new-forecast",
@@ -7967,8 +8206,8 @@ impl FermiConsole {
             .flex_col()
             .size_full()
             .overflow_y_scroll()
-            .p(px(24.0))
-            .gap(px(20.0))
+            .p(ui::s(24.0))
+            .gap(ui::s(20.0))
             .child(
                 // Header
                 div()
@@ -7978,7 +8217,7 @@ impl FermiConsole {
                     .flex_shrink_0()
                     .child(
                         div()
-                            .text_size(px(22.0))
+                            .text_size(ui::TEXT_5XL)
                             .text_color(theme::fg())
                             .font_weight(FontWeight::BOLD)
                             .child("Dashboard"),
@@ -7987,7 +8226,7 @@ impl FermiConsole {
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(12.0))
+                            .gap(ui::s(12.0))
                             // PM sync chip — same handler as the Portfolio
                             // panel's Check Resolutions button so muscle
                             // memory carries over.
@@ -7996,14 +8235,14 @@ impl FermiConsole {
                                     .id("dashboard-pm-sync-btn")
                                     .flex()
                                     .items_center()
-                                    .gap(px(4.0))
-                                    .px(px(10.0))
-                                    .py(px(4.0))
-                                    .rounded(px(6.0))
+                                    .gap(ui::s(4.0))
+                                    .px(ui::s(10.0))
+                                    .py(ui::s(4.0))
+                                    .rounded(ui::s(6.0))
                                     .bg(rgb(0x1A1A1A))
                                     .border_1()
                                     .border_color(rgb(pm_accent))
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(rgb(pm_accent))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .when(!pm_loading, |s| s.cursor_pointer())
@@ -8015,15 +8254,15 @@ impl FermiConsole {
                             )
                             .child(
                                 div()
-                                    .text_size(px(12.0))
+                                    .text_size(ui::TEXT_MD)
                                     .text_color(theme::fg_dim())
                                     .child(format!("🔥 {} active days (30d)", days_30d)),
                             )
                             .into_any_element()
                     } else {
                         div()
-                            .text_size(px(12.0))
-                            .text_color(theme::fg_faint())
+                            .text_size(ui::TEXT_MD)
+                            .text_color(theme::fg_muted())
                             .child("Sign in to sync forecasts and use agents")
                             .into_any_element()
                     }),
@@ -8050,7 +8289,7 @@ impl FermiConsole {
                 // Stats cards row
                 div()
                     .flex()
-                    .gap(px(16.0))
+                    .gap(ui::s(16.0))
                     .flex_shrink_0()
                     .child(self.render_stat_card(
                         "Brier Score",
@@ -8108,18 +8347,18 @@ impl FermiConsole {
                     div()
                         .flex()
                         .flex_row()
-                        .gap(px(16.0))
+                        .gap(ui::s(16.0))
                         .flex_shrink_0()
                         .child(
                             div()
                                 .flex_grow()
-                                .flex_basis(px(0.0))
+                                .flex_basis(ui::s(0.0))
                                 .child(self.render_dashboard_research_card(cx)),
                         )
                         .child(
                             div()
                                 .flex_grow()
-                                .flex_basis(px(0.0))
+                                .flex_basis(ui::s(0.0))
                                 .child(self.render_dashboard_marketplace_card(cx)),
                         ),
                 )
@@ -8243,9 +8482,9 @@ impl FermiConsole {
             .flex()
             .flex_col()
             .bg(theme::bg_elevated())
-            .rounded(px(8.0))
+            .rounded(ui::s(8.0))
             .border_1()
-            .border_color(theme::fg_faint())
+            .border_color(theme::border())
             .overflow_hidden()
             // Header
             .child(
@@ -8253,24 +8492,24 @@ impl FermiConsole {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .px(px(16.0))
-                    .py(px(12.0))
+                    .px(ui::s(16.0))
+                    .py(ui::s(12.0))
                     .border_b_1()
-                    .border_color(theme::fg_faint())
+                    .border_color(theme::border())
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(6.0))
+                            .gap(ui::s(6.0))
                             .child(
                                 div()
-                                    .text_size(px(14.0))
+                                    .text_size(ui::TEXT_XL)
                                     .text_color(rgb(theme::CYAN))
                                     .child("🔬"),
                             )
                             .child(
                                 div()
-                                    .text_size(px(13.0))
+                                    .text_size(ui::TEXT_LG)
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme::fg())
                                     .child("Research"),
@@ -8278,7 +8517,7 @@ impl FermiConsole {
                     )
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(theme::fg_dim())
                             .child(header_summary),
                     ),
@@ -8287,9 +8526,9 @@ impl FermiConsole {
             .when(is_empty, |el| {
                 el.child(
                     div()
-                        .p(px(16.0))
-                        .text_size(px(11.0))
-                        .text_color(theme::fg_faint())
+                        .p(ui::s(16.0))
+                        .text_size(ui::TEXT_BASE)
+                        .text_color(theme::fg_muted())
                         .child(
                             "No agent runs on your forecasts yet. Open a forecast \
                              in the Composer and hire an agent to gather evidence.",
@@ -8322,11 +8561,11 @@ impl FermiConsole {
                     .id(SharedString::from(format!("dash-research-{}", fid)))
                     .flex()
                     .flex_col()
-                    .gap(px(2.0))
-                    .px(px(16.0))
-                    .py(px(10.0))
+                    .gap(ui::s(2.0))
+                    .px(ui::s(16.0))
+                    .py(ui::s(10.0))
                     .border_b_1()
-                    .border_color(theme::fg_faint())
+                    .border_color(theme::border())
                     .cursor_pointer()
                     .hover(|s| s.bg(theme::bg_hover()))
                     .on_click(cx.listener(move |this, _e, _w, cx| {
@@ -8334,13 +8573,13 @@ impl FermiConsole {
                     }))
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(ui::TEXT_MD)
                             .text_color(theme::fg())
                             .child(question),
                     )
                     .child(
                         div()
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(theme::fg_dim())
                             .child(subline),
                     )
@@ -8349,9 +8588,9 @@ impl FermiConsole {
             .child(
                 div()
                     .id("dash-research-see-all")
-                    .px(px(16.0))
-                    .py(px(8.0))
-                    .text_size(px(11.0))
+                    .px(ui::s(16.0))
+                    .py(ui::s(8.0))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(rgb(theme::CYAN))
                     .cursor_pointer()
                     .hover(|s| s.bg(theme::bg_hover()))
@@ -8420,33 +8659,33 @@ impl FermiConsole {
             .flex()
             .flex_col()
             .bg(theme::bg_elevated())
-            .rounded(px(8.0))
+            .rounded(ui::s(8.0))
             .border_1()
-            .border_color(theme::fg_faint())
+            .border_color(theme::border())
             .overflow_hidden()
             .child(
                 div()
                     .flex()
                     .items_center()
                     .justify_between()
-                    .px(px(16.0))
-                    .py(px(12.0))
+                    .px(ui::s(16.0))
+                    .py(ui::s(12.0))
                     .border_b_1()
-                    .border_color(theme::fg_faint())
+                    .border_color(theme::border())
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(6.0))
+                            .gap(ui::s(6.0))
                             .child(
                                 div()
-                                    .text_size(px(14.0))
+                                    .text_size(ui::TEXT_XL)
                                     .text_color(rgb(theme::PURPLE))
                                     .child("✨"),
                             )
                             .child(
                                 div()
-                                    .text_size(px(13.0))
+                                    .text_size(ui::TEXT_LG)
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme::fg())
                                     .child("Marketplace"),
@@ -8454,7 +8693,7 @@ impl FermiConsole {
                     )
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(theme::fg_dim())
                             .child(header_summary),
                     ),
@@ -8462,9 +8701,9 @@ impl FermiConsole {
             .when(is_empty, |el| {
                 el.child(
                     div()
-                        .p(px(16.0))
-                        .text_size(px(11.0))
-                        .text_color(theme::fg_faint())
+                        .p(ui::s(16.0))
+                        .text_size(ui::TEXT_BASE)
+                        .text_color(theme::fg_muted())
                         .child(
                             "No new agents to try right now. Check back \
                              later — the community ships specialists all \
@@ -8488,11 +8727,11 @@ impl FermiConsole {
                     .id(SharedString::from(format!("dash-mkt-{}", aid)))
                     .flex()
                     .flex_col()
-                    .gap(px(2.0))
-                    .px(px(16.0))
-                    .py(px(10.0))
+                    .gap(ui::s(2.0))
+                    .px(ui::s(16.0))
+                    .py(ui::s(10.0))
                     .border_b_1()
-                    .border_color(theme::fg_faint())
+                    .border_color(theme::border())
                     .cursor_pointer()
                     .hover(|s| s.bg(theme::bg_hover()))
                     .on_click(cx.listener(move |this, _e, _w, cx| {
@@ -8507,31 +8746,31 @@ impl FermiConsole {
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(6.0))
+                            .gap(ui::s(6.0))
                             .child(
                                 div()
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(rgb(e.tier_color))
                                     .child(tier_glyph),
                             )
                             .child(
                                 div()
                                     .flex_grow()
-                                    .text_size(px(12.0))
+                                    .text_size(ui::TEXT_MD)
                                     .text_color(theme::fg())
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(e.display_name.clone()),
                             )
                             .child(
                                 div()
-                                    .text_size(px(10.0))
+                                    .text_size(ui::TEXT_SM)
                                     .text_color(theme::fg_dim())
                                     .child(cost_text),
                             ),
                     )
                     .child(
                         div()
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(theme::fg_dim())
                             .child(desc),
                     )
@@ -8539,9 +8778,9 @@ impl FermiConsole {
             .child(
                 div()
                     .id("dash-mkt-see-all")
-                    .px(px(16.0))
-                    .py(px(8.0))
-                    .text_size(px(11.0))
+                    .px(ui::s(16.0))
+                    .py(ui::s(8.0))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(rgb(theme::PURPLE))
                     .cursor_pointer()
                     .hover(|s| s.bg(theme::bg_hover()))
@@ -8585,59 +8824,62 @@ impl FermiConsole {
             .flex()
             .flex_col()
             .bg(theme::bg_elevated())
-            .rounded(px(8.0))
+            .rounded(ui::s(8.0))
             .border_1()
-            .border_color(theme::fg_faint())
+            .border_color(theme::border())
             .overflow_hidden()
             .child(
                 div()
                     .flex()
                     .items_center()
                     .justify_between()
-                    .px(px(16.0))
-                    .py(px(10.0))
+                    .px(ui::s(16.0))
+                    .py(ui::s(10.0))
                     .border_b_1()
-                    .border_color(theme::fg_faint())
+                    .border_color(theme::border())
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(6.0))
+                            .gap(ui::s(6.0))
                             .child(
                                 div()
-                                    .text_size(px(14.0))
+                                    .text_size(ui::TEXT_XL)
                                     .text_color(rgb(theme::GOLD))
                                     .child("👥"),
                             )
                             .child(
                                 div()
-                                    .text_size(px(13.0))
+                                    .text_size(ui::TEXT_LG)
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme::fg())
                                     .child("Teams"),
                             )
-                            .child(div().text_size(px(11.0)).text_color(theme::fg_dim()).child(
-                                if is_empty {
-                                    "none yet".to_string()
-                                } else {
-                                    format!(
-                                        "{} team{}",
-                                        teams.len(),
-                                        if teams.len() == 1 { "" } else { "s" }
-                                    )
-                                },
-                            )),
+                            .child(
+                                div()
+                                    .text_size(ui::TEXT_BASE)
+                                    .text_color(theme::fg_dim())
+                                    .child(if is_empty {
+                                        "none yet".to_string()
+                                    } else {
+                                        format!(
+                                            "{} team{}",
+                                            teams.len(),
+                                            if teams.len() == 1 { "" } else { "s" }
+                                        )
+                                    }),
+                            ),
                     )
                     .child(
                         div()
                             .id("dash-teams-manage")
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(rgb(theme::GOLD))
                             .cursor_pointer()
                             .hover(|s| s.bg(theme::bg_hover()))
-                            .px(px(6.0))
-                            .py(px(2.0))
-                            .rounded(px(4.0))
+                            .px(ui::s(6.0))
+                            .py(ui::s(2.0))
+                            .rounded(ui::s(4.0))
                             .on_click(cx.listener(|this, _e, _w, cx| {
                                 this.navigate(Panel::Teams, cx);
                             }))
@@ -8647,9 +8889,9 @@ impl FermiConsole {
             .when(is_empty, |el| {
                 el.child(
                     div()
-                        .p(px(16.0))
-                        .text_size(px(11.0))
-                        .text_color(theme::fg_faint())
+                        .p(ui::s(16.0))
+                        .text_size(ui::TEXT_BASE)
+                        .text_color(theme::fg_muted())
                         .child(
                             "You're not in any teams yet. Create one from the \
                              Teams panel to share forecasts with collaborators.",
@@ -8662,8 +8904,8 @@ impl FermiConsole {
                         .flex()
                         .flex_row()
                         .flex_wrap()
-                        .gap(px(10.0))
-                        .p(px(12.0))
+                        .gap(ui::s(10.0))
+                        .p(ui::s(12.0))
                         .children(
                             teams
                                 .into_iter()
@@ -8725,18 +8967,18 @@ impl FermiConsole {
             .id(SharedString::from(format!("dash-team-{}", tid)))
             .flex()
             .flex_col()
-            .gap(px(8.0))
-            .px(px(12.0))
-            .py(px(10.0))
-            .min_w(px(200.0))
-            .max_w(px(280.0))
+            .gap(ui::s(8.0))
+            .px(ui::s(12.0))
+            .py(ui::s(10.0))
+            .min_w(ui::s(200.0))
+            .max_w(ui::s(280.0))
             .flex_grow()
-            .rounded(px(6.0))
+            .rounded(ui::s(6.0))
             .border_1()
             .border_color(if is_hovered {
                 rgb(accent).into()
             } else {
-                theme::fg_faint()
+                theme::fg_muted()
             })
             .bg(if is_hovered {
                 theme::bg_hover()
@@ -8769,17 +9011,17 @@ impl FermiConsole {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap(px(10.0))
+                    .gap(ui::s(10.0))
                     .child(
                         div()
-                            .w(px(32.0))
-                            .h(px(32.0))
+                            .w(ui::s(32.0))
+                            .h(ui::s(32.0))
                             .flex()
                             .items_center()
                             .justify_center()
-                            .rounded(px(6.0))
+                            .rounded(ui::s(6.0))
                             .bg(rgb(accent))
-                            .text_size(px(14.0))
+                            .text_size(ui::TEXT_XL)
                             .font_weight(FontWeight::BOLD)
                             .text_color(rgb(theme::BG))
                             .child(initial),
@@ -8792,14 +9034,14 @@ impl FermiConsole {
                             .overflow_hidden()
                             .child(
                                 div()
-                                    .text_size(px(12.0))
+                                    .text_size(ui::TEXT_MD)
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme::fg())
                                     .child(name),
                             )
                             .child(
                                 div()
-                                    .text_size(px(10.0))
+                                    .text_size(ui::TEXT_SM)
                                     .text_color(theme::fg_dim())
                                     .child(subline),
                             ),
@@ -8821,12 +9063,12 @@ impl FermiConsole {
     fn render_team_card_roster_peek(&self, team_id: &str, accent: u32) -> AnyElement {
         let Some(detail) = self.team_details.get(team_id) else {
             return div()
-                .px(px(4.0))
-                .py(px(4.0))
+                .px(ui::s(4.0))
+                .py(ui::s(4.0))
                 .border_t_1()
-                .border_color(theme::fg_faint())
-                .text_size(px(10.0))
-                .text_color(theme::fg_faint())
+                .border_color(theme::border())
+                .text_size(ui::TEXT_SM)
+                .text_color(theme::fg_muted())
                 .child("roster loading…")
                 .into_any_element();
         };
@@ -8851,22 +9093,22 @@ impl FermiConsole {
             .flex()
             .flex_row()
             .flex_wrap()
-            .gap(px(4.0))
-            .px(px(4.0))
-            .py(px(6.0))
+            .gap(ui::s(4.0))
+            .px(ui::s(4.0))
+            .py(ui::s(6.0))
             .border_t_1()
-            .border_color(theme::fg_faint());
+            .border_color(theme::border());
 
         for label in show {
             row = row.child(
                 div()
-                    .px(px(6.0))
-                    .py(px(2.0))
-                    .rounded(px(4.0))
+                    .px(ui::s(6.0))
+                    .py(ui::s(2.0))
+                    .rounded(ui::s(4.0))
                     .bg(theme::bg_elevated())
                     .border_1()
                     .border_color(rgb(accent))
-                    .text_size(px(10.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(theme::fg())
                     .child(truncate(label, 20)),
             );
@@ -8874,9 +9116,9 @@ impl FermiConsole {
         if overflow > 0 {
             row = row.child(
                 div()
-                    .px(px(6.0))
-                    .py(px(2.0))
-                    .text_size(px(10.0))
+                    .px(ui::s(6.0))
+                    .py(ui::s(2.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(theme::fg_dim())
                     .child(format!("+{}", overflow)),
             );
@@ -8931,37 +9173,40 @@ impl FermiConsole {
             .flex_col()
             .flex_grow()
             .bg(theme::bg_elevated())
-            .rounded(px(8.0))
+            .rounded(ui::s(8.0))
             .border_1()
-            .border_color(theme::fg_faint())
+            .border_color(theme::border())
             .child(
                 div()
                     .flex()
                     .items_center()
                     .justify_between()
-                    .px(px(16.0))
-                    .py(px(10.0))
+                    .px(ui::s(16.0))
+                    .py(ui::s(10.0))
                     .border_b_1()
-                    .border_color(theme::fg_faint())
+                    .border_color(theme::border())
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
+                            .gap(ui::s(8.0))
                             .child(
                                 div()
-                                    .text_size(px(13.0))
+                                    .text_size(ui::TEXT_LG)
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme::fg())
                                     .child("Recent Activity"),
                             )
-                            .child(div().text_size(px(11.0)).text_color(theme::fg_dim()).child(
-                                if n == 0 {
-                                    "nothing yet".to_string()
-                                } else {
-                                    format!("{} event{}", n, if n == 1 { "" } else { "s" })
-                                },
-                            )),
+                            .child(
+                                div()
+                                    .text_size(ui::TEXT_BASE)
+                                    .text_color(theme::fg_dim())
+                                    .child(if n == 0 {
+                                        "nothing yet".to_string()
+                                    } else {
+                                        format!("{} event{}", n, if n == 1 { "" } else { "s" })
+                                    }),
+                            ),
                     )
                     // Source filter chips — now live. Mine + Team
                     // gate on ActivityItem.source; Marketplace stays
@@ -8970,7 +9215,7 @@ impl FermiConsole {
                     .child(
                         div()
                             .flex()
-                            .gap(px(6.0))
+                            .gap(ui::s(6.0))
                             .child(activity_filter_chip(
                                 "act-chip-all",
                                 &format!("All ({})", total),
@@ -9003,11 +9248,16 @@ impl FermiConsole {
                     ),
             )
             .child(
-                div().flex().flex_col().p(px(8.0)).gap(px(2.0)).children(
-                    filtered
-                        .into_iter()
-                        .map(|item| self.render_activity_item(item, cx)),
-                ),
+                div()
+                    .flex()
+                    .flex_col()
+                    .p(ui::s(8.0))
+                    .gap(ui::s(2.0))
+                    .children(
+                        filtered
+                            .into_iter()
+                            .map(|item| self.render_activity_item(item, cx)),
+                    ),
             )
     }
 
@@ -9023,29 +9273,29 @@ impl FermiConsole {
             .flex_col()
             .flex_grow()
             .bg(theme::bg_elevated())
-            .rounded(px(8.0))
+            .rounded(ui::s(8.0))
             .border_1()
-            .border_color(theme::fg_faint())
-            .p(px(16.0))
+            .border_color(theme::border())
+            .p(ui::s(16.0))
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(theme::fg_dim())
                     .child(label.to_string()),
             )
             .child(
                 div()
-                    .text_size(px(28.0))
+                    .text_size(ui::TEXT_7XL)
                     .text_color(rgb(accent))
                     .font_weight(FontWeight::BOLD)
-                    .mt(px(8.0))
+                    .mt(ui::s(8.0))
                     .child(value.to_string()),
             )
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(theme::fg_dim())
-                    .mt(px(4.0))
+                    .mt(ui::s(4.0))
                     .child(subtitle.to_string()),
             )
     }
@@ -9119,12 +9369,18 @@ impl FermiConsole {
             return div()
                 .flex()
                 .items_center()
-                .gap(px(4.0))
-                .child(div().w(px(8.0)).h(px(8.0)).rounded(px(4.0)).bg(rgb(color)))
+                .gap(ui::s(4.0))
                 .child(
                     div()
-                        .text_size(px(9.0))
-                        .text_color(theme::fg_faint())
+                        .w(ui::s(8.0))
+                        .h(ui::s(8.0))
+                        .rounded(ui::s(4.0))
+                        .bg(rgb(color)),
+                )
+                .child(
+                    div()
+                        .text_size(ui::TEXT_XS)
+                        .text_color(theme::fg_muted())
                         .child(truncate(&label, 14)),
                 )
                 .into_any_element();
@@ -9138,9 +9394,9 @@ impl FermiConsole {
         for (i, tid) in visible.enumerate() {
             let color = team_color(tid);
             let dot = div()
-                .w(px(9.0))
-                .h(px(9.0))
-                .rounded(px(5.0))
+                .w(ui::s(9.0))
+                .h(ui::s(9.0))
+                .rounded(ui::s(5.0))
                 .bg(rgb(color))
                 // Thin dark border between overlapping dots so the
                 // colour boundaries stay legible against the row's bg.
@@ -9148,14 +9404,14 @@ impl FermiConsole {
                 .border_color(theme::bg_elevated());
             // Overlap all but the first dot by a few pixels so the
             // stack reads as one unit.
-            stack = stack.child(if i == 0 { dot } else { dot.ml(px(-3.0)) });
+            stack = stack.child(if i == 0 { dot } else { dot.ml(ui::s(-3.0)) });
         }
         if overflow > 0 {
             stack = stack.child(
                 div()
-                    .ml(px(4.0))
-                    .text_size(px(9.0))
-                    .text_color(theme::fg_faint())
+                    .ml(ui::s(4.0))
+                    .text_size(ui::TEXT_XS)
+                    .text_color(theme::fg_muted())
                     .child(format!("+{}", overflow)),
             );
         }
@@ -9204,10 +9460,10 @@ impl FermiConsole {
             .id(SharedString::from(format!("activity-{}", item.forecast_id)))
             .flex()
             .items_center()
-            .gap(px(12.0))
-            .px(px(12.0))
-            .py(px(8.0))
-            .rounded(px(4.0))
+            .gap(ui::s(12.0))
+            .px(ui::s(12.0))
+            .py(ui::s(8.0))
+            .rounded(ui::s(4.0))
             .cursor_pointer()
             .hover(|style| style.bg(theme::bg_hover()))
             .on_click(cx.listener(move |this, _event, _window, cx| {
@@ -9215,22 +9471,22 @@ impl FermiConsole {
             }))
             .child(
                 div()
-                    .text_size(px(14.0))
+                    .text_size(ui::TEXT_XL)
                     .text_color(rgb(item.color))
-                    .w(px(20.0))
+                    .w(ui::s(20.0))
                     .child(item.icon),
             )
             .child(
                 div()
                     .flex_grow()
-                    .text_size(px(13.0))
+                    .text_size(ui::TEXT_LG)
                     .text_color(theme::fg())
                     .child(item.text.clone()),
             )
             .child(self.render_team_dots(&team_ids))
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(theme::fg_dim())
                     .child(item.time.clone()),
             )
@@ -9262,30 +9518,35 @@ impl FermiConsole {
                     .flex()
                     .flex_col()
                     .items_center()
-                    .gap(px(28.0))
-                    .w(px(520.0))
+                    .gap(ui::s(28.0))
+                    .w(ui::s(520.0))
                     .child(
                         // Wordmark + tagline block.
                         div()
                             .flex()
                             .flex_col()
                             .items_center()
-                            .gap(px(10.0))
+                            .gap(ui::s(10.0))
                             .child(
                                 div()
-                                    .text_size(px(32.0))
+                                    .text_size(ui::TEXT_8XL)
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(theme::cyan())
                                     .child("Fermi Console"),
                             )
-                            .child(div().text_size(px(13.0)).text_color(theme::fg_dim()).child(
-                                "Probabilistic forecasting workspace \
-                                         with AI research agents.",
-                            ))
                             .child(
                                 div()
-                                    .text_size(px(10.0))
-                                    .text_color(theme::fg_faint())
+                                    .text_size(ui::TEXT_LG)
+                                    .text_color(theme::fg_dim())
+                                    .child(
+                                        "Probabilistic forecasting workspace \
+                                         with AI research agents.",
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(ui::TEXT_SM)
+                                    .text_color(theme::fg_muted())
                                     .child(format!("v{}  •  BETA", env!("CARGO_PKG_VERSION"))),
                             ),
                     )
@@ -9296,16 +9557,16 @@ impl FermiConsole {
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(4.0))
+                            .gap(ui::s(4.0))
                             .items_center()
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(theme::fg_dim())
                             .child("New here? Signing in creates your account.")
                             .child("Every new account gets 100 free credits to start.")
                             .child(
                                 div()
-                                    .text_size(px(10.0))
-                                    .text_color(theme::fg_faint())
+                                    .text_size(ui::TEXT_SM)
+                                    .text_color(theme::fg_muted())
                                     .child(
                                         "Accounts are hosted by Agent Bestiary World, \
                                          the shared backend that powers Fermi Console.",
@@ -9321,24 +9582,24 @@ impl FermiConsole {
         div()
             .flex()
             .flex_col()
-            .gap(px(16.0))
-            .p(px(24.0))
+            .gap(ui::s(16.0))
+            .p(ui::s(24.0))
             .bg(theme::bg_elevated())
-            .rounded(px(8.0))
+            .rounded(ui::s(8.0))
             .border_1()
-            .border_color(theme::fg_faint())
-            .max_w(px(480.0))
+            .border_color(theme::border())
+            .max_w(ui::s(480.0))
             .overflow_hidden()
             .child(
                 div()
-                    .text_size(px(18.0))
+                    .text_size(ui::TEXT_3XL)
                     .text_color(theme::cyan())
                     .font_weight(FontWeight::BOLD)
                     .child("Sign In to Agent Bestiary World"),
             )
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(ui::TEXT_MD)
                     .text_color(theme::fg_dim())
                     .child("Sign in to use AI research agents, save forecasts, and compete on the leaderboard."),
             )
@@ -9346,19 +9607,19 @@ impl FermiConsole {
             .child(
                 div()
                     .flex()
-                    .gap(px(12.0))
+                    .gap(ui::s(12.0))
                     .child(
                         div()
                             .id("oauth-google")
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
-                            .px(px(20.0))
-                            .py(px(10.0))
-                            .rounded(px(6.0))
+                            .gap(ui::s(8.0))
+                            .px(ui::s(20.0))
+                            .py(ui::s(10.0))
+                            .rounded(ui::s(6.0))
                             .bg(rgb(0xFFFFFF))
                             .text_color(rgb(0x333333))
-                            .text_size(px(13.0))
+                            .text_size(ui::TEXT_LG)
                             .font_weight(FontWeight::SEMIBOLD)
                             .cursor_pointer()
                             .hover(|s| s.opacity(0.9))
@@ -9373,13 +9634,13 @@ impl FermiConsole {
                             .id("oauth-github")
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
-                            .px(px(20.0))
-                            .py(px(10.0))
-                            .rounded(px(6.0))
+                            .gap(ui::s(8.0))
+                            .px(ui::s(20.0))
+                            .py(ui::s(10.0))
+                            .rounded(ui::s(6.0))
                             .bg(rgb(0x24292E))
                             .text_color(rgb(0xFFFFFF))
-                            .text_size(px(13.0))
+                            .text_size(ui::TEXT_LG)
                             .font_weight(FontWeight::SEMIBOLD)
                             .cursor_pointer()
                             .hover(|s| s.opacity(0.9))
@@ -9394,7 +9655,7 @@ impl FermiConsole {
             .when(self.sign_in_loading, |el| {
                 el.child(
                     div()
-                        .text_size(px(12.0))
+                        .text_size(ui::TEXT_MD)
                         .text_color(theme::gold())
                         .child(if self.oauth_port.is_some() {
                             "Waiting for sign-in in your browser…"
@@ -9407,7 +9668,7 @@ impl FermiConsole {
             .when(self.sign_in_error.is_some(), |el| {
                 el.child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(theme::red())
                         .child(
                             self.sign_in_error
@@ -9421,49 +9682,49 @@ impl FermiConsole {
             .when(self.sign_in_fallback_message, |el| {
                 el.child(
                     div()
-                        .px(px(12.0))
-                        .py(px(10.0))
+                        .px(ui::s(12.0))
+                        .py(ui::s(10.0))
                         .bg(rgb(0x2A2D3A))
-                        .rounded(px(6.0))
+                        .rounded(ui::s(6.0))
                         .border_1()
                         .border_color(theme::gold())
                         .flex()
                         .flex_col()
-                        .gap(px(6.0))
+                        .gap(ui::s(6.0))
                         .child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(ui::TEXT_MD)
                                 .text_color(theme::gold())
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child("Almost there! You signed in on ABW."),
                         )
                         .child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(theme::fg_dim())
                                 .child("Copy your session token from your browser:"),
                         )
                         .child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(theme::fg())
                                 .child("1. Open agent-bestiary.world in your browser"),
                         )
                         .child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(theme::fg())
                                 .child("2. Open DevTools (F12) → Application → Cookies"),
                         )
                         .child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(theme::fg())
                                 .child("3. Copy the value of 'abw_session'"),
                         )
                         .child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(theme::fg())
                                 .child("4. Paste it below and click Connect"),
                         ),
@@ -9474,14 +9735,14 @@ impl FermiConsole {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(8.0))
-                    .pt(px(8.0))
+                    .gap(ui::s(8.0))
+                    .pt(ui::s(8.0))
                     .border_t_1()
-                    .border_color(theme::fg_faint())
+                    .border_color(theme::border())
                     .child(
                         div()
-                            .text_size(px(10.0))
-                            .text_color(theme::fg_faint())
+                            .text_size(ui::TEXT_SM)
+                            .text_color(theme::fg_muted())
                             .child(if self.sign_in_fallback_message {
                                 "Paste your session token here:"
                             } else {
@@ -9491,18 +9752,18 @@ impl FermiConsole {
                     .child(
                         div()
                             .flex()
-                            .gap(px(8.0))
+                            .gap(ui::s(8.0))
                             .items_end()
                             .child(div().flex_grow().overflow_hidden().child(self.sign_in_token_input.clone()))
                             .child(
                                 div()
                                     .id("sign-in-btn")
-                                    .px(px(16.0))
-                                    .py(px(7.0))
-                                    .rounded(px(4.0))
+                                    .px(ui::s(16.0))
+                                    .py(ui::s(7.0))
+                                    .rounded(ui::s(4.0))
                                     .bg(rgb(theme::CYAN))
                                     .text_color(rgb(theme::BG_DEEP))
-                                    .text_size(px(12.0))
+                                    .text_size(ui::TEXT_MD)
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .cursor_pointer()
                                     .hover(|s| s.opacity(0.85))
@@ -9513,14 +9774,22 @@ impl FermiConsole {
                             ),
                     ),
             )
+            // No offline escape hatch is advertised here, because there
+            // isn't one. `render()` swaps the entire panel router for this
+            // gate whenever `!self.connected`, so the Composer is not
+            // reachable pre-auth, and `save_forecast` no longer writes a
+            // local copy — the server is the only store. This slot used to
+            // claim "you can also use the app offline — Ctrl+4 to open the
+            // Composer and create local forecasts", which was MVP-era copy
+            // that outlived both of those facts.
             .child(
                 div()
-                    .text_size(px(10.0))
-                    .text_color(theme::fg_faint())
-                    .child(format!(
-                        "You can also use the app offline — {} to open the Composer and create local forecasts.",
-                        keys::chord("4")
-                    )),
+                    .text_size(ui::TEXT_SM)
+                    .text_color(theme::fg_muted())
+                    .child(
+                        "Fermi Console needs a connection — your forecasts \
+                         live on your account, not on this machine.",
+                    ),
             )
     }
 
@@ -10805,22 +11074,22 @@ impl FermiConsole {
             .flex()
             .flex_col()
             .bg(theme::bg_elevated())
-            .rounded(px(8.0))
+            .rounded(ui::s(8.0))
             .border_1()
-            .border_color(theme::fg_faint())
+            .border_color(theme::border())
             // ── Header ───────────────────────────────────────────────
             .child(
                 div()
-                    .px(px(16.0))
-                    .py(px(10.0))
+                    .px(ui::s(16.0))
+                    .py(ui::s(10.0))
                     .border_b_1()
-                    .border_color(theme::fg_faint())
+                    .border_color(theme::border())
                     .flex()
                     .items_center()
                     .justify_between()
                     .child(
                         div()
-                            .text_size(px(13.0))
+                            .text_size(ui::TEXT_LG)
                             .text_color(rgb(theme::BLUE))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(format!("Portfolios ({})", self.portfolios.len())),
@@ -10828,12 +11097,12 @@ impl FermiConsole {
                     .child(
                         div()
                             .id("create-portfolio-btn")
-                            .px(px(10.0))
-                            .py(px(3.0))
-                            .rounded(px(4.0))
+                            .px(ui::s(10.0))
+                            .py(ui::s(3.0))
+                            .rounded(ui::s(4.0))
                             .border_1()
                             .border_color(rgb(theme::CYAN))
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(rgb(theme::CYAN))
                             .cursor_pointer()
                             .hover(|s| s.bg(theme::bg_hover()))
@@ -10849,23 +11118,23 @@ impl FermiConsole {
             .when(self.portfolio_create_showing, |el| {
                 el.child(
                     div()
-                        .px(px(16.0))
-                        .py(px(10.0))
+                        .px(ui::s(16.0))
+                        .py(ui::s(10.0))
                         .border_b_1()
-                        .border_color(theme::fg_faint())
+                        .border_color(theme::border())
                         .flex()
                         .items_center()
-                        .gap(px(8.0))
+                        .gap(ui::s(8.0))
                         .child(div().flex_grow().child(self.portfolio_create_input.clone()))
                         .when(!self.portfolio_create_loading, |el| {
                             el.child(
                                 div()
                                     .id("portfolio-create-submit")
-                                    .px(px(12.0))
-                                    .py(px(5.0))
-                                    .rounded(px(4.0))
+                                    .px(ui::s(12.0))
+                                    .py(ui::s(5.0))
+                                    .rounded(ui::s(4.0))
                                     .bg(rgb(theme::CYAN))
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(rgb(theme::BG))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .cursor_pointer()
@@ -10879,7 +11148,7 @@ impl FermiConsole {
                         .when(self.portfolio_create_loading, |el| {
                             el.child(
                                 div()
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(theme::fg_dim())
                                     .child("Creating…"),
                             )
@@ -10887,10 +11156,10 @@ impl FermiConsole {
                         .child(
                             div()
                                 .id("portfolio-create-cancel")
-                                .px(px(8.0))
-                                .py(px(5.0))
-                                .rounded(px(4.0))
-                                .text_size(px(11.0))
+                                .px(ui::s(8.0))
+                                .py(ui::s(5.0))
+                                .rounded(ui::s(4.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(theme::fg_dim())
                                 .cursor_pointer()
                                 .hover(|s| s.bg(theme::bg_hover()))
@@ -10904,7 +11173,7 @@ impl FermiConsole {
                         .when(self.portfolio_create_error.is_some(), |el| {
                             el.child(
                                 div()
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(theme::red())
                                     .child(
                                         self.portfolio_create_error
@@ -10921,16 +11190,16 @@ impl FermiConsole {
                 div()
                     .flex()
                     .flex_row()
-                    .min_h(px(200.0))
+                    .min_h(ui::s(200.0))
                     // ── Left: portfolio list ──────────────────────────────
                     .child(
                         div()
-                            .w(px(220.0))
+                            .w(ui::s(220.0))
                             .flex_shrink_0()
                             .flex()
                             .flex_col()
                             .border_r_1()
-                            .border_color(theme::fg_faint())
+                            .border_color(theme::border())
                             // Virtual buckets pinned to the top: give
                             // homeless forecasts (shared with me,
                             // unassigned/drafts) a discoverable UX
@@ -10961,10 +11230,10 @@ impl FermiConsole {
                             .when(self.portfolios.is_empty(), |el| {
                                 el.child(
                                     div()
-                                        .px(px(14.0))
-                                        .py(px(12.0))
-                                        .text_size(px(11.0))
-                                        .text_color(theme::fg_faint())
+                                        .px(ui::s(14.0))
+                                        .py(ui::s(12.0))
+                                        .text_size(ui::TEXT_BASE)
+                                        .text_color(theme::fg_muted())
                                         .child("No named portfolios yet."),
                                 )
                             })
@@ -10983,26 +11252,26 @@ impl FermiConsole {
                                     .flex()
                                     .flex_col()
                                     .border_b_1()
-                                    .border_color(theme::fg_faint())
+                                    .border_color(theme::border())
                                     .when(is_selected, |el| el.bg(theme::bg_hover()))
                                     // Rename row
                                     .when(is_rename, |el| {
                                         el.child(
                                             div()
-                                                .px(px(10.0))
-                                                .py(px(6.0))
+                                                .px(ui::s(10.0))
+                                                .py(ui::s(6.0))
                                                 .flex()
                                                 .items_center()
-                                                .gap(px(6.0))
+                                                .gap(ui::s(6.0))
                                                 .child(div().flex_grow().child(self.portfolio_rename_input.clone()))
                                                 .child(
                                                     div()
                                                         .id(SharedString::from(format!("rename-ok-{}", pid4)))
-                                                        .px(px(8.0))
-                                                        .py(px(3.0))
-                                                        .rounded(px(3.0))
+                                                        .px(ui::s(8.0))
+                                                        .py(ui::s(3.0))
+                                                        .rounded(ui::s(3.0))
                                                         .bg(rgb(theme::CYAN))
-                                                        .text_size(px(10.0))
+                                                        .text_size(ui::TEXT_SM)
                                                         .text_color(rgb(theme::BG))
                                                         .font_weight(FontWeight::SEMIBOLD)
                                                         .cursor_pointer()
@@ -11021,9 +11290,9 @@ impl FermiConsole {
                                                 .child(
                                                     div()
                                                         .id(SharedString::from(format!("rename-cancel-{}", pid3)))
-                                                        .px(px(6.0))
-                                                        .py(px(3.0))
-                                                        .text_size(px(10.0))
+                                                        .px(ui::s(6.0))
+                                                        .py(ui::s(3.0))
+                                                        .text_size(ui::TEXT_SM)
                                                         .text_color(theme::fg_dim())
                                                         .cursor_pointer()
                                                         .hover(|s| s.bg(theme::bg_hover()))
@@ -11039,14 +11308,14 @@ impl FermiConsole {
                                     .when(is_confirm_delete && !is_rename, |el| {
                                         el.child(
                                             div()
-                                                .px(px(12.0))
-                                                .py(px(8.0))
+                                                .px(ui::s(12.0))
+                                                .py(ui::s(8.0))
                                                 .flex()
                                                 .flex_col()
-                                                .gap(px(4.0))
+                                                .gap(ui::s(4.0))
                                                 .child(
                                                     div()
-                                                        .text_size(px(10.0))
+                                                        .text_size(ui::TEXT_SM)
                                                         .text_color(theme::red())
                                                         .child("Delete this portfolio?"),
                                                 )
@@ -11054,15 +11323,15 @@ impl FermiConsole {
                                                     div()
                                                         .flex()
                                                         .items_center()
-                                                        .gap(px(6.0))
+                                                        .gap(ui::s(6.0))
                                                         .child(
                                                             div()
                                                                 .id(SharedString::from(format!("del-confirm-{}", pid2)))
-                                                                .px(px(8.0))
-                                                                .py(px(3.0))
-                                                                .rounded(px(3.0))
+                                                                .px(ui::s(8.0))
+                                                                .py(ui::s(3.0))
+                                                                .rounded(ui::s(3.0))
                                                                 .bg(theme::red())
-                                                                .text_size(px(10.0))
+                                                                .text_size(ui::TEXT_SM)
                                                                 .text_color(rgb(theme::BG))
                                                                 .font_weight(FontWeight::SEMIBOLD)
                                                                 .cursor_pointer()
@@ -11075,9 +11344,9 @@ impl FermiConsole {
                                                         .child(
                                                             div()
                                                                 .id(SharedString::from(format!("del-cancel-{}", pid)))
-                                                                .px(px(8.0))
-                                                                .py(px(3.0))
-                                                                .text_size(px(10.0))
+                                                                .px(ui::s(8.0))
+                                                                .py(ui::s(3.0))
+                                                                .text_size(ui::TEXT_SM)
                                                                 .text_color(theme::fg_dim())
                                                                 .cursor_pointer()
                                                                 .hover(|s| s.bg(theme::bg_hover()))
@@ -11099,11 +11368,11 @@ impl FermiConsole {
                                         el.child(
                                             div()
                                                 .id(SharedString::from(format!("portfolio-card-{}", pid_sel)))
-                                                .px(px(12.0))
-                                                .py(px(8.0))
+                                                .px(ui::s(12.0))
+                                                .py(ui::s(8.0))
                                                 .flex()
                                                 .items_center()
-                                                .gap(px(6.0))
+                                                .gap(ui::s(6.0))
                                                 .cursor_pointer()
                                                 .hover(|s| s.bg(theme::bg_hover()))
                                                 .on_click(cx.listener(move |this, _event, _window, cx| {
@@ -11124,7 +11393,7 @@ impl FermiConsole {
                                                 // Portfolio icon
                                                 .child(
                                                     div()
-                                                        .text_size(px(11.0))
+                                                        .text_size(ui::TEXT_BASE)
                                                         .text_color(rgb(theme::BLUE))
                                                         .child("◈"),
                                                 )
@@ -11137,7 +11406,7 @@ impl FermiConsole {
                                                         .overflow_hidden()
                                                         .child(
                                                             div()
-                                                                .text_size(px(12.0))
+                                                                .text_size(ui::TEXT_MD)
                                                                 .text_color(theme::fg())
                                                                 .font_weight(FontWeight::SEMIBOLD)
                                                                 .overflow_hidden()
@@ -11145,8 +11414,8 @@ impl FermiConsole {
                                                         )
                                                         .child(
                                                             div()
-                                                                .text_size(px(10.0))
-                                                                .text_color(theme::fg_faint())
+                                                                .text_size(ui::TEXT_SM)
+                                                                .text_color(theme::fg_muted())
                                                                 .child(format!("{} forecast{}", count, if count == 1 { "" } else { "s" })),
                                                         ),
                                                 )
@@ -11155,12 +11424,12 @@ impl FermiConsole {
                                                     div()
                                                         .flex()
                                                         .items_center()
-                                                        .gap(px(4.0))
+                                                        .gap(ui::s(4.0))
                                                         .child(
                                                             div()
                                                                 .id(SharedString::from(format!("portfolio-rename-btn-{}", pid_ren)))
-                                                                .text_size(px(10.0))
-                                                                .text_color(theme::fg_faint())
+                                                                .text_size(ui::TEXT_SM)
+                                                                .text_color(theme::fg_muted())
                                                                 .cursor_pointer()
                                                                 .hover(|s| s.text_color(rgb(theme::BLUE)))
                                                                 .on_click(cx.listener(move |this, _event, _window, cx| {
@@ -11176,8 +11445,8 @@ impl FermiConsole {
                                                         .child(
                                                             div()
                                                                 .id(SharedString::from(format!("portfolio-delete-btn-{}", pid_del)))
-                                                                .text_size(px(10.0))
-                                                                .text_color(theme::fg_faint())
+                                                                .text_size(ui::TEXT_SM)
+                                                                .text_color(theme::fg_muted())
                                                                 .cursor_pointer()
                                                                 .hover(|s| s.text_color(theme::red()))
                                                                 .on_click(cx.listener(move |this, _event, _window, cx| {
@@ -11213,11 +11482,11 @@ impl FermiConsole {
                                         .flex_grow()
                                         .items_center()
                                         .justify_center()
-                                        .p(px(24.0))
+                                        .p(ui::s(24.0))
                                         .child(
                                             div()
-                                                .text_size(px(12.0))
-                                                .text_color(theme::fg_faint())
+                                                .text_size(ui::TEXT_MD)
+                                                .text_color(theme::fg_muted())
                                                 .child("Select a portfolio to view its forecasts"),
                                         ),
                                 )
@@ -11244,16 +11513,16 @@ impl FermiConsole {
                                     // Portfolio detail header
                                     .child(
                                         div()
-                                            .px(px(14.0))
-                                            .py(px(8.0))
+                                            .px(ui::s(14.0))
+                                            .py(ui::s(8.0))
                                             .border_b_1()
-                                            .border_color(theme::fg_faint())
+                                            .border_color(theme::border())
                                             .flex()
                                             .items_center()
-                                            .gap(px(8.0))
+                                            .gap(ui::s(8.0))
                                             .child(
                                                 div()
-                                                    .text_size(px(13.0))
+                                                    .text_size(ui::TEXT_LG)
                                                     .text_color(theme::fg())
                                                     .font_weight(FontWeight::SEMIBOLD)
                                                     .child(portfolio_title),
@@ -11261,11 +11530,11 @@ impl FermiConsole {
                                             .when(avg_brier.is_some(), move |el| {
                                                 el.child(
                                                     div()
-                                                        .px(px(6.0))
-                                                        .py(px(2.0))
-                                                        .rounded(px(4.0))
+                                                        .px(ui::s(6.0))
+                                                        .py(ui::s(2.0))
+                                                        .rounded(ui::s(4.0))
                                                         .bg(theme::bg_hover())
-                                                        .text_size(px(10.0))
+                                                        .text_size(ui::TEXT_SM)
                                                         .text_color(rgb(theme::CYAN))
                                                         .child(format!("avg Brier {:.3}", avg_brier.unwrap())),
                                                 )
@@ -11283,16 +11552,16 @@ impl FermiConsole {
                                                 let pid_act = pid.clone();
                                                 div()
                                                     .id("portfolio-activity-btn")
-                                                    .px(px(10.0))
-                                                    .py(px(3.0))
-                                                    .rounded(px(4.0))
+                                                    .px(ui::s(10.0))
+                                                    .py(ui::s(3.0))
+                                                    .rounded(ui::s(4.0))
                                                     .border_1()
                                                     .border_color(if showing {
                                                         rgb(theme::GOLD)
                                                     } else {
-                                                        rgb(theme::FG_FAINT)
+                                                        rgb(theme::FG_MUTED)
                                                     })
-                                                    .text_size(px(11.0))
+                                                    .text_size(ui::TEXT_BASE)
                                                     .text_color(if showing {
                                                         rgb(theme::GOLD)
                                                     } else {
@@ -11321,16 +11590,16 @@ impl FermiConsole {
                                             .child(
                                                 div()
                                                     .id("portfolio-share-btn")
-                                                    .px(px(10.0))
-                                                    .py(px(3.0))
-                                                    .rounded(px(4.0))
+                                                    .px(ui::s(10.0))
+                                                    .py(ui::s(3.0))
+                                                    .rounded(ui::s(4.0))
                                                     .border_1()
                                                     .border_color(if self.portfolio_share_showing {
                                                         rgb(theme::CYAN)
                                                     } else {
-                                                        rgb(theme::FG_FAINT)
+                                                        rgb(theme::FG_MUTED)
                                                     })
-                                                    .text_size(px(11.0))
+                                                    .text_size(ui::TEXT_BASE)
                                                     .text_color(if self.portfolio_share_showing {
                                                         rgb(theme::CYAN)
                                                     } else {
@@ -11420,9 +11689,9 @@ impl FermiConsole {
                                     .when(show_numbers && is_loading, |el| {
                                         el.child(
                                             div()
-                                                .p(px(14.0))
-                                                .text_size(px(11.0))
-                                                .text_color(theme::fg_faint())
+                                                .p(ui::s(14.0))
+                                                .text_size(ui::TEXT_BASE)
+                                                .text_color(theme::fg_muted())
                                                 .child("Loading forecasts…"),
                                         )
                                     })
@@ -11430,9 +11699,9 @@ impl FermiConsole {
                                     .when(show_numbers && !is_loading && forecasts.is_empty(), |el| {
                                         el.child(
                                             div()
-                                                .p(px(14.0))
-                                                .text_size(px(11.0))
-                                                .text_color(theme::fg_faint())
+                                                .p(ui::s(14.0))
+                                                .text_size(ui::TEXT_BASE)
+                                                .text_color(theme::fg_muted())
                                                 .child("No forecasts in this portfolio yet."),
                                         )
                                     })
@@ -11533,17 +11802,17 @@ impl FermiConsole {
 
                                         // Toolbar: filter input + sort buttons + count
                                         let mut toolbar = div()
-                                            .px(px(14.0))
-                                            .py(px(8.0))
+                                            .px(ui::s(14.0))
+                                            .py(ui::s(8.0))
                                             .border_b_1()
-                                            .border_color(theme::fg_faint())
+                                            .border_color(theme::border())
                                             .flex()
                                             .items_center()
-                                            .gap(px(8.0))
+                                            .gap(ui::s(8.0))
                                             .child(
                                                 div()
-                                                    .text_size(px(10.0))
-                                                    .text_color(theme::fg_faint())
+                                                    .text_size(ui::TEXT_SM)
+                                                    .text_color(theme::fg_muted())
                                                     .child("🔍"),
                                             )
                                             .child(
@@ -11560,18 +11829,18 @@ impl FermiConsole {
                                                         "pf-sort-{:?}",
                                                         mode
                                                     )))
-                                                    .px(px(8.0))
-                                                    .py(px(2.0))
-                                                    .rounded(px(4.0))
+                                                    .px(ui::s(8.0))
+                                                    .py(ui::s(2.0))
+                                                    .rounded(ui::s(4.0))
                                                     .border_1()
                                                     .border_color(
-                                                        if is_active { theme::cyan() } else { theme::fg_faint() }
+                                                        if is_active { theme::cyan() } else { theme::fg_muted() }
                                                     )
-                                                    .text_size(px(10.0))
+                                                    .text_size(ui::TEXT_SM)
                                                     .text_color(
                                                         if is_active { theme::cyan() } else { theme::fg_dim() }
                                                     )
-                                                    .text_size(px(10.0))
+                                                    .text_size(ui::TEXT_SM)
                                                     .text_color(
                                                         if is_active { theme::cyan() } else { theme::fg_dim() }
                                                     )
@@ -11589,8 +11858,8 @@ impl FermiConsole {
                                         }
                                         toolbar = toolbar.child(
                                             div()
-                                                .text_size(px(10.0))
-                                                .text_color(theme::fg_faint())
+                                                .text_size(ui::TEXT_SM)
+                                                .text_color(theme::fg_muted())
                                                 .child(format!(
                                                     "{}/{}",
                                                     shown_count, total_count_for_summary
@@ -11612,17 +11881,17 @@ impl FermiConsole {
                                             ("resolved", "✓ resolved"),
                                         ];
                                         let mut chip_row = div()
-                                            .px(px(14.0))
-                                            .py(px(6.0))
+                                            .px(ui::s(14.0))
+                                            .py(ui::s(6.0))
                                             .border_b_1()
-                                            .border_color(theme::fg_faint())
+                                            .border_color(theme::border())
                                             .flex()
                                             .items_center()
-                                            .gap(px(6.0))
+                                            .gap(ui::s(6.0))
                                             .child(
                                                 div()
-                                                    .text_size(px(9.0))
-                                                    .text_color(theme::fg_faint())
+                                                    .text_size(ui::TEXT_XS)
+                                                    .text_color(theme::fg_muted())
                                                     .child("FILTER:"),
                                             );
                                         for (key, label) in chip_defs {
@@ -11631,13 +11900,13 @@ impl FermiConsole {
                                             chip_row = chip_row.child(
                                                 div()
                                                     .id(SharedString::from(format!("pf-chip-{}", key)))
-                                                    .px(px(8.0))
-                                                    .py(px(2.0))
-                                                    .rounded(px(10.0))
+                                                    .px(ui::s(8.0))
+                                                    .py(ui::s(2.0))
+                                                    .rounded(ui::s(10.0))
                                                     .border_1()
-                                                    .border_color(if is_on { theme::cyan() } else { theme::fg_faint() })
+                                                    .border_color(if is_on { theme::cyan() } else { theme::fg_muted() })
                                                     .bg(if is_on { theme::bg_active() } else { theme::bg_elevated() })
-                                                    .text_size(px(10.0))
+                                                    .text_size(ui::TEXT_SM)
                                                     .text_color(if is_on { theme::cyan() } else { theme::fg_dim() })
                                                     .cursor_pointer()
                                                     .hover(|s| s.bg(theme::bg_hover()))
@@ -11659,9 +11928,9 @@ impl FermiConsole {
                                             chip_row = chip_row.child(
                                                 div()
                                                     .id(SharedString::from("pf-chip-clear"))
-                                                    .px(px(6.0))
-                                                    .py(px(2.0))
-                                                    .text_size(px(9.0))
+                                                    .px(ui::s(6.0))
+                                                    .py(ui::s(2.0))
+                                                    .text_size(ui::TEXT_XS)
                                                     .text_color(theme::fg_dim())
                                                     .cursor_pointer()
                                                     .hover(|s| s.text_color(theme::red()))
@@ -11740,7 +12009,7 @@ impl FermiConsole {
             Some(d) if d.abs() >= 10.0 => theme::gold(),
             Some(d) if d.abs() >= 3.0 => theme::cyan(),
             Some(_) => theme::fg_dim(),
-            None => theme::fg_faint(),
+            None => theme::fg_muted(),
         };
         let movement_n = f.n_recent_updates.unwrap_or(0);
 
@@ -11767,11 +12036,11 @@ impl FermiConsole {
 
         let mut compact = div()
             .id(SharedString::from(format!("pf-row-{}", fid)))
-            .px(px(10.0))
-            .py(px(7.0))
+            .px(ui::s(10.0))
+            .py(ui::s(7.0))
             .flex()
             .items_center()
-            .gap(px(8.0))
+            .gap(ui::s(8.0))
             .cursor_pointer()
             .hover(|s| s.bg(theme::bg_hover()))
             .on_click(cx.listener(move |this, _event, _window, cx| {
@@ -11781,8 +12050,8 @@ impl FermiConsole {
             .child(
                 div()
                     .id(SharedString::from(format!("pf-chev-{}", fid)))
-                    .w(px(16.0))
-                    .text_size(px(10.0))
+                    .w(ui::s(19.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(if is_expanded {
                         theme::cyan()
                     } else {
@@ -11804,12 +12073,16 @@ impl FermiConsole {
                     }))
                     .child(chevron_glyph),
             )
-            // Title — truncated for scan-ability.
+            // Title — truncated for scan-ability. The width tracks the
+            // 44-character budget below: at the new body size those
+            // characters need ~330 design px, and the box clips rather
+            // than wrapping, so under-sizing it eats the truncation
+            // ellipsis and then the text before it.
             .child(
                 div()
-                    .w(px(280.0))
+                    .w(ui::s(331.0))
                     .overflow_hidden()
-                    .text_size(px(11.0))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(theme::fg())
                     .child(truncate(&f.question_text, 44)),
             )
@@ -11822,8 +12095,8 @@ impl FermiConsole {
             // Probability numeric.
             .child(
                 div()
-                    .w(px(38.0))
-                    .text_size(px(10.0))
+                    .w(ui::s(46.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(rgb(prob_color))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(format!("{}%", prob_pct)),
@@ -11831,40 +12104,40 @@ impl FermiConsole {
             // Δ vs crowd chip — anchored to a fixed width so rows align.
             .child({
                 let mut chip = div()
-                    .w(px(58.0))
-                    .text_size(px(10.0))
+                    .w(ui::s(70.0))
+                    .text_size(ui::TEXT_SM)
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(delta_color);
                 if let Some(s) = delta_str.clone() {
                     chip = chip.child(s);
                 } else {
-                    chip = chip.child(div().text_color(theme::fg_faint()).child("no crowd"));
+                    chip = chip.child(div().text_color(theme::fg_muted()).child("no crowd"));
                 }
                 chip
             })
             // Activity chip — present only when the forecast moved.
             .child({
-                let mut cell = div().w(px(48.0)).text_size(px(10.0));
+                let mut cell = div().w(ui::s(58.0)).text_size(ui::TEXT_SM);
                 if movement_n > 0 {
                     cell = cell
                         .text_color(rgb(theme::BLUE))
                         .child(format!("↑ {}× 7d", movement_n));
                 } else {
-                    cell = cell.text_color(theme::fg_faint()).child("quiet");
+                    cell = cell.text_color(theme::fg_muted()).child("quiet");
                 }
                 cell
             })
             // Recent activity (relative time).
             .child(
                 div()
-                    .w(px(42.0))
-                    .text_size(px(10.0))
-                    .text_color(theme::fg_faint())
+                    .w(ui::s(50.0))
+                    .text_size(ui::TEXT_SM)
+                    .text_color(theme::fg_muted())
                     .child(recent_str),
             )
             // Sharing badge — fixed slot so rows align even when absent.
             .child({
-                let mut cell = div().w(px(16.0)).text_size(px(10.0));
+                let mut cell = div().w(ui::s(19.0)).text_size(ui::TEXT_SM);
                 if let Some((icon, color)) = share_badge {
                     cell = cell.text_color(color).child(icon);
                 }
@@ -11873,8 +12146,8 @@ impl FermiConsole {
             // Status.
             .child(
                 div()
-                    .w(px(52.0))
-                    .text_size(px(10.0))
+                    .w(ui::s(62.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(rgb(status_color))
                     .child(f.status.clone()),
             );
@@ -11883,8 +12156,8 @@ impl FermiConsole {
         if let Some(bs) = brier_str.clone() {
             compact = compact.child(
                 div()
-                    .w(px(48.0))
-                    .text_size(px(10.0))
+                    .w(ui::s(58.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(theme::fg_dim())
                     .child(format!("B {}", bs)),
             );
@@ -11903,37 +12176,37 @@ impl FermiConsole {
                                                         // /forecast/:id fetch. Reserved.
 
             let mut panel = div()
-                .px(px(38.0)) // indent past the chevron + title column
-                .py(px(8.0))
+                .px(ui::s(38.0)) // indent past the chevron + title column
+                .py(ui::s(8.0))
                 .bg(theme::bg_active())
                 .border_l_2()
                 .border_color(rgb(theme::CYAN))
                 .flex()
                 .flex_col()
-                .gap(px(6.0))
+                .gap(ui::s(6.0))
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(theme::fg())
                         .child(f.question_text.clone()),
                 );
 
             // Tag chips.
             if !tags.is_empty() {
-                let mut tag_row = div().flex().flex_wrap().gap(px(4.0)).child(
+                let mut tag_row = div().flex().flex_wrap().gap(ui::s(4.0)).child(
                     div()
-                        .text_size(px(9.0))
-                        .text_color(theme::fg_faint())
+                        .text_size(ui::TEXT_XS)
+                        .text_color(theme::fg_muted())
                         .child("TAGS:"),
                 );
                 for t in tags {
                     tag_row = tag_row.child(
                         div()
-                            .px(px(6.0))
-                            .py(px(1.0))
-                            .rounded(px(3.0))
+                            .px(ui::s(6.0))
+                            .py(ui::s(1.0))
+                            .rounded(ui::s(3.0))
                             .bg(theme::bg_elevated())
-                            .text_size(px(9.0))
+                            .text_size(ui::TEXT_XS)
                             .text_color(theme::fg_dim())
                             .child(t),
                     );
@@ -11945,7 +12218,7 @@ impl FermiConsole {
             let mut metrics = div()
                 .flex()
                 .flex_wrap()
-                .gap(px(14.0))
+                .gap(ui::s(14.0))
                 .child(render_detail_kv(
                     "Model",
                     &format!("{:.1}%", prob_val * 100.0),
@@ -11976,7 +12249,7 @@ impl FermiConsole {
                 metrics = metrics.child(
                     div()
                         .id(SharedString::from(format!("pf-pm-open-{}", fid)))
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(theme::purple())
                         .cursor_pointer()
                         .hover(|s| s.text_color(theme::cyan()))
@@ -11991,7 +12264,7 @@ impl FermiConsole {
             if let Some(rn) = resolution_note {
                 panel = panel.child(
                     div()
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(theme::fg_dim())
                         .child(rn),
                 );
@@ -12002,16 +12275,16 @@ impl FermiConsole {
             panel = panel.child(
                 div()
                     .flex()
-                    .gap(px(8.0))
+                    .gap(ui::s(8.0))
                     .child(
                         div()
                             .id(SharedString::from(format!("pf-open-{}", fid)))
-                            .px(px(10.0))
-                            .py(px(3.0))
-                            .rounded(px(4.0))
+                            .px(ui::s(10.0))
+                            .py(ui::s(3.0))
+                            .rounded(ui::s(4.0))
                             .border_1()
                             .border_color(rgb(theme::CYAN))
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(rgb(theme::CYAN))
                             .cursor_pointer()
                             .hover(|s| s.bg(theme::bg_hover()))
@@ -12023,12 +12296,12 @@ impl FermiConsole {
                     .child(
                         div()
                             .id(SharedString::from(format!("pf-remove-{}", fid)))
-                            .px(px(10.0))
-                            .py(px(3.0))
-                            .rounded(px(4.0))
+                            .px(ui::s(10.0))
+                            .py(ui::s(3.0))
+                            .rounded(ui::s(4.0))
                             .border_1()
-                            .border_color(theme::fg_faint())
-                            .text_size(px(10.0))
+                            .border_color(theme::border())
+                            .text_size(ui::TEXT_SM)
                             .text_color(theme::fg_dim())
                             .cursor_pointer()
                             .hover(|s| s.bg(theme::bg_hover()).text_color(theme::red()))
@@ -12050,7 +12323,7 @@ impl FermiConsole {
         // rows visually separate whether or not one is expanded.
         div()
             .border_b_1()
-            .border_color(theme::fg_faint())
+            .border_color(theme::border())
             .child(compact)
             .when_some(drill, |el, d| el.child(d))
     }
@@ -12077,20 +12350,20 @@ impl FermiConsole {
         });
 
         let container = div()
-            .px(px(24.0))
-            .py(px(8.0))
+            .px(ui::s(24.0))
+            .py(ui::s(8.0))
             .border_t_1()
-            .border_color(theme::fg_faint())
+            .border_color(theme::border())
             .flex()
             .flex_col()
-            .gap(px(6.0));
+            .gap(ui::s(6.0));
 
         if self.portfolios.is_empty() {
             return container
                 .child(
                     div()
-                        .text_size(px(10.0))
-                        .text_color(theme::fg_faint())
+                        .text_size(ui::TEXT_SM)
+                        .text_color(theme::fg_muted())
                         .child("Create a portfolio to organise this forecast."),
                 )
                 .into_any_element();
@@ -12105,22 +12378,22 @@ impl FermiConsole {
                         .flex()
                         .flex_wrap()
                         .items_center()
-                        .gap(px(6.0))
+                        .gap(ui::s(6.0))
                         .child(
                             div()
-                                .text_size(px(10.0))
-                                .text_color(theme::fg_faint())
+                                .text_size(ui::TEXT_SM)
+                                .text_color(theme::fg_muted())
                                 .child("In portfolios:"),
                         )
                         .children(member_of.into_iter().map(|p| {
                             let label = truncate(&p.title, 22);
                             div()
                                 .id(SharedString::from(format!("in-{}-{}", p.id, fid)))
-                                .px(px(8.0))
-                                .py(px(3.0))
-                                .rounded(px(4.0))
+                                .px(ui::s(8.0))
+                                .py(ui::s(3.0))
+                                .rounded(ui::s(4.0))
                                 .bg(theme::bg_hover())
-                                .text_size(px(10.0))
+                                .text_size(ui::TEXT_SM)
                                 .text_color(theme::fg())
                                 .child(format!("✓ {}", label))
                         })),
@@ -12135,11 +12408,11 @@ impl FermiConsole {
                         .flex()
                         .flex_wrap()
                         .items_center()
-                        .gap(px(6.0))
+                        .gap(ui::s(6.0))
                         .child(
                             div()
-                                .text_size(px(10.0))
-                                .text_color(theme::fg_faint())
+                                .text_size(ui::TEXT_SM)
+                                .text_color(theme::fg_muted())
                                 .child("Add to:"),
                         )
                         .children(addable.into_iter().map(|p| {
@@ -12148,12 +12421,12 @@ impl FermiConsole {
                             let label = truncate(&p.title, 22);
                             div()
                                 .id(SharedString::from(format!("add-to-{}-{}", pid, fid)))
-                                .px(px(8.0))
-                                .py(px(3.0))
-                                .rounded(px(4.0))
+                                .px(ui::s(8.0))
+                                .py(ui::s(3.0))
+                                .rounded(ui::s(4.0))
                                 .border_1()
                                 .border_color(rgb(theme::CYAN))
-                                .text_size(px(10.0))
+                                .text_size(ui::TEXT_SM)
                                 .text_color(rgb(theme::CYAN))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(theme::bg_hover()))
@@ -12174,18 +12447,18 @@ impl FermiConsole {
             .flex_col()
             .size_full()
             .overflow_y_scroll()
-            .p(px(24.0))
-            .gap(px(16.0))
+            .p(ui::s(24.0))
+            .gap(ui::s(16.0))
             .child(
                 // Header
                 div().flex().items_center().justify_between().child(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(12.0))
+                        .gap(ui::s(12.0))
                         .child(
                             div()
-                                .text_size(px(22.0))
+                                .text_size(ui::TEXT_5XL)
                                 .text_color(theme::fg())
                                 .font_weight(FontWeight::BOLD)
                                 .child("Portfolio"),
@@ -12197,14 +12470,14 @@ impl FermiConsole {
                                     .id("pm-import-btn")
                                     .flex()
                                     .items_center()
-                                    .gap(px(6.0))
-                                    .px(px(12.0))
-                                    .py(px(5.0))
-                                    .rounded(px(6.0))
+                                    .gap(ui::s(6.0))
+                                    .px(ui::s(12.0))
+                                    .py(ui::s(5.0))
+                                    .rounded(ui::s(6.0))
                                     .bg(rgb(0x1A1A2E))
                                     .border_1()
                                     .border_color(rgb(theme::PURPLE))
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(rgb(theme::PURPLE))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .cursor_pointer()
@@ -12243,14 +12516,14 @@ impl FermiConsole {
                                     .id("pm-check-resolutions-btn")
                                     .flex()
                                     .items_center()
-                                    .gap(px(6.0))
-                                    .px(px(12.0))
-                                    .py(px(5.0))
-                                    .rounded(px(6.0))
+                                    .gap(ui::s(6.0))
+                                    .px(ui::s(12.0))
+                                    .py(ui::s(5.0))
+                                    .rounded(ui::s(6.0))
                                     .bg(rgb(0x1A1A1A))
                                     .border_1()
                                     .border_color(rgb(accent))
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(rgb(accent))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .when(!loading, |s| s.cursor_pointer())
@@ -12281,7 +12554,7 @@ impl FermiConsole {
             .when(self.forecasts_loading, |el| {
                 el.child(
                     div()
-                        .text_size(px(13.0))
+                        .text_size(ui::TEXT_LG)
                         .text_color(theme::fg_dim())
                         .child("Loading forecasts…"),
                 )
@@ -12294,17 +12567,17 @@ impl FermiConsole {
                         .items_center()
                         .justify_center()
                         .flex_grow()
-                        .gap(px(12.0))
+                        .gap(ui::s(12.0))
                         .child(
                             div()
-                                .text_size(px(16.0))
+                                .text_size(ui::TEXT_2XL)
                                 .text_color(theme::fg_dim())
                                 .child("Connect to view your portfolio"),
                         )
                         .child(
                             div()
-                                .text_size(px(12.0))
-                                .text_color(theme::fg_faint())
+                                .text_size(ui::TEXT_MD)
+                                .text_color(theme::fg_muted())
                                 .child("Set FERMI_API_KEY environment variable"),
                         ),
                 )
@@ -12346,10 +12619,10 @@ impl FermiConsole {
         div()
             .flex()
             .flex_col()
-            .gap(px(10.0))
-            .px(px(16.0))
-            .py(px(12.0))
-            .rounded(px(8.0))
+            .gap(ui::s(10.0))
+            .px(ui::s(16.0))
+            .py(ui::s(12.0))
+            .rounded(ui::s(8.0))
             .bg(rgb(0x1A1A2E))
             .border_1()
             .border_color(rgb(theme::PURPLE))
@@ -12361,7 +12634,7 @@ impl FermiConsole {
                     .justify_between()
                     .child(
                         div()
-                            .text_size(px(14.0))
+                            .text_size(ui::TEXT_XL)
                             .text_color(rgb(theme::PURPLE))
                             .font_weight(FontWeight::BOLD)
                             .child("🔮 Browse Polymarket"),
@@ -12369,11 +12642,11 @@ impl FermiConsole {
                     .child(
                         div()
                             .id("pm-close-search")
-                            .text_size(px(12.0))
+                            .text_size(ui::TEXT_MD)
                             .text_color(theme::fg_dim())
-                            .px(px(8.0))
-                            .py(px(2.0))
-                            .rounded(px(4.0))
+                            .px(ui::s(8.0))
+                            .py(ui::s(2.0))
+                            .rounded(ui::s(4.0))
                             .cursor_pointer()
                             .hover(|s| s.bg(theme::bg_hover()))
                             .on_click(cx.listener(|this, _event, _window, cx| {
@@ -12387,18 +12660,18 @@ impl FermiConsole {
             .child(
                 div()
                     .flex()
-                    .gap(px(8.0))
+                    .gap(ui::s(8.0))
                     .items_end()
                     .child(div().flex_grow().child(self.pm_search_input.clone()))
                     .child(
                         div()
                             .id("pm-search-btn")
-                            .px(px(14.0))
-                            .py(px(6.0))
-                            .rounded(px(4.0))
+                            .px(ui::s(14.0))
+                            .py(ui::s(6.0))
+                            .rounded(ui::s(4.0))
                             .bg(rgb(theme::PURPLE))
                             .text_color(rgb(theme::BG_DEEP))
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .font_weight(FontWeight::BOLD)
                             .cursor_pointer()
                             .hover(|s| s.opacity(0.85))
@@ -12414,8 +12687,8 @@ impl FermiConsole {
             )
             .child(
                 div()
-                    .text_size(px(9.0))
-                    .text_color(theme::fg_faint())
+                    .text_size(ui::TEXT_XS)
+                    .text_color(theme::fg_muted())
                     .child(
                     "Search active prediction markets. Select one to import as a Fermi forecast.",
                 ),
@@ -12424,7 +12697,7 @@ impl FermiConsole {
             .when(self.pm_search_loading, |el| {
                 el.child(
                     div()
-                        .text_size(px(12.0))
+                        .text_size(ui::TEXT_MD)
                         .text_color(rgb(theme::PURPLE))
                         .child("⟳ Searching Polymarket…"),
                 )
@@ -12435,11 +12708,11 @@ impl FermiConsole {
                 |el| {
                     el.child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(rgb(theme::RED))
-                            .px(px(10.0))
-                            .py(px(6.0))
-                            .rounded(px(4.0))
+                            .px(ui::s(10.0))
+                            .py(ui::s(6.0))
+                            .rounded(ui::s(4.0))
                             .bg(rgb(0x2A1A1A))
                             .child(format!(
                                 "⚠ {}",
@@ -12455,7 +12728,7 @@ impl FermiConsole {
                         .id("pm-results-scroll")
                         .flex()
                         .flex_col()
-                        .gap(px(6.0))
+                        .gap(ui::s(6.0))
                         .overflow_y_scroll()
                         .max_h(px(480.0))
                         .children(
@@ -12524,20 +12797,20 @@ impl FermiConsole {
                                         "Very High" => theme::GREEN,
                                         "High" => theme::CYAN,
                                         "Medium" => theme::GOLD,
-                                        _ => theme::FG_FAINT,
+                                        _ => theme::FG_MUTED,
                                     };
 
                                     div()
                                         .id(ElementId::Name(format!("pm-result-{}", i).into()))
                                         .flex()
                                         .items_center()
-                                        .gap(px(10.0))
-                                        .px(px(10.0))
-                                        .py(px(8.0))
-                                        .rounded(px(6.0))
+                                        .gap(ui::s(10.0))
+                                        .px(ui::s(10.0))
+                                        .py(ui::s(8.0))
+                                        .rounded(ui::s(6.0))
                                         .bg(rgb(theme::BG_ELEVATED))
                                         .border_1()
-                                        .border_color(rgb(theme::FG_FAINT))
+                                        .border_color(rgb(theme::BORDER))
                                         .cursor_pointer()
                                         .hover(|s| {
                                             s.border_color(rgb(theme::PURPLE))
@@ -12565,10 +12838,10 @@ impl FermiConsole {
                                                 .flex()
                                                 .flex_col()
                                                 .items_center()
-                                                .w(px(60.0))
+                                                .w(ui::s(60.0))
                                                 .child(
                                                     div()
-                                                        .text_size(px(18.0))
+                                                        .text_size(ui::TEXT_3XL)
                                                         .text_color(rgb(theme::PURPLE))
                                                         .font_weight(FontWeight::BOLD)
                                                         .child(price_pct),
@@ -12584,7 +12857,7 @@ impl FermiConsole {
                                                     };
                                                     el.child(
                                                         div()
-                                                            .text_size(px(8.0))
+                                                            .text_size(ui::TEXT_MICRO)
                                                             .text_color(rgb(color))
                                                             .child(format!(
                                                                 "{}{:.1}pp",
@@ -12598,13 +12871,13 @@ impl FermiConsole {
                                         .child(
                                             div()
                                                 .flex_grow()
-                                                .min_w(px(0.0))
+                                                .min_w(ui::s(0.0))
                                                 .flex()
                                                 .flex_col()
-                                                .gap(px(2.0))
+                                                .gap(ui::s(2.0))
                                                 .child(
                                                     div()
-                                                        .text_size(px(12.0))
+                                                        .text_size(ui::TEXT_MD)
                                                         .text_color(theme::fg())
                                                         .child(question_display.clone()),
                                                 )
@@ -12614,8 +12887,8 @@ impl FermiConsole {
                                                     |el| {
                                                         el.child(
                                                             div()
-                                                                .text_size(px(9.0))
-                                                                .text_color(theme::fg_faint())
+                                                                .text_size(ui::TEXT_XS)
+                                                                .text_color(theme::fg_muted())
                                                                 .child(event_title),
                                                         )
                                                     },
@@ -12623,9 +12896,9 @@ impl FermiConsole {
                                                 .child(
                                                     div()
                                                         .flex()
-                                                        .gap(px(8.0))
-                                                        .text_size(px(9.0))
-                                                        .text_color(theme::fg_faint())
+                                                        .gap(ui::s(8.0))
+                                                        .text_size(ui::TEXT_XS)
+                                                        .text_color(theme::fg_muted())
                                                         .when(!vol_fmt.is_empty(), |el| {
                                                             el.child(format!("{} vol", vol_fmt))
                                                         })
@@ -12645,11 +12918,11 @@ impl FermiConsole {
                                         // Import button
                                         .child(
                                             div()
-                                                .text_size(px(10.0))
+                                                .text_size(ui::TEXT_SM)
                                                 .text_color(rgb(theme::PURPLE))
-                                                .px(px(10.0))
-                                                .py(px(4.0))
-                                                .rounded(px(4.0))
+                                                .px(ui::s(10.0))
+                                                .py(ui::s(4.0))
+                                                .rounded(ui::s(4.0))
                                                 .bg(rgb(0x1A1A2E))
                                                 .border_1()
                                                 .border_color(rgb(theme::PURPLE))
@@ -12667,7 +12940,7 @@ impl FermiConsole {
                 |el| {
                     el.child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(theme::fg_dim())
                             .child("Search for a Polymarket question to import into Fermi."),
                     )
@@ -12687,21 +12960,21 @@ impl FermiConsole {
             .flex()
             .flex_col()
             .bg(theme::bg_elevated())
-            .rounded(px(8.0))
+            .rounded(ui::s(8.0))
             .border_1()
-            .border_color(theme::fg_faint())
+            .border_color(theme::border())
             .child(
                 div()
-                    .px(px(16.0))
-                    .py(px(10.0))
+                    .px(ui::s(16.0))
+                    .py(ui::s(10.0))
                     .border_b_1()
-                    .border_color(theme::fg_faint())
+                    .border_color(theme::border())
                     .flex()
                     .items_center()
-                    .gap(px(10.0))
+                    .gap(ui::s(10.0))
                     .child(
                         div()
-                            .text_size(px(13.0))
+                            .text_size(ui::TEXT_LG)
                             .text_color(rgb(accent))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(format!("{} ({})", title, forecasts.len())),
@@ -12709,8 +12982,8 @@ impl FermiConsole {
                     .when(!subtitle.is_empty(), |el| {
                         el.child(
                             div()
-                                .text_size(px(10.0))
-                                .text_color(theme::fg_faint())
+                                .text_size(ui::TEXT_SM)
+                                .text_color(theme::fg_muted())
                                 .child(subtitle.to_string()),
                         )
                     }),
@@ -12782,7 +13055,7 @@ impl FermiConsole {
             .flex()
             .flex_col()
             .border_b_1()
-            .border_color(theme::fg_faint())
+            .border_color(theme::border())
             .when(is_selected, |el| el.bg(theme::bg_hover()))
             .child(
                 // `id` must live on the interactive element for gpui
@@ -12793,11 +13066,11 @@ impl FermiConsole {
                         "virtual-portfolio-{}",
                         id_suffix
                     )))
-                    .px(px(12.0))
-                    .py(px(8.0))
+                    .px(ui::s(12.0))
+                    .py(ui::s(8.0))
                     .flex()
                     .items_center()
-                    .gap(px(6.0))
+                    .gap(ui::s(6.0))
                     .cursor_pointer()
                     .hover(|s| s.bg(theme::bg_hover()))
                     .on_click(cx.listener(move |this, _event, _window, cx| {
@@ -12807,7 +13080,7 @@ impl FermiConsole {
                     // (vs the blue ◈ used for named portfolios).
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(ui::TEXT_MD)
                             .text_color(rgb(theme::GOLD))
                             .child(icon),
                     )
@@ -12819,7 +13092,7 @@ impl FermiConsole {
                             .overflow_hidden()
                             .child(
                                 div()
-                                    .text_size(px(12.0))
+                                    .text_size(ui::TEXT_MD)
                                     .text_color(theme::fg())
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .overflow_hidden()
@@ -12827,8 +13100,8 @@ impl FermiConsole {
                             )
                             .child(
                                 div()
-                                    .text_size(px(10.0))
-                                    .text_color(theme::fg_faint())
+                                    .text_size(ui::TEXT_SM)
+                                    .text_color(theme::fg_muted())
                                     .child(if loading {
                                         "loading…".to_string()
                                     } else if count == 0 {
@@ -12914,39 +13187,39 @@ impl FermiConsole {
             .flex_grow()
             .child(
                 div()
-                    .px(px(14.0))
-                    .py(px(8.0))
+                    .px(ui::s(14.0))
+                    .py(ui::s(8.0))
                     .border_b_1()
-                    .border_color(theme::fg_faint())
+                    .border_color(theme::border())
                     .flex()
                     .flex_col()
-                    .gap(px(2.0))
+                    .gap(ui::s(2.0))
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
+                            .gap(ui::s(8.0))
                             .child(
                                 div()
-                                    .text_size(px(13.0))
+                                    .text_size(ui::TEXT_LG)
                                     .text_color(theme::fg())
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(title),
                             )
                             .child(
                                 div()
-                                    .px(px(6.0))
-                                    .py(px(1.0))
-                                    .rounded(px(4.0))
+                                    .px(ui::s(6.0))
+                                    .py(ui::s(1.0))
+                                    .rounded(ui::s(4.0))
                                     .bg(theme::bg_hover())
-                                    .text_size(px(10.0))
+                                    .text_size(ui::TEXT_SM)
                                     .text_color(rgb(theme::GOLD))
                                     .child(format!("{}", count)),
                             ),
                     )
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(theme::fg_dim())
                             .child(blurb),
                     )
@@ -12963,18 +13236,18 @@ impl FermiConsole {
             .when(loading, |el| {
                 el.child(
                     div()
-                        .p(px(14.0))
-                        .text_size(px(11.0))
-                        .text_color(theme::fg_faint())
+                        .p(ui::s(14.0))
+                        .text_size(ui::TEXT_BASE)
+                        .text_color(theme::fg_muted())
                         .child("Loading forecasts…"),
                 )
             })
             .when(!loading && count == 0, |el| {
                 el.child(
                     div()
-                        .p(px(24.0))
-                        .text_size(px(12.0))
-                        .text_color(theme::fg_faint())
+                        .p(ui::s(24.0))
+                        .text_size(ui::TEXT_MD)
+                        .text_color(theme::fg_muted())
                         .child(match bucket {
                             VirtualPortfolio::SharedWithMe => {
                                 "Nothing shared with you yet. When a teammate \
@@ -13043,7 +13316,7 @@ impl FermiConsole {
             .flex()
             .flex_col()
             .border_b_1()
-            .border_color(theme::fg_faint())
+            .border_color(theme::border())
             .when(is_selected, |el| el.bg(theme::bg_active()))
             // ── Summary row (click to toggle detail) ──────────────
             .child(
@@ -13051,9 +13324,9 @@ impl FermiConsole {
                     .id(SharedString::from(format!("forecast-row-{}", forecast.id)))
                     .flex()
                     .items_center()
-                    .gap(px(12.0))
-                    .px(px(16.0))
-                    .py(px(10.0))
+                    .gap(ui::s(12.0))
+                    .px(ui::s(16.0))
+                    .py(ui::s(10.0))
                     .cursor_pointer()
                     .hover(|style| style.bg(theme::bg_hover()))
                     .on_click(cx.listener(move |this, _event, _window, cx| {
@@ -13068,8 +13341,8 @@ impl FermiConsole {
                     .child(
                         // Probability badge
                         div()
-                            .w(px(48.0))
-                            .text_size(px(14.0))
+                            .w(ui::s(48.0))
+                            .text_size(ui::TEXT_XL)
                             .text_color(rgb(status_color))
                             .font_weight(FontWeight::BOLD)
                             .child(prob_text),
@@ -13080,18 +13353,18 @@ impl FermiConsole {
                             .flex_grow()
                             .flex()
                             .flex_col()
-                            .gap(px(2.0))
+                            .gap(ui::s(2.0))
                             .child(
                                 div()
-                                    .text_size(px(13.0))
+                                    .text_size(ui::TEXT_LG)
                                     .text_color(theme::fg())
                                     .child(truncate(&forecast.question_text, 60)),
                             )
                             .child(
                                 div()
                                     .flex()
-                                    .gap(px(8.0))
-                                    .text_size(px(11.0))
+                                    .gap(ui::s(8.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(theme::fg_dim())
                                     .when(forecast.domain.is_some(), |el| {
                                         el.child(
@@ -13122,11 +13395,11 @@ impl FermiConsole {
                     .child(
                         // Status badge
                         div()
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(rgb(status_color))
-                            .px(px(8.0))
-                            .py(px(2.0))
-                            .rounded(px(4.0))
+                            .px(ui::s(8.0))
+                            .py(ui::s(2.0))
+                            .rounded(ui::s(4.0))
                             .bg(theme::bg_active())
                             .child(forecast.status.clone()),
                     )
@@ -13151,7 +13424,7 @@ impl FermiConsole {
                         };
                         el.child(
                             div()
-                                .text_size(px(10.0))
+                                .text_size(ui::TEXT_SM)
                                 .text_color(rgb(color))
                                 .child(format!("{} {}", icon, label)),
                         )
@@ -13159,7 +13432,7 @@ impl FermiConsole {
                     .when(forecast.actual_outcome.is_some(), |el| {
                         el.child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(ui::TEXT_MD)
                                 .text_color(if forecast.actual_outcome == Some(true) {
                                     theme::green()
                                 } else {
@@ -13175,8 +13448,8 @@ impl FermiConsole {
                     // Expand/collapse indicator
                     .child(
                         div()
-                            .text_size(px(10.0))
-                            .text_color(theme::fg_faint())
+                            .text_size(ui::TEXT_SM)
+                            .text_color(theme::fg_muted())
                             .child(if is_selected { "▾" } else { "▸" }),
                     ),
             )
@@ -13197,22 +13470,22 @@ impl FermiConsole {
                     // those two views.
                     .child(
                         div()
-                            .px(px(24.0))
-                            .py(px(10.0))
+                            .px(ui::s(24.0))
+                            .py(ui::s(10.0))
                             .border_t_1()
-                            .border_color(theme::fg_faint())
+                            .border_color(theme::border())
                             .flex()
                             .items_center()
-                            .gap(px(10.0))
+                            .gap(ui::s(10.0))
                             .child(
                                 div()
                                     .id(SharedString::from(format!("open-cockpit-{}", fid_open)))
-                                    .px(px(14.0))
-                                    .py(px(5.0))
-                                    .rounded(px(5.0))
+                                    .px(ui::s(14.0))
+                                    .py(ui::s(5.0))
+                                    .rounded(ui::s(5.0))
                                     .border_1()
                                     .border_color(rgb(theme::CYAN))
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(rgb(theme::CYAN))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .cursor_pointer()
@@ -13225,19 +13498,19 @@ impl FermiConsole {
                             .when(is_active, |el| {
                                 el.child(
                                     div()
-                                        .text_size(px(10.0))
-                                        .text_color(theme::fg_faint())
+                                        .text_size(ui::TEXT_SM)
+                                        .text_color(theme::fg_muted())
                                         .child("Outcome known?"),
                                 )
                                 .child(
                                     div()
                                         .id(SharedString::from(format!("resolve-btn-{}", fid)))
-                                        .px(px(14.0))
-                                        .py(px(5.0))
-                                        .rounded(px(5.0))
+                                        .px(ui::s(14.0))
+                                        .py(ui::s(5.0))
+                                        .rounded(ui::s(5.0))
                                         .border_1()
                                         .border_color(rgb(theme::GREEN))
-                                        .text_size(px(11.0))
+                                        .text_size(ui::TEXT_BASE)
                                         .text_color(rgb(theme::GREEN))
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .cursor_pointer()
@@ -13346,23 +13619,23 @@ impl FermiConsole {
             // ── Header ────────────────────────────────────────────────
             .child(
                 div()
-                    .px(px(24.0))
-                    .py(px(16.0))
+                    .px(ui::s(24.0))
+                    .py(ui::s(16.0))
                     .border_b_1()
-                    .border_color(theme::fg_faint())
+                    .border_color(theme::border())
                     .flex()
                     .items_center()
-                    .gap(px(12.0))
+                    .gap(ui::s(12.0))
                     .child(
                         div()
-                            .text_size(px(20.0))
+                            .text_size(ui::TEXT_4XL)
                             .text_color(theme::cyan())
                             .font_weight(FontWeight::BOLD)
                             .child("⚙ Research Fleet"),
                     )
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(ui::TEXT_MD)
                             .text_color(theme::fg_dim())
                             .child(format!("{} fermi orchestra agents", roster_count)),
                     )
@@ -13371,7 +13644,7 @@ impl FermiConsole {
                         el.child(
                             div()
                                 .ml_auto()
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(theme::fg_dim())
                                 .child(format!("⚡ {:.1} credits this session", session_cost)),
                         )
@@ -13381,17 +13654,17 @@ impl FermiConsole {
             .when(!agent_runs.is_empty(), |el| {
                 el.child(
                     div()
-                        .px(px(24.0))
-                        .py(px(8.0))
+                        .px(ui::s(24.0))
+                        .py(ui::s(8.0))
                         .border_b_1()
-                        .border_color(theme::fg_faint())
+                        .border_color(theme::border())
                         .flex()
                         .items_center()
-                        .gap(px(16.0))
+                        .gap(ui::s(16.0))
                         .when(running_count > 0, |el| {
                             el.child(
                                 div()
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(theme::gold())
                                     .child(format!("⟳ {} running", running_count)),
                             )
@@ -13399,7 +13672,7 @@ impl FermiConsole {
                         .when(completed_count > 0, |el| {
                             el.child(
                                 div()
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(theme::green())
                                     .child(format!("✓ {} done", completed_count)),
                             )
@@ -13407,7 +13680,7 @@ impl FermiConsole {
                         .when(failed_count > 0, |el| {
                             el.child(
                                 div()
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(theme::red())
                                     .child(format!("✗ {} failed", failed_count)),
                             )
@@ -13439,12 +13712,12 @@ impl FermiConsole {
                 } else {
                     el.child(
                         div()
-                            .px(px(16.0))
-                            .py(px(8.0))
+                            .px(ui::s(16.0))
+                            .py(ui::s(8.0))
                             .border_t_1()
-                            .border_color(theme::fg_faint())
-                            .text_size(px(11.0))
-                            .text_color(theme::fg_faint())
+                            .border_color(theme::border())
+                            .text_size(ui::TEXT_BASE)
+                            .text_color(theme::fg_muted())
                             .font_weight(FontWeight::SEMIBOLD)
                             .child("THIS SESSION"),
                     )
@@ -13452,8 +13725,8 @@ impl FermiConsole {
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(8.0))
-                            .p(px(16.0))
+                            .gap(ui::s(8.0))
+                            .p(ui::s(16.0))
                             .children(session_rows),
                     )
                 }
@@ -13465,19 +13738,19 @@ impl FermiConsole {
                         .flex_col()
                         .items_center()
                         .justify_center()
-                        .py(px(48.0))
+                        .py(ui::s(48.0))
                         .w_full()
                         .child(
                             div()
-                                .text_size(px(14.0))
+                                .text_size(ui::TEXT_XL)
                                 .text_color(theme::fg_dim())
                                 .child("No fermi orchestra agents found"),
                         )
                         .child(
                             div()
-                                .text_size(px(12.0))
-                                .text_color(theme::fg_faint())
-                                .mt(px(4.0))
+                                .text_size(ui::TEXT_MD)
+                                .text_color(theme::fg_muted())
+                                .mt(ui::s(4.0))
                                 .child("Open a forecast in the Composer to assign agents"),
                         ),
                 )
@@ -13513,10 +13786,10 @@ impl FermiConsole {
             ("rising", "▲ Rising"),
             ("fresh", "✨ Fresh"),
         ];
-        let mut tier_row = div().flex().flex_wrap().gap(px(6.0)).child(
+        let mut tier_row = div().flex().flex_wrap().gap(ui::s(6.0)).child(
             div()
-                .text_size(px(9.0))
-                .text_color(theme::fg_faint())
+                .text_size(ui::TEXT_XS)
+                .text_color(theme::fg_muted())
                 .child("TIER:"),
         );
         for (key, label) in tier_defs {
@@ -13525,21 +13798,21 @@ impl FermiConsole {
             tier_row = tier_row.child(
                 div()
                     .id(SharedString::from(format!("mkt-tier-{}", key)))
-                    .px(px(8.0))
-                    .py(px(2.0))
-                    .rounded(px(10.0))
+                    .px(ui::s(8.0))
+                    .py(ui::s(2.0))
+                    .rounded(ui::s(10.0))
                     .border_1()
                     .border_color(if is_on {
                         theme::cyan()
                     } else {
-                        theme::fg_faint()
+                        theme::fg_muted()
                     })
                     .bg(if is_on {
                         theme::bg_active()
                     } else {
                         theme::bg_elevated()
                     })
-                    .text_size(px(10.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(if is_on {
                         theme::cyan()
                     } else {
@@ -13564,10 +13837,10 @@ impl FermiConsole {
             ("success", "Most reliable"),
             ("executions", "Most used"),
         ];
-        let mut sort_row = div().flex().flex_wrap().gap(px(6.0)).child(
+        let mut sort_row = div().flex().flex_wrap().gap(ui::s(6.0)).child(
             div()
-                .text_size(px(9.0))
-                .text_color(theme::fg_faint())
+                .text_size(ui::TEXT_XS)
+                .text_color(theme::fg_muted())
                 .child("SORT:"),
         );
         for (key, label) in sort_defs {
@@ -13576,21 +13849,21 @@ impl FermiConsole {
             sort_row = sort_row.child(
                 div()
                     .id(SharedString::from(format!("mkt-sort-{}", key)))
-                    .px(px(8.0))
-                    .py(px(2.0))
-                    .rounded(px(10.0))
+                    .px(ui::s(8.0))
+                    .py(ui::s(2.0))
+                    .rounded(ui::s(10.0))
                     .border_1()
                     .border_color(if is_on {
                         theme::cyan()
                     } else {
-                        theme::fg_faint()
+                        theme::fg_muted()
                     })
                     .bg(if is_on {
                         theme::bg_active()
                     } else {
                         theme::bg_elevated()
                     })
-                    .text_size(px(10.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(if is_on {
                         theme::cyan()
                     } else {
@@ -13615,7 +13888,7 @@ impl FermiConsole {
         let visible_count = entries.len();
 
         // Card list.
-        let cards = div().flex().flex_col().gap(px(8.0)).children(
+        let cards = div().flex().flex_col().gap(ui::s(8.0)).children(
             entries
                 .into_iter()
                 .enumerate()
@@ -13625,25 +13898,25 @@ impl FermiConsole {
         div()
             .flex()
             .flex_col()
-            .gap(px(8.0))
-            .px(px(16.0))
-            .py(px(12.0))
+            .gap(ui::s(8.0))
+            .px(ui::s(16.0))
+            .py(ui::s(12.0))
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(10.0))
+                    .gap(ui::s(10.0))
                     .child(
                         div()
-                            .text_size(px(13.0))
+                            .text_size(ui::TEXT_LG)
                             .text_color(theme::fg())
                             .font_weight(FontWeight::SEMIBOLD)
                             .child("AGENT MARKETPLACE"),
                     )
                     .child(
                         div()
-                            .text_size(px(10.0))
-                            .text_color(theme::fg_faint())
+                            .text_size(ui::TEXT_SM)
+                            .text_color(theme::fg_muted())
                             .child("hire agents to research your drivers"),
                     ),
             )
@@ -13652,13 +13925,13 @@ impl FermiConsole {
             .when(no_data_at_all && visible_count > 0, |el| {
                 el.child(
                     div()
-                        .px(px(10.0))
-                        .py(px(6.0))
-                        .rounded(px(4.0))
+                        .px(ui::s(10.0))
+                        .py(ui::s(6.0))
+                        .rounded(ui::s(4.0))
                         .bg(theme::bg())
                         .border_1()
-                        .border_color(theme::fg_faint())
-                        .text_size(px(10.0))
+                        .border_color(theme::border())
+                        .text_size(ui::TEXT_SM)
                         .text_color(theme::fg_dim())
                         .child(
                             "No usage data yet on these agents — listed alphabetically. \
@@ -13669,10 +13942,10 @@ impl FermiConsole {
             .when(visible_count == 0, |el| {
                 el.child(
                     div()
-                        .px(px(10.0))
-                        .py(px(10.0))
-                        .text_size(px(11.0))
-                        .text_color(theme::fg_faint())
+                        .px(ui::s(10.0))
+                        .py(ui::s(10.0))
+                        .text_size(ui::TEXT_BASE)
+                        .text_color(theme::fg_muted())
                         .child("No agents match the current filter."),
                 )
             })
@@ -13731,15 +14004,15 @@ impl FermiConsole {
 
         // Tag pills (up to 3).
         let tag_row = {
-            let mut row = div().flex().flex_wrap().gap(px(4.0));
+            let mut row = div().flex().flex_wrap().gap(ui::s(4.0));
             for tag in e.tags.iter().take(3) {
                 row = row.child(
                     div()
-                        .px(px(5.0))
-                        .py(px(1.0))
-                        .rounded(px(3.0))
+                        .px(ui::s(5.0))
+                        .py(ui::s(1.0))
+                        .rounded(ui::s(3.0))
                         .bg(theme::bg_hover())
-                        .text_size(px(9.0))
+                        .text_size(ui::TEXT_XS)
                         .text_color(theme::fg_dim())
                         .child(tag.clone()),
                 );
@@ -13757,15 +14030,15 @@ impl FermiConsole {
         // bad".
         let score_chip: AnyElement = if e.has_data {
             div()
-                .text_size(px(10.0))
+                .text_size(ui::TEXT_SM)
                 .text_color(theme::gold())
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(format!("score {:.0}", e.score))
                 .into_any_element()
         } else {
             div()
-                .text_size(px(9.0))
-                .text_color(theme::fg_faint())
+                .text_size(ui::TEXT_XS)
+                .text_color(theme::fg_muted())
                 .child("unrated")
                 .into_any_element()
         };
@@ -13773,24 +14046,24 @@ impl FermiConsole {
         let compact = div()
             .flex()
             .flex_col()
-            .gap(px(6.0))
-            .px(px(12.0))
-            .py(px(10.0))
-            .rounded(px(6.0))
+            .gap(ui::s(6.0))
+            .px(ui::s(12.0))
+            .py(ui::s(10.0))
+            .rounded(ui::s(6.0))
             .border_1()
-            .border_color(theme::fg_faint())
+            .border_color(theme::border())
             .bg(theme::bg_elevated())
             // Header row: chevron + rank + name + tier + score
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(10.0))
+                    .gap(ui::s(10.0))
                     .child(
                         div()
                             .id(SharedString::from(format!("mkt-chev-{}", e.agent_id)))
-                            .w(px(14.0))
-                            .text_size(px(11.0))
+                            .w(ui::s(17.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(if is_expanded {
                                 theme::cyan()
                             } else {
@@ -13814,8 +14087,8 @@ impl FermiConsole {
                     )
                     .child(
                         div()
-                            .w(px(28.0))
-                            .text_size(px(14.0))
+                            .w(ui::s(28.0))
+                            .text_size(ui::TEXT_XL)
                             .text_color(theme::fg_dim())
                             .font_weight(FontWeight::BOLD)
                             .child(format!("#{}", rank)),
@@ -13823,20 +14096,20 @@ impl FermiConsole {
                     .child(
                         div()
                             .flex_grow()
-                            .text_size(px(13.0))
+                            .text_size(ui::TEXT_LG)
                             .text_color(theme::fg())
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(e.display_name.clone()),
                     )
                     .child(
                         div()
-                            .px(px(6.0))
-                            .py(px(1.0))
-                            .rounded(px(4.0))
+                            .px(ui::s(6.0))
+                            .py(ui::s(1.0))
+                            .rounded(ui::s(4.0))
                             .border_1()
                             .border_color(rgb(e.tier_color))
                             .bg(theme::bg())
-                            .text_size(px(9.0))
+                            .text_size(ui::TEXT_XS)
                             .text_color(rgb(e.tier_color))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(e.tier.to_uppercase()),
@@ -13846,36 +14119,46 @@ impl FermiConsole {
             // Description
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(theme::fg_dim())
                     .child(truncate(&e.description, 140)),
             )
             // Stats row — hidden entirely when the agent has no data,
             // and each cell is Option so the row doesn't leave gaps.
             .when(e.has_data, |el| {
-                let mut row = div().flex().items_center().flex_wrap().gap(px(10.0));
+                let mut row = div().flex().items_center().flex_wrap().gap(ui::s(10.0));
                 if let Some((str_, color)) = cost_cell.clone() {
                     row = row.child(
                         div()
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(rgb(color))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(str_),
                     );
                 }
                 if let Some((str_, color)) = success_cell.clone() {
-                    row = row.child(div().text_size(px(10.0)).text_color(rgb(color)).child(str_));
+                    row = row.child(
+                        div()
+                            .text_size(ui::TEXT_SM)
+                            .text_color(rgb(color))
+                            .child(str_),
+                    );
                 }
                 if let Some(u) = usage_cell.clone() {
                     row = row.child(
                         div()
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(theme::fg_dim())
                             .child(u),
                     );
                 }
                 if let Some(c) = contribution_str.clone() {
-                    row = row.child(div().text_size(px(10.0)).text_color(theme::cyan()).child(c));
+                    row = row.child(
+                        div()
+                            .text_size(ui::TEXT_SM)
+                            .text_color(theme::cyan())
+                            .child(c),
+                    );
                 }
                 el.child(row)
             })
@@ -13884,19 +14167,19 @@ impl FermiConsole {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(10.0))
+                    .gap(ui::s(10.0))
                     .child(tag_row)
                     .child(div().flex_grow())
                     .child(
                         div()
                             .id(SharedString::from(format!("mkt-hire-{}", e.agent_id)))
-                            .px(px(12.0))
-                            .py(px(4.0))
-                            .rounded(px(6.0))
+                            .px(ui::s(12.0))
+                            .py(ui::s(4.0))
+                            .rounded(ui::s(6.0))
                             .border_1()
                             .border_color(rgb(theme::CYAN))
                             .bg(rgb(theme::CYAN))
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(rgb(theme::BG))
                             .font_weight(FontWeight::SEMIBOLD)
                             .cursor_pointer()
@@ -13941,19 +14224,19 @@ impl FermiConsole {
             div()
                 .flex()
                 .items_start()
-                .gap(px(8.0))
-                .py(px(2.0))
+                .gap(ui::s(8.0))
+                .py(ui::s(2.0))
                 .child(
                     div()
-                        .w(px(88.0))
-                        .text_size(px(9.0))
-                        .text_color(theme::fg_faint())
+                        .w(ui::s(108.0))
+                        .text_size(ui::TEXT_XS)
+                        .text_color(theme::fg_muted())
                         .child(label),
                 )
                 .child(
                     div()
                         .flex_grow()
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(theme::fg())
                         .child(value),
                 )
@@ -13987,11 +14270,11 @@ impl FermiConsole {
         let sample_queries_section: Option<AnyElement> = if e.sample_queries.is_empty() {
             None
         } else {
-            let mut bullets = div().flex().flex_col().gap(px(3.0)).flex_grow();
+            let mut bullets = div().flex().flex_col().gap(ui::s(3.0)).flex_grow();
             for q in e.sample_queries.iter().take(3) {
                 bullets = bullets.child(
                     div()
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(theme::fg_dim())
                         .child(format!("• {}", truncate(q, 120))),
                 );
@@ -14000,14 +14283,14 @@ impl FermiConsole {
                 div()
                     .flex()
                     .items_start()
-                    .gap(px(8.0))
-                    .py(px(2.0))
+                    .gap(ui::s(8.0))
+                    .py(ui::s(2.0))
                     .child(
                         div()
-                            .w(px(88.0))
+                            .w(ui::s(108.0))
                             .flex_shrink_0()
-                            .text_size(px(9.0))
-                            .text_color(theme::fg_faint())
+                            .text_size(ui::TEXT_XS)
+                            .text_color(theme::fg_muted())
                             .child("SAMPLE"),
                     )
                     .child(bullets)
@@ -14028,18 +14311,18 @@ impl FermiConsole {
                 .flex()
                 .flex_wrap()
                 .items_center()
-                .gap(px(4.0))
+                .gap(ui::s(4.0))
                 .flex_grow();
             for item in items {
                 pills = pills.child(
                     div()
-                        .px(px(6.0))
-                        .py(px(1.0))
-                        .rounded(px(3.0))
+                        .px(ui::s(6.0))
+                        .py(ui::s(1.0))
+                        .rounded(ui::s(3.0))
                         .bg(theme::bg_elevated())
                         .border_1()
-                        .border_color(theme::fg_faint())
-                        .text_size(px(9.0))
+                        .border_color(theme::border())
+                        .text_size(ui::TEXT_XS)
                         .text_color(theme::fg())
                         .child(item.clone()),
                 );
@@ -14048,14 +14331,14 @@ impl FermiConsole {
                 div()
                     .flex()
                     .items_start()
-                    .gap(px(8.0))
-                    .py(px(2.0))
+                    .gap(ui::s(8.0))
+                    .py(ui::s(2.0))
                     .child(
                         div()
-                            .w(px(88.0))
+                            .w(ui::s(108.0))
                             .flex_shrink_0()
-                            .text_size(px(9.0))
-                            .text_color(theme::fg_faint())
+                            .text_size(ui::TEXT_XS)
+                            .text_color(theme::fg_muted())
                             .child(title),
                     )
                     .child(pills)
@@ -14074,14 +14357,14 @@ impl FermiConsole {
         let agent_url_for_open = agent_url.clone();
 
         div()
-            .px(px(38.0)) // indent past chevron + rank
-            .py(px(8.0))
+            .px(ui::s(38.0)) // indent past chevron + rank
+            .py(ui::s(8.0))
             .bg(theme::bg_active())
             .border_l_2()
             .border_color(rgb(theme::CYAN))
             .flex()
             .flex_col()
-            .gap(px(4.0))
+            .gap(ui::s(4.0))
             .child(contract)
             .child(model_row)
             .child(version_row)
@@ -14091,24 +14374,29 @@ impl FermiConsole {
             .when(e.needs_secrets, |el| {
                 el.child(
                     div()
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(theme::gold())
                         .child("⚠ Requires secrets — configure in ABW before first run."),
                 )
             })
             .child(
-                div().flex().items_center().gap(px(8.0)).mt(px(4.0)).child(
-                    div()
-                        .id(SharedString::from(format!("mkt-abw-{}", e.agent_id)))
-                        .text_size(px(10.0))
-                        .text_color(theme::purple())
-                        .cursor_pointer()
-                        .hover(|s| s.text_color(theme::cyan()))
-                        .on_click(cx.listener(move |_this, _, _, _cx| {
-                            let _ = open::that(&agent_url_for_open);
-                        }))
-                        .child("Open in ABW ↗"),
-                ),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(ui::s(8.0))
+                    .mt(ui::s(4.0))
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("mkt-abw-{}", e.agent_id)))
+                            .text_size(ui::TEXT_SM)
+                            .text_color(theme::purple())
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(theme::cyan()))
+                            .on_click(cx.listener(move |_this, _, _, _cx| {
+                                let _ = open::that(&agent_url_for_open);
+                            }))
+                            .child("Open in ABW ↗"),
+                    ),
             )
     }
 
@@ -14203,30 +14491,30 @@ impl FermiConsole {
             // Header
             .child(
                 div()
-                    .px(px(24.0))
-                    .py(px(16.0))
+                    .px(ui::s(24.0))
+                    .py(ui::s(16.0))
                     .border_b_1()
-                    .border_color(theme::fg_faint())
+                    .border_color(theme::border())
                     .flex()
                     .items_center()
-                    .gap(px(12.0))
+                    .gap(ui::s(12.0))
                     .child(
                         div()
-                            .text_size(px(20.0))
+                            .text_size(ui::TEXT_4XL)
                             .text_color(theme::blue())
                             .font_weight(FontWeight::BOLD)
                             .child("👥 Teams"),
                     )
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(ui::TEXT_MD)
                             .text_color(theme::fg_dim())
                             .child(format!("{} teams", self.teams.len())),
                     )
                     .when(self.teams_loading, |el| {
                         el.child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(theme::blue())
                                 .child("⟳ Loading…"),
                         )
@@ -14235,11 +14523,11 @@ impl FermiConsole {
                     .child(
                         div()
                             .id("team-new-btn")
-                            .px(px(12.0))
-                            .py(px(5.0))
-                            .rounded(px(4.0))
+                            .px(ui::s(12.0))
+                            .py(ui::s(5.0))
+                            .rounded(ui::s(4.0))
                             .bg(theme::blue())
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(rgb(theme::BG))
                             .font_weight(FontWeight::SEMIBOLD)
                             .cursor_pointer()
@@ -14269,21 +14557,21 @@ impl FermiConsole {
                             .id("teams-list")
                             .flex()
                             .flex_col()
-                            .w(px(260.0))
+                            .w(ui::s(260.0))
                             .h_full()
                             .border_r_1()
-                            .border_color(theme::fg_faint())
+                            .border_color(theme::border())
                             .overflow_y_scroll()
                             .when(self.teams.is_empty() && !self.teams_loading, |el| {
                                 el.child(
                                     div()
                                         .flex()
                                         .flex_col()
-                                        .gap(px(6.0))
-                                        .p(px(20.0))
+                                        .gap(ui::s(6.0))
+                                        .p(ui::s(20.0))
                                         .child(
                                             div()
-                                                .text_size(px(12.0))
+                                                .text_size(ui::TEXT_MD)
                                                 .text_color(theme::fg_dim())
                                                 .child(
                                                     "No collaboration teams yet. Create one to share forecasts with a group.",
@@ -14291,8 +14579,8 @@ impl FermiConsole {
                                         )
                                         .child(
                                             div()
-                                                .text_size(px(10.0))
-                                                .text_color(theme::fg_faint())
+                                                .text_size(ui::TEXT_SM)
+                                                .text_color(theme::fg_muted())
                                                 .child(
                                                     "Auto-created workspace teams (Team Prior — X, Tournament Path — X) \
                                                      are hidden from this panel — they're implementation plumbing, \
@@ -14308,9 +14596,9 @@ impl FermiConsole {
                                     .id(SharedString::from(format!("team-{}", team.id)))
                                     .flex()
                                     .flex_col()
-                                    .gap(px(2.0))
-                                    .px(px(14.0))
-                                    .py(px(10.0))
+                                    .gap(ui::s(2.0))
+                                    .px(ui::s(14.0))
+                                    .py(ui::s(10.0))
                                     .cursor_pointer()
                                     .border_l_2()
                                     .border_color(if is_sel {
@@ -14327,15 +14615,15 @@ impl FermiConsole {
                                     }))
                                     .child(
                                         div()
-                                            .text_size(px(13.0))
+                                            .text_size(ui::TEXT_LG)
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .text_color(theme::fg())
                                             .child(team.name.clone()),
                                     )
                                     .child(
                                         div()
-                                            .text_size(px(10.0))
-                                            .text_color(theme::fg_faint())
+                                            .text_size(ui::TEXT_SM)
+                                            .text_color(theme::fg_muted())
                                             .child(format!("@{}", team.slug)),
                                     )
                             })),
@@ -14353,18 +14641,21 @@ impl FermiConsole {
             .flex_grow()
             .h_full()
             .overflow_y_scroll()
-            .p(px(24.0))
-            .gap(px(16.0));
+            .p(ui::s(24.0))
+            .gap(ui::s(16.0));
 
         let Some(detail) = self.selected_team_detail.as_ref() else {
             return container
-                .child(div().text_size(px(12.0)).text_color(theme::fg_dim()).child(
-                    if self.selected_team_id.is_some() {
-                        "Loading team…"
-                    } else {
-                        "Select a team to view its members."
-                    },
-                ))
+                .child(
+                    div()
+                        .text_size(ui::TEXT_MD)
+                        .text_color(theme::fg_dim())
+                        .child(if self.selected_team_id.is_some() {
+                            "Loading team…"
+                        } else {
+                            "Select a team to view its members."
+                        }),
+                )
                 .into_any_element();
         };
 
@@ -14390,10 +14681,10 @@ impl FermiConsole {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(4.0))
+                    .gap(ui::s(4.0))
                     .child(
                         div()
-                            .text_size(px(18.0))
+                            .text_size(ui::TEXT_3XL)
                             .font_weight(FontWeight::BOLD)
                             .text_color(theme::fg())
                             .child(detail.team.name.clone()),
@@ -14401,7 +14692,7 @@ impl FermiConsole {
                     .when(detail.team.description.is_some(), |el| {
                         el.child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(ui::TEXT_MD)
                                 .text_color(theme::fg_dim())
                                 .child(detail.team.description.clone().unwrap_or_default()),
                         )
@@ -14466,21 +14757,21 @@ impl FermiConsole {
             let active = tab == kind;
             div()
                 .id(id)
-                .px(px(12.0))
-                .py(px(6.0))
-                .rounded(px(6.0))
+                .px(ui::s(12.0))
+                .py(ui::s(6.0))
+                .rounded(ui::s(6.0))
                 .border_1()
                 .border_color(if active {
                     rgb(accent).into()
                 } else {
-                    theme::fg_faint()
+                    theme::fg_muted()
                 })
                 .bg(if active {
                     theme::bg_hover()
                 } else {
                     theme::bg()
                 })
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(if active {
                     rgb(accent).into()
                 } else {
@@ -14504,7 +14795,7 @@ impl FermiConsole {
         div()
             .flex()
             .flex_row()
-            .gap(px(8.0))
+            .gap(ui::s(8.0))
             // Ops leads, in the alarm colour, because it is the only tab
             // that makes a claim on the reader's time. Red when there is
             // something to do, orange when there isn't, so the accent
@@ -14565,16 +14856,16 @@ impl FermiConsole {
         div()
             .flex()
             .flex_col()
-            .gap(px(16.0))
+            .gap(ui::s(16.0))
             // Members section header + invite toggle
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(8.0))
+                    .gap(ui::s(8.0))
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(ui::TEXT_MD)
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme::cyan())
                             .child(format!("Members ({})", detail.members.len())),
@@ -14583,11 +14874,11 @@ impl FermiConsole {
                     .child(
                         div()
                             .id("team-invite-toggle")
-                            .px(px(10.0))
-                            .py(px(4.0))
-                            .rounded(px(4.0))
+                            .px(ui::s(10.0))
+                            .py(ui::s(4.0))
+                            .rounded(ui::s(4.0))
                             .bg(theme::bg_active())
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(theme::cyan())
                             .cursor_pointer()
                             .hover(|s| s.bg(theme::bg_hover()))
@@ -14609,8 +14900,8 @@ impl FermiConsole {
             // chips happen to co-occur.
             .child(
                 div()
-                    .text_size(px(9.5))
-                    .text_color(theme::fg_faint())
+                    .text_size(ui::TEXT_XS)
+                    .text_color(theme::fg_muted())
                     .child(
                         "Role administers the team. ⚖ resolve grants terminal actions — \
                          resolving or voiding this team's forecasts, which cannot be undone. \
@@ -14623,17 +14914,17 @@ impl FermiConsole {
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(8.0))
+                        .gap(ui::s(8.0))
                         .child(div().flex_grow().child(self.team_invite_input.clone()))
                         // Role cycle chip
                         .child(
                             div()
                                 .id("team-invite-role")
-                                .px(px(10.0))
-                                .py(px(6.0))
-                                .rounded(px(4.0))
+                                .px(ui::s(10.0))
+                                .py(ui::s(6.0))
+                                .rounded(ui::s(4.0))
                                 .bg(theme::bg_active())
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(theme::gold())
                                 .cursor_pointer()
                                 .hover(|s| s.bg(theme::bg_hover()))
@@ -14652,11 +14943,11 @@ impl FermiConsole {
                         .child(
                             div()
                                 .id("team-invite-send")
-                                .px(px(12.0))
-                                .py(px(6.0))
-                                .rounded(px(4.0))
+                                .px(ui::s(12.0))
+                                .py(ui::s(6.0))
+                                .rounded(ui::s(4.0))
                                 .bg(theme::blue())
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(rgb(theme::BG))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .cursor_pointer()
@@ -14676,7 +14967,7 @@ impl FermiConsole {
             .when(self.team_action_error.is_some(), |el| {
                 el.child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(theme::red())
                         .child(self.team_action_error.clone().unwrap_or_default()),
                 )
@@ -14725,7 +15016,7 @@ impl FermiConsole {
         div()
             .flex()
             .flex_col()
-            .gap(px(2.0))
+            .gap(ui::s(2.0))
             .children(detail.members.iter().map(|m| {
                 let mid = m.member_id.clone();
                 let is_owner_role = m.role == "owner";
@@ -14745,10 +15036,10 @@ impl FermiConsole {
                     .id(SharedString::from(format!("member-{}", mid)))
                     .flex()
                     .items_center()
-                    .gap(px(8.0))
-                    .px(px(12.0))
-                    .py(px(8.0))
-                    .rounded(px(6.0))
+                    .gap(ui::s(8.0))
+                    .px(ui::s(12.0))
+                    .py(ui::s(8.0))
+                    .rounded(ui::s(6.0))
                     .bg(if is_filtered {
                         theme::bg_active()
                     } else {
@@ -14773,20 +15064,20 @@ impl FermiConsole {
                                 this.set_team_activity_actor(Some(mid_click.clone()), cx);
                             }))
                     })
-                    .child(
-                        div()
-                            .text_size(px(13.0))
-                            .child(if is_agent { "🤖" } else { "🧑" }),
-                    )
+                    .child(div().text_size(ui::TEXT_LG).child(if is_agent {
+                        "🤖"
+                    } else {
+                        "🧑"
+                    }))
                     .child(
                         div()
                             .flex_grow()
                             .flex()
                             .flex_col()
-                            .gap(px(2.0))
+                            .gap(ui::s(2.0))
                             .child(
                                 div()
-                                    .text_size(px(12.0))
+                                    .text_size(ui::TEXT_MD)
                                     .text_color(theme::fg())
                                     .child(label),
                             )
@@ -14824,9 +15115,9 @@ impl FermiConsole {
                                     .unwrap_or_default();
                                 el.child(
                                     div()
-                                        .text_size(px(9.5))
+                                        .text_size(ui::TEXT_XS)
                                         .text_color(if bits.is_empty() {
-                                            theme::fg_faint()
+                                            theme::fg_muted()
                                         } else {
                                             theme::fg_dim()
                                         })
@@ -14836,8 +15127,8 @@ impl FermiConsole {
                             .when(contrib.is_none(), |el| {
                                 el.child(
                                     div()
-                                        .text_size(px(9.0))
-                                        .text_color(theme::fg_faint())
+                                        .text_size(ui::TEXT_XS)
+                                        .text_color(theme::fg_muted())
                                         .child(short_user_label(&mid)),
                                 )
                             }),
@@ -14848,11 +15139,11 @@ impl FermiConsole {
                     .when_some(contrib.filter(|c| c.total_actions > 0), |el, c| {
                         el.child(
                             div()
-                                .px(px(7.0))
-                                .py(px(2.0))
-                                .rounded(px(10.0))
+                                .px(ui::s(7.0))
+                                .py(ui::s(2.0))
+                                .rounded(ui::s(10.0))
                                 .bg(theme::bg_active())
-                                .text_size(px(10.0))
+                                .text_size(ui::TEXT_SM)
                                 .text_color(theme::cyan())
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child(c.total_actions.to_string()),
@@ -14888,7 +15179,7 @@ impl FermiConsole {
                             div()
                                 .flex()
                                 .items_center()
-                                .gap(px(4.0))
+                                .gap(ui::s(4.0))
                                 // `resolve` is drawn whether held or not.
                                 // "Who can close forecasts?" is asked of
                                 // the roster as a whole, and a chip that
@@ -14900,21 +15191,21 @@ impl FermiConsole {
                                 .child(
                                     div()
                                         .id(SharedString::from(format!("cap-resolve-{}", mid)))
-                                        .px(px(7.0))
-                                        .py(px(2.0))
-                                        .rounded(px(4.0))
+                                        .px(ui::s(7.0))
+                                        .py(ui::s(2.0))
+                                        .rounded(ui::s(4.0))
                                         .border_1()
                                         .border_color(if has_resolve {
                                             rgb(theme::GOLD).into()
                                         } else {
-                                            theme::fg_faint()
+                                            theme::fg_muted()
                                         })
                                         .when(has_resolve, |c| c.bg(theme::bg_active()))
-                                        .text_size(px(10.0))
+                                        .text_size(ui::TEXT_SM)
                                         .text_color(if has_resolve {
                                             theme::gold()
                                         } else {
-                                            theme::fg_faint()
+                                            theme::fg_muted()
                                         })
                                         .when(editable, |c| {
                                             c.cursor_pointer()
@@ -14942,12 +15233,12 @@ impl FermiConsole {
                                         .filter(|c| c.as_str() != Self::CAP_RESOLVE)
                                         .map(|c| {
                                             div()
-                                                .px(px(7.0))
-                                                .py(px(2.0))
-                                                .rounded(px(4.0))
+                                                .px(ui::s(7.0))
+                                                .py(ui::s(2.0))
+                                                .rounded(ui::s(4.0))
                                                 .border_1()
-                                                .border_color(theme::fg_faint())
-                                                .text_size(px(10.0))
+                                                .border_color(theme::border())
+                                                .text_size(ui::TEXT_SM)
                                                 .text_color(theme::fg_dim())
                                                 .child(c.clone())
                                         }),
@@ -14957,11 +15248,11 @@ impl FermiConsole {
                     // Role chip
                     .child(
                         div()
-                            .px(px(8.0))
-                            .py(px(2.0))
-                            .rounded(px(4.0))
+                            .px(ui::s(8.0))
+                            .py(ui::s(2.0))
+                            .rounded(ui::s(4.0))
                             .bg(theme::bg_active())
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(theme::gold())
                             .child(m.role.clone()),
                     )
@@ -14970,10 +15261,10 @@ impl FermiConsole {
                         el.child(
                             div()
                                 .id(SharedString::from(format!("rm-{}", mid)))
-                                .px(px(6.0))
-                                .py(px(2.0))
-                                .rounded(px(4.0))
-                                .text_size(px(12.0))
+                                .px(ui::s(6.0))
+                                .py(ui::s(2.0))
+                                .rounded(ui::s(4.0))
+                                .text_size(ui::TEXT_MD)
                                 .text_color(theme::fg_dim())
                                 .cursor_pointer()
                                 .hover(|s| s.bg(theme::bg_hover()).text_color(theme::red()))
@@ -15012,7 +15303,7 @@ impl FermiConsole {
     ) -> AnyElement {
         if in_flight {
             return div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(theme::fg_dim())
                 .child(format!("⟳ Loading {}…", label))
                 .into_any_element();
@@ -15027,19 +15318,19 @@ impl FermiConsole {
         div()
             .flex()
             .flex_col()
-            .gap(px(8.0))
-            .p(px(14.0))
-            .rounded(px(6.0))
+            .gap(ui::s(8.0))
+            .p(ui::s(14.0))
+            .rounded(ui::s(6.0))
             .bg(theme::bg_elevated())
             .border_1()
             .border_color(if err.is_some() {
                 rgb(theme::RED).into()
             } else {
-                theme::fg_faint()
+                theme::fg_muted()
             })
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(if err.is_some() {
                         theme::red()
                     } else {
@@ -15053,20 +15344,20 @@ impl FermiConsole {
             .when_some(err, |el, e| {
                 el.child(
                     div()
-                        .text_size(px(10.0))
-                        .text_color(theme::fg_faint())
+                        .text_size(ui::TEXT_SM)
+                        .text_color(theme::fg_muted())
                         .child(e),
                 )
             })
             .child(
                 div()
                     .id(SharedString::from(format!("retry-{}-{}", surface, tid)))
-                    .px(px(10.0))
-                    .py(px(4.0))
-                    .rounded(px(4.0))
+                    .px(ui::s(10.0))
+                    .py(ui::s(4.0))
+                    .rounded(ui::s(4.0))
                     .border_1()
                     .border_color(rgb(theme::CYAN))
-                    .text_size(px(10.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(rgb(theme::CYAN))
                     .cursor_pointer()
                     .hover(|s| s.bg(theme::bg_hover()))
@@ -15101,7 +15392,7 @@ impl FermiConsole {
     /// constraint; `done_when` sits directly under it, because it is the
     /// only completion contract that exists.
     fn render_team_ops_body(&self, team_id: &str, cx: &mut Context<Self>) -> AnyElement {
-        let container = div().flex().flex_col().gap(px(12.0));
+        let container = div().flex().flex_col().gap(ui::s(12.0));
 
         let Some(board) = self.team_ops.get(team_id) else {
             return container
@@ -15123,29 +15414,34 @@ impl FermiConsole {
             return container
                 .child(
                     div()
-                        .p(px(16.0))
-                        .rounded(px(6.0))
+                        .p(ui::s(16.0))
+                        .rounded(ui::s(6.0))
                         .bg(theme::bg_elevated())
                         .border_1()
-                        .border_color(theme::fg_faint())
+                        .border_color(theme::border())
                         .flex()
                         .flex_col()
-                        .gap(px(8.0))
+                        .gap(ui::s(8.0))
                         .child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(ui::TEXT_MD)
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(theme::green())
                                 .child("✓ No open ops"),
                         )
-                        .child(div().text_size(px(11.0)).text_color(theme::fg_dim()).child(
-                            "Nothing on this team's shared surface currently \
-                                     needs coordination.",
-                        ))
                         .child(
                             div()
-                                .text_size(px(10.5))
-                                .text_color(theme::fg_faint())
+                                .text_size(ui::TEXT_BASE)
+                                .text_color(theme::fg_dim())
+                                .child(
+                                    "Nothing on this team's shared surface currently \
+                                     needs coordination.",
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_size(ui::TEXT_SM)
+                                .text_color(theme::fg_muted())
                                 .child(
                                     "An op appears by itself when:\n\
                              ⚡ a portfolio share cascades to forecasts nobody has reviewed;\n\
@@ -15176,10 +15472,10 @@ impl FermiConsole {
             return result
                 .child(
                     div()
-                        .p(px(14.0))
-                        .rounded(px(6.0))
+                        .p(ui::s(14.0))
+                        .rounded(ui::s(6.0))
                         .bg(theme::bg_elevated())
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(theme::fg_dim())
                         .child("No ops of that kind right now. Clear the filter to see the board."),
                 )
@@ -15187,7 +15483,7 @@ impl FermiConsole {
         }
 
         result = result.child(
-            div().flex().flex_col().gap(px(4.0)).children(
+            div().flex().flex_col().gap(ui::s(4.0)).children(
                 visible
                     .into_iter()
                     .enumerate()
@@ -15233,23 +15529,23 @@ impl FermiConsole {
             .flex()
             .flex_wrap()
             .items_center()
-            .gap(px(6.0))
+            .gap(ui::s(6.0))
             // "All" is the clear affordance and the active-state anchor:
             // one chip is always lit, so the board never looks filtered
             // when it isn't.
             .child(
                 div()
                     .id("ops-kind-all")
-                    .px(px(9.0))
-                    .py(px(3.0))
-                    .rounded(px(10.0))
+                    .px(ui::s(9.0))
+                    .py(ui::s(3.0))
+                    .rounded(ui::s(10.0))
                     .border_1()
                     .border_color(if active.is_none() {
                         rgb(theme::ORANGE).into()
                     } else {
-                        theme::fg_faint()
+                        theme::fg_muted()
                     })
-                    .text_size(px(10.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(if active.is_none() {
                         theme::orange()
                     } else {
@@ -15284,16 +15580,16 @@ impl FermiConsole {
 
                 div()
                     .id(SharedString::from(format!("ops-kind-{}", kind)))
-                    .px(px(9.0))
-                    .py(px(3.0))
-                    .rounded(px(10.0))
+                    .px(ui::s(9.0))
+                    .py(ui::s(3.0))
+                    .rounded(ui::s(10.0))
                     .border_1()
                     .border_color(if is_active {
                         rgb(theme::ORANGE).into()
                     } else {
-                        theme::fg_faint()
+                        theme::fg_muted()
                     })
-                    .text_size(px(10.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(if is_active {
                         theme::orange()
                     } else {
@@ -15380,10 +15676,10 @@ impl FermiConsole {
             .id(SharedString::from(format!("op-{}-{}", idx, op.id)))
             .flex()
             .items_start()
-            .gap(px(10.0))
-            .px(px(12.0))
-            .py(px(9.0))
-            .rounded(px(6.0))
+            .gap(ui::s(10.0))
+            .px(ui::s(12.0))
+            .py(ui::s(9.0))
+            .rounded(ui::s(6.0))
             .bg(theme::bg_elevated())
             .border_l_2()
             .border_color(rgb(accent))
@@ -15401,9 +15697,9 @@ impl FermiConsole {
             })
             .child(
                 div()
-                    .w(px(20.0))
+                    .w(ui::s(20.0))
                     .flex_shrink_0()
-                    .text_size(px(14.0))
+                    .text_size(ui::TEXT_XL)
                     .text_color(rgb(accent))
                     .child(op.glyph()),
             )
@@ -15412,18 +15708,18 @@ impl FermiConsole {
                     .flex_grow()
                     .flex()
                     .flex_col()
-                    .gap(px(3.0))
+                    .gap(ui::s(3.0))
                     // Objective + urgency: the two facts that decide
                     // whether this row is your next action.
                     .child(
                         div()
                             .flex()
                             .items_baseline()
-                            .gap(px(8.0))
+                            .gap(ui::s(8.0))
                             .child(
                                 div()
                                     .flex_grow()
-                                    .text_size(px(13.0))
+                                    .text_size(ui::TEXT_LG)
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme::fg())
                                     .child(op.objective.clone()),
@@ -15431,11 +15727,11 @@ impl FermiConsole {
                             .child(
                                 div()
                                     .flex_shrink_0()
-                                    .px(px(7.0))
-                                    .py(px(1.0))
-                                    .rounded(px(4.0))
+                                    .px(ui::s(7.0))
+                                    .py(ui::s(1.0))
+                                    .rounded(ui::s(4.0))
                                     .bg(theme::bg_active())
-                                    .text_size(px(9.5))
+                                    .text_size(ui::TEXT_XS)
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(rgb(accent))
                                     // The bucket, not the 0–100 score: the
@@ -15451,7 +15747,7 @@ impl FermiConsole {
                     .when(!op.done_when.is_empty(), |el| {
                         el.child(
                             div()
-                                .text_size(px(10.0))
+                                .text_size(ui::TEXT_SM)
                                 .text_color(theme::fg_dim())
                                 .child(format!("done when: {}", op.done_when)),
                         )
@@ -15465,23 +15761,24 @@ impl FermiConsole {
                             div()
                                 .flex()
                                 .flex_col()
-                                .gap(px(1.0))
-                                .mt(px(2.0))
+                                .gap(ui::s(1.0))
+                                .mt(ui::s(2.0))
                                 .children(rollup.iter().take(ROLLUP_VISIBLE).map(|it| {
-                                    div().text_size(px(10.0)).text_color(theme::fg_dim()).child(
-                                        format!(
+                                    div()
+                                        .text_size(ui::TEXT_SM)
+                                        .text_color(theme::fg_dim())
+                                        .child(format!(
                                             "· {} — {:.0}%, {}d",
                                             truncate(&it.question, 52),
                                             it.probability_pct,
                                             it.age_days
-                                        ),
-                                    )
+                                        ))
                                 }))
                                 .when(rollup.len() > ROLLUP_VISIBLE, |el| {
                                     el.child(
                                         div()
-                                            .text_size(px(9.5))
-                                            .text_color(theme::fg_faint())
+                                            .text_size(ui::TEXT_XS)
+                                            .text_color(theme::fg_muted())
                                             .child(format!(
                                                 "+{} more",
                                                 rollup.len() - ROLLUP_VISIBLE
@@ -15495,18 +15792,18 @@ impl FermiConsole {
                             div()
                                 .flex()
                                 .items_baseline()
-                                .gap(px(8.0))
+                                .gap(ui::s(8.0))
                                 .child(
                                     div()
                                         .flex_grow()
-                                        .text_size(px(10.0))
-                                        .text_color(theme::fg_faint())
+                                        .text_size(ui::TEXT_SM)
+                                        .text_color(theme::fg_muted())
                                         .child(meta_line.clone()),
                                 )
                                 .child(
                                     div()
                                         .flex_shrink_0()
-                                        .text_size(px(9.5))
+                                        .text_size(ui::TEXT_XS)
                                         .text_color(theme::fg_dim())
                                         .child(op.kind_label()),
                                 ),
@@ -15534,7 +15831,7 @@ impl FermiConsole {
     /// out, because "you get this because you have the portfolio" is a
     /// materially different fact from "someone handed you this".
     fn render_team_shared_body(&self, team_id: &str, cx: &mut Context<Self>) -> AnyElement {
-        let container = div().flex().flex_col().gap(px(16.0));
+        let container = div().flex().flex_col().gap(ui::s(16.0));
 
         let Some(shared) = self.team_shared.get(team_id) else {
             return container
@@ -15557,28 +15854,33 @@ impl FermiConsole {
             return result
                 .child(
                     div()
-                        .p(px(16.0))
-                        .rounded(px(6.0))
+                        .p(ui::s(16.0))
+                        .rounded(ui::s(6.0))
                         .bg(theme::bg_elevated())
                         .border_1()
-                        .border_color(theme::fg_faint())
+                        .border_color(theme::border())
                         .flex()
                         .flex_col()
-                        .gap(px(8.0))
+                        .gap(ui::s(8.0))
                         .child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(ui::TEXT_MD)
                                 .text_color(theme::fg())
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child("Nothing shared with this team yet"),
                         )
-                        .child(div().text_size(px(11.0)).text_color(theme::fg_dim()).child(
-                            "Three ways work reaches a team:\n\
+                        .child(
+                            div()
+                                .text_size(ui::TEXT_BASE)
+                                .text_color(theme::fg_dim())
+                                .child(
+                                    "Three ways work reaches a team:\n\
                              • Share a portfolio with the team (above) — every forecast \
                              inside comes with it.\n\
                              • Share a single forecast with the team from its Access tab.\n\
                              • Create the forecast or portfolio as the team.",
-                        )),
+                                ),
+                        ),
                 )
                 .into_any_element();
         }
@@ -15594,16 +15896,16 @@ impl FermiConsole {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(8.0))
+                    .gap(ui::s(8.0))
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(ui::TEXT_MD)
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme::blue())
                             .child(format!("Portfolios ({})", shared.portfolios.len())),
                     )
                     .child(
-                        div().flex().flex_col().gap(px(6.0)).children(
+                        div().flex().flex_col().gap(ui::s(6.0)).children(
                             shared
                                 .portfolios
                                 .iter()
@@ -15619,16 +15921,16 @@ impl FermiConsole {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(8.0))
+                    .gap(ui::s(8.0))
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(ui::TEXT_MD)
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme::cyan())
                             .child(format!("Forecasts ({})", direct.len())),
                     )
                     .child(
-                        div().flex().flex_col().gap(px(4.0)).children(
+                        div().flex().flex_col().gap(ui::s(4.0)).children(
                             direct
                                 .into_iter()
                                 .map(|f| self.render_team_forecast_row(f, cx)),
@@ -15643,15 +15945,15 @@ impl FermiConsole {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(8.0))
+                    .gap(ui::s(8.0))
                     .child(
                         div()
                             .flex()
                             .items_baseline()
-                            .gap(px(8.0))
+                            .gap(ui::s(8.0))
                             .child(
                                 div()
-                                    .text_size(px(12.0))
+                                    .text_size(ui::TEXT_MD)
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme::gold())
                                     .child(format!(
@@ -15661,8 +15963,8 @@ impl FermiConsole {
                             )
                             .child(
                                 div()
-                                    .text_size(px(10.0))
-                                    .text_color(theme::fg_faint())
+                                    .text_size(ui::TEXT_SM)
+                                    .text_color(theme::fg_muted())
                                     .child(
                                         "the team has these because it has the book \
                                          — not shared individually",
@@ -15670,7 +15972,7 @@ impl FermiConsole {
                             ),
                     )
                     .child(
-                        div().flex().flex_col().gap(px(4.0)).children(
+                        div().flex().flex_col().gap(ui::s(4.0)).children(
                             inherited
                                 .into_iter()
                                 .map(|f| self.render_team_forecast_row(f, cx)),
@@ -15712,16 +16014,16 @@ impl FermiConsole {
         let header = div()
             .flex()
             .items_center()
-            .gap(px(8.0))
+            .gap(ui::s(8.0))
             .child(
                 div()
                     .id("team-share-portfolio-toggle")
-                    .px(px(10.0))
-                    .py(px(5.0))
-                    .rounded(px(5.0))
+                    .px(ui::s(10.0))
+                    .py(ui::s(5.0))
+                    .rounded(ui::s(5.0))
                     .border_1()
                     .border_color(rgb(theme::BLUE))
-                    .text_size(px(11.0))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(rgb(theme::BLUE))
                     .font_weight(FontWeight::SEMIBOLD)
                     .cursor_pointer()
@@ -15739,8 +16041,8 @@ impl FermiConsole {
             .when(!self.team_share_portfolio_showing, |el| {
                 el.child(
                     div()
-                        .text_size(px(10.0))
-                        .text_color(theme::fg_faint())
+                        .text_size(ui::TEXT_SM)
+                        .text_color(theme::fg_muted())
                         .child("every forecast in it comes along"),
                 )
             });
@@ -15752,11 +16054,11 @@ impl FermiConsole {
         div()
             .flex()
             .flex_col()
-            .gap(px(8.0))
+            .gap(ui::s(8.0))
             .child(header)
             .child(if candidates.is_empty() {
                 div()
-                    .text_size(px(11.0))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(theme::fg_dim())
                     .child(
                         "Every portfolio you can administer is already on this \
@@ -15767,20 +16069,20 @@ impl FermiConsole {
                 div()
                     .flex()
                     .flex_wrap()
-                    .gap(px(6.0))
+                    .gap(ui::s(6.0))
                     .children(candidates.into_iter().map(|p| {
                         let pid = p.id.clone();
                         let in_flight = self.portfolio_team_share_in_flight.contains(&p.id);
                         let count = p.forecast_count.unwrap_or(0);
                         div()
                             .id(SharedString::from(format!("share-pf-to-team-{}", p.id)))
-                            .px(px(9.0))
-                            .py(px(4.0))
-                            .rounded(px(4.0))
+                            .px(ui::s(9.0))
+                            .py(ui::s(4.0))
+                            .rounded(ui::s(4.0))
                             .border_1()
-                            .border_color(theme::fg_faint())
+                            .border_color(theme::border())
                             .bg(theme::bg_elevated())
-                            .text_size(px(10.5))
+                            .text_size(ui::TEXT_SM)
                             .text_color(theme::fg())
                             .when(!in_flight, |el| {
                                 el.cursor_pointer()
@@ -15846,10 +16148,10 @@ impl FermiConsole {
             .id(SharedString::from(format!("team-fc-{}", fid)))
             .flex()
             .items_center()
-            .gap(px(10.0))
-            .px(px(12.0))
-            .py(px(9.0))
-            .rounded(px(6.0))
+            .gap(ui::s(10.0))
+            .px(ui::s(12.0))
+            .py(ui::s(9.0))
+            .rounded(ui::s(6.0))
             .bg(theme::bg_elevated())
             .border_l_2()
             // Inherited rows get a gold rule so the eye can separate
@@ -15866,8 +16168,8 @@ impl FermiConsole {
             }))
             .child(
                 div()
-                    .w(px(42.0))
-                    .text_size(px(13.0))
+                    .w(ui::s(42.0))
+                    .text_size(ui::TEXT_LG)
                     .text_color(rgb(status_color))
                     .font_weight(FontWeight::BOLD)
                     .child(prob),
@@ -15877,16 +16179,16 @@ impl FermiConsole {
                     .flex_grow()
                     .flex()
                     .flex_col()
-                    .gap(px(2.0))
+                    .gap(ui::s(2.0))
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(ui::TEXT_MD)
                             .text_color(theme::fg())
                             .child(truncate(&f.question_text, 58)),
                     )
                     .child(
                         div()
-                            .text_size(px(9.5))
+                            .text_size(ui::TEXT_XS)
                             .text_color(theme::fg_dim())
                             .child(format!("{} · {}", owner, f.provenance_line())),
                     ),
@@ -15897,7 +16199,7 @@ impl FermiConsole {
             .when(f.n_recent_updates > 0, |el| {
                 el.child(
                     div()
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(theme::cyan())
                         .child(format!("↑{}", f.n_recent_updates)),
                 )
@@ -15905,8 +16207,8 @@ impl FermiConsole {
             .when(!when.is_empty(), |el| {
                 el.child(
                     div()
-                        .text_size(px(10.0))
-                        .text_color(theme::fg_faint())
+                        .text_size(ui::TEXT_SM)
+                        .text_color(theme::fg_muted())
                         .child(when.clone()),
                 )
             })
@@ -15964,12 +16266,12 @@ impl FermiConsole {
             .id(SharedString::from(format!("team-portfolio-{}", pid)))
             .flex()
             .items_center()
-            .gap(px(10.0))
-            .px(px(12.0))
-            .py(px(10.0))
-            .rounded(px(6.0))
+            .gap(ui::s(10.0))
+            .px(ui::s(12.0))
+            .py(ui::s(10.0))
+            .rounded(ui::s(6.0))
             .border_1()
-            .border_color(theme::fg_faint())
+            .border_color(theme::border())
             .bg(theme::bg_elevated())
             .cursor_pointer()
             .hover(|s| s.bg(theme::bg_hover()).border_color(rgb(theme::BLUE)))
@@ -15979,7 +16281,7 @@ impl FermiConsole {
             }))
             .child(
                 div()
-                    .text_size(px(14.0))
+                    .text_size(ui::TEXT_XL)
                     .text_color(rgb(theme::BLUE))
                     .child("◈"),
             )
@@ -15988,17 +16290,17 @@ impl FermiConsole {
                     .flex_grow()
                     .flex()
                     .flex_col()
-                    .gap(px(2.0))
+                    .gap(ui::s(2.0))
                     .child(
                         div()
-                            .text_size(px(13.0))
+                            .text_size(ui::TEXT_LG)
                             .text_color(theme::fg())
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(title),
                     )
                     .child(
                         div()
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(theme::fg_dim())
                             .child(format!(
                                 "{} forecast{} · {} resolved{} · {} · {}",
@@ -16014,8 +16316,8 @@ impl FermiConsole {
             .when(!when.is_empty(), |el| {
                 el.child(
                     div()
-                        .text_size(px(10.0))
-                        .text_color(theme::fg_faint())
+                        .text_size(ui::TEXT_SM)
+                        .text_color(theme::fg_muted())
                         .child(when.clone()),
                 )
             })
@@ -16035,7 +16337,7 @@ impl FermiConsole {
     /// actor and kind filters. The actor filter is also what a Roster row
     /// click sets, making "what has Bo been doing" a one-click question.
     fn render_team_activity_body(&self, team_id: &str, cx: &mut Context<Self>) -> AnyElement {
-        let container = div().flex().flex_col().gap(px(10.0));
+        let container = div().flex().flex_col().gap(ui::s(10.0));
 
         let Some(events) = self.team_activity.get(team_id) else {
             return container
@@ -16056,12 +16358,12 @@ impl FermiConsole {
             return result
                 .child(
                     div()
-                        .p(px(16.0))
-                        .rounded(px(6.0))
+                        .p(ui::s(16.0))
+                        .rounded(ui::s(6.0))
                         .bg(theme::bg_elevated())
                         .border_1()
-                        .border_color(theme::fg_faint())
-                        .text_size(px(11.0))
+                        .border_color(theme::border())
+                        .text_size(ui::TEXT_BASE)
                         .text_color(theme::fg_dim())
                         .child(if filtered {
                             // Distinguishing "no matches" from "no
@@ -16098,9 +16400,9 @@ impl FermiConsole {
                         } else {
                             px(0.0)
                         })
-                        .pb(px(2.0))
-                        .text_size(px(10.0))
-                        .text_color(theme::fg_faint())
+                        .pb(ui::s(2.0))
+                        .text_size(ui::TEXT_SM)
+                        .text_color(theme::fg_muted())
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(humanise_day(&day))
                         .into_any_element(),
@@ -16150,27 +16452,27 @@ impl FermiConsole {
             .flex()
             .flex_wrap()
             .items_center()
-            .gap(px(6.0))
+            .gap(ui::s(6.0))
             .child(
                 div()
-                    .text_size(px(10.0))
-                    .text_color(theme::fg_faint())
+                    .text_size(ui::TEXT_SM)
+                    .text_color(theme::fg_muted())
                     .child("Filter:"),
             )
             .children(kinds.into_iter().map(|(label, wire)| {
                 let is_active = active_kind == Some(wire);
                 div()
                     .id(SharedString::from(format!("act-kind-{}", label)))
-                    .px(px(9.0))
-                    .py(px(3.0))
-                    .rounded(px(10.0))
+                    .px(ui::s(9.0))
+                    .py(ui::s(3.0))
+                    .rounded(ui::s(10.0))
                     .border_1()
                     .border_color(if is_active {
                         rgb(theme::GOLD).into()
                     } else {
-                        theme::fg_faint()
+                        theme::fg_muted()
                     })
-                    .text_size(px(10.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(if is_active {
                         theme::gold()
                     } else {
@@ -16191,13 +16493,13 @@ impl FermiConsole {
                 el.child(
                     div()
                         .id("act-actor-clear")
-                        .px(px(9.0))
-                        .py(px(3.0))
-                        .rounded(px(10.0))
+                        .px(ui::s(9.0))
+                        .py(ui::s(3.0))
+                        .rounded(ui::s(10.0))
                         .bg(theme::bg_active())
                         .border_1()
                         .border_color(rgb(theme::CYAN))
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(theme::cyan())
                         .cursor_pointer()
                         .hover(|s| s.bg(theme::bg_hover()))
@@ -16210,8 +16512,8 @@ impl FermiConsole {
             .when(actor.is_none(), |el| {
                 el.child(
                     div()
-                        .text_size(px(10.0))
-                        .text_color(theme::fg_faint())
+                        .text_size(ui::TEXT_SM)
+                        .text_color(theme::fg_muted())
                         .child("· click a roster member to filter by person"),
                 )
             })
@@ -16257,11 +16559,11 @@ impl FermiConsole {
             .id(SharedString::from(format!("act-{}-{}", idx, e.object_id)))
             .flex()
             .items_center()
-            .gap(px(10.0))
-            .px(px(10.0))
-            .py(px(7.0))
+            .gap(ui::s(10.0))
+            .px(ui::s(10.0))
+            .py(ui::s(7.0))
             .border_b_1()
-            .border_color(theme::fg_faint())
+            .border_color(theme::border())
             .when(is_forecast, |el| {
                 el.cursor_pointer()
                     .hover(|s| s.bg(theme::bg_hover()))
@@ -16271,8 +16573,8 @@ impl FermiConsole {
             })
             .child(
                 div()
-                    .w(px(18.0))
-                    .text_size(px(12.0))
+                    .w(ui::s(18.0))
+                    .text_size(ui::TEXT_MD)
                     .text_color(rgb(color))
                     .child(e.glyph()),
             )
@@ -16280,11 +16582,11 @@ impl FermiConsole {
             // read the team's division of labour at a glance.
             .child(
                 div()
-                    .w(px(96.0))
+                    .w(ui::s(113.0))
                     .flex_shrink_0()
-                    .text_size(px(11.0))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(if unattributed {
-                        theme::fg_faint()
+                        theme::fg_muted()
                     } else {
                         theme::fg()
                     })
@@ -16313,17 +16615,17 @@ impl FermiConsole {
                     .flex_grow()
                     .flex()
                     .flex_col()
-                    .gap(px(1.0))
+                    .gap(ui::s(1.0))
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(theme::fg())
                             .child(e.summary.clone()),
                     )
                     .when_some(e.object_title.clone(), |el, t| {
                         el.child(
                             div()
-                                .text_size(px(10.0))
+                                .text_size(ui::TEXT_SM)
                                 .text_color(theme::fg_dim())
                                 .child(truncate(&t, 62)),
                         )
@@ -16334,15 +16636,15 @@ impl FermiConsole {
             .when_some(e.agent_id.clone(), |el, a| {
                 el.child(
                     div()
-                        .text_size(px(9.5))
+                        .text_size(ui::TEXT_XS)
                         .text_color(theme::gold())
                         .child(format!("🤖 {}", truncate(&a, 16))),
                 )
             })
             .child(
                 div()
-                    .text_size(px(10.0))
-                    .text_color(theme::fg_faint())
+                    .text_size(ui::TEXT_SM)
+                    .text_color(theme::fg_muted())
                     .child(time),
             )
             .into_any_element()
@@ -16361,14 +16663,14 @@ impl FermiConsole {
         div()
             .flex()
             .flex_col()
-            .gap(px(8.0))
-            .mt(px(20.0))
-            .pt(px(14.0))
+            .gap(ui::s(8.0))
+            .mt(ui::s(20.0))
+            .pt(ui::s(14.0))
             .border_t_1()
-            .border_color(theme::fg_faint())
+            .border_color(theme::border())
             .child(
                 div()
-                    .text_size(px(10.0))
+                    .text_size(ui::TEXT_SM)
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme::red())
                     .child("Danger zone"),
@@ -16377,14 +16679,14 @@ impl FermiConsole {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(10.0))
+                    .gap(ui::s(10.0))
                     .child(
                         div()
                             .id("team-delete")
-                            .px(px(12.0))
-                            .py(px(5.0))
-                            .rounded(px(4.0))
-                            .text_size(px(11.0))
+                            .px(ui::s(12.0))
+                            .py(ui::s(5.0))
+                            .rounded(ui::s(4.0))
+                            .text_size(ui::TEXT_BASE)
                             .border_1()
                             .cursor_pointer()
                             .when(!armed && !loading, |el| {
@@ -16401,8 +16703,8 @@ impl FermiConsole {
                                     .hover(|s| s.opacity(0.85))
                             })
                             .when(loading, |el| {
-                                el.border_color(theme::fg_faint())
-                                    .text_color(theme::fg_faint())
+                                el.border_color(theme::border())
+                                    .text_color(theme::fg_muted())
                             })
                             .on_click(cx.listener(|this, _, _w, cx| {
                                 this.delete_selected_team(cx);
@@ -16417,8 +16719,8 @@ impl FermiConsole {
                     )
                     .child(
                         div()
-                            .text_size(px(10.0))
-                            .text_color(theme::fg_faint())
+                            .text_size(ui::TEXT_SM)
+                            .text_color(theme::fg_muted())
                             .child(if armed {
                                 "This is irreversible — members lose access, shares become orphaned."
                             } else {
@@ -16445,33 +16747,38 @@ impl FermiConsole {
             .take(5) // most recent 5 non-pending, purely informational
             .collect();
 
-        let mut container = div().flex().flex_col().gap(px(6.0)).mt(px(8.0)).child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(8.0))
-                .child(
-                    div()
-                        .text_size(px(12.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(theme::cyan())
-                        .child(format!("Invites ({} pending)", pending.len())),
-                )
-                .when(self.team_invites_loading, |el| {
-                    el.child(
+        let mut container = div()
+            .flex()
+            .flex_col()
+            .gap(ui::s(6.0))
+            .mt(ui::s(8.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(ui::s(8.0))
+                    .child(
                         div()
-                            .text_size(px(10.0))
-                            .text_color(theme::fg_faint())
-                            .child("loading…"),
+                            .text_size(ui::TEXT_MD)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme::cyan())
+                            .child(format!("Invites ({} pending)", pending.len())),
                     )
-                }),
-        );
+                    .when(self.team_invites_loading, |el| {
+                        el.child(
+                            div()
+                                .text_size(ui::TEXT_SM)
+                                .text_color(theme::fg_muted())
+                                .child("loading…"),
+                        )
+                    }),
+            );
 
         if pending.is_empty() && terminal.is_empty() && !self.team_invites_loading {
             container = container.child(
                 div()
-                    .text_size(px(11.0))
-                    .text_color(theme::fg_faint())
+                    .text_size(ui::TEXT_BASE)
+                    .text_color(theme::fg_muted())
                     .child("No invites yet. Use + Invite above to bring someone in."),
             );
             return container;
@@ -16492,44 +16799,44 @@ impl FermiConsole {
                 "accepted" => theme::green(),
                 "declined" => theme::red(),
                 "revoked" => theme::fg_dim(),
-                "expired" => theme::fg_faint(),
+                "expired" => theme::fg_muted(),
                 _ => theme::fg_dim(),
             };
             let mut row = div()
                 .flex()
                 .items_center()
-                .gap(px(8.0))
-                .px(px(12.0))
-                .py(px(6.0))
-                .rounded(px(6.0))
+                .gap(ui::s(8.0))
+                .px(ui::s(12.0))
+                .py(ui::s(6.0))
+                .rounded(ui::s(6.0))
                 .bg(theme::bg_elevated())
-                .child(div().text_size(px(12.0)).child("✉"))
+                .child(div().text_size(ui::TEXT_MD).child("✉"))
                 .child(
                     div()
                         .flex_grow()
                         .flex()
                         .flex_col()
-                        .gap(px(2.0))
+                        .gap(ui::s(2.0))
                         .child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(ui::TEXT_MD)
                                 .text_color(theme::fg())
                                 .child(recipient),
                         )
                         .child(
                             div()
-                                .text_size(px(10.0))
-                                .text_color(theme::fg_faint())
+                                .text_size(ui::TEXT_SM)
+                                .text_color(theme::fg_muted())
                                 .child(format!("role: {}", inv.permission)),
                         ),
                 )
                 .child(
                     div()
-                        .px(px(8.0))
-                        .py(px(2.0))
-                        .rounded(px(4.0))
+                        .px(ui::s(8.0))
+                        .py(ui::s(2.0))
+                        .rounded(ui::s(4.0))
                         .bg(theme::bg_active())
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(status_color)
                         .child(inv.status.clone()),
                 );
@@ -16551,10 +16858,10 @@ impl FermiConsole {
                     row = row.child(
                         div()
                             .id(SharedString::from(format!("tinv-copy-{}", iid)))
-                            .px(px(6.0))
-                            .py(px(2.0))
-                            .rounded(px(4.0))
-                            .text_size(px(11.0))
+                            .px(ui::s(6.0))
+                            .py(ui::s(2.0))
+                            .rounded(ui::s(4.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(theme::cyan())
                             .cursor_pointer()
                             .hover(|s| s.bg(theme::bg_hover()))
@@ -16576,18 +16883,18 @@ impl FermiConsole {
                     // shared before hitting Copy.
                     row = row.child(
                         div()
-                            .text_size(px(9.0))
-                            .text_color(theme::fg_faint())
+                            .text_size(ui::TEXT_XS)
+                            .text_color(theme::fg_muted())
                             .child(invite_url),
                     );
                 }
                 row = row.child(
                     div()
                         .id(SharedString::from(format!("tinv-revoke-{}", iid)))
-                        .px(px(6.0))
-                        .py(px(2.0))
-                        .rounded(px(4.0))
-                        .text_size(px(11.0))
+                        .px(ui::s(6.0))
+                        .py(ui::s(2.0))
+                        .rounded(ui::s(4.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(theme::fg_dim())
                         .cursor_pointer()
                         .hover(|s| s.bg(theme::bg_hover()).text_color(theme::red()))
@@ -16617,16 +16924,16 @@ impl FermiConsole {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(16.0))
-                    .w(px(420.0))
-                    .p(px(24.0))
-                    .rounded(px(12.0))
+                    .gap(ui::s(16.0))
+                    .w(ui::s(420.0))
+                    .p(ui::s(24.0))
+                    .rounded(ui::s(12.0))
                     .bg(rgb(theme::BG_ELEVATED))
                     .border_1()
                     .border_color(rgb(theme::BLUE))
                     .child(
                         div()
-                            .text_size(px(16.0))
+                            .text_size(ui::TEXT_2XL)
                             .font_weight(FontWeight::BOLD)
                             .text_color(theme::fg())
                             .child("Create Team"),
@@ -16636,7 +16943,7 @@ impl FermiConsole {
                     .when(self.team_create_error.is_some(), |el| {
                         el.child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(theme::red())
                                 .child(self.team_create_error.clone().unwrap_or_default()),
                         )
@@ -16644,15 +16951,15 @@ impl FermiConsole {
                     .child(
                         div()
                             .flex()
-                            .gap(px(8.0))
+                            .gap(ui::s(8.0))
                             .justify_end()
                             .child(
                                 div()
                                     .id("team-create-cancel")
-                                    .px(px(14.0))
-                                    .py(px(7.0))
-                                    .rounded(px(6.0))
-                                    .text_size(px(12.0))
+                                    .px(ui::s(14.0))
+                                    .py(ui::s(7.0))
+                                    .rounded(ui::s(6.0))
+                                    .text_size(ui::TEXT_MD)
                                     .text_color(theme::fg_dim())
                                     .cursor_pointer()
                                     .hover(|s| s.bg(theme::bg_hover()))
@@ -16666,11 +16973,11 @@ impl FermiConsole {
                             .child(
                                 div()
                                     .id("team-create-submit")
-                                    .px(px(16.0))
-                                    .py(px(7.0))
-                                    .rounded(px(6.0))
+                                    .px(ui::s(16.0))
+                                    .py(ui::s(7.0))
+                                    .rounded(ui::s(6.0))
                                     .bg(theme::blue())
-                                    .text_size(px(12.0))
+                                    .text_size(ui::TEXT_MD)
                                     .text_color(rgb(theme::BG))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .cursor_pointer()
@@ -16723,23 +17030,23 @@ impl FermiConsole {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(16.0))
-                    .w(px(500.0))
-                    .p(px(28.0))
-                    .rounded(px(12.0))
+                    .gap(ui::s(16.0))
+                    .w(ui::s(500.0))
+                    .p(ui::s(28.0))
+                    .rounded(ui::s(12.0))
                     .bg(rgb(theme::BG_ELEVATED))
                     .border_1()
                     .border_color(rgb(theme::CYAN))
                     .child(
                         div()
-                            .text_size(px(22.0))
+                            .text_size(ui::TEXT_5XL)
                             .font_weight(FontWeight::BOLD)
                             .text_color(theme::cyan())
                             .child(format!("Welcome, {}!", name)),
                     )
                     .child(
                         div()
-                            .text_size(px(13.0))
+                            .text_size(ui::TEXT_LG)
                             .text_color(theme::fg())
                             .child(format!(
                                 "You have {} credits to get started. Credits are the \
@@ -16750,15 +17057,15 @@ impl FermiConsole {
                     )
                     .child(
                         div()
-                            .p(px(12.0))
-                            .rounded(px(6.0))
+                            .p(ui::s(12.0))
+                            .rounded(ui::s(6.0))
                             .bg(rgb(theme::BG))
                             .border_1()
-                            .border_color(theme::fg_faint())
+                            .border_color(theme::border())
                             .flex()
                             .flex_col()
-                            .gap(px(6.0))
-                            .text_size(px(11.0))
+                            .gap(ui::s(6.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(theme::fg_dim())
                             .child("Rough guide:")
                             .child("  • A quick research question: ~2–5 credits")
@@ -16768,22 +17075,22 @@ impl FermiConsole {
                     )
                     .child(
                         div()
-                            .text_size(px(10.0))
-                            .text_color(theme::fg_faint())
+                            .text_size(ui::TEXT_SM)
+                            .text_color(theme::fg_muted())
                             .child(
                                 "Your balance stays visible in the sidebar. Ask \
                                  the maintainer for a top-up when you run low.",
                             ),
                     )
                     .child(
-                        div().flex().justify_end().gap(px(8.0)).child(
+                        div().flex().justify_end().gap(ui::s(8.0)).child(
                             div()
                                 .id("welcome-dismiss")
-                                .px(px(18.0))
-                                .py(px(8.0))
-                                .rounded(px(6.0))
+                                .px(ui::s(18.0))
+                                .py(ui::s(8.0))
+                                .rounded(ui::s(6.0))
                                 .bg(rgb(theme::CYAN))
-                                .text_size(px(12.0))
+                                .text_size(ui::TEXT_MD)
                                 .text_color(rgb(theme::BG))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .cursor_pointer()
@@ -16852,27 +17159,27 @@ impl FermiConsole {
                     let bar = div()
                         .flex()
                         .flex_col()
-                        .gap(px(6.0))
+                        .gap(ui::s(6.0))
                         .child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(theme::fg_dim())
                                 .child(label),
                         )
                         .child(
                             div()
-                                .h(px(6.0))
+                                .h(ui::s(6.0))
                                 .w_full()
-                                .rounded(px(3.0))
+                                .rounded(ui::s(3.0))
                                 .bg(rgb(theme::BG))
                                 .border_1()
-                                .border_color(theme::fg_faint())
+                                .border_color(theme::border())
                                 .child(
                                     div()
                                         .h_full()
                                         .w(gpui::relative(pct as f32 / 100.0))
                                         .bg(rgb(theme::CYAN))
-                                        .rounded(px(3.0)),
+                                        .rounded(ui::s(3.0)),
                                 ),
                         );
                     (Some(bar), "Downloading…".to_string(), false, theme::FG_DIM)
@@ -16880,7 +17187,7 @@ impl FermiConsole {
                 updater::DownloadState::Installing => (
                     Some(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(theme::fg_dim())
                             .child("Installing…"),
                     ),
@@ -16891,7 +17198,7 @@ impl FermiConsole {
                 updater::DownloadState::Restarting => (
                     Some(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(theme::green())
                             .child("Restarting…"),
                     ),
@@ -16902,7 +17209,7 @@ impl FermiConsole {
                 updater::DownloadState::Failed(msg) => (
                     Some(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(theme::red())
                             .child(format!("✗ {}", msg)),
                     ),
@@ -16923,11 +17230,11 @@ impl FermiConsole {
         let mut card = div()
             .flex()
             .flex_col()
-            .gap(px(14.0))
-            .w(px(600.0))
+            .gap(ui::s(14.0))
+            .w(ui::s(600.0))
             .max_h(px(640.0))
-            .p(px(24.0))
-            .rounded(px(12.0))
+            .p(ui::s(24.0))
+            .rounded(ui::s(12.0))
             .bg(rgb(theme::BG_ELEVATED))
             .border_1()
             .border_color(rgb(theme::CYAN))
@@ -16935,11 +17242,11 @@ impl FermiConsole {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(8.0))
-                    .child(div().text_size(px(20.0)).child("⬆"))
+                    .gap(ui::s(8.0))
+                    .child(div().text_size(ui::TEXT_4XL).child("⬆"))
                     .child(
                         div()
-                            .text_size(px(16.0))
+                            .text_size(ui::TEXT_2XL)
                             .font_weight(FontWeight::BOLD)
                             .text_color(theme::fg())
                             .child(format!("Fermi Console {} is available", release.tag)),
@@ -16947,7 +17254,7 @@ impl FermiConsole {
             )
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(ui::TEXT_MD)
                     .text_color(theme::fg_dim())
                     .child(format!(
                         "You're on v{}. New build published {}.",
@@ -16962,12 +17269,12 @@ impl FermiConsole {
                     .id("update-modal-notes")
                     .overflow_y_scroll()
                     .max_h(px(340.0))
-                    .p(px(12.0))
-                    .rounded(px(6.0))
+                    .p(ui::s(12.0))
+                    .rounded(ui::s(6.0))
                     .bg(rgb(theme::BG))
                     .border_1()
-                    .border_color(theme::fg_faint())
-                    .text_size(px(11.0))
+                    .border_color(theme::border())
+                    .text_size(ui::TEXT_BASE)
                     .text_color(theme::fg())
                     .child(notes_display),
             );
@@ -16980,17 +17287,17 @@ impl FermiConsole {
         card = card.child(
             div()
                 .flex()
-                .gap(px(8.0))
+                .gap(ui::s(8.0))
                 .items_center()
                 .child(
                     // View on GitHub link — always available so testers
                     // can eyeball what's actually shipping.
                     div()
                         .id("update-modal-github")
-                        .px(px(12.0))
-                        .py(px(7.0))
-                        .rounded(px(6.0))
-                        .text_size(px(11.0))
+                        .px(ui::s(12.0))
+                        .py(ui::s(7.0))
+                        .rounded(ui::s(6.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(theme::fg_dim())
                         .cursor_pointer()
                         .hover(|s| s.bg(theme::bg_hover()))
@@ -17003,10 +17310,10 @@ impl FermiConsole {
                 .child(
                     div()
                         .id("update-modal-later")
-                        .px(px(14.0))
-                        .py(px(7.0))
-                        .rounded(px(6.0))
-                        .text_size(px(12.0))
+                        .px(ui::s(14.0))
+                        .py(ui::s(7.0))
+                        .rounded(ui::s(6.0))
+                        .text_size(ui::TEXT_MD)
                         .text_color(theme::fg_dim())
                         .cursor_pointer()
                         .hover(|s| s.bg(theme::bg_hover()))
@@ -17019,11 +17326,11 @@ impl FermiConsole {
                 .child({
                     let mut btn = div()
                         .id("update-modal-primary")
-                        .px(px(16.0))
-                        .py(px(7.0))
-                        .rounded(px(6.0))
+                        .px(ui::s(16.0))
+                        .py(ui::s(7.0))
+                        .rounded(ui::s(6.0))
                         .bg(rgb(primary_color))
-                        .text_size(px(12.0))
+                        .text_size(ui::TEXT_MD)
                         .text_color(rgb(theme::BG))
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(primary_label);
@@ -17095,6 +17402,20 @@ impl FermiConsole {
                 ],
             ),
             (
+                "Readability",
+                vec![
+                    (c("+"), "Larger text — scales the whole interface"),
+                    (c("-"), "Smaller text"),
+                    (
+                        c("0"),
+                        // Stating the current value here is the point: the
+                        // scale is otherwise invisible, so an operator who
+                        // has drifted off the default has no way to tell.
+                        "Reset to the default size",
+                    ),
+                ],
+            ),
+            (
                 "Window",
                 vec![
                     (c("M"), "Minimize"),
@@ -17119,21 +17440,21 @@ impl FermiConsole {
             div()
                 .flex()
                 .items_center()
-                .gap(px(12.0))
-                .py(px(4.0))
+                .gap(ui::s(12.0))
+                .py(ui::s(4.0))
                 .child(
                     // Key pill — fixed-width so descriptions align in
                     // a clean column regardless of chord length.
                     div()
                         .flex_none()
-                        .w(px(140.0))
-                        .px(px(8.0))
-                        .py(px(3.0))
-                        .rounded(px(4.0))
+                        .w(ui::s(140.0))
+                        .px(ui::s(8.0))
+                        .py(ui::s(3.0))
+                        .rounded(ui::s(4.0))
                         .bg(rgb(theme::BG))
                         .border_1()
-                        .border_color(theme::fg_faint())
-                        .text_size(px(11.0))
+                        .border_color(theme::border())
+                        .text_size(ui::TEXT_BASE)
                         .text_color(theme::cyan())
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(keys),
@@ -17141,17 +17462,17 @@ impl FermiConsole {
                 .child(
                     div()
                         .flex_grow()
-                        .text_size(px(12.0))
+                        .text_size(ui::TEXT_MD)
                         .text_color(theme::fg())
                         .child(desc),
                 )
         };
 
-        let mut body = div().flex().flex_col().gap(px(18.0));
+        let mut body = div().flex().flex_col().gap(ui::s(18.0));
         for (label, rows) in sections {
-            let mut section = div().flex().flex_col().gap(px(6.0)).child(
+            let mut section = div().flex().flex_col().gap(ui::s(6.0)).child(
                 div()
-                    .text_size(px(10.0))
+                    .text_size(ui::TEXT_SM)
                     .text_color(theme::fg_dim())
                     .font_weight(FontWeight::BOLD)
                     // Poor-man's letter-spacing via a manual
@@ -17170,11 +17491,20 @@ impl FermiConsole {
             .id("shortcuts-modal-card")
             .flex()
             .flex_col()
-            .gap(px(16.0))
-            .w(px(560.0))
+            .gap(ui::s(16.0))
+            .w(ui::s(560.0))
+            // Unscaled — the one place `px` is still correct.
+            //
+            // Every other length here is a design measurement and scales
+            // with the UI. This is not: it is a guard against the card
+            // growing taller than the *window*, and the window does not
+            // scale. Multiplying it would let a large text setting push
+            // the card past the viewport, clipping the bottom of the list
+            // with no way to scroll to it. The body below is the scroll
+            // region that absorbs the extra height instead.
             .max_h(px(660.0))
-            .p(px(24.0))
-            .rounded(px(12.0))
+            .p(ui::s(24.0))
+            .rounded(ui::s(12.0))
             .bg(rgb(theme::BG_ELEVATED))
             .border_1()
             .border_color(rgb(theme::CYAN))
@@ -17183,11 +17513,11 @@ impl FermiConsole {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(8.0))
-                    .child(div().text_size(px(20.0)).child("⌨"))
+                    .gap(ui::s(8.0))
+                    .child(div().text_size(ui::TEXT_4XL).child("⌨"))
                     .child(
                         div()
-                            .text_size(px(16.0))
+                            .text_size(ui::TEXT_2XL)
                             .font_weight(FontWeight::BOLD)
                             .text_color(theme::fg())
                             .child("Keyboard shortcuts"),
@@ -17196,10 +17526,10 @@ impl FermiConsole {
                     .child(
                         div()
                             .id("shortcuts-modal-close")
-                            .px(px(10.0))
-                            .py(px(4.0))
-                            .rounded(px(4.0))
-                            .text_size(px(12.0))
+                            .px(ui::s(10.0))
+                            .py(ui::s(4.0))
+                            .rounded(ui::s(4.0))
+                            .text_size(ui::TEXT_MD)
                             .text_color(theme::fg_dim())
                             .cursor_pointer()
                             .hover(|s| s.bg(theme::bg_hover()).text_color(theme::fg()))
@@ -17212,7 +17542,7 @@ impl FermiConsole {
             )
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(theme::fg_dim())
                     // The rows above now render the platform's real
                     // modifier, so the old "Ctrl maps to ⌘ on macOS"
@@ -17230,7 +17560,7 @@ impl FermiConsole {
                     .id("shortcuts-modal-body")
                     .overflow_y_scroll()
                     .max_h(px(480.0))
-                    .pr(px(8.0))
+                    .pr(ui::s(8.0))
                     .child(body),
             );
 
@@ -17298,10 +17628,10 @@ impl FermiConsole {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(14.0))
-                    .w(px(520.0))
-                    .p(px(24.0))
-                    .rounded(px(12.0))
+                    .gap(ui::s(14.0))
+                    .w(ui::s(520.0))
+                    .p(ui::s(24.0))
+                    .rounded(ui::s(12.0))
                     .bg(rgb(theme::BG_ELEVATED))
                     .border_1()
                     .border_color(rgb(theme::CYAN))
@@ -17310,11 +17640,11 @@ impl FermiConsole {
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
-                            .child(div().text_size(px(18.0)).child("🔗"))
+                            .gap(ui::s(8.0))
+                            .child(div().text_size(ui::TEXT_3XL).child("🔗"))
                             .child(
                                 div()
-                                    .text_size(px(16.0))
+                                    .text_size(ui::TEXT_2XL)
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(theme::fg())
                                     .child("Invite ready to share"),
@@ -17323,7 +17653,7 @@ impl FermiConsole {
                     // Subtitle: target label + permission.
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(ui::TEXT_MD)
                             .text_color(theme::fg_dim())
                             .child(format!(
                                 "{} • {} access",
@@ -17334,20 +17664,20 @@ impl FermiConsole {
                     // gold otherwise ("share this link directly").
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(email_color)
                             .child(email_line),
                     )
                     // The link itself, in a bordered read-only field.
                     .child(
                         div()
-                            .px(px(12.0))
-                            .py(px(10.0))
-                            .rounded(px(6.0))
+                            .px(ui::s(12.0))
+                            .py(ui::s(10.0))
+                            .rounded(ui::s(6.0))
                             .bg(rgb(theme::BG))
                             .border_1()
-                            .border_color(theme::fg_faint())
-                            .text_size(px(10.0))
+                            .border_color(theme::border())
+                            .text_size(ui::TEXT_SM)
                             .text_color(theme::cyan())
                             .child(invite_url.clone()),
                     )
@@ -17355,15 +17685,15 @@ impl FermiConsole {
                     .child(
                         div()
                             .flex()
-                            .gap(px(8.0))
+                            .gap(ui::s(8.0))
                             .justify_end()
                             .child(
                                 div()
                                     .id("invite-modal-dismiss")
-                                    .px(px(14.0))
-                                    .py(px(7.0))
-                                    .rounded(px(6.0))
-                                    .text_size(px(12.0))
+                                    .px(ui::s(14.0))
+                                    .py(ui::s(7.0))
+                                    .rounded(ui::s(6.0))
+                                    .text_size(ui::TEXT_MD)
                                     .text_color(theme::fg_dim())
                                     .cursor_pointer()
                                     .hover(|s| s.bg(theme::bg_hover()))
@@ -17376,11 +17706,11 @@ impl FermiConsole {
                             .child(
                                 div()
                                     .id("invite-modal-copy")
-                                    .px(px(16.0))
-                                    .py(px(7.0))
-                                    .rounded(px(6.0))
+                                    .px(ui::s(16.0))
+                                    .py(ui::s(7.0))
+                                    .rounded(ui::s(6.0))
                                     .bg(rgb(theme::CYAN))
-                                    .text_size(px(12.0))
+                                    .text_size(ui::TEXT_MD)
                                     .text_color(rgb(theme::BG))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .cursor_pointer()
@@ -17419,7 +17749,7 @@ impl FermiConsole {
 
         // Stepper header.
         let step_labels = ["1  Forecast", "2  Driver", "3  Terms"];
-        let mut stepper = div().flex().items_center().gap(px(8.0));
+        let mut stepper = div().flex().items_center().gap(ui::s(8.0));
         for (i, label) in step_labels.iter().enumerate() {
             let n = (i + 1) as u8;
             let is_active = modal.step == n;
@@ -17429,11 +17759,11 @@ impl FermiConsole {
             } else if is_done {
                 theme::GREEN
             } else {
-                theme::FG_FAINT
+                theme::FG_MUTED
             };
             stepper = stepper.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(ui::TEXT_BASE)
                     .text_color(rgb(color))
                     .font_weight(if is_active {
                         FontWeight::BOLD
@@ -17445,8 +17775,8 @@ impl FermiConsole {
             if i < step_labels.len() - 1 {
                 stepper = stepper.child(
                     div()
-                        .text_size(px(11.0))
-                        .text_color(theme::fg_faint())
+                        .text_size(ui::TEXT_BASE)
+                        .text_color(theme::fg_muted())
                         .child("›"),
                 );
             }
@@ -17482,19 +17812,19 @@ impl FermiConsole {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(14.0))
-                    .w(px(560.0))
+                    .gap(ui::s(14.0))
+                    .w(ui::s(560.0))
                     .max_h(px(600.0))
-                    .p(px(24.0))
-                    .rounded(px(12.0))
+                    .p(ui::s(24.0))
+                    .rounded(ui::s(12.0))
                     .bg(rgb(theme::BG_ELEVATED))
                     .border_1()
                     .border_color(rgb(theme::CYAN))
                     // Header
                     .child(
-                        div().flex().items_center().gap(px(8.0)).child(
+                        div().flex().items_center().gap(ui::s(8.0)).child(
                             div()
-                                .text_size(px(16.0))
+                                .text_size(ui::TEXT_2XL)
                                 .font_weight(FontWeight::BOLD)
                                 .text_color(theme::fg())
                                 .child(format!("Hire {}", modal.agent_display)),
@@ -17516,14 +17846,14 @@ impl FermiConsole {
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
+                            .gap(ui::s(8.0))
                             .child(
                                 div()
                                     .id("hire-cancel")
-                                    .px(px(14.0))
-                                    .py(px(6.0))
-                                    .rounded(px(6.0))
-                                    .text_size(px(11.0))
+                                    .px(ui::s(14.0))
+                                    .py(ui::s(6.0))
+                                    .rounded(ui::s(6.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(theme::fg_dim())
                                     .cursor_pointer()
                                     .hover(|s| s.bg(theme::bg_hover()))
@@ -17538,12 +17868,12 @@ impl FermiConsole {
                                 el.child(
                                     div()
                                         .id("hire-back")
-                                        .px(px(12.0))
-                                        .py(px(6.0))
-                                        .rounded(px(6.0))
+                                        .px(ui::s(12.0))
+                                        .py(ui::s(6.0))
+                                        .rounded(ui::s(6.0))
                                         .border_1()
-                                        .border_color(theme::fg_faint())
-                                        .text_size(px(11.0))
+                                        .border_color(theme::border())
+                                        .text_size(ui::TEXT_BASE)
                                         .text_color(theme::fg_dim())
                                         .cursor_pointer()
                                         .hover(|s| s.bg(theme::bg_hover()))
@@ -17559,19 +17889,19 @@ impl FermiConsole {
                             .child(
                                 div()
                                     .id("hire-next")
-                                    .px(px(16.0))
-                                    .py(px(6.0))
-                                    .rounded(px(6.0))
+                                    .px(ui::s(16.0))
+                                    .py(ui::s(6.0))
+                                    .rounded(ui::s(6.0))
                                     .bg(if can_advance {
                                         rgb(theme::CYAN)
                                     } else {
                                         rgb(theme::BG_ACTIVE)
                                     })
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(if can_advance {
                                         rgb(theme::BG)
                                     } else {
-                                        rgb(theme::FG_FAINT)
+                                        rgb(theme::FG_MUTED)
                                     })
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .when(can_advance, |s| {
@@ -17593,9 +17923,9 @@ impl FermiConsole {
         let mut forecasts: Vec<&Forecast> = self.active_forecasts.iter().collect();
         forecasts.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
-        let mut container = div().flex().flex_col().gap(px(4.0)).child(
+        let mut container = div().flex().flex_col().gap(ui::s(4.0)).child(
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(theme::fg_dim())
                 .child("Pick the forecast this agent should research for."),
         );
@@ -17603,14 +17933,14 @@ impl FermiConsole {
         if forecasts.is_empty() {
             container = container.child(
                 div()
-                    .px(px(10.0))
-                    .py(px(10.0))
-                    .rounded(px(6.0))
+                    .px(ui::s(10.0))
+                    .py(ui::s(10.0))
+                    .rounded(ui::s(6.0))
                     .bg(theme::bg())
                     .border_1()
-                    .border_color(theme::fg_faint())
-                    .text_size(px(11.0))
-                    .text_color(theme::fg_faint())
+                    .border_color(theme::border())
+                    .text_size(ui::TEXT_BASE)
+                    .text_color(theme::fg_muted())
                     .child(
                         "No active forecasts yet. Start a forecast in the Composer, \
                          then come back to hire this agent.",
@@ -17630,15 +17960,15 @@ impl FermiConsole {
                     .id(SharedString::from(format!("hire-fc-{}", fid)))
                     .flex()
                     .items_center()
-                    .gap(px(8.0))
-                    .px(px(10.0))
-                    .py(px(6.0))
-                    .rounded(px(6.0))
+                    .gap(ui::s(8.0))
+                    .px(ui::s(10.0))
+                    .py(ui::s(6.0))
+                    .rounded(ui::s(6.0))
                     .border_1()
                     .border_color(if is_selected {
                         theme::cyan()
                     } else {
-                        theme::fg_faint()
+                        theme::fg_muted()
                     })
                     .bg(if is_selected {
                         theme::bg_active()
@@ -17659,7 +17989,7 @@ impl FermiConsole {
                     }))
                     .child(
                         div()
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(if is_selected {
                                 theme::cyan()
                             } else {
@@ -17670,14 +18000,14 @@ impl FermiConsole {
                     .child(
                         div()
                             .flex_grow()
-                            .text_size(px(12.0))
+                            .text_size(ui::TEXT_MD)
                             .text_color(theme::fg())
                             .child(label),
                     )
                     .child(
                         div()
-                            .text_size(px(10.0))
-                            .text_color(theme::fg_faint())
+                            .text_size(ui::TEXT_SM)
+                            .text_color(theme::fg_muted())
                             .child(format!("{:.0}%", f.predicted_probability * 100.0)),
                     ),
             );
@@ -17699,11 +18029,14 @@ impl FermiConsole {
             .and_then(|c| c.read(cx).forecast_id.clone());
         let same_forecast = cockpit_forecast_id.as_deref() == modal.forecast_id.as_deref();
 
-        let mut container = div().flex().flex_col().gap(px(4.0)).child(
-            div().text_size(px(11.0)).text_color(theme::fg_dim()).child(
-                "Bind the agent to a driver, or hire it as an ambient research \
+        let mut container = div().flex().flex_col().gap(ui::s(4.0)).child(
+            div()
+                .text_size(ui::TEXT_BASE)
+                .text_color(theme::fg_dim())
+                .child(
+                    "Bind the agent to a driver, or hire it as an ambient research \
                      agent (no driver — the agent adds evidence to the forecast at large).",
-            ),
+                ),
         );
 
         // Ambient option always present.
@@ -17713,15 +18046,15 @@ impl FermiConsole {
                 .id("hire-drv-ambient")
                 .flex()
                 .items_center()
-                .gap(px(8.0))
-                .px(px(10.0))
-                .py(px(6.0))
-                .rounded(px(6.0))
+                .gap(ui::s(8.0))
+                .px(ui::s(10.0))
+                .py(ui::s(6.0))
+                .rounded(ui::s(6.0))
                 .border_1()
                 .border_color(if ambient_selected {
                     theme::cyan()
                 } else {
-                    theme::fg_faint()
+                    theme::fg_muted()
                 })
                 .bg(if ambient_selected {
                     theme::bg_active()
@@ -17738,7 +18071,7 @@ impl FermiConsole {
                 }))
                 .child(
                     div()
-                        .text_size(px(10.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(if ambient_selected {
                             theme::cyan()
                         } else {
@@ -17749,7 +18082,7 @@ impl FermiConsole {
                 .child(
                     div()
                         .flex_grow()
-                        .text_size(px(12.0))
+                        .text_size(ui::TEXT_MD)
                         .text_color(theme::fg())
                         .child("Ambient research agent (no specific driver)"),
                 ),
@@ -17774,8 +18107,8 @@ impl FermiConsole {
                 if drivers.is_empty() {
                     container = container.child(
                         div()
-                            .text_size(px(10.0))
-                            .text_color(theme::fg_faint())
+                            .text_size(ui::TEXT_SM)
+                            .text_color(theme::fg_muted())
                             .child(
                                 "This forecast has no drivers yet — hire ambient, \
                                  then add drivers in the Composer.",
@@ -17790,15 +18123,15 @@ impl FermiConsole {
                                 .id(SharedString::from(format!("hire-drv-{}", driver)))
                                 .flex()
                                 .items_center()
-                                .gap(px(8.0))
-                                .px(px(10.0))
-                                .py(px(6.0))
-                                .rounded(px(6.0))
+                                .gap(ui::s(8.0))
+                                .px(ui::s(10.0))
+                                .py(ui::s(6.0))
+                                .rounded(ui::s(6.0))
                                 .border_1()
                                 .border_color(if is_selected {
                                     theme::cyan()
                                 } else {
-                                    theme::fg_faint()
+                                    theme::fg_muted()
                                 })
                                 .bg(if is_selected {
                                     theme::bg_active()
@@ -17815,7 +18148,7 @@ impl FermiConsole {
                                 }))
                                 .child(
                                     div()
-                                        .text_size(px(10.0))
+                                        .text_size(ui::TEXT_SM)
                                         .text_color(if is_selected {
                                             theme::cyan()
                                         } else {
@@ -17826,7 +18159,7 @@ impl FermiConsole {
                                 .child(
                                     div()
                                         .flex_grow()
-                                        .text_size(px(12.0))
+                                        .text_size(ui::TEXT_MD)
                                         .text_color(theme::fg())
                                         .child(driver),
                                 ),
@@ -17835,11 +18168,16 @@ impl FermiConsole {
                 }
             }
         } else {
-            container = container.child(div().text_size(px(10.0)).text_color(theme::gold()).child(
-                "Driver list requires the picked forecast to be open in the \
+            container = container.child(
+                div()
+                    .text_size(ui::TEXT_SM)
+                    .text_color(theme::gold())
+                    .child(
+                        "Driver list requires the picked forecast to be open in the \
                          Composer. For now hire ambient, then open the forecast to \
                          assign the driver via + Assign Agent.",
-            ));
+                    ),
+            );
         }
 
         container
@@ -17859,23 +18197,23 @@ impl FermiConsole {
         div()
             .flex()
             .flex_col()
-            .gap(px(10.0))
+            .gap(ui::s(10.0))
             // Contract summary.
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(4.0))
-                    .px(px(12.0))
-                    .py(px(10.0))
-                    .rounded(px(6.0))
+                    .gap(ui::s(4.0))
+                    .px(ui::s(12.0))
+                    .py(ui::s(10.0))
+                    .rounded(ui::s(6.0))
                     .bg(theme::bg())
                     .border_1()
-                    .border_color(theme::fg_faint())
+                    .border_color(theme::border())
                     .child(
                         div()
-                            .text_size(px(9.0))
-                            .text_color(theme::fg_faint())
+                            .text_size(ui::TEXT_XS)
+                            .text_color(theme::fg_muted())
                             .child("HIRE SUMMARY"),
                     )
                     .child(render_detail_kv("Agent", &modal.agent_display))
@@ -17889,43 +18227,53 @@ impl FermiConsole {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(4.0))
-                    .px(px(12.0))
-                    .py(px(10.0))
-                    .rounded(px(6.0))
+                    .gap(ui::s(4.0))
+                    .px(ui::s(12.0))
+                    .py(ui::s(10.0))
+                    .rounded(ui::s(6.0))
                     .bg(theme::bg())
                     .border_1()
-                    .border_color(theme::fg_faint())
+                    .border_color(theme::border())
                     .child(
                         div()
-                            .text_size(px(9.0))
-                            .text_color(theme::fg_faint())
+                            .text_size(ui::TEXT_XS)
+                            .text_color(theme::fg_muted())
                             .child("TERMS"),
                     )
-                    .child(div().text_size(px(11.0)).text_color(theme::fg_dim()).child(
-                        "Placeholder. When ABW ships fork_pricing / royalty terms \
+                    .child(
+                        div()
+                            .text_size(ui::TEXT_BASE)
+                            .text_color(theme::fg_dim())
+                            .child(
+                                "Placeholder. When ABW ships fork_pricing / royalty terms \
                                  per agent, this section will surface them (per-run credit \
                                  cost, royalty to author, cap per session). For now the \
                                  default is: pay-per-run at the agent's model cost, no \
                                  royalties, no cap.",
-                    ))
-                    .child(div().text_size(px(10.0)).text_color(theme::gold()).child(
-                        "⚠ This hire flow's binding step is scaffolded but the \
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(ui::TEXT_SM)
+                            .text_color(theme::gold())
+                            .child(
+                                "⚠ This hire flow's binding step is scaffolded but the \
                                  auto-assign wiring lands in a follow-up. Confirm below \
                                  will drop a hint into the Composer so you can complete \
                                  the assignment via + Assign Agent.",
-                    )),
+                            ),
+                    ),
             )
             // Notes textbox.
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(4.0))
+                    .gap(ui::s(4.0))
                     .child(
                         div()
-                            .text_size(px(9.0))
-                            .text_color(theme::fg_faint())
+                            .text_size(ui::TEXT_XS)
+                            .text_color(theme::fg_muted())
                             .child("NOTES"),
                     )
                     .child(modal.notes.clone()),
@@ -17946,11 +18294,11 @@ impl FermiConsole {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(14.0))
-                    .w(px(520.0))
+                    .gap(ui::s(14.0))
+                    .w(ui::s(520.0))
                     .max_h(px(560.0))
-                    .p(px(24.0))
-                    .rounded(px(12.0))
+                    .p(ui::s(24.0))
+                    .rounded(ui::s(12.0))
                     .bg(rgb(theme::BG_ELEVATED))
                     .border_1()
                     .border_color(rgb(theme::CYAN))
@@ -17959,17 +18307,17 @@ impl FermiConsole {
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
+                            .gap(ui::s(8.0))
                             .child(
                                 div()
-                                    .text_size(px(16.0))
+                                    .text_size(ui::TEXT_2XL)
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(theme::fg())
                                     .child("📥 Inbox"),
                             )
                             .child(
                                 div()
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(theme::fg_dim())
                                     .child(format!("{} pending", self.inbox_invites.len())),
                             )
@@ -17977,10 +18325,10 @@ impl FermiConsole {
                             .child(
                                 div()
                                     .id("inbox-close")
-                                    .px(px(8.0))
-                                    .py(px(4.0))
-                                    .rounded(px(4.0))
-                                    .text_size(px(12.0))
+                                    .px(ui::s(8.0))
+                                    .py(ui::s(4.0))
+                                    .rounded(ui::s(4.0))
+                                    .text_size(ui::TEXT_MD)
                                     .text_color(theme::fg_dim())
                                     .cursor_pointer()
                                     .hover(|s| s.bg(theme::bg_hover()))
@@ -17994,7 +18342,7 @@ impl FermiConsole {
                     .when(self.inbox_invites.is_empty() && !self.inbox_loading, |el| {
                         el.child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(ui::TEXT_MD)
                                 .text_color(theme::fg_dim())
                                 .child("No pending invites."),
                         )
@@ -18005,7 +18353,7 @@ impl FermiConsole {
                             .id("inbox-list")
                             .flex()
                             .flex_col()
-                            .gap(px(8.0))
+                            .gap(ui::s(8.0))
                             .overflow_y_scroll()
                             .children(self.inbox_invites.iter().map(|inv| {
                                 let iid = inv.id.clone();
@@ -18018,22 +18366,22 @@ impl FermiConsole {
                                 div()
                                     .flex()
                                     .flex_col()
-                                    .gap(px(6.0))
-                                    .p(px(12.0))
-                                    .rounded(px(8.0))
+                                    .gap(ui::s(6.0))
+                                    .p(ui::s(12.0))
+                                    .rounded(ui::s(8.0))
                                     .bg(rgb(theme::BG))
                                     .border_1()
-                                    .border_color(theme::fg_faint())
+                                    .border_color(theme::border())
                                     .child(
                                         div()
                                             .flex()
                                             .items_center()
-                                            .gap(px(8.0))
-                                            .child(div().text_size(px(14.0)).child(icon))
+                                            .gap(ui::s(8.0))
+                                            .child(div().text_size(ui::TEXT_XL).child(icon))
                                             .child(
                                                 div()
                                                     .flex_grow()
-                                                    .text_size(px(12.0))
+                                                    .text_size(ui::TEXT_MD)
                                                     .text_color(theme::fg())
                                                     .child(format!(
                                                         "{} · {} access",
@@ -18042,8 +18390,8 @@ impl FermiConsole {
                                             )
                                             .child(
                                                 div()
-                                                    .text_size(px(10.0))
-                                                    .text_color(theme::fg_faint())
+                                                    .text_size(ui::TEXT_SM)
+                                                    .text_color(theme::fg_muted())
                                                     .child(format!(
                                                         "from {}",
                                                         inv.inviter_display_name
@@ -18057,7 +18405,7 @@ impl FermiConsole {
                                     .when(inv.message.is_some(), |el| {
                                         el.child(
                                             div()
-                                                .text_size(px(11.0))
+                                                .text_size(ui::TEXT_BASE)
                                                 .text_color(theme::fg_dim())
                                                 .child(inv.message.clone().unwrap_or_default()),
                                         )
@@ -18066,7 +18414,7 @@ impl FermiConsole {
                                     .child(
                                         div()
                                             .flex()
-                                            .gap(px(8.0))
+                                            .gap(ui::s(8.0))
                                             .justify_end()
                                             .child(
                                                 div()
@@ -18074,10 +18422,10 @@ impl FermiConsole {
                                                         "inv-decline-{}",
                                                         iid
                                                     )))
-                                                    .px(px(12.0))
-                                                    .py(px(5.0))
-                                                    .rounded(px(4.0))
-                                                    .text_size(px(11.0))
+                                                    .px(ui::s(12.0))
+                                                    .py(ui::s(5.0))
+                                                    .rounded(ui::s(4.0))
+                                                    .text_size(ui::TEXT_BASE)
                                                     .text_color(theme::fg_dim())
                                                     .cursor_pointer()
                                                     .hover(|s| {
@@ -18102,11 +18450,11 @@ impl FermiConsole {
                                                         "inv-accept-{}",
                                                         iid
                                                     )))
-                                                    .px(px(14.0))
-                                                    .py(px(5.0))
-                                                    .rounded(px(4.0))
+                                                    .px(ui::s(14.0))
+                                                    .py(ui::s(5.0))
+                                                    .rounded(ui::s(4.0))
                                                     .bg(theme::green())
-                                                    .text_size(px(11.0))
+                                                    .text_size(ui::TEXT_BASE)
                                                     .text_color(rgb(theme::BG))
                                                     .font_weight(FontWeight::SEMIBOLD)
                                                     .cursor_pointer()
@@ -18139,30 +18487,30 @@ impl FermiConsole {
             // Header
             .child(
                 div()
-                    .px(px(24.0))
-                    .py(px(16.0))
+                    .px(ui::s(24.0))
+                    .py(ui::s(16.0))
                     .border_b_1()
-                    .border_color(theme::fg_faint())
+                    .border_color(theme::border())
                     .flex()
                     .items_center()
-                    .gap(px(12.0))
+                    .gap(ui::s(12.0))
                     .child(
                         div()
-                            .text_size(px(20.0))
+                            .text_size(ui::TEXT_4XL)
                             .text_color(theme::gold())
                             .font_weight(FontWeight::BOLD)
                             .child("⚑ Leaderboard"),
                     )
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(ui::TEXT_MD)
                             .text_color(theme::fg_dim())
                             .child(format!("{} forecasters", self.leaderboard.len())),
                     )
                     .when(self.leaderboard_loading, |el| {
                         el.child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(theme::gold())
                                 .child("⟳ Loading…"),
                         )
@@ -18177,11 +18525,11 @@ impl FermiConsole {
                             .unwrap_or_else(|| "Unranked".into());
                         el.child(div().flex_grow()).child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(ui::TEXT_MD)
                                 .text_color(theme::cyan())
-                                .px(px(10.0))
-                                .py(px(4.0))
-                                .rounded(px(4.0))
+                                .px(ui::s(10.0))
+                                .py(ui::s(4.0))
+                                .rounded(ui::s(4.0))
                                 .bg(theme::bg_active())
                                 .child(rank),
                         )
@@ -18192,19 +18540,19 @@ impl FermiConsole {
                 div()
                     .flex()
                     .items_center()
-                    .px(px(24.0))
-                    .py(px(8.0))
+                    .px(ui::s(24.0))
+                    .py(ui::s(8.0))
                     .bg(theme::bg_deep())
                     .border_b_1()
-                    .border_color(theme::fg_faint())
-                    .text_size(px(10.0))
-                    .text_color(theme::fg_faint())
-                    .child(div().w(px(40.0)).child("Rank"))
+                    .border_color(theme::border())
+                    .text_size(ui::TEXT_SM)
+                    .text_color(theme::fg_muted())
+                    .child(div().w(ui::s(40.0)).child("Rank"))
                     .child(div().flex_grow().child("Forecaster"))
-                    .child(div().w(px(70.0)).text_right().child("Resolved"))
-                    .child(div().w(px(80.0)).text_right().child("Avg Brier"))
-                    .child(div().w(px(80.0)).text_right().child("Best"))
-                    .child(div().w(px(80.0)).text_right().child("Calibration")),
+                    .child(div().w(ui::s(70.0)).text_right().child("Resolved"))
+                    .child(div().w(ui::s(80.0)).text_right().child("Avg Brier"))
+                    .child(div().w(ui::s(80.0)).text_right().child("Best"))
+                    .child(div().w(ui::s(80.0)).text_right().child("Calibration")),
             )
             // Leaderboard rows
             .child(
@@ -18226,18 +18574,18 @@ impl FermiConsole {
                                     .flex_col()
                                     .items_center()
                                     .justify_center()
-                                    .py(px(48.0))
+                                    .py(ui::s(48.0))
                                     .child(
                                         div()
-                                            .text_size(px(14.0))
+                                            .text_size(ui::TEXT_XL)
                                             .text_color(theme::fg_dim())
                                             .child("No leaderboard data"),
                                     )
                                     .child(
                                         div()
-                                            .text_size(px(12.0))
-                                            .text_color(theme::fg_faint())
-                                            .mt(px(4.0))
+                                            .text_size(ui::TEXT_MD)
+                                            .text_color(theme::fg_muted())
+                                            .mt(ui::s(4.0))
                                             .child(
                                                 "Resolve forecasts to appear on the leaderboard",
                                             ),
@@ -18249,14 +18597,14 @@ impl FermiConsole {
             // Calibration legend
             .child(
                 div()
-                    .px(px(24.0))
-                    .py(px(12.0))
+                    .px(ui::s(24.0))
+                    .py(ui::s(12.0))
                     .border_t_1()
-                    .border_color(theme::fg_faint())
+                    .border_color(theme::border())
                     .flex()
-                    .gap(px(16.0))
-                    .text_size(px(10.0))
-                    .text_color(theme::fg_faint())
+                    .gap(ui::s(16.0))
+                    .text_size(ui::TEXT_SM)
+                    .text_color(theme::fg_muted())
                     .child("Brier score: 0.0 = perfect, 0.25 = coin flip, lower is better")
                     .child("Min 3 resolved forecasts to rank"),
             )
@@ -18302,17 +18650,17 @@ impl FermiConsole {
         div()
             .flex()
             .items_center()
-            .px(px(24.0))
-            .py(px(10.0))
+            .px(ui::s(24.0))
+            .py(ui::s(10.0))
             .border_b_1()
-            .border_color(theme::fg_faint())
+            .border_color(theme::border())
             .hover(|s| s.bg(theme::bg_hover()))
             .when(is_me, |el| el.bg(theme::bg_active()))
             // Rank
             .child(
                 div()
-                    .w(px(40.0))
-                    .text_size(px(14.0))
+                    .w(ui::s(40.0))
+                    .text_size(ui::TEXT_XL)
                     .text_color(rgb(rank_color))
                     .font_weight(FontWeight::BOLD)
                     .child(format!("#{}", rank)),
@@ -18321,7 +18669,7 @@ impl FermiConsole {
             .child(
                 div().flex_grow().flex().flex_col().child(
                     div()
-                        .text_size(px(13.0))
+                        .text_size(ui::TEXT_LG)
                         .text_color(if is_me { theme::cyan() } else { theme::fg() })
                         .font_weight(if is_me {
                             FontWeight::BOLD
@@ -18334,8 +18682,8 @@ impl FermiConsole {
             // Resolved count
             .child(
                 div()
-                    .w(px(70.0))
-                    .text_size(px(12.0))
+                    .w(ui::s(70.0))
+                    .text_size(ui::TEXT_MD)
                     .text_color(theme::fg_dim())
                     .text_right()
                     .child(format!("{}", resolved)),
@@ -18343,8 +18691,8 @@ impl FermiConsole {
             // Avg Brier
             .child(
                 div()
-                    .w(px(80.0))
-                    .text_size(px(13.0))
+                    .w(ui::s(80.0))
+                    .text_size(ui::TEXT_LG)
                     .text_color(rgb(brier_color))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_right()
@@ -18353,8 +18701,8 @@ impl FermiConsole {
             // Best Brier
             .child(
                 div()
-                    .w(px(80.0))
-                    .text_size(px(12.0))
+                    .w(ui::s(80.0))
+                    .text_size(ui::TEXT_MD)
                     .text_color(theme::fg_dim())
                     .text_right()
                     .child(format!("{:.3}", best_brier)),
@@ -18362,9 +18710,9 @@ impl FermiConsole {
             // Calibration mini
             .child(
                 div()
-                    .w(px(80.0))
-                    .text_size(px(10.0))
-                    .text_color(theme::fg_faint())
+                    .w(ui::s(96.0))
+                    .text_size(ui::TEXT_SM)
+                    .text_color(theme::fg_muted())
                     .text_right()
                     .child(cal_indicator),
             )
@@ -18390,10 +18738,10 @@ impl FermiConsole {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(20.0))
-                    .w(px(480.0))
-                    .p(px(28.0))
-                    .rounded(px(12.0))
+                    .gap(ui::s(20.0))
+                    .w(ui::s(480.0))
+                    .p(ui::s(28.0))
+                    .rounded(ui::s(12.0))
                     .bg(rgb(theme::BG_ELEVATED))
                     .border_1()
                     .border_color(rgb(theme::CYAN))
@@ -18402,18 +18750,18 @@ impl FermiConsole {
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(6.0))
+                            .gap(ui::s(6.0))
                             .child(
                                 div()
-                                    .text_size(px(18.0))
+                                    .text_size(ui::TEXT_3XL)
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(rgb(theme::CYAN))
                                     .child("Commit Forecast"),
                             )
                             .child(
                                 div()
-                                    .text_size(px(11.0))
-                                    .text_color(theme::fg_faint())
+                                    .text_size(ui::TEXT_BASE)
+                                    .text_color(theme::fg_muted())
                                     .child("Once committed, this forecast enters Brier scoring."),
                             ),
                     )
@@ -18422,13 +18770,13 @@ impl FermiConsole {
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(6.0))
-                            .p(px(12.0))
-                            .rounded(px(6.0))
+                            .gap(ui::s(6.0))
+                            .p(ui::s(12.0))
+                            .rounded(ui::s(6.0))
                             .bg(rgb(theme::BG))
                             .child(
                                 div()
-                                    .text_size(px(13.0))
+                                    .text_size(ui::TEXT_LG)
                                     .text_color(rgb(theme::FG))
                                     .child(question),
                             )
@@ -18436,18 +18784,18 @@ impl FermiConsole {
                                 div()
                                     .flex()
                                     .items_center()
-                                    .gap(px(8.0))
+                                    .gap(ui::s(8.0))
                                     .child(
                                         div()
-                                            .text_size(px(24.0))
+                                            .text_size(ui::TEXT_6XL)
                                             .font_weight(FontWeight::BOLD)
                                             .text_color(rgb(theme::CYAN))
                                             .child(format!("{}%", prob_pct)),
                                     )
                                     .child(
                                         div()
-                                            .text_size(px(11.0))
-                                            .text_color(theme::fg_faint())
+                                            .text_size(ui::TEXT_BASE)
+                                            .text_color(theme::fg_muted())
                                             .child("committed probability"),
                                     ),
                             ),
@@ -18457,17 +18805,17 @@ impl FermiConsole {
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(8.0))
+                            .gap(ui::s(8.0))
                             .child(
                                 div()
-                                    .text_size(px(11.0))
-                                    .text_color(theme::fg_faint())
+                                    .text_size(ui::TEXT_BASE)
+                                    .text_color(theme::fg_muted())
                                     .child("WHO CAN SEE THIS FORECAST"),
                             )
                             .child(
                                 div()
                                     .flex()
-                                    .gap(px(8.0))
+                                    .gap(ui::s(8.0))
                                     // Private option
                                     .child({
                                         let is_sel = selected_vis == "private";
@@ -18476,15 +18824,15 @@ impl FermiConsole {
                                             .flex()
                                             .flex_col()
                                             .items_center()
-                                            .gap(px(4.0))
+                                            .gap(ui::s(4.0))
                                             .flex_1()
-                                            .p(px(12.0))
-                                            .rounded(px(8.0))
+                                            .p(ui::s(12.0))
+                                            .rounded(ui::s(8.0))
                                             .border_1()
                                             .border_color(if is_sel {
                                                 rgb(theme::CYAN)
                                             } else {
-                                                rgb(theme::FG_FAINT)
+                                                rgb(theme::FG_MUTED)
                                             })
                                             .bg(if is_sel {
                                                 rgb(theme::BG_ACTIVE)
@@ -18497,18 +18845,18 @@ impl FermiConsole {
                                                 this.commit_sheet_visibility = "private".into();
                                                 cx.notify();
                                             }))
-                                            .child(div().text_size(px(18.0)).child("🔒"))
+                                            .child(div().text_size(ui::TEXT_3XL).child("🔒"))
                                             .child(
                                                 div()
-                                                    .text_size(px(11.0))
+                                                    .text_size(ui::TEXT_BASE)
                                                     .font_weight(FontWeight::SEMIBOLD)
                                                     .text_color(rgb(theme::FG))
                                                     .child("Private"),
                                             )
                                             .child(
                                                 div()
-                                                    .text_size(px(9.0))
-                                                    .text_color(theme::fg_faint())
+                                                    .text_size(ui::TEXT_XS)
+                                                    .text_color(theme::fg_muted())
                                                     .child("only you + invited"),
                                             )
                                     })
@@ -18520,15 +18868,15 @@ impl FermiConsole {
                                             .flex()
                                             .flex_col()
                                             .items_center()
-                                            .gap(px(4.0))
+                                            .gap(ui::s(4.0))
                                             .flex_1()
-                                            .p(px(12.0))
-                                            .rounded(px(8.0))
+                                            .p(ui::s(12.0))
+                                            .rounded(ui::s(8.0))
                                             .border_1()
                                             .border_color(if is_sel {
                                                 rgb(theme::CYAN)
                                             } else {
-                                                rgb(theme::FG_FAINT)
+                                                rgb(theme::FG_MUTED)
                                             })
                                             .bg(if is_sel {
                                                 rgb(theme::BG_ACTIVE)
@@ -18541,18 +18889,18 @@ impl FermiConsole {
                                                 this.commit_sheet_visibility = "public".into();
                                                 cx.notify();
                                             }))
-                                            .child(div().text_size(px(18.0)).child("🌐"))
+                                            .child(div().text_size(ui::TEXT_3XL).child("🌐"))
                                             .child(
                                                 div()
-                                                    .text_size(px(11.0))
+                                                    .text_size(ui::TEXT_BASE)
                                                     .font_weight(FontWeight::SEMIBOLD)
                                                     .text_color(rgb(theme::FG))
                                                     .child("Public"),
                                             )
                                             .child(
                                                 div()
-                                                    .text_size(px(9.0))
-                                                    .text_color(theme::fg_faint())
+                                                    .text_size(ui::TEXT_XS)
+                                                    .text_color(theme::fg_muted())
                                                     .child("global Brier"),
                                             )
                                     }),
@@ -18565,11 +18913,11 @@ impl FermiConsole {
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(8.0))
+                            .gap(ui::s(8.0))
                             .child(
                                 div()
-                                    .text_size(px(11.0))
-                                    .text_color(theme::fg_faint())
+                                    .text_size(ui::TEXT_BASE)
+                                    .text_color(theme::fg_muted())
                                     .child("SHARE WITH (optional)"),
                             )
                             // Add row: input + permission cycle + Add
@@ -18577,16 +18925,16 @@ impl FermiConsole {
                                 div()
                                     .flex()
                                     .items_center()
-                                    .gap(px(8.0))
+                                    .gap(ui::s(8.0))
                                     .child(div().flex_grow().child(self.commit_share_input.clone()))
                                     .child(
                                         div()
                                             .id("commit-share-perm")
-                                            .px(px(10.0))
-                                            .py(px(6.0))
-                                            .rounded(px(4.0))
+                                            .px(ui::s(10.0))
+                                            .py(ui::s(6.0))
+                                            .rounded(ui::s(4.0))
                                             .bg(rgb(theme::BG_ACTIVE))
-                                            .text_size(px(11.0))
+                                            .text_size(ui::TEXT_BASE)
                                             .text_color(theme::gold())
                                             .cursor_pointer()
                                             .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -18605,11 +18953,11 @@ impl FermiConsole {
                                     .child(
                                         div()
                                             .id("commit-share-add")
-                                            .px(px(12.0))
-                                            .py(px(6.0))
-                                            .rounded(px(4.0))
+                                            .px(ui::s(12.0))
+                                            .py(ui::s(6.0))
+                                            .rounded(ui::s(4.0))
                                             .bg(rgb(theme::BLUE))
-                                            .text_size(px(11.0))
+                                            .text_size(ui::TEXT_BASE)
                                             .text_color(rgb(theme::BG))
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .cursor_pointer()
@@ -18626,25 +18974,25 @@ impl FermiConsole {
                                     div()
                                         .flex()
                                         .items_center()
-                                        .gap(px(8.0))
-                                        .px(px(10.0))
-                                        .py(px(6.0))
-                                        .rounded(px(6.0))
+                                        .gap(ui::s(8.0))
+                                        .px(ui::s(10.0))
+                                        .py(ui::s(6.0))
+                                        .rounded(ui::s(6.0))
                                         .bg(rgb(theme::BG))
-                                        .child(div().text_size(px(12.0)).child(
+                                        .child(div().text_size(ui::TEXT_MD).child(
                                             if target.contains('@') { "✉" } else { "🧑" },
                                         ))
                                         .child(
                                             div()
                                                 .flex_grow()
                                                 .overflow_hidden()
-                                                .text_size(px(11.0))
+                                                .text_size(ui::TEXT_BASE)
                                                 .text_color(rgb(theme::FG))
                                                 .child(target.clone()),
                                         )
                                         .child(
                                             div()
-                                                .text_size(px(10.0))
+                                                .text_size(ui::TEXT_SM)
                                                 .text_color(theme::gold())
                                                 .child(perm.clone()),
                                         )
@@ -18654,10 +19002,10 @@ impl FermiConsole {
                                                     "commit-share-rm-{}",
                                                     i
                                                 )))
-                                                .px(px(6.0))
-                                                .py(px(2.0))
-                                                .rounded(px(4.0))
-                                                .text_size(px(12.0))
+                                                .px(ui::s(6.0))
+                                                .py(ui::s(2.0))
+                                                .rounded(ui::s(4.0))
+                                                .text_size(ui::TEXT_MD)
                                                 .text_color(theme::fg_dim())
                                                 .cursor_pointer()
                                                 .hover(|s| {
@@ -18684,19 +19032,19 @@ impl FermiConsole {
                     .child(
                         div()
                             .flex()
-                            .gap(px(12.0))
+                            .gap(ui::s(12.0))
                             .justify_end()
                             // Cancel
                             .child(
                                 div()
                                     .id("commit-cancel")
-                                    .px(px(20.0))
-                                    .py(px(10.0))
-                                    .rounded(px(6.0))
+                                    .px(ui::s(20.0))
+                                    .py(ui::s(10.0))
+                                    .rounded(ui::s(6.0))
                                     .border_1()
-                                    .border_color(rgb(theme::FG_FAINT))
-                                    .text_size(px(13.0))
-                                    .text_color(theme::fg_faint())
+                                    .border_color(rgb(theme::BORDER))
+                                    .text_size(ui::TEXT_LG)
+                                    .text_color(theme::fg_muted())
                                     .cursor_pointer()
                                     .hover(|s| {
                                         s.bg(rgb(theme::BG_HOVER)).text_color(rgb(theme::FG))
@@ -18711,11 +19059,11 @@ impl FermiConsole {
                             .child(
                                 div()
                                     .id("commit-confirm")
-                                    .px(px(20.0))
-                                    .py(px(10.0))
-                                    .rounded(px(6.0))
+                                    .px(ui::s(20.0))
+                                    .py(ui::s(10.0))
+                                    .rounded(ui::s(6.0))
                                     .bg(rgb(theme::CYAN))
-                                    .text_size(px(13.0))
+                                    .text_size(ui::TEXT_LG)
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(rgb(theme::BG_DEEP))
                                     .cursor_pointer()
@@ -18756,10 +19104,10 @@ impl FermiConsole {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(20.0))
-                    .w(px(480.0))
-                    .p(px(28.0))
-                    .rounded(px(12.0))
+                    .gap(ui::s(20.0))
+                    .w(ui::s(480.0))
+                    .p(ui::s(28.0))
+                    .rounded(ui::s(12.0))
                     .bg(rgb(theme::BG_ELEVATED))
                     .border_1()
                     .border_color(rgb(theme::GREEN))
@@ -18768,18 +19116,18 @@ impl FermiConsole {
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(6.0))
+                            .gap(ui::s(6.0))
                             .child(
                                 div()
-                                    .text_size(px(18.0))
+                                    .text_size(ui::TEXT_3XL)
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(rgb(theme::GREEN))
                                     .child("Resolve Forecast"),
                             )
                             .child(
                                 div()
-                                    .text_size(px(11.0))
-                                    .text_color(theme::fg_faint())
+                                    .text_size(ui::TEXT_BASE)
+                                    .text_color(theme::fg_muted())
                                     .child(
                                     "Record the actual outcome. This locks in your Brier score.",
                                 ),
@@ -18788,10 +19136,10 @@ impl FermiConsole {
                     // Question summary
                     .child(
                         div()
-                            .p(px(12.0))
-                            .rounded(px(6.0))
+                            .p(ui::s(12.0))
+                            .rounded(ui::s(6.0))
                             .bg(rgb(theme::BG))
-                            .text_size(px(13.0))
+                            .text_size(ui::TEXT_LG)
                             .text_color(rgb(theme::FG))
                             .child(question),
                     )
@@ -18800,17 +19148,17 @@ impl FermiConsole {
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(8.0))
+                            .gap(ui::s(8.0))
                             .child(
                                 div()
-                                    .text_size(px(11.0))
-                                    .text_color(theme::fg_faint())
+                                    .text_size(ui::TEXT_BASE)
+                                    .text_color(theme::fg_muted())
                                     .child("WHAT HAPPENED?"),
                             )
                             .child(
                                 div()
                                     .flex()
-                                    .gap(px(12.0))
+                                    .gap(ui::s(12.0))
                                     // YES tile
                                     .child({
                                         let is_sel = selected == Some(true);
@@ -18819,15 +19167,15 @@ impl FermiConsole {
                                             .flex()
                                             .flex_col()
                                             .items_center()
-                                            .gap(px(6.0))
+                                            .gap(ui::s(6.0))
                                             .flex_1()
-                                            .p(px(16.0))
-                                            .rounded(px(8.0))
+                                            .p(ui::s(16.0))
+                                            .rounded(ui::s(8.0))
                                             .border_1()
                                             .border_color(if is_sel {
                                                 rgb(theme::GREEN)
                                             } else {
-                                                rgb(theme::FG_FAINT)
+                                                rgb(theme::FG_MUTED)
                                             })
                                             .bg(if is_sel {
                                                 rgb(theme::BG_ACTIVE)
@@ -18840,18 +19188,18 @@ impl FermiConsole {
                                                 this.resolve_outcome = Some(true);
                                                 cx.notify();
                                             }))
-                                            .child(div().text_size(px(24.0)).child("✓"))
+                                            .child(div().text_size(ui::TEXT_6XL).child("✓"))
                                             .child(
                                                 div()
-                                                    .text_size(px(13.0))
+                                                    .text_size(ui::TEXT_LG)
                                                     .font_weight(FontWeight::BOLD)
                                                     .text_color(rgb(theme::GREEN))
                                                     .child("YES"),
                                             )
                                             .child(
                                                 div()
-                                                    .text_size(px(10.0))
-                                                    .text_color(theme::fg_faint())
+                                                    .text_size(ui::TEXT_SM)
+                                                    .text_color(theme::fg_muted())
                                                     .child("it happened"),
                                             )
                                     })
@@ -18863,15 +19211,15 @@ impl FermiConsole {
                                             .flex()
                                             .flex_col()
                                             .items_center()
-                                            .gap(px(6.0))
+                                            .gap(ui::s(6.0))
                                             .flex_1()
-                                            .p(px(16.0))
-                                            .rounded(px(8.0))
+                                            .p(ui::s(16.0))
+                                            .rounded(ui::s(8.0))
                                             .border_1()
                                             .border_color(if is_sel {
                                                 rgb(theme::RED)
                                             } else {
-                                                rgb(theme::FG_FAINT)
+                                                rgb(theme::FG_MUTED)
                                             })
                                             .bg(if is_sel {
                                                 rgb(theme::BG_ACTIVE)
@@ -18884,18 +19232,18 @@ impl FermiConsole {
                                                 this.resolve_outcome = Some(false);
                                                 cx.notify();
                                             }))
-                                            .child(div().text_size(px(24.0)).child("✗"))
+                                            .child(div().text_size(ui::TEXT_6XL).child("✗"))
                                             .child(
                                                 div()
-                                                    .text_size(px(13.0))
+                                                    .text_size(ui::TEXT_LG)
                                                     .font_weight(FontWeight::BOLD)
                                                     .text_color(rgb(theme::RED))
                                                     .child("NO"),
                                             )
                                             .child(
                                                 div()
-                                                    .text_size(px(10.0))
-                                                    .text_color(theme::fg_faint())
+                                                    .text_size(ui::TEXT_SM)
+                                                    .text_color(theme::fg_muted())
                                                     .child("it didn't happen"),
                                             )
                                     }),
@@ -18905,7 +19253,7 @@ impl FermiConsole {
                     .when(self.resolve_error.is_some(), |el| {
                         el.child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .text_color(theme::red())
                                 .child(self.resolve_error.as_deref().unwrap_or("").to_string()),
                         )
@@ -18914,18 +19262,18 @@ impl FermiConsole {
                     .child(
                         div()
                             .flex()
-                            .gap(px(12.0))
+                            .gap(ui::s(12.0))
                             .justify_end()
                             // Cancel
                             .child(
                                 div()
                                     .id("resolve-cancel")
-                                    .px(px(16.0))
-                                    .py(px(8.0))
-                                    .rounded(px(6.0))
+                                    .px(ui::s(16.0))
+                                    .py(ui::s(8.0))
+                                    .rounded(ui::s(6.0))
                                     .border_1()
-                                    .border_color(rgb(theme::FG_FAINT))
-                                    .text_size(px(13.0))
+                                    .border_color(rgb(theme::BORDER))
+                                    .text_size(ui::TEXT_LG)
                                     .text_color(theme::fg_dim())
                                     .cursor_pointer()
                                     .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -18940,11 +19288,11 @@ impl FermiConsole {
                             .child(
                                 div()
                                     .id("resolve-confirm")
-                                    .px(px(20.0))
-                                    .py(px(8.0))
-                                    .rounded(px(6.0))
+                                    .px(ui::s(20.0))
+                                    .py(ui::s(8.0))
+                                    .rounded(ui::s(6.0))
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .text_size(px(13.0))
+                                    .text_size(ui::TEXT_LG)
                                     .when(has_selection && !self.resolve_loading, |el| {
                                         el.bg(rgb(theme::GREEN))
                                             .text_color(rgb(theme::BG))
@@ -18955,7 +19303,7 @@ impl FermiConsole {
                                             }))
                                     })
                                     .when(!has_selection || self.resolve_loading, |el| {
-                                        el.bg(theme::bg_hover()).text_color(theme::fg_faint())
+                                        el.bg(theme::bg_hover()).text_color(theme::fg_muted())
                                     })
                                     .child(if self.resolve_loading {
                                         "Resolving…"
@@ -18980,11 +19328,11 @@ impl FermiConsole {
         let mut content = div()
             .flex()
             .flex_col()
-            .gap(px(16.0))
-            .w(px(720.0))
+            .gap(ui::s(16.0))
+            .w(ui::s(720.0))
             .max_h(px(640.0))
-            .p(px(24.0))
-            .rounded(px(12.0))
+            .p(ui::s(24.0))
+            .rounded(ui::s(12.0))
             .bg(rgb(theme::BG_ELEVATED))
             .border_1()
             .border_color(rgb(theme::GOLD))
@@ -18992,17 +19340,17 @@ impl FermiConsole {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(10.0))
+                    .gap(ui::s(10.0))
                     .child(
                         div()
-                            .text_size(px(18.0))
+                            .text_size(ui::TEXT_3XL)
                             .font_weight(FontWeight::BOLD)
                             .text_color(rgb(theme::GOLD))
                             .child("Pending cascades"),
                     )
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(theme::fg_dim())
                             .child(format!("{} pending review · operator-gate enabled", n)),
                     )
@@ -19010,7 +19358,7 @@ impl FermiConsole {
                     .child(
                         div()
                             .id("pending-cascades-close")
-                            .text_size(px(14.0))
+                            .text_size(ui::TEXT_XL)
                             .text_color(theme::fg_dim())
                             .cursor_pointer()
                             .hover(|s| s.text_color(theme::fg()))
@@ -19022,28 +19370,31 @@ impl FermiConsole {
                     ),
             )
             .child(
-                div().text_size(px(11.0)).text_color(theme::fg_dim()).child(
-                    "Each entry below was queued by a forecast resolution. \
+                div()
+                    .text_size(ui::TEXT_BASE)
+                    .text_color(theme::fg_dim())
+                    .child(
+                        "Each entry below was queued by a forecast resolution. \
                          Apply fires the propagation; Dismiss closes the entry \
                          without changing any siblings."
-                        .to_string(),
-                ),
+                            .to_string(),
+                    ),
             );
 
         if loading && self.pending_cascades.is_empty() {
             content = content.child(
                 div()
-                    .py(px(24.0))
+                    .py(ui::s(24.0))
                     .text_color(theme::fg_dim())
-                    .text_size(px(12.0))
+                    .text_size(ui::TEXT_MD)
                     .child("Loading…"),
             );
         } else if self.pending_cascades.is_empty() {
             content = content.child(
                 div()
-                    .py(px(24.0))
+                    .py(ui::s(24.0))
                     .text_color(theme::fg_dim())
-                    .text_size(px(12.0))
+                    .text_size(ui::TEXT_MD)
                     .child(
                         "No cascades pending. Resolve a forecast that's part of \
                          a relationship (e.g. WC sims mutex) to queue one."
@@ -19057,7 +19408,7 @@ impl FermiConsole {
                 .id(list_id)
                 .flex()
                 .flex_col()
-                .gap(px(10.0))
+                .gap(ui::s(10.0))
                 .overflow_y_scroll();
 
             for entry in &self.pending_cascades {
@@ -19134,20 +19485,20 @@ impl FermiConsole {
                 let mut row = div()
                     .flex()
                     .flex_col()
-                    .gap(px(8.0))
-                    .p(px(14.0))
-                    .rounded(px(8.0))
+                    .gap(ui::s(8.0))
+                    .p(ui::s(14.0))
+                    .rounded(ui::s(8.0))
                     .bg(rgb(theme::BG))
                     .border_1()
-                    .border_color(theme::fg_faint())
+                    .border_color(theme::border())
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(10.0))
+                            .gap(ui::s(10.0))
                             .child(
                                 div()
-                                    .text_size(px(12.0))
+                                    .text_size(ui::TEXT_MD)
                                     .text_color(rgb(theme::FG))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .flex_grow()
@@ -19155,11 +19506,11 @@ impl FermiConsole {
                             )
                             .child(
                                 div()
-                                    .px(px(8.0))
-                                    .py(px(2.0))
-                                    .rounded(px(4.0))
+                                    .px(ui::s(8.0))
+                                    .py(ui::s(2.0))
+                                    .rounded(ui::s(4.0))
                                     .bg(rgb(theme::BG_ELEVATED))
-                                    .text_size(px(10.0))
+                                    .text_size(ui::TEXT_SM)
                                     .text_color(rgb(outcome_color))
                                     .font_weight(FontWeight::BOLD)
                                     .child(outcome_label.to_string()),
@@ -19168,8 +19519,8 @@ impl FermiConsole {
                     .child(
                         div()
                             .flex()
-                            .gap(px(10.0))
-                            .text_size(px(10.0))
+                            .gap(ui::s(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(theme::fg_dim())
                             .child(format!("kind: {}", kind))
                             .child(format!("source: {}", source))
@@ -19185,12 +19536,12 @@ impl FermiConsole {
                     };
                     row = row.child(
                         div()
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(theme::fg_dim())
-                            .mt(px(2.0))
+                            .mt(ui::s(2.0))
                             .child(label),
                     );
-                    let mut deltas_box = div().flex().flex_col().gap(px(2.0));
+                    let mut deltas_box = div().flex().flex_col().gap(ui::s(2.0));
                     for d in &top_deltas {
                         let fid = d
                             .get("forecast_id")
@@ -19215,27 +19566,28 @@ impl FermiConsole {
                         } else {
                             theme::FG_DIM
                         };
-                        deltas_box =
-                            deltas_box.child(
-                                div()
-                                    .flex()
-                                    .gap(px(10.0))
-                                    .text_size(px(10.0))
-                                    .child(div().w(px(70.0)).text_color(theme::fg_dim()).child(fid))
-                                    .child(div().w(px(140.0)).text_color(rgb(theme::FG)).child(
+                        deltas_box = deltas_box.child(
+                            div()
+                                .flex()
+                                .gap(ui::s(10.0))
+                                .text_size(ui::TEXT_SM)
+                                .child(div().w(ui::s(70.0)).text_color(theme::fg_dim()).child(fid))
+                                .child(
+                                    div().w(ui::s(140.0)).text_color(rgb(theme::FG)).child(
                                         format!("{:.1}% → {:.1}%", prev * 100.0, new_p * 100.0),
-                                    ))
-                                    .child(
-                                        div()
-                                            .text_color(rgb(arrow_color))
-                                            .font_weight(FontWeight::BOLD)
-                                            .child(format!(
-                                                "{}{:.2}pp",
-                                                if dpp >= 0.0 { "+" } else { "" },
-                                                dpp
-                                            )),
                                     ),
-                            );
+                                )
+                                .child(
+                                    div()
+                                        .text_color(rgb(arrow_color))
+                                        .font_weight(FontWeight::BOLD)
+                                        .child(format!(
+                                            "{}{:.2}pp",
+                                            if dpp >= 0.0 { "+" } else { "" },
+                                            dpp
+                                        )),
+                                ),
+                        );
                     }
                     row = row.child(deltas_box);
                 }
@@ -19244,25 +19596,25 @@ impl FermiConsole {
                 row = row.child(
                     div()
                         .flex()
-                        .gap(px(10.0))
-                        .mt(px(4.0))
+                        .gap(ui::s(10.0))
+                        .mt(ui::s(4.0))
                         .child({
                             let mut btn = div()
                                 .id(SharedString::from(format!("apply-{}", cid)))
-                                .px(px(14.0))
-                                .py(px(6.0))
-                                .rounded(px(6.0))
+                                .px(ui::s(14.0))
+                                .py(ui::s(6.0))
+                                .rounded(ui::s(6.0))
                                 .bg(if in_flight {
                                     rgb(theme::BG_ELEVATED)
                                 } else {
                                     rgb(theme::GREEN)
                                 })
                                 .text_color(if in_flight {
-                                    rgb(theme::FG_FAINT)
+                                    rgb(theme::FG_MUTED)
                                 } else {
                                     rgb(theme::BG)
                                 })
-                                .text_size(px(11.0))
+                                .text_size(ui::TEXT_BASE)
                                 .font_weight(FontWeight::SEMIBOLD);
                             if !in_flight {
                                 btn = btn.cursor_pointer().hover(|s| s.opacity(0.85));
@@ -19279,13 +19631,13 @@ impl FermiConsole {
                         .child({
                             let mut btn = div()
                                 .id(SharedString::from(format!("dismiss-{}", cid)))
-                                .px(px(14.0))
-                                .py(px(6.0))
-                                .rounded(px(6.0))
+                                .px(ui::s(14.0))
+                                .py(ui::s(6.0))
+                                .rounded(ui::s(6.0))
                                 .border_1()
                                 .border_color(rgb(theme::RED))
                                 .text_color(rgb(theme::RED))
-                                .text_size(px(11.0));
+                                .text_size(ui::TEXT_BASE);
                             if !in_flight {
                                 btn = btn.cursor_pointer().hover(|s| s.bg(rgb(theme::BG_HOVER)));
                                 btn = btn.on_click(cx.listener(move |this, _, _, cx| {
@@ -19339,10 +19691,10 @@ impl FermiConsole {
                 let mut content = div()
                     .flex()
                     .flex_col()
-                    .gap(px(20.0))
-                    .w(px(560.0))
-                    .p(px(28.0))
-                    .rounded(px(12.0))
+                    .gap(ui::s(20.0))
+                    .w(ui::s(560.0))
+                    .p(ui::s(28.0))
+                    .rounded(ui::s(12.0))
                     .bg(rgb(theme::BG_ELEVATED))
                     .border_1()
                     .border_color(rgb(theme::CYAN))
@@ -19351,18 +19703,18 @@ impl FermiConsole {
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(6.0))
+                            .gap(ui::s(6.0))
                             .child(
                                 div()
-                                    .text_size(px(18.0))
+                                    .text_size(ui::TEXT_3XL)
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(rgb(theme::CYAN))
                                     .child("Cascade resolution"),
                             )
                             .child(
                                 div()
-                                    .text_size(px(11.0))
-                                    .text_color(theme::fg_faint())
+                                    .text_size(ui::TEXT_BASE)
+                                    .text_color(theme::fg_muted())
                                     .child(format!(
                                         "Forecast {} resolved: {}. Propagate to siblings?",
                                         trigger_short, outcome_label
@@ -19399,28 +19751,28 @@ impl FermiConsole {
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(8.0))
-                            .p(px(14.0))
-                            .rounded(px(8.0))
+                            .gap(ui::s(8.0))
+                            .p(ui::s(14.0))
+                            .rounded(ui::s(8.0))
                             .bg(rgb(theme::BG))
                             .border_1()
-                            .border_color(rgb(theme::FG_FAINT))
+                            .border_color(rgb(theme::BORDER))
                             .child(
                                 div()
                                     .flex()
                                     .items_center()
-                                    .gap(px(8.0))
+                                    .gap(ui::s(8.0))
                                     .child(
                                         div()
-                                            .text_size(px(11.0))
+                                            .text_size(ui::TEXT_BASE)
                                             .text_color(rgb(theme::CYAN))
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .child(kind.clone()),
                                     )
                                     .child(
                                         div()
-                                            .text_size(px(10.0))
-                                            .text_color(theme::fg_faint())
+                                            .text_size(ui::TEXT_SM)
+                                            .text_color(theme::fg_muted())
                                             .child(format!(
                                                 "{} sibling forecast{}",
                                                 n_siblings,
@@ -19428,24 +19780,27 @@ impl FermiConsole {
                                             )),
                                     ),
                             )
-                            .child(div().text_size(px(10.0)).text_color(theme::fg_dim()).child(
-                                if description.is_empty() {
-                                    "(no description)".to_string()
-                                } else {
-                                    description
-                                },
-                            ))
+                            .child(
+                                div()
+                                    .text_size(ui::TEXT_SM)
+                                    .text_color(theme::fg_dim())
+                                    .child(if description.is_empty() {
+                                        "(no description)".to_string()
+                                    } else {
+                                        description
+                                    }),
+                            )
                             .child({
                                 let is_loading = self.cascade_loading;
                                 div()
                                     .id(SharedString::from(format!("cascade-fire-{}", rel_id)))
-                                    .px(px(14.0))
-                                    .py(px(7.0))
-                                    .rounded(px(6.0))
+                                    .px(ui::s(14.0))
+                                    .py(ui::s(7.0))
+                                    .rounded(ui::s(6.0))
                                     .border_1()
                                     .border_color(rgb(theme::CYAN))
                                     .bg(rgb(theme::BG_ACTIVE))
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(rgb(theme::CYAN))
                                     .when(!is_loading, |el| {
@@ -19472,12 +19827,12 @@ impl FermiConsole {
                 if let Some(ref summary) = self.cascade_summary {
                     content = content.child(
                         div()
-                            .p(px(12.0))
-                            .rounded(px(6.0))
+                            .p(ui::s(12.0))
+                            .rounded(ui::s(6.0))
                             .bg(rgb(theme::BG))
                             .border_1()
                             .border_color(rgb(theme::GREEN))
-                            .text_size(px(11.0))
+                            .text_size(ui::TEXT_BASE)
                             .text_color(rgb(theme::GREEN))
                             .child(summary.clone()),
                     );
@@ -19485,15 +19840,15 @@ impl FermiConsole {
 
                 // Done / Skip buttons
                 content = content.child(
-                    div().flex().gap(px(12.0)).justify_end().child(
+                    div().flex().gap(ui::s(12.0)).justify_end().child(
                         div()
                             .id("cascade-skip")
-                            .px(px(16.0))
-                            .py(px(8.0))
-                            .rounded(px(6.0))
+                            .px(ui::s(16.0))
+                            .py(ui::s(8.0))
+                            .rounded(ui::s(6.0))
                             .border_1()
-                            .border_color(rgb(theme::FG_FAINT))
-                            .text_size(px(13.0))
+                            .border_color(rgb(theme::BORDER))
+                            .text_size(ui::TEXT_LG)
                             .text_color(theme::fg_dim())
                             .cursor_pointer()
                             .hover(|s| s.bg(rgb(theme::BG_HOVER)))
@@ -19522,7 +19877,17 @@ impl Focusable for FermiConsole {
 }
 
 impl Render for FermiConsole {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Publish the UI scale to the window before building the tree.
+        //
+        // This one line is what makes the scale global: every length in the
+        // console is a `rems` produced by `ui::s` or a `ui::TEXT_*` token,
+        // and GPUI resolves `rems` against `Window::rem_size` at layout
+        // time. Setting it here — rather than once at startup — means a
+        // scale change takes effect on the very next frame, with no
+        // invalidation to plumb and nothing to keep in sync.
+        window.set_rem_size(ui::rem_size());
+
         // Pre-compute overlays before chaining to avoid borrow conflicts
         let commit_overlay = self
             .commit_sheet_showing
@@ -19600,6 +19965,9 @@ impl Render for FermiConsole {
             .on_action(cx.listener(Self::on_toggle_fermi_chat))
             .on_action(cx.listener(Self::on_send_fermi_chat))
             .on_action(cx.listener(Self::on_show_activity))
+            .on_action(cx.listener(Self::on_increase_ui_scale))
+            .on_action(cx.listener(Self::on_decrease_ui_scale))
+            .on_action(cx.listener(Self::on_reset_ui_scale))
             .relative()
             .flex()
             .size_full()
@@ -19676,24 +20044,29 @@ impl Render for FermiConsole {
                         div()
                             // Fixed to bottom-right corner
                             .absolute()
-                            .bottom(px(24.0))
-                            .right(px(24.0))
+                            .bottom(ui::s(24.0))
+                            .right(ui::s(24.0))
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
-                            .px(px(16.0))
-                            .py(px(10.0))
-                            .rounded(px(8.0))
+                            .gap(ui::s(8.0))
+                            .px(ui::s(16.0))
+                            .py(ui::s(10.0))
+                            .rounded(ui::s(8.0))
                             .bg(theme::bg_elevated())
                             .border_1()
                             .border_color(rgb(color))
                             .shadow_lg()
-                            .child(div().text_size(px(14.0)).text_color(rgb(color)).child(icon))
                             .child(
                                 div()
-                                    .text_size(px(12.0))
+                                    .text_size(ui::TEXT_XL)
+                                    .text_color(rgb(color))
+                                    .child(icon),
+                            )
+                            .child(
+                                div()
+                                    .text_size(ui::TEXT_MD)
                                     .text_color(theme::fg())
-                                    .min_w(px(0.0))
+                                    .min_w(ui::s(0.0))
                                     .child(msg.clone()),
                             ),
                     )
@@ -19922,21 +20295,21 @@ fn activity_filter_chip(
 ) -> impl IntoElement {
     let active = kind == current;
     let (bg_color, fg_color, border_color) = if disabled {
-        (theme::BG, theme::FG_FAINT, theme::FG_FAINT)
+        (theme::BG, theme::FG_MUTED, theme::BORDER)
     } else if active {
         (theme::BG_HOVER, theme::FG, theme::CYAN)
     } else {
-        (theme::BG, theme::FG_DIM, theme::FG_FAINT)
+        (theme::BG, theme::FG_DIM, theme::BORDER)
     };
     div()
         .id(SharedString::from(id))
-        .px(px(8.0))
-        .py(px(2.0))
-        .rounded(px(10.0))
+        .px(ui::s(8.0))
+        .py(ui::s(2.0))
+        .rounded(ui::s(10.0))
         .border_1()
         .border_color(rgb(border_color))
         .bg(rgb(bg_color))
-        .text_size(px(10.0))
+        .text_size(ui::TEXT_SM)
         .text_color(rgb(fg_color))
         .when(!disabled, |el| {
             el.cursor_pointer().hover(|s| s.bg(theme::bg_hover()))
@@ -19952,20 +20325,20 @@ fn activity_filter_chip(
 
 fn activity_source_chip(label: &str, active: bool, disabled: bool) -> impl IntoElement {
     let (bg_color, fg_color, border_color) = if disabled {
-        (theme::BG, theme::FG_FAINT, theme::FG_FAINT)
+        (theme::BG, theme::FG_MUTED, theme::BORDER)
     } else if active {
         (theme::BG_HOVER, theme::FG, theme::CYAN)
     } else {
-        (theme::BG, theme::FG_DIM, theme::FG_FAINT)
+        (theme::BG, theme::FG_DIM, theme::BORDER)
     };
     div()
-        .px(px(8.0))
-        .py(px(2.0))
-        .rounded(px(10.0))
+        .px(ui::s(8.0))
+        .py(ui::s(2.0))
+        .rounded(ui::s(10.0))
         .border_1()
         .border_color(rgb(border_color))
         .bg(rgb(bg_color))
-        .text_size(px(10.0))
+        .text_size(ui::TEXT_SM)
         .text_color(rgb(fg_color))
         .child(label.to_string())
 }
@@ -20365,11 +20738,11 @@ fn render_shared_provenance_summary(forecasts: &[Forecast]) -> impl IntoElement 
     };
 
     div()
-        .pt(px(4.0))
+        .pt(ui::s(4.0))
         .flex()
         .flex_wrap()
-        .gap(px(10.0))
-        .text_size(px(10.0))
+        .gap(ui::s(10.0))
+        .text_size(ui::TEXT_SM)
         .when_some(grantor_text, |el, t| {
             el.child(div().text_color(theme::gold()).child(t))
         })
@@ -20386,7 +20759,7 @@ fn render_shared_provenance_summary(forecasts: &[Forecast]) -> impl IntoElement 
         .when(public_or_link > 0, |el| {
             el.child(
                 div()
-                    .text_color(theme::fg_faint())
+                    .text_color(theme::fg_muted())
                     .child(format!("🌐 {} public / link", public_or_link)),
             )
         })
@@ -20438,8 +20811,8 @@ fn render_forecast_collab_line(f: &Forecast) -> impl IntoElement {
     div()
         .flex()
         .flex_wrap()
-        .gap(px(8.0))
-        .text_size(px(10.0))
+        .gap(ui::s(8.0))
+        .text_size(ui::TEXT_SM)
         .when_some(provenance, |el, line| {
             el.child(
                 div()
@@ -20448,7 +20821,7 @@ fn render_forecast_collab_line(f: &Forecast) -> impl IntoElement {
             )
         })
         .when_some(portfolio_text, |el, t| {
-            el.child(div().text_color(theme::fg_faint()).child(t))
+            el.child(div().text_color(theme::fg_muted()).child(t))
         })
 }
 
@@ -20466,18 +20839,18 @@ fn render_forecast_detail(f: &Forecast) -> impl IntoElement {
         .unwrap_or("—");
 
     div()
-        .px(px(24.0))
-        .py(px(12.0))
+        .px(ui::s(24.0))
+        .py(ui::s(12.0))
         .bg(theme::bg())
         .border_t_1()
-        .border_color(theme::fg_faint())
+        .border_color(theme::border())
         .flex()
         .flex_col()
-        .gap(px(8.0))
+        .gap(ui::s(8.0))
         // Full question
         .child(
             div()
-                .text_size(px(14.0))
+                .text_size(ui::TEXT_XL)
                 .text_color(theme::fg())
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(f.question_text.clone()),
@@ -20487,9 +20860,9 @@ fn render_forecast_detail(f: &Forecast) -> impl IntoElement {
             div()
                 .flex()
                 .flex_wrap()
-                .gap_x(px(24.0))
-                .gap_y(px(6.0))
-                .text_size(px(11.0))
+                .gap_x(ui::s(24.0))
+                .gap_y(ui::s(6.0))
+                .text_size(ui::TEXT_BASE)
                 .child(render_detail_kv(
                     "Domain",
                     f.domain.as_deref().unwrap_or("—"),
@@ -20521,16 +20894,16 @@ fn render_forecast_detail(f: &Forecast) -> impl IntoElement {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(2.0))
+                    .gap(ui::s(2.0))
                     .child(
                         div()
-                            .text_size(px(10.0))
-                            .text_color(theme::fg_faint())
+                            .text_size(ui::TEXT_SM)
+                            .text_color(theme::fg_muted())
                             .child("Resolution Criteria"),
                     )
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(ui::TEXT_MD)
                             .text_color(theme::fg_dim())
                             .child(f.resolution_criteria.as_deref().unwrap_or("").to_string()),
                     ),
@@ -20544,7 +20917,7 @@ fn render_forecast_detail(f: &Forecast) -> impl IntoElement {
                 let high = f.confidence_interval_high.unwrap_or(0.0);
                 el.child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(theme::fg_dim())
                         .child(format!("Confidence interval: [{:.1}, {:.1}]", low, high)),
                 )
@@ -20555,8 +20928,8 @@ fn render_forecast_detail(f: &Forecast) -> impl IntoElement {
             el.child(
                 div()
                     .flex()
-                    .gap(px(12.0))
-                    .text_size(px(11.0))
+                    .gap(ui::s(12.0))
+                    .text_size(ui::TEXT_BASE)
                     .child(render_detail_kv(
                         "Resolved",
                         f.resolved_at
@@ -20586,11 +20959,11 @@ fn render_forecast_detail(f: &Forecast) -> impl IntoElement {
                     div()
                         .flex()
                         .flex_col()
-                        .gap(px(4.0))
+                        .gap(ui::s(4.0))
                         .child(
                             div()
-                                .text_size(px(10.0))
-                                .text_color(theme::fg_faint())
+                                .text_size(ui::TEXT_SM)
+                                .text_color(theme::fg_muted())
                                 .child(format!("Update History ({})", updates.len())),
                         )
                         .children(updates.iter().map(|u| {
@@ -20610,18 +20983,18 @@ fn render_forecast_detail(f: &Forecast) -> impl IntoElement {
                                 .unwrap_or("");
                             div()
                                 .flex()
-                                .gap(px(8.0))
-                                .text_size(px(10.0))
+                                .gap(ui::s(8.0))
+                                .text_size(ui::TEXT_SM)
                                 .text_color(theme::fg_dim())
                                 .child(format!("{} → {}", prev, new_p))
                                 .when(!reason.is_empty(), |el| {
                                     el.child(
                                         div()
-                                            .text_color(theme::fg_faint())
+                                            .text_color(theme::fg_muted())
                                             .child(truncate(reason, 40)),
                                     )
                                 })
-                                .child(div().text_color(theme::fg_faint()).child(date.to_string()))
+                                .child(div().text_color(theme::fg_muted()).child(date.to_string()))
                         })),
                 )
             },
@@ -20629,8 +21002,8 @@ fn render_forecast_detail(f: &Forecast) -> impl IntoElement {
         // Forecast ID
         .child(
             div()
-                .text_size(px(9.0))
-                .text_color(theme::fg_faint())
+                .text_size(ui::TEXT_XS)
+                .text_color(theme::fg_muted())
                 .child(format!("ID: {}", f.id)),
         )
 }
@@ -21049,35 +21422,35 @@ fn render_fleet_agent_row(
         Some(AgentRunStatus::Running) => ("⟳", "Running", theme::GOLD),
         Some(AgentRunStatus::Completed) => ("✓", "Completed", theme::GREEN),
         Some(AgentRunStatus::Failed) => ("✗", "Failed", theme::RED),
-        Some(AgentRunStatus::Idle) | None => ("○", "Idle", theme::FG_FAINT),
+        Some(AgentRunStatus::Idle) | None => ("○", "Idle", theme::FG_MUTED),
     };
 
     div()
         .w_full()
         .bg(theme::bg_elevated())
         .border_1()
-        .border_color(theme::fg_faint())
-        .rounded(px(6.0))
-        .p(px(14.0))
+        .border_color(theme::border())
+        .rounded(ui::s(6.0))
+        .p(ui::s(14.0))
         .flex()
-        .gap(px(12.0))
+        .gap(ui::s(12.0))
         // Left: status indicator column
         .child(
             div()
                 .flex()
                 .flex_col()
                 .items_center()
-                .gap(px(4.0))
-                .w(px(48.0))
+                .gap(ui::s(4.0))
+                .w(ui::s(48.0))
                 .child(
                     div()
-                        .text_size(px(18.0))
+                        .text_size(ui::TEXT_3XL)
                         .text_color(rgb(status_color))
                         .child(status_icon),
                 )
                 .child(
                     div()
-                        .text_size(px(9.0))
+                        .text_size(ui::TEXT_XS)
                         .text_color(rgb(status_color))
                         .child(status_text),
                 ),
@@ -21087,30 +21460,30 @@ fn render_fleet_agent_row(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(4.0))
+                .gap(ui::s(4.0))
                 .flex_grow()
-                .min_w(px(0.0))
+                .min_w(ui::s(0.0))
                 // Name + tier badge
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(8.0))
+                        .gap(ui::s(8.0))
                         .child(
                             div()
-                                .text_size(px(13.0))
+                                .text_size(ui::TEXT_LG)
                                 .text_color(theme::fg())
                                 .font_weight(FontWeight::BOLD)
-                                .min_w(px(0.0))
+                                .min_w(ui::s(0.0))
                                 .child(card.agent_id.clone()),
                         )
                         .child(
                             div()
-                                .text_size(px(9.0))
+                                .text_size(ui::TEXT_XS)
                                 .text_color(rgb(tier_color))
-                                .px(px(5.0))
-                                .py(px(1.0))
-                                .rounded(px(3.0))
+                                .px(ui::s(5.0))
+                                .py(ui::s(1.0))
+                                .rounded(ui::s(3.0))
                                 .bg(theme::bg_active())
                                 .child(card.agent_type.clone()),
                         ),
@@ -21118,9 +21491,9 @@ fn render_fleet_agent_row(
                 // Description
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(theme::fg_dim())
-                        .min_w(px(0.0))
+                        .min_w(ui::s(0.0))
                         .child(card.metadata.description.clone()),
                 )
                 // Driver assignments
@@ -21129,21 +21502,21 @@ fn render_fleet_agent_row(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(4.0))
+                            .gap(ui::s(4.0))
                             .flex_wrap()
                             .child(
                                 div()
-                                    .text_size(px(9.0))
-                                    .text_color(theme::fg_faint())
+                                    .text_size(ui::TEXT_XS)
+                                    .text_color(theme::fg_muted())
                                     .child("Assigned to:"),
                             )
                             .children(assigned_drivers.iter().map(|d| {
                                 div()
-                                    .text_size(px(9.0))
+                                    .text_size(ui::TEXT_XS)
                                     .text_color(theme::cyan())
-                                    .px(px(4.0))
-                                    .py(px(1.0))
-                                    .rounded(px(2.0))
+                                    .px(ui::s(4.0))
+                                    .py(ui::s(1.0))
+                                    .rounded(ui::s(2.0))
                                     .bg(theme::bg())
                                     .child(d.clone())
                             })),
@@ -21152,8 +21525,8 @@ fn render_fleet_agent_row(
                 .when(assigned_drivers.is_empty(), |el| {
                     el.child(
                         div()
-                            .text_size(px(9.0))
-                            .text_color(theme::fg_faint())
+                            .text_size(ui::TEXT_XS)
+                            .text_color(theme::fg_muted())
                             .child("Not assigned to any driver"),
                     )
                 })
@@ -21164,13 +21537,13 @@ fn render_fleet_agent_row(
                         let finding = run.and_then(|r| r.latest_finding.as_deref()).unwrap_or("");
                         el.child(
                             div()
-                                .text_size(px(10.0))
+                                .text_size(ui::TEXT_SM)
                                 .text_color(theme::fg_dim())
                                 .bg(theme::bg())
-                                .px(px(6.0))
-                                .py(px(3.0))
-                                .rounded(px(3.0))
-                                .min_w(px(0.0))
+                                .px(ui::s(6.0))
+                                .py(ui::s(3.0))
+                                .rounded(ui::s(3.0))
+                                .min_w(ui::s(0.0))
                                 .child(format!("💬 {}", finding)),
                         )
                     },
@@ -21180,9 +21553,9 @@ fn render_fleet_agent_row(
                     let err = run.and_then(|r| r.error.as_deref()).unwrap_or("");
                     el.child(
                         div()
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(theme::red())
-                            .min_w(px(0.0))
+                            .min_w(ui::s(0.0))
                             .child(format!("Error: {}", err)),
                     )
                 }),
@@ -21193,15 +21566,15 @@ fn render_fleet_agent_row(
                 .flex()
                 .flex_col()
                 .items_end()
-                .gap(px(4.0))
-                .w(px(80.0))
+                .gap(ui::s(4.0))
+                .w(ui::s(80.0))
                 .flex_shrink_0()
                 // Evidence count
                 .when(run.is_some(), |el| {
                     let ev = run.map(|r| r.evidence_count).unwrap_or(0);
                     el.child(
                         div()
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(theme::fg_dim())
                             .child(format!("{} evidence", ev)),
                     )
@@ -21211,23 +21584,23 @@ fn render_fleet_agent_row(
                     let c = run.and_then(|r| r.credits_charged).unwrap_or(0.0);
                     el.child(
                         div()
-                            .text_size(px(9.0))
-                            .text_color(theme::fg_faint())
+                            .text_size(ui::TEXT_XS)
+                            .text_color(theme::fg_muted())
                             .child(format!("⚡ {:.1} cr", c)),
                     )
                 })
                 // Model
                 .child(
                     div()
-                        .text_size(px(9.0))
-                        .text_color(theme::fg_faint())
+                        .text_size(ui::TEXT_XS)
+                        .text_color(theme::fg_muted())
                         .child(card.capabilities.model.clone()),
                 )
                 // Total runs (lifetime)
                 .child(
                     div()
-                        .text_size(px(9.0))
-                        .text_color(theme::fg_faint())
+                        .text_size(ui::TEXT_XS)
+                        .text_color(theme::fg_muted())
                         .child(format!("{} runs", card.usage.total_executions)),
                 ),
         )
@@ -21240,55 +21613,55 @@ fn render_local_agent_card(card: &AgentCard) -> impl IntoElement {
     };
 
     div()
-        .w(px(300.0))
+        .w(ui::s(300.0))
         .bg(theme::bg_elevated())
         .border_1()
-        .border_color(theme::fg_faint())
-        .rounded(px(6.0))
-        .p(px(14.0))
+        .border_color(theme::border())
+        .rounded(ui::s(6.0))
+        .p(ui::s(14.0))
         .flex()
         .flex_col()
-        .gap(px(6.0))
+        .gap(ui::s(6.0))
         .hover(|s| s.border_color(rgb(tier_color)))
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(px(8.0))
+                .gap(ui::s(8.0))
                 .child(
                     div()
-                        .text_size(px(14.0))
+                        .text_size(ui::TEXT_XL)
                         .text_color(theme::fg())
                         .font_weight(FontWeight::BOLD)
                         .child(card.agent_id.clone()),
                 )
                 .child(
                     div()
-                        .text_size(px(9.0))
+                        .text_size(ui::TEXT_XS)
                         .text_color(rgb(tier_color))
-                        .px(px(5.0))
-                        .py(px(1.0))
-                        .rounded(px(3.0))
+                        .px(ui::s(5.0))
+                        .py(ui::s(1.0))
+                        .rounded(ui::s(3.0))
                         .bg(theme::bg_active())
                         .child(card.agent_type.clone()),
                 ),
         )
         .child(
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(theme::fg_dim())
-                .min_w(px(0.0))
+                .min_w(ui::s(0.0))
                 .child(card.metadata.description.clone()),
         )
         .when(!card.capabilities.skills.is_empty(), |el| {
-            el.child(div().flex().flex_wrap().gap(px(4.0)).children(
+            el.child(div().flex().flex_wrap().gap(ui::s(4.0)).children(
                 card.capabilities.skills.iter().take(4).map(|s| {
                     div()
-                        .text_size(px(9.0))
+                        .text_size(ui::TEXT_XS)
                         .text_color(rgb(theme::CYAN))
-                        .px(px(4.0))
-                        .py(px(1.0))
-                        .rounded(px(2.0))
+                        .px(ui::s(4.0))
+                        .py(ui::s(1.0))
+                        .rounded(ui::s(2.0))
                         .bg(theme::bg())
                         .child(s.clone())
                 }),
@@ -21297,9 +21670,9 @@ fn render_local_agent_card(card: &AgentCard) -> impl IntoElement {
         .child(
             div()
                 .flex()
-                .gap(px(12.0))
-                .text_size(px(10.0))
-                .text_color(theme::fg_faint())
+                .gap(ui::s(12.0))
+                .text_size(ui::TEXT_SM)
+                .text_color(theme::fg_muted())
                 .child(card.capabilities.model.clone())
                 .child(format!("{} runs", card.usage.total_executions)),
         )
@@ -21402,30 +21775,30 @@ fn render_portfolio_hud(forecasts: &[PortfolioForecast]) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
-            .gap(px(2.0))
-            .px(px(12.0))
-            .py(px(8.0))
-            .min_w(px(110.0))
-            .rounded(px(6.0))
+            .gap(ui::s(2.0))
+            .px(ui::s(12.0))
+            .py(ui::s(8.0))
+            .min_w(ui::s(110.0))
+            .rounded(ui::s(6.0))
             .border_1()
-            .border_color(theme::fg_faint())
+            .border_color(theme::border())
             .bg(theme::bg_elevated())
             .child(
                 div()
-                    .text_size(px(18.0))
+                    .text_size(ui::TEXT_3XL)
                     .font_weight(FontWeight::BOLD)
                     .text_color(rgb(color))
                     .child(value),
             )
             .child(
                 div()
-                    .text_size(px(9.0))
-                    .text_color(theme::fg_faint())
+                    .text_size(ui::TEXT_XS)
+                    .text_color(theme::fg_muted())
                     .child(label.to_string()),
             )
             .child(
                 div()
-                    .text_size(px(9.0))
+                    .text_size(ui::TEXT_XS)
                     .text_color(theme::fg_dim())
                     .child(sub),
             )
@@ -21436,11 +21809,11 @@ fn render_portfolio_hud(forecasts: &[PortfolioForecast]) -> impl IntoElement {
     div()
         .flex()
         .flex_wrap()
-        .gap(px(8.0))
-        .px(px(14.0))
-        .py(px(10.0))
+        .gap(ui::s(8.0))
+        .px(ui::s(14.0))
+        .py(ui::s(10.0))
         .border_b_1()
-        .border_color(theme::fg_faint())
+        .border_color(theme::border())
         .child(tile(
             n_total.to_string(),
             "BOOK SIZE",
@@ -21542,9 +21915,9 @@ fn render_mini_worm(
     let model_w = width_px * clamp(prob);
     div()
         .relative()
-        .w(px(width_px))
-        .h(px(6.0))
-        .rounded(px(3.0))
+        .w(ui::s(width_px))
+        .h(ui::s(6.0))
+        .rounded(ui::s(3.0))
         .bg(theme::bg_active())
         // Filled model portion (cyan bar left-aligned).
         .child(
@@ -21552,9 +21925,9 @@ fn render_mini_worm(
                 .absolute()
                 .top_0()
                 .left_0()
-                .h(px(6.0))
-                .w(px(model_w))
-                .rounded(px(3.0))
+                .h(ui::s(6.0))
+                .w(ui::s(model_w))
+                .rounded(ui::s(3.0))
                 .bg(rgb(theme::CYAN)),
         )
         // Crowd tick (purple, tall) at the crowd's x-coord — lets the
@@ -21564,10 +21937,10 @@ fn render_mini_worm(
             el.child(
                 div()
                     .absolute()
-                    .top(px(-2.0))
-                    .left(px(x))
-                    .w(px(2.0))
-                    .h(px(10.0))
+                    .top(ui::s(-2.0))
+                    .left(ui::s(x))
+                    .w(ui::s(2.0))
+                    .h(ui::s(10.0))
                     .bg(rgb(theme::PURPLE)),
             )
         })
@@ -21578,10 +21951,10 @@ fn render_mini_worm(
             el.child(
                 div()
                     .absolute()
-                    .top(px(-2.0))
-                    .left(px(x))
-                    .w(px(1.0))
-                    .h(px(10.0))
+                    .top(ui::s(-2.0))
+                    .left(ui::s(x))
+                    .w(ui::s(1.0))
+                    .h(ui::s(10.0))
                     .bg(rgb(theme::GOLD)),
             )
         })
@@ -21630,15 +22003,15 @@ fn render_portfolio_rollup_strip(forecasts: &[PortfolioForecast]) -> impl IntoEl
     div()
         .flex()
         .flex_col()
-        .gap(px(2.0))
-        .px(px(14.0))
-        .py(px(8.0))
+        .gap(ui::s(2.0))
+        .px(ui::s(14.0))
+        .py(ui::s(8.0))
         .border_b_1()
-        .border_color(theme::fg_faint())
+        .border_color(theme::border())
         .child(
             div()
-                .text_size(px(10.0))
-                .text_color(theme::fg_faint())
+                .text_size(ui::TEXT_SM)
+                .text_color(theme::fg_muted())
                 .font_weight(FontWeight::SEMIBOLD)
                 .child("BIGGEST EDGES"),
         )
@@ -21661,7 +22034,7 @@ fn render_portfolio_rollup_strip(forecasts: &[PortfolioForecast]) -> impl IntoEl
                     Some(format!("{}{:.1}pp", if d >= 0.0 { "+" } else { "" }, d)),
                     theme::FG_DIM,
                 ),
-                None => (None, theme::FG_FAINT),
+                None => (None, theme::FG_MUTED),
             };
             let title = truncate(&f.question_text, 44);
             let bar = render_mini_worm(prob, f.pm_market_price, None, 90.0);
@@ -21669,20 +22042,20 @@ fn render_portfolio_rollup_strip(forecasts: &[PortfolioForecast]) -> impl IntoEl
             div()
                 .flex()
                 .items_center()
-                .gap(px(10.0))
-                .py(px(2.0))
+                .gap(ui::s(10.0))
+                .py(ui::s(2.0))
                 .child(
                     div()
-                        .w(px(180.0))
-                        .text_size(px(11.0))
+                        .w(ui::s(180.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(theme::fg())
                         .child(title),
                 )
                 .child(bar)
                 .child(
                     div()
-                        .w(px(38.0))
-                        .text_size(px(11.0))
+                        .w(ui::s(45.0))
+                        .text_size(ui::TEXT_BASE)
                         .text_color(theme::cyan())
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(format!("{}%", prob_pct)),
@@ -21690,8 +22063,8 @@ fn render_portfolio_rollup_strip(forecasts: &[PortfolioForecast]) -> impl IntoEl
                 .when(crowd_str.is_some(), |el| {
                     el.child(
                         div()
-                            .w(px(70.0))
-                            .text_size(px(10.0))
+                            .w(ui::s(84.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(theme::purple())
                             .child(crowd_str.clone().unwrap_or_default()),
                     )
@@ -21699,7 +22072,7 @@ fn render_portfolio_rollup_strip(forecasts: &[PortfolioForecast]) -> impl IntoEl
                 .when(delta_str.is_some(), |el| {
                     el.child(
                         div()
-                            .text_size(px(10.0))
+                            .text_size(ui::TEXT_SM)
                             .text_color(rgb(delta_color))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(delta_str.clone().unwrap_or_default()),
@@ -21961,30 +22334,30 @@ fn render_portfolio_risk_view(
         div()
             .flex()
             .flex_col()
-            .gap(px(2.0))
-            .px(px(12.0))
-            .py(px(8.0))
-            .min_w(px(150.0))
-            .rounded(px(6.0))
+            .gap(ui::s(2.0))
+            .px(ui::s(12.0))
+            .py(ui::s(8.0))
+            .min_w(ui::s(150.0))
+            .rounded(ui::s(6.0))
             .border_1()
-            .border_color(theme::fg_faint())
+            .border_color(theme::border())
             .bg(theme::bg_elevated())
             .child(
                 div()
-                    .text_size(px(18.0))
+                    .text_size(ui::TEXT_3XL)
                     .font_weight(FontWeight::BOLD)
                     .text_color(rgb(color))
                     .child(value),
             )
             .child(
                 div()
-                    .text_size(px(9.0))
-                    .text_color(theme::fg_faint())
+                    .text_size(ui::TEXT_XS)
+                    .text_color(theme::fg_muted())
                     .child(label.to_string()),
             )
             .child(
                 div()
-                    .text_size(px(9.0))
+                    .text_size(ui::TEXT_XS)
                     .text_color(theme::fg_dim())
                     .child(sub),
             )
@@ -22002,17 +22375,17 @@ fn render_portfolio_risk_view(
     // Header row + tiles.
     let mut header_row = div().flex().items_center().justify_between().child(
         div()
-            .text_size(px(11.0))
-            .text_color(theme::fg_faint())
+            .text_size(ui::TEXT_BASE)
+            .text_color(theme::fg_muted())
             .font_weight(FontWeight::SEMIBOLD)
             .child("RISK VIEW"),
     );
     // Inline correlation slider (rendered as chips: −0.5 / 0 / 0.3 / 0.6 / 0.9).
     let rho_stops: &[f64] = &[-0.5, 0.0, 0.3, 0.6, 0.9];
-    let mut slider = div().flex().items_center().gap(px(4.0)).child(
+    let mut slider = div().flex().items_center().gap(ui::s(4.0)).child(
         div()
-            .text_size(px(9.0))
-            .text_color(theme::fg_faint())
+            .text_size(ui::TEXT_XS)
+            .text_color(theme::fg_muted())
             .child(format!("ρ = {:.1}", correlation_rho)),
     );
     let on_rho = Arc::new(on_rho_change);
@@ -22026,16 +22399,16 @@ fn render_portfolio_risk_view(
                         .replace('.', "_")
                         .replace('-', "n"),
                 ))
-                .px(px(6.0))
-                .py(px(1.0))
-                .rounded(px(4.0))
+                .px(ui::s(6.0))
+                .py(ui::s(1.0))
+                .rounded(ui::s(4.0))
                 .border_1()
                 .border_color(if is_on {
                     theme::cyan()
                 } else {
-                    theme::fg_faint()
+                    theme::fg_muted()
                 })
-                .text_size(px(9.0))
+                .text_size(ui::TEXT_XS)
                 .text_color(if is_on {
                     theme::cyan()
                 } else {
@@ -22053,7 +22426,7 @@ fn render_portfolio_risk_view(
     let tiles_row_1 = div()
         .flex()
         .flex_wrap()
-        .gap(px(8.0))
+        .gap(ui::s(8.0))
         .child(tile(
             m.hhi.map(|h| format!("{:.2}", h)).unwrap_or_else(dash),
             "CONCENTRATION",
@@ -22090,7 +22463,7 @@ fn render_portfolio_risk_view(
     let tiles_row_2 = div()
         .flex()
         .flex_wrap()
-        .gap(px(8.0))
+        .gap(ui::s(8.0))
         .child(tile(
             m.expected_brier
                 .map(|b| format!("{:.3}", b))
@@ -22150,22 +22523,22 @@ fn render_portfolio_risk_view(
         let mut header = div()
             .flex()
             .items_center()
-            .gap(px(6.0))
-            .px(px(4.0))
-            .py(px(2.0))
+            .gap(ui::s(6.0))
+            .px(ui::s(4.0))
+            .py(ui::s(2.0))
             .child(
                 div()
-                    .w(px(60.0))
-                    .text_size(px(9.0))
-                    .text_color(theme::fg_faint())
+                    .w(ui::s(73.0))
+                    .text_size(ui::TEXT_XS)
+                    .text_color(theme::fg_muted())
                     .child("P(joint)"),
             );
         for t in &titles {
             header = header.child(
                 div()
-                    .w(px(72.0))
-                    .text_size(px(9.0))
-                    .text_color(theme::fg_faint())
+                    .w(ui::s(88.0))
+                    .text_size(ui::TEXT_XS)
+                    .text_color(theme::fg_muted())
                     .child(t.clone()),
             );
         }
@@ -22174,13 +22547,13 @@ fn render_portfolio_risk_view(
             let mut row = div()
                 .flex()
                 .items_center()
-                .gap(px(6.0))
-                .px(px(4.0))
-                .py(px(2.0))
+                .gap(ui::s(6.0))
+                .px(ui::s(4.0))
+                .py(ui::s(2.0))
                 .child(
                     div()
-                        .w(px(60.0))
-                        .text_size(px(10.0))
+                        .w(ui::s(72.0))
+                        .text_size(ui::TEXT_SM)
                         .text_color(theme::cyan())
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(format!("{:.1}%", outcome.joint_prob * 100.0)),
@@ -22189,8 +22562,8 @@ fn render_portfolio_risk_view(
                 let yes = (outcome.mask >> i) & 1 == 1;
                 row = row.child(
                     div()
-                        .w(px(72.0))
-                        .text_size(px(9.0))
+                        .w(ui::s(88.0))
+                        .text_size(ui::TEXT_XS)
                         .text_color(if yes { theme::green() } else { theme::red() })
                         .child(if yes { "YES" } else { "NO" }),
                 );
@@ -22222,38 +22595,38 @@ fn render_portfolio_risk_view(
     div()
         .flex()
         .flex_col()
-        .gap(px(6.0))
-        .px(px(14.0))
-        .py(px(10.0))
+        .gap(ui::s(6.0))
+        .px(ui::s(14.0))
+        .py(ui::s(10.0))
         .border_b_1()
-        .border_color(theme::fg_faint())
+        .border_color(theme::border())
         .child(header_row)
         .child(tiles_row_1)
         .child(tiles_row_2)
         .when(!tree_rows.is_empty(), |el| {
             el.child(
                 div()
-                    .mt(px(6.0))
+                    .mt(ui::s(6.0))
                     .flex()
                     .flex_col()
-                    .rounded(px(6.0))
+                    .rounded(ui::s(6.0))
                     .border_1()
-                    .border_color(theme::fg_faint())
+                    .border_color(theme::border())
                     .bg(theme::bg_elevated())
                     .children(tree_rows)
                     // Footer strip — shown mass + assumption label.
                     .child(
                         div()
-                            .px(px(8.0))
-                            .py(px(4.0))
+                            .px(ui::s(8.0))
+                            .py(ui::s(4.0))
                             .border_t_1()
-                            .border_color(theme::fg_faint())
+                            .border_color(theme::border())
                             .flex()
                             .items_center()
                             .justify_between()
-                            .gap(px(8.0))
-                            .text_size(px(9.0))
-                            .text_color(theme::fg_faint())
+                            .gap(ui::s(8.0))
+                            .text_size(ui::TEXT_XS)
+                            .text_color(theme::fg_muted())
                             .child(div().child(format!(
                                 "Σ shown = {:.1}% · {}/{} scenarios",
                                 shown_mass_pct, n_shown, total_rows
@@ -22280,21 +22653,21 @@ fn render_portfolio_stats_panel(stats: &PortfolioStats) -> impl IntoElement {
     ];
 
     div()
-        .px(px(24.0))
-        .py(px(12.0))
+        .px(ui::s(24.0))
+        .py(ui::s(12.0))
         .bg(theme::bg())
         .border_t_1()
-        .border_color(theme::fg_faint())
+        .border_color(theme::border())
         .flex()
         .flex_col()
-        .gap(px(10.0))
+        .gap(ui::s(10.0))
         // Stats row
         .child(
             div()
                 .flex()
                 .flex_wrap()
-                .gap_x(px(20.0))
-                .gap_y(px(4.0))
+                .gap_x(ui::s(20.0))
+                .gap_y(ui::s(4.0))
                 .children([
                     render_detail_kv(
                         "Total",
@@ -22334,11 +22707,11 @@ fn render_portfolio_stats_panel(stats: &PortfolioStats) -> impl IntoElement {
                 div()
                     .flex()
                     .items_end()
-                    .gap(px(10.0))
+                    .gap(ui::s(10.0))
                     .child(
                         div()
-                            .text_size(px(10.0))
-                            .text_color(theme::fg_faint())
+                            .text_size(ui::TEXT_SM)
+                            .text_color(theme::fg_muted())
                             .child("Calibration:"),
                     )
                     .children(cal_buckets.iter().map(|(label, val, ideal)| {
@@ -22354,10 +22727,10 @@ fn render_portfolio_stats_panel(stats: &PortfolioStats) -> impl IntoElement {
                             .flex()
                             .flex_col()
                             .items_center()
-                            .gap(px(2.0))
+                            .gap(ui::s(2.0))
                             .child(
                                 div()
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(rgb(bar_color))
                                     .font_weight(FontWeight::BOLD)
                                     .child(
@@ -22367,8 +22740,8 @@ fn render_portfolio_stats_panel(stats: &PortfolioStats) -> impl IntoElement {
                             )
                             .child(
                                 div()
-                                    .text_size(px(9.0))
-                                    .text_color(theme::fg_faint())
+                                    .text_size(ui::TEXT_XS)
+                                    .text_color(theme::fg_muted())
                                     .child(label.to_string()),
                             )
                     })),
@@ -22380,11 +22753,11 @@ fn render_portfolio_stats_panel(stats: &PortfolioStats) -> impl IntoElement {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(4.0))
+                    .gap(ui::s(4.0))
                     .child(
                         div()
-                            .text_size(px(10.0))
-                            .text_color(theme::fg_faint())
+                            .text_size(ui::TEXT_SM)
+                            .text_color(theme::fg_muted())
                             .child("Recent Resolutions"),
                     )
                     .children(stats.recent_resolutions.iter().take(3).map(|r| {
@@ -22396,10 +22769,10 @@ fn render_portfolio_stats_panel(stats: &PortfolioStats) -> impl IntoElement {
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(8.0))
+                            .gap(ui::s(8.0))
                             .child(
                                 div()
-                                    .text_size(px(10.0))
+                                    .text_size(ui::TEXT_SM)
                                     .text_color(rgb(outcome_color))
                                     .child(match r.actual_outcome {
                                         Some(true) => "Yes",
@@ -22410,15 +22783,15 @@ fn render_portfolio_stats_panel(stats: &PortfolioStats) -> impl IntoElement {
                             .child(
                                 div()
                                     .flex_grow()
-                                    .text_size(px(11.0))
+                                    .text_size(ui::TEXT_BASE)
                                     .text_color(theme::fg_dim())
                                     .child(truncate(r.question_text.as_deref().unwrap_or("?"), 52)),
                             )
                             .when(r.brier_score.is_some(), |el| {
                                 el.child(
                                     div()
-                                        .text_size(px(10.0))
-                                        .text_color(theme::fg_faint())
+                                        .text_size(ui::TEXT_SM)
+                                        .text_color(theme::fg_muted())
                                         .child(format!("{:.3}", r.brier_score.unwrap_or(0.0))),
                                 )
                             })
@@ -22430,16 +22803,16 @@ fn render_portfolio_stats_panel(stats: &PortfolioStats) -> impl IntoElement {
 fn render_detail_kv(key: &str, value: &str) -> impl IntoElement {
     div()
         .flex()
-        .gap(px(6.0))
+        .gap(ui::s(6.0))
         .child(
             div()
-                .text_size(px(10.0))
-                .text_color(theme::fg_faint())
+                .text_size(ui::TEXT_SM)
+                .text_color(theme::fg_muted())
                 .child(format!("{}:", key)),
         )
         .child(
             div()
-                .text_size(px(11.0))
+                .text_size(ui::TEXT_BASE)
                 .text_color(theme::fg())
                 .child(value.to_string()),
         )
@@ -22592,6 +22965,10 @@ fn pretty_timestamp(iso: &str) -> String {
 
 fn main() {
     env_logger::init();
+
+    // Restore the operator's UI scale before the first frame, so the
+    // console never flashes at one size and settles at another.
+    uiscale::load_scale();
 
     // Start a background Tokio runtime — reqwest needs this for HTTP.
     // GPUI has its own async executor, but reqwest's Client::builder()
@@ -22761,6 +23138,21 @@ fn main() {
             // this level, and the handler is a no-op when the modal
             // isn't showing.
             KeyBinding::new("escape", DismissShortcuts, Some("FermiConsole")),
+            // UI scale. The browser/editor chord every operator already
+            // has in their fingers, which matters more here than
+            // elsewhere — someone who finds the console unreadable
+            // should not have to find a menu to fix it.
+            //
+            // `=` and `shift-=` (i.e. `+`) both bound, because "zoom in"
+            // is muscle-memory for the plus key and on a US layout that
+            // is a shifted `=`. `+` itself is bound too for keypads and
+            // layouts where it is unshifted.
+            KeyBinding::new("secondary-=", IncreaseUiScale, Some("FermiConsole")),
+            KeyBinding::new("secondary-shift-=", IncreaseUiScale, Some("FermiConsole")),
+            KeyBinding::new("secondary-+", IncreaseUiScale, Some("FermiConsole")),
+            KeyBinding::new("secondary--", DecreaseUiScale, Some("FermiConsole")),
+            // Ctrl+0 is free: panel navigation uses 1–6.
+            KeyBinding::new("secondary-0", ResetUiScale, Some("FermiConsole")),
         ]);
 
         // Driver arrow navigation (up/down arrow keys while in the Composer)

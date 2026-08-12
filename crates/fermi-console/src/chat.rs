@@ -39,6 +39,7 @@ use serde_json::{json, Value as JsonValue};
 
 use crate::text_input::TextInput;
 use crate::theme;
+use crate::ui;
 
 // ── Message shape ────────────────────────────────────────────────────────
 
@@ -643,7 +644,7 @@ pub(crate) fn render_message(msg: &ChatMessage) -> impl IntoElement {
             "You",
             theme::CYAN,
             theme::BG_ELEVATED,
-            theme::FG_FAINT,
+            theme::BORDER,
             theme::FG,
         ),
         ChatRole::Assistant => ("Fermi", theme::PURPLE, 0x1A1A2E, theme::PURPLE, theme::FG),
@@ -666,10 +667,10 @@ pub(crate) fn render_message(msg: &ChatMessage) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
-        .gap(px(4.0))
-        .px(px(10.0))
-        .py(px(8.0))
-        .rounded(px(6.0))
+        .gap(ui::s(4.0))
+        .px(ui::s(10.0))
+        .py(ui::s(8.0))
+        .rounded(ui::s(6.0))
         .bg(rgb(bg_color))
         .border_1()
         .border_color(rgb(border_color))
@@ -677,24 +678,24 @@ pub(crate) fn render_message(msg: &ChatMessage) -> impl IntoElement {
             div()
                 .flex()
                 .items_center()
-                .gap(px(6.0))
+                .gap(ui::s(6.0))
                 .child(
                     div()
-                        .text_size(px(9.0))
+                        .text_size(ui::TEXT_XS)
                         .text_color(rgb(label_color))
                         .font_weight(FontWeight::BOLD)
                         .child(label),
                 )
                 .child(
                     div()
-                        .text_size(px(9.0))
-                        .text_color(theme::fg_faint())
+                        .text_size(ui::TEXT_XS)
+                        .text_color(theme::fg_muted())
                         .child(format_time(&msg.created_at)),
                 ),
         )
         .child(
             div()
-                .text_size(px(12.0))
+                .text_size(ui::TEXT_MD)
                 .text_color(rgb(text_color))
                 .child(msg.text.clone()),
         )

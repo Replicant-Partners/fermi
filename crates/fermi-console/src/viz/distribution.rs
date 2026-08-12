@@ -40,13 +40,27 @@ pub use fermi_console::plot::distribution::{Chrome, Percentiles};
 use super::paint::{self, Align};
 use super::PlotSurface;
 
-const FG: u32 = 0xCBCCC6;
-const FG_DIM: u32 = 0x5C6773;
-const FG_FAINT: u32 = 0x3E4B59;
-const CYAN: u32 = 0x5CCFE6;
-const GREEN: u32 = 0xBAE67E;
-const GOLD: u32 = 0xFFCC66;
-const ORANGE: u32 = 0xFFAE57;
+// Chart palette. Re-exported from `crate::theme` rather than redeclared,
+// because these constants *were* redeclared — and then drifted: the axis
+// labels here kept the pre-accessibility grey (2.7:1 against the panel
+// background) long after the same token was fixed everywhere else.
+//
+// `AXIS_LABEL` is text and carries a contrast floor; `GRIDLINE` is a
+// hairline and does not. Keeping them as separate names is what stops the
+// next person from reaching for the quiet one to draw a label with.
+use crate::theme;
+
+const FG: u32 = theme::FG;
+const AXIS_LABEL: u32 = theme::FG_DIM;
+const GRIDLINE: u32 = theme::BORDER;
+/// The hover crosshair. Brighter than [`GRIDLINE`] on purpose — it
+/// tracks the cursor and has to be findable at a glance.
+const CROSSHAIR: u32 = theme::FG_DIM;
+const CAPTION: u32 = theme::FG_MUTED;
+const CYAN: u32 = theme::CYAN;
+const GREEN: u32 = theme::GREEN;
+const GOLD: u32 = theme::GOLD;
+const ORANGE: u32 = theme::ORANGE;
 
 /// A probability-density chart.
 #[derive(IntoElement)]
@@ -213,7 +227,7 @@ impl DistributionPlot {
                     plot.top + plot.height() / 2.0 - 5.0,
                     "no distribution yet — run a simulation",
                     10.0,
-                    paint::hsla(FG_DIM, 1.0),
+                    paint::hsla(AXIS_LABEL, 1.0),
                     Align::Center,
                 );
             }
@@ -278,7 +292,7 @@ impl DistributionPlot {
                 plot.left,
                 plot.right,
                 baseline,
-                paint::hsla(FG_FAINT, 1.0),
+                paint::hsla(GRIDLINE, 1.0),
                 1.0,
                 None,
             );
@@ -365,7 +379,7 @@ impl DistributionPlot {
                         cx_px,
                         plot.top,
                         baseline,
-                        paint::hsla(FG_DIM, 0.7),
+                        paint::hsla(CROSSHAIR, 0.7),
                         1.0,
                         None,
                     );
@@ -398,7 +412,7 @@ impl DistributionPlot {
                     plot.bottom + 2.0,
                     format::value(v),
                     9.0,
-                    paint::hsla(FG_DIM, 1.0),
+                    paint::hsla(AXIS_LABEL, 1.0),
                     align,
                 );
             }
@@ -407,7 +421,7 @@ impl DistributionPlot {
                 // A curve inferred from three quantiles gets a warning
                 // colour: the operator must not read shape off it.
                 let (color, alpha) = if density.source.shape_is_real() {
-                    (FG_FAINT, 1.0)
+                    (CAPTION, 1.0)
                 } else {
                     (ORANGE, 0.85)
                 };
