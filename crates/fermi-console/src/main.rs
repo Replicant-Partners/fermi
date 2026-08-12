@@ -29,6 +29,7 @@ mod viz;
 // tests can actually run — rustc segfaults expanding this binary's
 // GPUI element chains under `--test`. Same module, one definition.
 // `uiscale` is there for the same reason: it backs `mod ui` above.
+use fermi_console::agent_naming::base_agent_id;
 use fermi_console::{uiscale, updater};
 
 use api::client::{
@@ -13614,12 +13615,18 @@ impl FermiConsole {
                 let state = cockpit_entity.read(cx);
                 let runs = state.agent_runs.clone();
                 let cost = state.session_cost;
-                // Build a map: agent_name → Vec<driver_name>
+                // Build a map: ABW agent id → Vec<driver_name>.
+                //
+                // Keyed on the agent id, not the bound AST name, because
+                // every consumer looks it up by `card.agent_id`. Keying it
+                // on the bound name meant the fleet panel never found the
+                // drivers an agent was hired onto.
                 let mut amap: std::collections::HashMap<String, Vec<String>> =
                     std::collections::HashMap::new();
                 for agent_stmt in state.program.agents() {
+                    let base = base_agent_id(&agent_stmt.name, &agent_stmt.driver_refs);
                     for driver_ref in &agent_stmt.driver_refs {
-                        amap.entry(agent_stmt.name.clone())
+                        amap.entry(base.to_string())
                             .or_default()
                             .push(driver_ref.clone());
                     }
@@ -13733,7 +13740,7 @@ impl FermiConsole {
                 let mut session_rows: Vec<gpui::AnyElement> = Vec::new();
                 for card in fermi_agents.iter() {
                     let agent_id = &card.agent_id;
-                    if let Some(run) = agent_runs.iter().find(|r| r.agent_name == *agent_id) {
+                    if let Some(run) = agent_runs.iter().find(|r| r.base_agent_id == *agent_id) {
                         let drivers = assigned_map.get(agent_id).cloned().unwrap_or_default();
                         session_rows.push(
                             render_fleet_agent_row(card, Some(run), &drivers).into_any_element(),
@@ -21123,13 +21130,15 @@ fn build_agent_marketplace(
         .map(|c| (c.agent_id.clone(), *c))
         .collect();
 
-    // Index session runs by agent_name (with confidence averages).
+    // Index session runs by ABW agent id (with confidence averages).
+    // Runs carry it explicitly — a bound run's `agent_name` is an FPL
+    // identifier and can't be split back without the driver.
     let mut session_confidence: std::collections::HashMap<String, (f64, usize)> =
         std::collections::HashMap::new();
     for run in session_runs {
         if let Some(c) = run.confidence {
             let entry = session_confidence
-                .entry(base_agent_name_local(&run.agent_name).to_string())
+                .entry(run.base_agent_id.clone())
                 .or_insert((0.0, 0));
             entry.0 += c;
             entry.1 += 1;
@@ -21409,34 +21418,6 @@ fn sort_marketplace(entries: &mut Vec<AgentMarketplaceEntry>, mode: &str) {
         };
         cmp.then_with(|| a.display_name.cmp(&b.display_name))
     });
-}
-
-/// Local copy of the cockpit's base_agent_name helper. Used to align
-/// session runs (whose IDs may be compound like "macro_forecaster_x")
-/// with catalog agent_ids ("macro_forecaster"). The cockpit's version
-/// is private to that module; keep this mirror in sync with any changes
-/// there.
-fn base_agent_name_local(name: &str) -> &str {
-    // Common bound-agent suffix pattern: "<agent>_<driver>". The
-    // registry doesn't expose the split rule, but every known compound
-    // uses a `_` separator and the catalog agent_ids are all lowercase
-    // snake. Match longest catalog prefix.
-    const KNOWN_BASES: &[&str] = &[
-        "macro_forecaster",
-        "fermi",
-        "market_research",
-        "simops_advisor",
-        "simops_optimizer",
-        "simops_cascade",
-        "simops_narrator_local",
-        "valuechain_mapper",
-    ];
-    for base in KNOWN_BASES {
-        if name == *base || name.starts_with(&format!("{}_", base)) {
-            return base;
-        }
-    }
-    name
 }
 
 fn render_fleet_agent_row(

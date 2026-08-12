@@ -49,6 +49,10 @@ use crate::api::client::{
 use crate::text_input::TextInput;
 use crate::theme;
 use crate::ui;
+use fermi_console::agent_naming::{
+    base_agent_id, base_agent_id_for_driver, bound_agent_name, evidence_belongs_to_agent,
+    evidence_id, sanitize_name,
+};
 use fermi_console::wire::{clamp_wire_interval_bound, clamp_wire_probability};
 
 // ════════════════════════════════════════════════════════════════════
@@ -187,7 +191,15 @@ pub enum SseEvent {
 /// Status of an agent execution within a driver context.
 #[derive(Debug, Clone)]
 pub struct AgentExecution {
+    /// The agent's identity inside the FPL program. For a driver-bound
+    /// agent this is the *bound* name (`{base_agent_id}_{driver}`), which
+    /// is what evidence ids and AST lookups key on.
     pub agent_name: String,
+    /// The ABW agent id this run executes — the only name that may be
+    /// sent to `/api/agents/:id/execute`. Carried explicitly because it
+    /// is not recoverable from `agent_name` alone (see
+    /// [`fermi_console::agent_naming`]).
+    pub base_agent_id: String,
     pub status: AgentRunStatus,
     pub evidence_count: usize,
     pub confidence: Option<f64>,
@@ -215,7 +227,11 @@ pub enum AgentRunStatus {
 pub struct EvidenceSuggestion {
     pub id: String,
     pub driver_name: String,
+    /// The suggesting agent's FPL name (bound, so it ties back to the
+    /// driver and to the evidence that carried the suggestion).
     pub agent_name: String,
+    /// The suggesting agent's ABW id — what to show an operator.
+    pub agent_base_id: String,
     pub suggested_p50: f64,
     pub current_p50: f64,
     pub reasoning: String,
@@ -2182,12 +2198,15 @@ impl CockpitState {
                         agent_id,
                         text.chars().take(60).collect::<String>()
                     );
-                    // Update the agent's latest_finding for the speech bubble
-                    if let Some(run) = self.agent_runs.iter_mut().find(|r| {
-                        r.agent_name == *agent_id
-                            || base_agent_name(&r.agent_name) == agent_id.as_str()
-                            || r.agent_name.starts_with(agent_id.as_str())
-                    }) {
+                    // Update the agent's latest_finding for the speech
+                    // bubble. SSE carries the tracking id, which is a run's
+                    // FPL name; fall back to the ABW id for runs fired
+                    // without a binding.
+                    if let Some(run) = self
+                        .agent_runs
+                        .iter_mut()
+                        .find(|r| r.agent_name == *agent_id || r.base_agent_id == *agent_id)
+                    {
                         run.latest_finding = Some(text.chars().take(120).collect());
                     }
                     self.messages.push(AssistantMessage {
@@ -2393,6 +2412,7 @@ impl CockpitState {
 
         self.agent_runs.push(AgentExecution {
             agent_name: "fermi".into(),
+            base_agent_id: "fermi".into(),
             status: AgentRunStatus::Running,
             evidence_count: 0,
             confidence: None,
@@ -2414,7 +2434,7 @@ impl CockpitState {
             text: "⟳ Fermi is decomposing your question into a probability model…".into(),
         });
 
-        self.fire_agent("fermi", &structured_query, cx);
+        self.fire_agent("fermi", "fermi", &structured_query, cx);
 
         self.focused_node = FocusedNode::Question;
         cx.notify();
@@ -3095,8 +3115,9 @@ impl CockpitState {
                     (agent.to_string(), q)
                 };
 
-                // Create compound agent name for this driver
-                let compound_name = format!("{}_{}", agent_to_use, sanitize_name(driver_name));
+                // Bind the agent to this driver. The bound name is the
+                // agent's FPL identity; `agent_to_use` stays the ABW id.
+                let compound_name = bound_agent_name(&agent_to_use, driver_name);
                 let compound_for_fire = compound_name.clone();
 
                 // Add agent to AST
@@ -3114,6 +3135,7 @@ impl CockpitState {
                 // Track execution
                 self.agent_runs.push(AgentExecution {
                     agent_name: compound_name,
+                    base_agent_id: agent_to_use.clone(),
                     status: AgentRunStatus::Running,
                     evidence_count: 0,
                     confidence: None,
@@ -3129,8 +3151,9 @@ impl CockpitState {
                     latest_finding: None,
                 });
 
-                // Fire agent with compound name so tracking matches agent_runs
-                self.fire_agent(&compound_for_fire, &query, cx);
+                // Execute the ABW agent; track it under its bound name so
+                // evidence lands on this driver.
+                self.fire_agent(&agent_to_use, &compound_for_fire, &query, cx);
                 assigned_count += 1;
             }
 
@@ -3142,7 +3165,7 @@ impl CockpitState {
                 .iter()
                 .filter(|a| a.name != "fermi" && !a.driver_refs.is_empty())
             {
-                let base = base_agent_name(&a.name).to_string();
+                let base = base_agent_id(&a.name, &a.driver_refs).to_string();
                 *agent_counts.entry(base).or_insert(0) += 1;
             }
             let summary: Vec<String> = agent_counts
@@ -3209,17 +3232,59 @@ impl CockpitState {
         out
     }
 
+    /// The ABW agent id behind an FPL agent name.
+    ///
+    /// A driver-bound agent's FPL name carries a `_{driver}` suffix that
+    /// must never reach `/api/agents/:id/execute`. `driver_refs` on the
+    /// AST statement makes the split exact — see
+    /// [`fermi_console::agent_naming`] for why this is not guessable from
+    /// the name alone. A name with no matching statement is already a
+    /// bare agent id.
+    fn base_agent_id_of(&self, agent_name: &str) -> String {
+        self.program
+            .agent(agent_name)
+            .map(|a| base_agent_id(&a.name, &a.driver_refs).to_string())
+            .unwrap_or_else(|| agent_name.to_string())
+    }
+
+    /// The FPL identity a run of `base_agent_id` on `driver_name` should
+    /// be tracked under.
+    ///
+    /// Schedules are keyed on `(forecast, driver, base agent id)` and so
+    /// never carry the bound name. Recover it when the AST has one, so a
+    /// scheduled re-run's evidence lands on the driver that hired it.
+    fn tracking_id_for(&self, base_agent_id: &str, driver_name: &str) -> String {
+        let bound = bound_agent_name(base_agent_id, driver_name);
+        if self.program.agent(&bound).is_some() {
+            bound
+        } else {
+            base_agent_id.to_string()
+        }
+    }
+
     /// Fire a single agent in the background. Results flow back via cx.spawn.
+    ///
+    /// `base_agent_id` is the **ABW agent id** — the only name the server
+    /// can resolve. `tracking_id` is the agent's **FPL identity**: the
+    /// bound name (`{base_agent_id}_{driver}`) when the run belongs to a
+    /// driver, otherwise the same as `base_agent_id`. Both are passed
+    /// explicitly because the bound name cannot be split back into an
+    /// agent id without the driver, and guessing it sent FPL identifiers
+    /// to ABW as agent ids (404) for every non-curated agent.
     ///
     /// Execution path:
     ///   1. ABW API (primary) — user authenticated via OAuth, ABW handles LLM costs
     ///   2. Local registry (dev fallback) — only if ANTHROPIC_API_KEY was set at startup
     ///   3. Fail with "Sign in to run agents" if neither is available
-    fn fire_agent(&self, agent_id: &str, query: &str, cx: &mut Context<Self>) {
-        // agent_id may be compound (market_research_song_quality)
-        // Registry knows the base name (market_research)
-        let base_id = base_agent_name(agent_id).to_string();
-        let tracking_id = agent_id.to_string();
+    fn fire_agent(
+        &self,
+        base_agent_id: &str,
+        tracking_id: &str,
+        query: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let base_id = base_agent_id.to_string();
+        let tracking_id = tracking_id.to_string();
         let api = self.api.clone();
         let registry = self.registry.clone();
         let q = query.to_string();
@@ -3544,9 +3609,18 @@ impl CockpitState {
 
                     this.update(cx, |state, cx| {
                         // Route to the right processor based on agent type.
-                        // If a driver-bound agent (compound name like "macro_forecaster_driver_x"),
-                        // always process evidence for that driver regardless of agent type.
-                        let is_driver_bound = tracking_id != base_id; // compound name means it's bound to a driver
+                        // A driver-bound agent's evidence belongs to its
+                        // driver regardless of which agent produced it.
+                        //
+                        // Ask the AST, not the names: `assign_agent_to_driver`
+                        // fires the base id as the tracking id for unbound
+                        // runs, so `tracking_id != base_id` was false for
+                        // every manual hire and routed driver evidence down
+                        // the unbound path.
+                        let is_driver_bound = state
+                            .program
+                            .agent(&tracking_id)
+                            .is_some_and(|a| !a.driver_refs.is_empty());
                         log::info!("[composer] Routing {} to processor (base_id={}, driver_bound={})", tracking_id, base_id, is_driver_bound);
 
                         if is_driver_bound {
@@ -3795,7 +3869,16 @@ impl CockpitState {
         }
     }
 
+    /// Attach a completed run's evidence to the program.
+    ///
+    /// `agent_id` is the run's **tracking id** — the bound FPL name for a
+    /// driver-bound agent. Evidence ids are minted from it, which is what
+    /// links the items back to the driver that hired the agent. The ABW
+    /// id (for display and workspace attribution) is resolved from the
+    /// AST rather than guessed from the name.
     fn process_agent_evidence(&mut self, agent_id: &str, result: &JsonValue) {
+        let base_id = self.base_agent_id_of(agent_id);
+
         // Extract the first key finding before borrowing agent_runs mutably
         let first_finding: Option<String> = result
             .get("evidence")
@@ -3818,13 +3901,13 @@ impl CockpitState {
                     .map(|s| s.chars().take(120).collect())
             });
 
-        // Match by exact name OR by base agent name (compound names like
-        // market_research_satellite_deployment match base "market_research")
-        if let Some(run) = self.agent_runs.iter_mut().find(|r| {
-            r.agent_name == agent_id
-                || base_agent_name(&r.agent_name) == agent_id
-                || r.agent_name.starts_with(agent_id)
-        }) {
+        // Runs are tracked under their FPL name, so this is an exact
+        // match; `base_agent_id` covers runs fired without a binding.
+        if let Some(run) = self
+            .agent_runs
+            .iter_mut()
+            .find(|r| r.agent_name == agent_id || r.base_agent_id == agent_id)
+        {
             let completed_name = run.agent_name.clone();
             run.status = AgentRunStatus::Completed;
             run.completed_at = Some(
@@ -3863,7 +3946,7 @@ impl CockpitState {
                     .unwrap_or_default();
 
                 self.program.add_evidence(EvidenceStmt {
-                    id: format!("{}_{}", agent_id, count),
+                    id: evidence_id(agent_id, count),
                     source: source.to_string(),
                     summary: summary.map(|s| s.to_string()),
                     url: None,
@@ -3874,11 +3957,11 @@ impl CockpitState {
                 });
                 count += 1;
             }
-            if let Some(run) = self.agent_runs.iter_mut().find(|r| {
-                r.agent_name == agent_id
-                    || base_agent_name(&r.agent_name) == agent_id
-                    || r.agent_name.starts_with(agent_id)
-            }) {
+            if let Some(run) = self
+                .agent_runs
+                .iter_mut()
+                .find(|r| r.agent_name == agent_id || r.base_agent_id == agent_id)
+            {
                 run.evidence_count = count;
             }
 
@@ -3897,13 +3980,7 @@ impl CockpitState {
                 if let Some(suggested) = extract_suggested_p50(&all_text) {
                     let driver_name = self
                         .program
-                        .agents()
-                        .iter()
-                        .find(|a| {
-                            a.name == agent_id
-                                || base_agent_name(&a.name) == agent_id
-                                || a.name.starts_with(agent_id)
-                        })
+                        .agent(agent_id)
                         .and_then(|a| a.driver_refs.first().cloned());
 
                     if let Some(dn) = driver_name {
@@ -3943,11 +4020,12 @@ impl CockpitState {
                         if (suggested - current_p50).abs() / current_p50.max(0.01) > 0.01 {
                             let sug_id =
                                 format!("sug_{}_{}", agent_id, self.pending_suggestions.len());
-                            let ev_id = format!("{}_{}", agent_id, count.saturating_sub(1));
+                            let ev_id = evidence_id(agent_id, count.saturating_sub(1));
                             self.pending_suggestions.push(EvidenceSuggestion {
                                 id: sug_id,
                                 driver_name: dn.clone(),
                                 agent_name: agent_id.to_string(),
+                                agent_base_id: base_id.clone(),
                                 suggested_p50: suggested,
                                 current_p50,
                                 reasoning: all_text.chars().take(200).collect(),
@@ -3959,7 +4037,7 @@ impl CockpitState {
                                 kind: MessageKind::Suggestion,
                                 text: format!(
                                     "💡 {} suggests p50 {:.2} → {:.2} ({:+.0}%)",
-                                    base_agent_name(agent_id),
+                                    base_id,
                                     current_p50,
                                     suggested,
                                     (suggested / current_p50.max(0.001) - 1.0) * 100.0
@@ -3977,7 +4055,10 @@ impl CockpitState {
             if let Some(ref ws_id) = self.workspace_id {
                 let api = self.api.clone();
                 let ws = ws_id.clone();
-                let agent = agent_id.to_string();
+                // The workspace log is an ABW-side view keyed on real agent
+                // ids — attribute the message to the ABW id, not to this
+                // program's bound name.
+                let agent = base_id.clone();
                 let summary = result
                     .get("evidence")
                     .and_then(|v| v.as_array())
@@ -3999,7 +4080,7 @@ impl CockpitState {
                 tokio::spawn(async move {
                     let content = format!(
                         "**{}** completed research ({} evidence items):\n\n{}",
-                        base_agent_name(&agent),
+                        agent,
                         count,
                         summary.chars().take(500).collect::<String>()
                     );
@@ -4008,7 +4089,7 @@ impl CockpitState {
                             &ws,
                             "agent",
                             &agent,
-                            Some(base_agent_name(&agent)),
+                            Some(&agent),
                             &content,
                             "execution_result",
                             Some(&meta),
@@ -4407,7 +4488,8 @@ impl CockpitState {
                         for sched in &overdue {
                             let agent_id = sched.agent_id.clone();
                             let query = sched.query.clone();
-                            state.fire_agent(&agent_id, &query, cx);
+                            let tracking = state.tracking_id_for(&agent_id, &sched.driver_name);
+                            state.fire_agent(&agent_id, &tracking, &query, cx);
                             state.messages.push(AssistantMessage {
                                 node: format!("driver:{}", sched.driver_name),
                                 kind: MessageKind::Info,
@@ -5533,7 +5615,8 @@ impl CockpitState {
             None => return,
         };
 
-        self.fire_agent(&sched.agent_id, &sched.query, cx);
+        let tracking = self.tracking_id_for(&sched.agent_id, &sched.driver_name);
+        self.fire_agent(&sched.agent_id, &tracking, &sched.query, cx);
         self.messages.push(AssistantMessage {
             node: format!("driver:{}", sched.driver_name),
             kind: MessageKind::Info,
@@ -5618,8 +5701,13 @@ impl CockpitState {
             _ => None,
         };
 
+        // `agent_id` is the ABW id; `bound_name` is its identity in this
+        // program. Keep both — the server only resolves the former, the
+        // AST and evidence only key on the latter.
+        let bound_name = bound_agent_name(agent_id, driver_name);
+
         self.program.add_agent(AgentStmt {
-            name: format!("{}_{}", agent_id, sanitize_name(driver_name)),
+            name: bound_name.clone(),
             agent_type: Some("research".into()),
             query: query.clone(),
             executor: Some(fermi::ast::ExecutorType::LLM),
@@ -5630,7 +5718,8 @@ impl CockpitState {
         });
 
         self.agent_runs.push(AgentExecution {
-            agent_name: format!("{}_{}", agent_id, sanitize_name(driver_name)),
+            agent_name: bound_name.clone(),
+            base_agent_id: agent_id.to_string(),
             status: AgentRunStatus::Running,
             evidence_count: 0,
             confidence: None,
@@ -5655,7 +5744,7 @@ impl CockpitState {
             ),
         });
 
-        self.fire_agent(agent_id, &query, cx);
+        self.fire_agent(agent_id, &bound_name, &query, cx);
 
         // Persist recurring schedules to the backend (Once is fire-and-forget)
         if let (Some(fid), Some(hours)) = (self.forecast_id.clone(), interval_hours) {
@@ -5704,7 +5793,7 @@ impl CockpitState {
         schedule: Schedule,
         cx: &mut Context<Self>,
     ) {
-        let bound_name = format!("{}_{}", base_agent_id, sanitize_name(driver_name));
+        let bound_name = bound_agent_name(base_agent_id, driver_name);
 
         // Update the in-memory AST schedule on the bound agent (if it exists).
         // This keeps the FPL source in sync — generate_fpl_text reads from
@@ -5741,7 +5830,7 @@ impl CockpitState {
                             driver_name, q_text
                         )
                     });
-                self.fire_agent(base_agent_id, &query, cx);
+                self.fire_agent(base_agent_id, &bound_name, &query, cx);
                 self.messages.push(AssistantMessage {
                     node: format!("driver:{}", driver_name),
                     kind: MessageKind::Info,
@@ -5804,6 +5893,11 @@ impl CockpitState {
     }
 
     /// Re-run a previously completed or failed agent using its stored query.
+    ///
+    /// `agent_name` is the FPL (bound) name shown on the driver card. The
+    /// ABW id comes from the statement's `driver_refs`, never from the
+    /// name itself — guessing it here is what made Retry 404 for every
+    /// agent outside the old curated allowlist.
     pub fn retry_agent(&mut self, agent_name: &str, cx: &mut Context<Self>) {
         // Look up the agent in the AST to get its query
         let agent_stmt = self
@@ -5812,8 +5906,11 @@ impl CockpitState {
             .iter()
             .find(|a| a.name == agent_name)
             .cloned();
-        let query = match agent_stmt {
-            Some(ref a) => a.query.clone(),
+        let (query, base_id) = match agent_stmt {
+            Some(ref a) => (
+                a.query.clone(),
+                base_agent_id(&a.name, &a.driver_refs).to_string(),
+            ),
             None => {
                 log::warn!("[composer] retry_agent: {} not found in AST", agent_name);
                 return;
@@ -5840,6 +5937,7 @@ impl CockpitState {
             // No existing run — create one
             self.agent_runs.push(AgentExecution {
                 agent_name: agent_name.to_string(),
+                base_agent_id: base_id.clone(),
                 status: AgentRunStatus::Running,
                 evidence_count: 0,
                 confidence: None,
@@ -5862,8 +5960,7 @@ impl CockpitState {
             text: format!("⟳ Re-running {}…", agent_name),
         });
 
-        let base_id = base_agent_name(agent_name).to_string();
-        self.fire_agent(&base_id, &query, cx);
+        self.fire_agent(&base_id, agent_name, &query, cx);
         cx.notify();
     }
 
@@ -6057,7 +6154,7 @@ impl CockpitState {
              5. Rate the evidence quality (0.0-1.0) based on source reliability and relevance"
         );
 
-        let compound = format!("market_research_{}", sanitize_name(driver_name));
+        let compound = bound_agent_name("market_research", driver_name);
         self.program.add_agent(AgentStmt {
             name: compound.clone(),
             agent_type: Some("research".into()),
@@ -6069,7 +6166,8 @@ impl CockpitState {
             confidence_threshold: None,
         });
         self.agent_runs.push(AgentExecution {
-            agent_name: compound,
+            agent_name: compound.clone(),
+            base_agent_id: "market_research".into(),
             status: AgentRunStatus::Running,
             evidence_count: 0,
             confidence: None,
@@ -6091,7 +6189,7 @@ impl CockpitState {
             text: format!("📎 Analyzing URL for '{}': {}…", driver_display, url),
         });
 
-        self.fire_agent("market_research", &query, cx);
+        self.fire_agent("market_research", &compound, &query, cx);
         cx.notify();
     }
 
@@ -6324,7 +6422,7 @@ impl CockpitState {
                 new_p50,
                 new_p5,
                 new_p95,
-                base_agent_name(&sug.agent_name)
+                sug.agent_base_id.clone()
             ),
         });
 
@@ -6337,7 +6435,7 @@ impl CockpitState {
             let ws = ws_id.clone();
             let merged = self.workspace_params.clone();
             let driver_name = sug.driver_name.clone();
-            let agent_name = base_agent_name(&sug.agent_name);
+            let agent_name = sug.agent_base_id.clone();
             let content = format!(
                 "**Param update** on driver `{}`:\n- {}: {:.3} → {:.3}\n- {}: {:.3} → {:.3}\n- {}: {:.3} → {:.3}\n- Source: {} evidence\n- Rationale: {}",
                 driver_name,
@@ -6480,7 +6578,7 @@ impl CockpitState {
                 "✓ Accepted: p50 {:.2} → {:.2} (from {})",
                 sug.current_p50,
                 sug.suggested_p50,
-                base_agent_name(&sug.agent_name)
+                sug.agent_base_id.clone()
             ),
         });
 
@@ -6493,7 +6591,7 @@ impl CockpitState {
                 sug.current_p50,
                 sug.suggested_p50,
                 (sug.suggested_p50 / sug.current_p50.max(0.001) - 1.0) * 100.0,
-                base_agent_name(&sug.agent_name),
+                sug.agent_base_id.clone(),
                 sug.reasoning.chars().take(200).collect::<String>(),
             );
             let meta = serde_json::json!({
@@ -6545,7 +6643,7 @@ impl CockpitState {
                 kind: MessageKind::Info,
                 text: format!(
                     "✗ Rejected p50 suggestion from {}",
-                    base_agent_name(&sug.agent_name)
+                    sug.agent_base_id.clone()
                 ),
             });
         }
@@ -6599,6 +6697,7 @@ impl CockpitState {
 
         self.agent_runs.push(AgentExecution {
             agent_name: "fermi_base_rate".into(),
+            base_agent_id: "fermi".into(),
             status: AgentRunStatus::Running,
             evidence_count: 0,
             confidence: None,
@@ -6622,8 +6721,10 @@ impl CockpitState {
 
         // Latch the guard flag so the completion handler goes through
         // apply_base_rate_only() instead of the full decomposition path.
+        // Tracked as `fermi_base_rate` so failures land on the row this
+        // pushed rather than on the decomposition run (or nowhere).
         self.base_rate_update_in_flight = true;
-        self.fire_agent("fermi", &query, cx);
+        self.fire_agent("fermi", "fermi_base_rate", &query, cx);
     }
 
     /// Extract ONLY the base rate from a fermi agent response and update
@@ -8386,8 +8487,13 @@ impl CockpitState {
                                 .iter()
                                 .filter(|e| evidence_matches_agent(e, &name))
                                 .count();
+                            // The statement was added to the program just
+                            // above, so its driver_refs resolve the ABW id
+                            // this restored row would re-run.
+                            let base_id = self.base_agent_id_of(&name);
                             self.agent_runs.push(AgentExecution {
                                 agent_name: name,
+                                base_agent_id: base_id,
                                 status: if ev_count > 0 {
                                     AgentRunStatus::Completed
                                 } else {
@@ -10864,7 +10970,7 @@ impl Render for CockpitState {
                             .count();
                         let running_names: Vec<String> = self.agent_runs.iter()
                             .filter(|r| r.status == AgentRunStatus::Running)
-                            .map(|r| base_agent_name(&r.agent_name).to_string())
+                            .map(|r| r.base_agent_id.clone())
                             .collect();
                         el.child(
                             div()
@@ -13980,8 +14086,13 @@ fn render_driver_card(
                         _ => ("○", "idle".to_string(), theme::FG_DIM, theme::BG),
                     };
 
-                    // Extract the base agent name (before the _driver suffix)
-                    let display_name = agent_name.split('_').take(2).collect::<Vec<_>>().join("_");
+                    // Show the ABW agent id, not this program's bound name.
+                    // `name` is the driver, which makes the split exact —
+                    // taking the first two underscore segments guessed, and
+                    // guessed wrong for any id that isn't two words.
+                    let display_name = run
+                        .map(|r| r.base_agent_id.clone())
+                        .unwrap_or_else(|| base_agent_id_for_driver(agent_name, name).to_string());
 
                     div()
                         .flex()
@@ -14537,7 +14648,7 @@ fn render_agent_picker(
                     // here so the closures below pass the right id.
                     let bound_name = assigned.clone();
                     let base_id =
-                        base_agent_id_for_bound(&bound_name, driver_name);
+                        base_agent_id_for_driver(&bound_name, driver_name).to_string();
 
                     let dn_run = dn.clone();
                     let baid_run = base_id.clone();
@@ -15578,7 +15689,8 @@ fn render_driver_editor_and_evidence(
                             // once here so closures + lookups use the
                             // right id.
                             let bound = bound_name.clone();
-                            let base_id = base_agent_id_for_bound(&bound, &driver_name_owned);
+                            let base_id =
+                                base_agent_id_for_driver(&bound, &driver_name_owned).to_string();
 
                             let dn_run = driver_name_owned.clone();
                             let baid_run = base_id.clone();
@@ -16996,10 +17108,7 @@ fn render_pinned_suggestions(
                                         .text_size(ui::TEXT_BASE)
                                         .text_color(rgb(theme::FG))
                                         .font_weight(FontWeight::SEMIBOLD)
-                                        .child(format!(
-                                            "{} suggests:",
-                                            base_agent_name(&sug.agent_name)
-                                        )),
+                                        .child(format!("{} suggests:", sug.agent_base_id.clone())),
                                 )
                                 .child(
                                     div()
@@ -21553,9 +21662,14 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
                 .iter()
                 .filter(|a| matches!(a.schedule.as_ref(), Some(Schedule::Once) | None))
                 .flat_map(|a| {
+                    // The rows feed `update_schedule_for_assigned_agent`,
+                    // which is keyed on the ABW agent id — hand it the base
+                    // id, not this program's bound name, or it re-binds the
+                    // suffix twice and fires a name no server can resolve.
+                    let base = base_agent_id(&a.name, &a.driver_refs).to_string();
                     a.driver_refs
                         .iter()
-                        .map(|d| (a.name.clone(), d.clone(), a.query.clone()))
+                        .map(|d| (base.clone(), d.clone(), a.query.clone()))
                         .collect::<Vec<_>>()
                 })
                 .collect();
@@ -24686,6 +24800,9 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                     }
                                 })
                                 .unwrap_or_default();
+                            let display_id = agent_stmt
+                                .map(|a| base_agent_id(&a.name, &a.driver_refs).to_string())
+                                .unwrap_or_else(|| agent_name.to_string());
                             div()
                                 .flex()
                                 .items_center()
@@ -24698,7 +24815,7 @@ fn render_wiki_tab(state: &CockpitState, cx: &mut Context<CockpitState>) -> impl
                                         .py(ui::s(1.0))
                                         .rounded(ui::s(2.0))
                                         .bg(rgb(theme::BG))
-                                        .child(base_agent_name(agent_name).to_string()),
+                                        .child(display_id),
                                 )
                                 .when(!query_preview.is_empty(), |el| {
                                     el.child(
@@ -26029,7 +26146,7 @@ fn generate_evidence_wiki(
                 };
                 md.push_str(&format!(
                     "- **{}** (schedule: {})  \n  Query: _{}_\n",
-                    base_agent_name(&agent.name),
+                    base_agent_id(&agent.name, &agent.driver_refs),
                     schedule,
                     agent.query
                 ));
@@ -26224,7 +26341,7 @@ fn generate_evidence_wiki(
             let driver_list = a.driver_refs.join(", ");
             md.push_str(&format!(
                 "| {} | {} | {} |\n",
-                base_agent_name(&a.name),
+                base_agent_id(&a.name, &a.driver_refs),
                 driver_list,
                 a.query
             ));
@@ -27078,55 +27195,6 @@ fn extract_multiplier_near_keyword(text: &str, keyword: &str) -> Option<f64> {
     None
 }
 
-fn base_agent_name(compound_name: &str) -> &str {
-    // Known agent base names — covers all curated agents.
-    // The compound agent name format is "{base_id}_{driver_name}".
-    // We match against known base IDs to extract the base portion.
-    let known = [
-        "macro_forecaster",
-        "market_research",
-        "sentiment_analyzer",
-        "entity_investigator",
-        "monte_carlo_sim",
-        "equity_analyst",
-        "biotech_analyst",
-        "nba_analyst",
-        "football_analyst",
-        "energy_advisor",
-        "comparator",
-        "performance_coach",
-        "social_media_studio",
-        "simops_advisor",
-        "simops_optimizer",
-        "simops_cascade",
-        "simops_narrator_local",
-        "valuechain_mapper",
-        "ar_cartographer",
-        "ar_choreographer",
-        "wild_companion",
-        "keeper",
-        "reynolds_flock",
-        "embedding_broker",
-        "coherence_evaluator",
-        "publish_coach",
-        "sensor_advisor",
-        "intention_coordinator",
-        "rabble_anchor_manager",
-        "fermi",
-    ];
-    // Check longest matches first (some names are prefixes of others)
-    let mut best: &str = compound_name;
-    let mut best_len = 0;
-    for base in &known {
-        if compound_name.starts_with(base) && base.len() > best_len {
-            best = base;
-            best_len = base.len();
-        }
-    }
-    best
-}
-
-/// Check if an evidence item is linked to an agent (by base name match).
 /// Extract a suggested p50 value from agent output text.
 /// Scans for patterns like "Suggested p50: 1.15", "p50 multiplier: 0.95", etc.
 fn extract_suggested_p50(text: &str) -> Option<f64> {
@@ -27258,17 +27326,16 @@ fn is_forecast_collaboration_team(t: &Team) -> bool {
     true
 }
 
+/// Whether an evidence item was produced by the agent whose FPL name is
+/// `agent_name` (the *bound* name for driver-bound agents).
+///
+/// The rules live in [`fermi_console::agent_naming`] so they can be
+/// asserted; this is the `EvidenceStmt`-shaped face of them. Every
+/// caller passes an `AgentStmt::name`, so linkage is exact for evidence
+/// minted since the bound name reached `evidence_id`, and recovered by
+/// owner-prefix for forecasts saved before that.
 fn evidence_matches_agent(evidence: &EvidenceStmt, agent_name: &str) -> bool {
-    let base = base_agent_name(agent_name);
-    // Evidence IDs are formatted as "{base_agent_id}_{N}" (e.g. "market_research_0")
-    // Agent statement names are "{base_agent_id}_{driver_name}" (e.g. "market_research_economic_crisis")
-    // Match by:
-    // 1. Evidence ID starts with the base agent name followed by "_" (most reliable)
-    // 2. Evidence source text contains the base agent name
-    // 3. Evidence ID contains the full compound agent name
-    evidence.id.starts_with(&format!("{}_", base))
-        || evidence.source.contains(base)
-        || evidence.id.contains(agent_name)
+    evidence_belongs_to_agent(&evidence.id, &evidence.source, agent_name)
 }
 
 fn clean_fpl_string(s: &str) -> String {
@@ -27280,41 +27347,6 @@ fn clean_fpl_string(s: &str) -> String {
         .chars()
         .take(500) // truncate very long strings
         .collect()
-}
-
-/// Parse a bound AST agent name back to its base registry id.
-///
-/// `assign_agent_to_driver` constructs the bound name as
-/// `<base_agent_id>_<sanitize_name(driver_name)>`. This is the inverse:
-/// strip the suffix to recover `<base_agent_id>`. Falls back to the bound
-/// name unchanged when the suffix doesn't match (e.g. agents added by a
-/// path that doesn't follow the convention).
-fn base_agent_id_for_bound(bound_name: &str, driver_name: &str) -> String {
-    let suffix = format!("_{}", sanitize_name(driver_name));
-    bound_name
-        .strip_suffix(&suffix)
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| bound_name.to_string())
-}
-
-fn sanitize_name(name: &str) -> String {
-    let s: String = name
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '_' {
-                c.to_ascii_lowercase()
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if s.starts_with(|c: char| c.is_ascii_digit()) {
-        format!("d_{}", s)
-    } else if s.is_empty() {
-        "unnamed".to_string()
-    } else {
-        s
-    }
 }
 
 fn expr_to_f64(expr: &Expression) -> f64 {

@@ -46,10 +46,17 @@
 //! than a squint at a screenshot. The binary's `ui` module wraps these in
 //! GPUI's `Rems` and is what feature code actually calls.
 //!
+//! [`agent_naming`] holds the bound-name convention for driver-bound
+//! agents — the construction `{agent_id}_{driver}` and its inverse.
+//! Getting the inverse wrong sends an FPL identifier to ABW as an agent
+//! id (404) and orphans the evidence that identifier produced, so the
+//! rules belong somewhere they can be asserted rather than guessed.
+//!
 //! Candidates to migrate here as they're decoupled from GPUI: the FPL
 //! action-marker parser in `chat.rs` and the Anthropic error extractor
 //! in `cockpit.rs`, both of which currently have tests that can't run.
 
+pub mod agent_naming;
 pub mod plot;
 pub mod roster;
 pub mod uiscale;
