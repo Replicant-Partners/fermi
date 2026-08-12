@@ -98,7 +98,38 @@ the result. The Ecology lens now says this out loud — "labels, so
 composability with them is asserted, not verified" — which is honest but is
 not a fix.
 
-### 3.2 The two most expensive gaps
+### 3.2 DB-native agents declare no interface at all
+
+Measured after `agents.taxonomy` landed (mig-186) and the whole population
+became classifiable: all 13 efra agents derive to `phylum: Solitaria` with no
+`order`. Both are honest — the derivation is reading real emptiness:
+
+| field | efra agents |
+|---|---|
+| `produces` | `{}` — empty on all 13 |
+| `mcp_tools` | none |
+| `mcp_servers` | none |
+
+These are the platform's principal third-party agents, and they declare no
+outputs, no tools and no dependencies. They have system prompts and
+descriptions; they have no interface.
+
+This materially changes what P3 can achieve. Typing the interface does not
+help agents that declare no interface — a schema-compatibility check over an
+empty `produces` returns nothing, correctly. The catalogue's composability
+ceiling is therefore set by *authoring*, not by the type system:
+
+* **Curated agents** declare `accepts`/`produces` on 95 of 96 cards, because
+  the card template asks for them.
+* **API-authored agents** declare nothing, because the creation path does not
+  ask and nothing subsequently prompts for it.
+
+So before typed composition can pay off, agent creation has to elicit an
+interface. That is a product change in the creation flow, not a schema
+change — and it is cheaper than P3, which should probably follow it rather
+than precede it.
+
+### 3.3 The two most expensive gaps
 
 **Counterfactual attribution is built and one deploy away from producing.**
 `src/attribution/` implements exactly the right idea: re-run the forecast
@@ -218,6 +249,20 @@ slots do something.
 
 **Done when:** a declared pipeline executes end-to-end and its stage outputs
 are recorded.
+
+### P2.5 — Make agent creation elicit an interface (days, product change)
+
+Added after §3.2. All 13 efra agents — the platform's principal third-party
+agents — declare empty `produces`, no tools and no dependencies, because the
+creation and import paths never ask. Curated cards declare an interface on 95
+of 96 because the card template asks.
+
+Until creation elicits `accepts`/`produces`, every later composability
+mechanism is reasoning over a blank. Cheap to fix and it gates P3, so it
+should come first.
+
+**Done when:** the creation flow asks what an agent takes and returns, and the
+Ecology sheet shows a declared interface for agents authored through the UI.
 
 ### P3 — Type the interface, using MCP rather than a new vocabulary (2–3 weeks)
 
