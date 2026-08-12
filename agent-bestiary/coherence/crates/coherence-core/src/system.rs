@@ -613,11 +613,15 @@ impl CoherenceSystem {
             return FeedbackAction::FullIntervention;
         }
 
-        if gc.is_good(self.config.good_threshold) {
-            return FeedbackAction::PositiveReinforcement;
-        }
-
-        // Check individual principle thresholds
+        // Check individual principle thresholds BEFORE declaring success.
+        //
+        // This used to sit after an early `PositiveReinforcement` return on a
+        // good Γ(C), which made a weak principle unreportable whenever the
+        // global score was healthy. Γ(C) is the mean positive activation per
+        // utterance and is structurally blind to per-principle failures, so
+        // the two are not redundant: every stored evaluation reported
+        // "✅ Conversation is coherent" at Γ(C) ≥ 0.94 while σ(P₁) sat at 0.0.
+        // A specific, actionable weakness outranks a good average.
         let weak_principles = self
             .principle_scores
             .below_threshold(self.config.principle_threshold);
@@ -630,6 +634,10 @@ impl CoherenceSystem {
             return FeedbackAction::TargetedFeedback {
                 principles: principle_names,
             };
+        }
+
+        if gc.is_good(self.config.good_threshold) {
+            return FeedbackAction::PositiveReinforcement;
         }
 
         FeedbackAction::NoAction
@@ -746,6 +754,76 @@ impl fmt::Display for CoherenceSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::principles::{Principle, PrincipleScore};
+
+    // ── Feedback action ordering ──
+
+    fn system_with(global: f64, weak_principle: Option<(Principle, f64)>) -> CoherenceSystem {
+        let mut sys = CoherenceSystem::new(ConversationId::new());
+        sys.global_coherence = Some(GlobalCoherence {
+            score: global,
+            utterance_count: 10,
+            accepted_count: 9,
+            rejected_count: 1,
+            settling_cycles: 5,
+            converged: true,
+            final_max_delta: 0.0001,
+            computed_at: Utc::now(),
+        });
+        let mut scores = PrincipleScores::new();
+        for p in Principle::ALL {
+            let v = match weak_principle {
+                Some((wp, wv)) if wp == p => wv,
+                _ => 0.9,
+            };
+            scores.add(PrincipleScore::new(p, v).unwrap());
+        }
+        sys.set_principle_scores(scores);
+        sys
+    }
+
+    /// A weak principle must be reported even when Γ(C) looks healthy.
+    ///
+    /// Γ(C) is the mean positive activation per utterance and cannot express
+    /// a per-principle failure, so a good global score is not evidence that
+    /// every principle is fine. This previously returned early on
+    /// `is_good`, which is why σ(P₁)=0.0 was reported as
+    /// "✅ Conversation is coherent" in every stored evaluation.
+    #[test]
+    fn weak_principle_outranks_a_good_global_score() {
+        let sys = system_with(0.96, Some((Principle::Symmetry, 0.0)));
+        match sys.determine_feedback_action() {
+            FeedbackAction::TargetedFeedback { principles } => {
+                assert!(
+                    principles.iter().any(|p| p.contains("Symmetry")),
+                    "expected Symmetry to be named, got {principles:?}"
+                );
+            }
+            other => panic!("expected TargetedFeedback, got {other:?}"),
+        }
+    }
+
+    /// With every principle healthy, a good global score still earns praise —
+    /// the fix must not make positive reinforcement unreachable.
+    #[test]
+    fn healthy_principles_and_good_global_still_reinforce() {
+        let sys = system_with(0.96, None);
+        assert!(matches!(
+            sys.determine_feedback_action(),
+            FeedbackAction::PositiveReinforcement
+        ));
+    }
+
+    /// Systemic collapse still takes precedence over a single weak principle.
+    #[test]
+    fn critical_global_still_outranks_principle_feedback() {
+        let sys = system_with(0.05, Some((Principle::Symmetry, 0.0)));
+        assert!(matches!(
+            sys.determine_feedback_action(),
+            FeedbackAction::FullIntervention
+        ));
+    }
+
     // ── Activation ──
 
     #[test]

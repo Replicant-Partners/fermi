@@ -10,6 +10,12 @@ use coherence_core::{
     CoherenceSystem, Principle, PrincipleScore, PrincipleScores,
 };
 
+/// Topical overlap at which a reply counts as taking up the previous turn.
+///
+/// Deliberately lower than the relation-detection gate: a reply need only
+/// engage with the other's point, not restate it.
+const UPTAKE_THRESHOLD: f64 = 0.10;
+
 /// Computes principle-level scores from a settled [`CoherenceSystem`].
 pub struct PrincipleScorer;
 
@@ -46,34 +52,94 @@ impl PrincipleScorer {
         Ok(ps)
     }
 
-    /// P1 — Symmetry: Measures bidirectional engagement.
+    /// P1 — Symmetry: mutual acknowledgment and bidirectional engagement.
     ///
-    /// Score = fraction of utterance pairs that have at least one
-    /// acknowledgment-type coherence relation between them. Higher means
-    /// participants are engaging with each other's contributions.
+    /// Measured as **uptake**: when one participant speaks and the other
+    /// replies, does the reply actually engage with what was said?
+    ///
+    /// The previous definition was `acknowledgments / scorable utterances`,
+    /// where an acknowledgment required the turn to *begin* with a phrase like
+    /// "I agree" / "exactly" / "good point". That is a human-meeting-transcript
+    /// idiom. In an agent↔human dyad the human's turn is a question (excluded
+    /// from `scorable` entirely) and the agent's answer never opens that way,
+    /// so the count was structurally pinned at zero — confirmed across every
+    /// stored evaluation and on a real 64-episode history.
+    ///
+    /// Uptake is the property that definition was reaching for, and it is
+    /// measurable in Q&A: a companion that answers the question you actually
+    /// asked is bidirectionally engaged; one that responds with boilerplate is
+    /// not. Questions are deliberately included here even though they are
+    /// unscorable as *propositions* — in a dyad the question is the human's
+    /// entire contribution, and excluding it makes symmetry unmeasurable.
+    ///
+    /// An explicit acknowledgment still counts as full uptake.
     fn score_symmetry(system: &CoherenceSystem) -> (f64, Option<String>) {
-        let ack_count = system
-            .relations
-            .coherence_of_kind(CoherenceKind::Acknowledges)
-            .len();
-        let scorable = system.scorable_count();
-
-        if scorable <= 1 {
+        let utterances = &system.utterances;
+        if utterances.len() <= 1 {
             return (
                 1.0,
                 Some("Single or no utterances — symmetry trivially satisfied".into()),
             );
         }
 
-        // Ratio of acknowledgments to scorable utterances, capped at 1.0
-        let ratio = (ack_count as f64 / scorable as f64).min(1.0);
+        // Explicit acknowledgments short-circuit to full uptake regardless of
+        // vocabulary overlap ("Correct." shares no content words).
+        let ack_ids: std::collections::HashSet<_> = system
+            .relations
+            .coherence_of_kind(CoherenceKind::Acknowledges)
+            .iter()
+            .map(|r| r.target)
+            .collect();
 
+        let mut exchanges = 0usize;
+        let mut engaged = 0usize;
+        for pair in utterances.windows(2) {
+            let (prev, next) = (&pair[0], &pair[1]);
+            // Only turn-taking across participants counts; a participant
+            // continuing their own point is not bidirectional engagement.
+            if prev.participant_id == next.participant_id {
+                continue;
+            }
+            exchanges += 1;
+
+            if ack_ids.contains(&next.id) {
+                engaged += 1;
+                continue;
+            }
+            // Adjacent turns are `distance = 1`, which the relevance gate
+            // passes unconditionally, so compare overlap directly instead.
+            let o = coherence_core::relevance::overlap(
+                &coherence_core::relevance::content_tokens(&prev.content),
+                &coherence_core::relevance::content_tokens(&next.content),
+            );
+            if o >= UPTAKE_THRESHOLD {
+                engaged += 1;
+            }
+        }
+
+        if exchanges == 0 {
+            return (
+                1.0,
+                Some("No turn-taking between participants — symmetry not applicable".into()),
+            );
+        }
+
+        let ratio = engaged as f64 / exchanges as f64;
         let diag = if ratio < 0.2 {
-            Some("Low mutual acknowledgment between participants".into())
+            Some(format!(
+                "Low uptake — {}/{} replies engage with what the other said",
+                engaged, exchanges
+            ))
         } else if ratio >= 0.6 {
-            Some("Strong bidirectional engagement".into())
+            Some(format!(
+                "Strong bidirectional engagement — {}/{} replies take up the other's content",
+                engaged, exchanges
+            ))
         } else {
-            None
+            Some(format!(
+                "Partial uptake — {}/{} replies engage with what the other said",
+                engaged, exchanges
+            ))
         };
 
         (ratio, diag)
@@ -294,6 +360,93 @@ mod tests {
 
     fn make_utterance(kind: UtteranceKind, content: &str) -> Utterance {
         Utterance::new(ParticipantId::new(), MessageId::new(), kind, content)
+    }
+
+    fn utt_from(p: ParticipantId, kind: UtteranceKind, content: &str) -> Utterance {
+        Utterance::new(p, MessageId::new(), kind, content)
+    }
+
+    fn symmetry_of(sys: &CoherenceSystem) -> f64 {
+        PrincipleScorer::score(sys)
+            .scores
+            .iter()
+            .find(|s| s.principle == Principle::Symmetry)
+            .map(|s| s.score)
+            .expect("symmetry scored")
+    }
+
+    /// A Q&A dyad where the agent answers the question that was asked.
+    ///
+    /// Regression: under the old prefix-regex definition this scored exactly
+    /// 0.0, because the human's turns are questions (unscorable) and the
+    /// agent never opens with "I agree".
+    #[test]
+    fn symmetry_rewards_on_topic_answers_without_acknowledgment_phrases() {
+        let human = ParticipantId::new();
+        let agent = ParticipantId::new();
+        let mut sys = CoherenceSystem::new(ConversationId::new());
+        for (q, a) in [
+            (
+                "Which agents help with social media marketing?",
+                "These marketing agents handle social media scheduling and campaigns.",
+            ),
+            (
+                "How does the deployment pipeline handle rollback?",
+                "The deployment pipeline performs rollback via blue-green cutover.",
+            ),
+        ] {
+            sys.add_utterance(utt_from(human, UtteranceKind::Question, q));
+            sys.add_utterance(utt_from(agent, UtteranceKind::Claim, a));
+        }
+        let s = symmetry_of(&sys);
+        assert!(
+            s > 0.6,
+            "on-topic answers should register as engagement, got {s}"
+        );
+    }
+
+    /// The discriminating case: the agent replies, but about something else.
+    /// If symmetry cannot separate this from the case above it carries no
+    /// information.
+    #[test]
+    fn symmetry_penalises_boilerplate_that_ignores_the_question() {
+        let human = ParticipantId::new();
+        let agent = ParticipantId::new();
+        let mut sys = CoherenceSystem::new(ConversationId::new());
+        for (q, a) in [
+            (
+                "Which agents help with social media marketing?",
+                "Thank you for reaching out. Please consult the documentation portal.",
+            ),
+            (
+                "How does the deployment pipeline handle rollback?",
+                "Thank you for reaching out. Please consult the documentation portal.",
+            ),
+        ] {
+            sys.add_utterance(utt_from(human, UtteranceKind::Question, q));
+            sys.add_utterance(utt_from(agent, UtteranceKind::Claim, a));
+        }
+        let s = symmetry_of(&sys);
+        assert!(
+            s < 0.34,
+            "off-topic boilerplate should not read as engagement, got {s}"
+        );
+    }
+
+    /// A participant continuing their own point is not bidirectional.
+    #[test]
+    fn symmetry_ignores_same_speaker_runs() {
+        let solo = ParticipantId::new();
+        let mut sys = CoherenceSystem::new(ConversationId::new());
+        for c in [
+            "deployment pipeline notes",
+            "more deployment pipeline notes",
+        ] {
+            sys.add_utterance(utt_from(solo, UtteranceKind::Claim, c));
+        }
+        // No cross-participant exchange exists, so symmetry is not applicable
+        // rather than zero.
+        assert_eq!(symmetry_of(&sys), 1.0);
     }
 
     #[test]

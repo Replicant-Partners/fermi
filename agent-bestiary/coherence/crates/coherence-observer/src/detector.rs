@@ -40,7 +40,16 @@ impl RelationDetector {
         let mut relations = Vec::new();
 
         for (i, u1) in utterances.iter().enumerate() {
-            for u2 in utterances.iter().skip(i + 1) {
+            for (offset, u2) in utterances.iter().skip(i + 1).enumerate() {
+                let distance = offset + 1;
+                // Topical gate. Without it the cue-based rules below, which
+                // inspect only the later utterance, relate it to every
+                // utterance that precedes it — producing an exact
+                // claims×evidence cross-product and an edge density above
+                // 50%. See [`crate::relevance`].
+                if !coherence_core::relevance::is_relevant(u1, u2, distance) {
+                    continue;
+                }
                 relations.extend(Self::detect_pair(u1, u2));
             }
         }

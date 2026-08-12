@@ -8,6 +8,7 @@
 pub mod error;
 pub mod principles;
 pub mod relations;
+pub mod relevance;
 pub mod system;
 pub mod types;
 
@@ -15,6 +16,7 @@ pub mod types;
 pub use error::CoreError;
 pub use principles::{Principle, PrincipleScore, PrincipleScores};
 pub use relations::{CoherenceRelation, IncoherenceRelation, RelationStrength};
+pub use relevance::{content_tokens, is_relevant, overlap, relevance};
 pub use system::{Activation, CoherenceSnapshot, CoherenceSystem, GlobalCoherence};
 pub use types::{
     Conversation, ConversationId, Message, MessageId, Participant, ParticipantId, Utterance,

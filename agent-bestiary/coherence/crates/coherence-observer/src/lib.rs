@@ -15,3 +15,8 @@ mod observer;
 pub use classifier::UtteranceClassifier;
 pub use detector::RelationDetector;
 pub use observer::ConversationObserver;
+
+// Relevance gating lives in `coherence-core` so the settling engine's
+// Symmetry scorer can share it; re-exported here for callers that think of it
+// as an observation concern.
+pub use coherence_core::relevance::{content_tokens, is_relevant, overlap, relevance};
