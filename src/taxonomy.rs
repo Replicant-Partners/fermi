@@ -169,7 +169,12 @@ const ORDER_PATTERNS: &[(&str, &[&str])] = &[
             "routing",
             "listing",
             "match",
-            "position",
+            // Plural on purpose. Singular "position" also means an argued
+            // stance (vote_strategist's `aggregate-position`), which is a
+            // judgement rather than plumbing — matching it here filed a
+            // consensus strategist under Operationales. The plural is the
+            // spatial sense this was added for (`updated_positions`).
+            "positions",
             "metric",
         ],
     ),

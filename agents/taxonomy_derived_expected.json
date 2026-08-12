@@ -111,6 +111,12 @@
     "phylum": "Instrumenta",
     "species": "deal_finder"
   },
+  "debate_strategist": {
+    "class": "Coordinia",
+    "order": "Diagnosticales",
+    "phylum": "Instrumenta",
+    "species": "debate_strategist"
+  },
   "delivery": {
     "class": "Creativia",
     "order": "Operationales",
@@ -333,6 +339,12 @@
     "phylum": "Instrumenta",
     "species": "performance_coach"
   },
+  "pipeline_strategist": {
+    "class": "Coordinia",
+    "order": "Evidentiales",
+    "phylum": "Instrumenta",
+    "species": "pipeline_strategist"
+  },
   "preference_modeler": {
     "class": "Analytia",
     "order": "Diagnosticales",
@@ -522,6 +534,12 @@
     "order": "Imaginales",
     "phylum": "Instrumenta",
     "species": "video_analyst"
+  },
+  "vote_strategist": {
+    "class": "Coordinia",
+    "order": "Consiliales",
+    "phylum": "Instrumenta",
+    "species": "vote_strategist"
   },
   "watermark": {
     "class": "Creativia",

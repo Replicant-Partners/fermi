@@ -50,7 +50,8 @@
     "Forecastidae",
     "Creatoridae",
     "Efratidae",
-    "Ludidae"
+    "Ludidae",
+    "Strategidae"
   ],
   "//family": [
     "Lineage — which cohort was this agent authored as part of? Families track",
@@ -69,7 +70,11 @@
     "Forecastidae   — Fermi forecasting specialists",
     "Creatoridae    — image, avatar, media generation",
     "Efratidae      — the efra equity-research suite",
-    "Ludidae        — games and puzzles"
+    "Ludidae        — games and puzzles",
+    "Strategidae    — coordination strategists: the agents that decide HOW a",
+    "                 composition works rather than doing the work. Added for a",
+    "                 cohort of five (cohere_and_coordinate, moe_router,",
+    "                 pipeline, vote, debate), not as a singleton."
   ],
 
   "genus": [

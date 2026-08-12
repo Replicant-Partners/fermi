@@ -110,9 +110,14 @@ ORDER_PATTERNS = [
     ("Narrativales", r"narrat|story|post|synopsis|prose|dream|message|response|"
                      r"summary|brief|note"),
     # Plumbing: state, transforms, machine-to-machine payloads.
+    # `positions` is plural on purpose. Singular "position" also means an
+    # argued stance (vote_strategist's `aggregate-position`), which is a
+    # judgement, not plumbing — matching it here filed a consensus strategist
+    # under Operationales. The plural form is the spatial sense this pattern
+    # was added for (reynolds_flock's `updated_positions`).
     ("Operationales", r"state|config|transform|input|action|command|operation|task|"
                       r"workflow|packaged|payload|schema|manifest|rules|ontolog|"
-                      r"embedding|routing|listing|match|position|metric"),
+                      r"embedding|routing|listing|match|positions|metric"),
     # Epistemic output — the broadest bucket, so it goes last.
     ("Evidentiales", r"evidence|analys|assess|report|profile|finding|research|"
                      r"rating|comparison|audit|scan|intel|catalog|fact"),

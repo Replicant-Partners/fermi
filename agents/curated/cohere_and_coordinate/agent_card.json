@@ -51,7 +51,9 @@
             },
             "member_agent_ids": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "Proposed new member roster (agent_ids). Omit to keep current roster and only adjust weights."
             },
             "member_weights": {
@@ -67,7 +69,10 @@
               "description": "Your agent_id: cohere_and_coordinate"
             }
           },
-          "required": ["diff_summary", "rationale"]
+          "required": [
+            "diff_summary",
+            "rationale"
+          ]
         }
       }
     ],
@@ -147,7 +152,10 @@
       "phylum": "Composita",
       "class": "Cohaerentia",
       "order": "Diagnosticales",
-      "species": "cohere_and_coordinate"
+      "species": "cohere_and_coordinate",
+      "kingdom": "Cognita",
+      "family": "Strategidae",
+      "genus": "Coordinator"
     },
     "created": "2026-02-10",
     "author": "Fermi Team",
@@ -161,7 +169,10 @@
       "coordination_strategy"
     ],
     "strategy": {
-      "rsi_modes": ["cascade", "tune_team"],
+      "rsi_modes": [
+        "cascade",
+        "tune_team"
+      ],
       "member_count_min": 2,
       "member_count_max": null,
       "member_role_requirements": [],
@@ -209,36 +220,60 @@
       {
         "name": "Pre-flight",
         "agent": "cohere_and_coordinate",
-        "accepts": ["intention-signal"],
-        "produces": ["intention-clearance"],
+        "accepts": [
+          "intention-signal"
+        ],
+        "produces": [
+          "intention-clearance"
+        ],
         "description": "Read/write intention map, detect conflicts, feed IntentionAligns/Conflicts into coherence graph"
       },
       {
         "name": "Assess",
         "agent": "cohere_and_coordinate",
-        "accepts": ["workspace-state", "coherence-scores"],
-        "produces": ["situation-report"],
+        "accepts": [
+          "workspace-state",
+          "coherence-scores"
+        ],
+        "produces": [
+          "situation-report"
+        ],
         "description": "Read workspace conversation, list agents with valence, get latest TEC evaluation"
       },
       {
         "name": "Diagnose",
         "agent": "cohere_and_coordinate",
-        "accepts": ["situation-report"],
-        "produces": ["diagnosis"],
+        "accepts": [
+          "situation-report"
+        ],
+        "produces": [
+          "diagnosis"
+        ],
         "description": "Classify incoherence type, identify weak TEC principles, check for false consensus"
       },
       {
         "name": "Coordinate",
         "agent": "cohere_and_coordinate",
-        "accepts": ["diagnosis"],
-        "produces": ["coordination-plan", "role-assignment"],
+        "accepts": [
+          "diagnosis"
+        ],
+        "produces": [
+          "coordination-plan",
+          "role-assignment"
+        ],
         "description": "Assign roles, resolve destructive conflicts, flag productive incoherence to protect, write brief"
       },
       {
         "name": "Tension Audit",
         "agent": "cohere_and_coordinate",
-        "accepts": ["diagnosis", "consolidated-memory"],
-        "produces": ["composition-proposal", "cascade-episode"],
+        "accepts": [
+          "diagnosis",
+          "consolidated-memory"
+        ],
+        "produces": [
+          "composition-proposal",
+          "cascade-episode"
+        ],
         "description": "Composition Dreaming only: valence homophily detection, structural proposals, cascade RSI writes"
       }
     ]
