@@ -58,6 +58,11 @@ pub mod schema_trust;
 // it; `scripts/taxonomy.py` remains the editorial tool for on-disk cards.
 pub mod taxonomy;
 
+// Pipeline planning (SPEC_31 P2) — validate a declared workflow_template's
+// seams before executing it, so a pipeline that would break at stage 4 never
+// spends stages 1–3.
+pub mod pipeline;
+
 // Re-export main types
 pub use ast::*;
 pub use evaluator::{evaluate, EvalError, EvaluationContext};
