@@ -1144,6 +1144,9 @@ struct CockpitDrain {
     invite_share: Option<(JsonValue, String, String)>,
     /// Parent should refetch its forecast lists.
     refresh_forecasts: bool,
+    /// A forecast was deleted in the composer and must be evicted from
+    /// every cache the parent holds, portfolio aggregates included.
+    deleted_forecast: Option<String>,
     /// Operator clicked the banner — open the Activity tab.
     open_activity: bool,
     /// Banner messages not yet mirrored into the Activity log.
@@ -1879,6 +1882,7 @@ impl FermiConsole {
             let drained = cockpit_ref.update(cx, |state, _| {
                 let refresh = state.pending_forecasts_refresh;
                 state.pending_forecasts_refresh = false;
+                let deleted = state.pending_forecast_deleted.take();
                 let open_activity = state.pending_open_activity;
                 state.pending_open_activity = false;
 
@@ -1915,6 +1919,7 @@ impl FermiConsole {
                     toasts: std::mem::take(&mut state.pending_toasts),
                     invite_share: state.pending_invite_share.take(),
                     refresh_forecasts: refresh,
+                    deleted_forecast: deleted,
                     open_activity,
                     mirrored,
                     rich: std::mem::take(&mut state.pending_activity),
@@ -1925,6 +1930,7 @@ impl FermiConsole {
                 toasts,
                 invite_share,
                 refresh_forecasts,
+                deleted_forecast,
                 open_activity,
                 mirrored,
                 rich,
@@ -1948,6 +1954,9 @@ impl FermiConsole {
             }
             if let Some((invite_json, target_label, recipient)) = invite_share {
                 this.open_invite_share_modal(&invite_json, target_label, recipient, cx);
+            }
+            if let Some(fid) = deleted_forecast {
+                this.evict_deleted_forecast(&fid, cx);
             }
             if refresh_forecasts {
                 // Forecast list on the parent has drifted (publish
@@ -10116,6 +10125,44 @@ impl FermiConsole {
             },
         )
         .detach();
+    }
+
+    /// Drop a forecast that no longer exists from every cache the
+    /// console holds, then reconcile the aggregates with the server.
+    ///
+    /// Two halves, on purpose. The local eviction is what makes the UI
+    /// honest *on this frame*: the refetches are async, and until they
+    /// land the Portfolio panel would go on rendering a count for a
+    /// forecast it can no longer list — which is exactly the state a
+    /// composer-side delete used to leave behind, since it told the
+    /// console nothing at all.
+    ///
+    /// The refetches then correct what can't be recomputed locally. A
+    /// forecast can belong to any number of books, and neither the
+    /// composer nor this function knows which, so per-book counts and
+    /// the Total/Active/Resolved tiles are invalidated wholesale rather
+    /// than decremented on a guess.
+    fn evict_deleted_forecast(&mut self, forecast_id: &str, cx: &mut Context<Self>) {
+        self.active_forecasts.retain(|f| f.id != forecast_id);
+        self.resolved_forecasts.retain(|f| f.id != forecast_id);
+        self.draft_forecasts.retain(|f| f.id != forecast_id);
+        self.unassigned_forecasts.retain(|f| f.id != forecast_id);
+        self.shared_with_me_forecasts
+            .retain(|f| f.id != forecast_id);
+        for list in self.portfolio_forecasts.values_mut() {
+            list.retain(|f| f.id != forecast_id);
+        }
+
+        self.portfolio_stats_cache.clear();
+        self.fetch_portfolios(cx);
+        if let Some(pid) = self.selected_portfolio_id.clone() {
+            // `_if_needed` is cache-gated, and the clear above is what
+            // makes it fire.
+            self.fetch_portfolio_stats_if_needed(pid, cx);
+        }
+        self.fetch_forecasts(cx);
+        self.fetch_stats(cx);
+        cx.notify();
     }
 
     fn remove_from_portfolio(

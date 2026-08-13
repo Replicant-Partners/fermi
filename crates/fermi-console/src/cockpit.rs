@@ -670,6 +670,18 @@ pub struct CockpitState {
     /// background refresh loop. Cleared by the observe handler.
     pub pending_forecasts_refresh: bool,
 
+    /// A forecast was deleted in the composer, and the parent's caches
+    /// still contain it. Carries the id so the parent can drop it on the
+    /// current frame rather than showing a count it can no longer
+    /// justify until a refetch lands.
+    ///
+    /// Distinct from `pending_forecasts_refresh` because deletion
+    /// invalidates strictly more: a forecast leaves the portfolios it
+    /// belonged to, so the per-book counts and the Total/Active/Resolved
+    /// aggregates go stale too, and the composer has no idea which books
+    /// those were. Cleared by the observe handler.
+    pub pending_forecast_deleted: Option<String>,
+
     /// Portfolios the operator owns — fetched by the cockpit itself
     /// (not piped from the parent). Powers the inline portfolio
     /// membership chip strip in the question section. Each entry is
@@ -1213,6 +1225,7 @@ impl CockpitState {
             pending_invite_share: None,
             pending_open_activity: false,
             pending_forecasts_refresh: false,
+            pending_forecast_deleted: None,
             cockpit_portfolios: Vec::new(),
             cockpit_portfolios_loading: false,
             current_portfolio_ids: std::collections::HashSet::new(),
@@ -1967,6 +1980,12 @@ impl CockpitState {
             this.update(cx, |state, cx| match result {
                 Ok(()) => {
                     log::info!("[delete] forecast={} deleted", fid);
+                    // Tell the parent the row is gone. Without this the
+                    // Portfolio panel keeps reporting a forecast it can no
+                    // longer list: the book's count and its
+                    // Total/Active/Resolved come from caches the composer
+                    // never touched, so they sat at 1 next to an empty list.
+                    state.pending_forecast_deleted = Some(fid.clone());
                     state.messages.push(AssistantMessage {
                         node: "question".into(),
                         kind: MessageKind::Info,
