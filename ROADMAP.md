@@ -127,6 +127,42 @@ storytelling:
       observation write drops) to a Slack incoming webhook so we don't
       only find out at share-demo time.
 
+## 6b. Platform economics & principal custody
+
+Context: `docs/plans/PLATFORM_ECONOMICS.md` and
+`docs/plans/ABW_SYSTEM_OWNERSHIP_MIGRATION.md`. The cost/margin view
+(`/api/admin/economics/platform`, admin → Economics tab) ships now; the
+items below are what it is honest about *not* yet knowing.
+
+- [ ] **Cash-out / payout.** *(deferred, tracked)* There is no path
+      from credits to fiat for **any** principal — Stripe is
+      inbound-only (`/api/billing/checkout`). Credits are a closed
+      loop. Once platform-service agents are owned by `abw-system`,
+      its wallet accrues royalties with no way to realise them.
+      Needs: Stripe Connect payout accounts, a withdrawal ledger
+      tx_type, KYC/threshold policy, and a reconciliation story
+      between credits issued and fiat held. Prerequisite for paying
+      third-party agent authors, so this gates the marketplace
+      becoming a real economy rather than a scoreboard.
+- [ ] **Input/output token split.** `episodes.tokens_used` is a single
+      number, but provider pricing differs several-fold between input
+      and output (Anthropic: 3x–5x). Until this is split, every USD
+      cost figure carries that error bar. Highest-leverage accuracy
+      fix available.
+- [ ] **Cost from provider usage, not estimation.** Even with a split,
+      cost is `tokens × rate card`. Providers report actual billed
+      usage; ingesting it would make cost *measured* rather than
+      modelled, and would catch rate-card drift when pricing changes.
+- [ ] **Persist `funding_principal` as a column.** Currently in
+      `episodes.context` JSONB — queryable, but unindexed, so the
+      economics view scans. Promote to a real column with an index
+      when the volume justifies it.
+- [ ] **Principal custody API** (`ObjectType::Principal`). Key
+      rotation for `abw-system` is currently SQL-only:
+      `bootstrap_agent_credential_if_absent` returns early when a row
+      exists, so changing the env var does nothing. See
+      `ABW_SYSTEM_OWNERSHIP_MIGRATION.md` §4b.
+
 ## 7. Recently shipped (chronological, most recent first)
 
 Anchor points so future readers can navigate the delta:

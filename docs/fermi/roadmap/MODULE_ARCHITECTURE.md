@@ -263,6 +263,13 @@ FPL Code → LSP → Backend → Agent Registry → LLM API
 
 ## Client-Server Architecture Decision
 
+> **Superseded (as shipped).** The "offline capable / sync on demand" leg below was
+> never made to work and has been removed from the console. `save_forecast` writes
+> only to the backend, and the auth gate replaces the whole panel router when the
+> client is disconnected, so there is no local store to sync and no divergence to
+> reconcile. Local execution of simulations survives; local *storage* does not.
+> Treat this section as the original planning intent, not current behavior.
+
 **Selected:** Hybrid (Smart Client)
 
 ### Rationale:

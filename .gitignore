@@ -102,3 +102,6 @@ integrity-audit-*.txt
 forecasts/*.fpl
 forecasts/*.state.json
 forecasts/*.evidence.md
+
+# UI review screenshots — local visual-diff artefacts, not source.
+.ui-review/
