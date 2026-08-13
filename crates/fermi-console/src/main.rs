@@ -905,6 +905,9 @@ struct FermiConsole {
     /// source. Marketplace stays a placeholder until we ingest
     /// marketplace publish events.
     dashboard_activity_filter: ActivityFilter,
+    /// Ownership filter over the Dashboard's Research card — all research,
+    /// only my forecasts, or only ones shared with me.
+    dashboard_research_scope: ResearchScope,
     /// Team detail cache keyed by team_id. Populated by a background
     /// fan-out that fires after `fetch_teams` completes so the
     /// Dashboard's team cards can render member counts and initials
@@ -1178,6 +1181,36 @@ enum ActivityFilter {
     Marketplace,
 }
 
+/// Chip filter over the Dashboard's Research card. Ownership, not source:
+/// the card's three forecast lists come from `list_forecasts` with no
+/// `scope`, which is a mix of the operator's own forecasts and ones shared
+/// with them. Comparing `Forecast.owner_id` against `current_user_id`
+/// separates the two client-side — no extra round-trip, and the counts
+/// stay honest because we're filtering the same set we already summed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResearchScope {
+    All,
+    Mine,
+    Shared,
+}
+
+impl ResearchScope {
+    /// Does a forecast owned by `owner_id` belong in this scope?
+    ///
+    /// `me == None` means we haven't learned the caller's user id yet (it
+    /// arrives with the first successful auth). Treat that as "can't tell"
+    /// and admit everything, matching `viewer_administers_selected_team`'s
+    /// unknown-not-nobody convention — showing an empty card because an id
+    /// hasn't landed would look like "no research" all over again.
+    fn admits(self, owner_id: &str, me: Option<&str>) -> bool {
+        match (self, me) {
+            (ResearchScope::All, _) | (_, None) => true,
+            (ResearchScope::Mine, Some(me)) => owner_id == me,
+            (ResearchScope::Shared, Some(me)) => owner_id != me,
+        }
+    }
+}
+
 impl FermiConsole {
     fn new(api: Arc<ApiClient>, registry: Arc<AgentRegistry>, cx: &mut Context<Self>) -> Self {
         let sign_in_token_input = cx.new(|cx| {
@@ -1356,6 +1389,7 @@ impl FermiConsole {
             portfolio_shares_in_flight: std::collections::HashSet::new(),
             selected_team_tab: TeamTab::Ops,
             dashboard_activity_filter: ActivityFilter::All,
+            dashboard_research_scope: ResearchScope::All,
             team_details: std::collections::HashMap::new(),
             team_details_in_flight: std::collections::HashSet::new(),
             hovered_team_id: None,
@@ -2414,6 +2448,21 @@ impl FermiConsole {
                 });
                 self.search_polymarket(cx);
             }
+            // ── Model edits ──────────────────────────────────────
+            //
+            // The symbolic write. Parsing and validation live in
+            // `fermi_console::mutations` so an LLM sending p5 > p95, a
+            // probability of 15 meaning 0.15, or a base rate with no
+            // reference class is rejected with a reason the operator can
+            // read — rather than silently producing a nonsense forecast.
+            "set_driver_distribution"
+            | "set_driver_probability"
+            | "set_base_rate"
+            | "assign_agent" => {
+                if let Err(msg) = self.apply_chat_model_edit(&tool, &args, cx) {
+                    self.push_chat_action_error(&msg, cx);
+                }
+            }
             other => {
                 self.push_chat_action_error(
                     &format!(
@@ -2424,6 +2473,65 @@ impl FermiConsole {
                 );
             }
         }
+    }
+
+    /// Apply a chat-proposed edit to the open forecast.
+    ///
+    /// Separated from the dispatch match so the whole family shares one
+    /// set of preconditions: a composer must be open, and the operator
+    /// must be looking at it afterwards (an edit they cannot see is
+    /// indistinguishable from one that silently failed).
+    fn apply_chat_model_edit(
+        &mut self,
+        tool: &str,
+        args: &serde_json::Value,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        use fermi_console::mutations as mu;
+
+        let Some(cockpit) = self.cockpit.clone() else {
+            return Err(format!(
+                "{tool} needs a forecast open in the composer first"
+            ));
+        };
+        if self.active_panel != Panel::Composer {
+            self.navigate(Panel::Composer, cx);
+        }
+
+        let result: Result<String, String> = cockpit.update(cx, |c, cx| match tool {
+            "set_driver_distribution" => {
+                let driver = mu::driver_name(args)?;
+                let edit = mu::parse_distribution(args)?;
+                c.apply_driver_distribution(&driver, edit, cx)?;
+                Ok(format!("{driver} updated"))
+            }
+            "set_driver_probability" => {
+                let driver = mu::driver_name(args)?;
+                let edit = mu::parse_binary(args)?;
+                c.apply_driver_binary(&driver, edit, cx)?;
+                Ok(format!("{driver} updated"))
+            }
+            "set_base_rate" => {
+                let edit = mu::parse_base_rate(args)?;
+                c.apply_base_rate_edit(edit, cx)?;
+                Ok("base rate updated".to_string())
+            }
+            "assign_agent" => {
+                let (driver, agent) = mu::parse_assign_agent(args)?;
+                if !c.agent_is_routable_pub(&agent) {
+                    return Err(format!(
+                        "`{agent}` isn't in the orchestra — nothing would be able to run it"
+                    ));
+                }
+                // Schedule::Once: attach it for review, don't fire and
+                // bill on a chat click.
+                c.assign_agent_to_driver(&driver, &agent, fermi::ast::Schedule::Once, cx);
+                Ok(format!("{agent} assigned to {driver}"))
+            }
+            other => Err(format!("unhandled model edit {other:?}")),
+        });
+
+        result.map(|_| ())
     }
 
     fn dismiss_chat_action(
@@ -7062,24 +7170,38 @@ impl FermiConsole {
                     cx.notify();
                     return;
                 }
-                // Ctrl+Enter is a three-state action, not one action:
-                //
-                //   staged research pending  -> run it
-                //   otherwise                -> decompose (which arms a
-                //                               confirm when it would
-                //                               overwrite existing work)
-                //
-                // Decomposition no longer fires agents itself, so the
-                // operator gets a review step between "assign" and "spend"
-                // without needing to learn a second shortcut.
-                if !cockpit.pending_research.is_empty() {
-                    cockpit.run_pending_research(cx);
-                    cx.notify();
-                    return;
-                }
+                // Ctrl+Enter covers three outcomes, two of them
+                // irreversible: decomposition discards the forecast, and
+                // running staged research bills real money. The branch is
+                // decided by `fermi_console::flow`, which is a pure
+                // function under test — this handler only dispatches.
                 let question = cockpit.question_input.read(cx).text().to_string();
-                if !question.trim().is_empty() {
-                    cockpit.orchestrate_question(&question, cx);
+                let ctx = fermi_console::flow::ResearchContext {
+                    staged: cockpit.pending_research.len(),
+                    has_question: !question.trim().is_empty(),
+                    drivers: cockpit.program.drivers().len(),
+                    evidence: cockpit.program.evidence_items().len(),
+                    agents: cockpit
+                        .program
+                        .agents()
+                        .iter()
+                        .filter(|a| !a.driver_refs.is_empty())
+                        .count(),
+                    armed: cockpit.redecompose_armed,
+                };
+
+                use fermi_console::flow::ResearchAction;
+                match fermi_console::flow::next_research_action(ctx) {
+                    ResearchAction::RunStaged { .. } => cockpit.run_pending_research(cx),
+                    ResearchAction::Nothing => {}
+                    // `orchestrate_question` owns the arm/disarm state and
+                    // the message that names what would be lost, so both
+                    // overwrite outcomes route through it.
+                    ResearchAction::ArmOverwrite { .. }
+                    | ResearchAction::ConfirmOverwrite
+                    | ResearchAction::Decompose => {
+                        cockpit.orchestrate_question(&question, cx)
+                    }
                 }
             });
             cx.notify();
@@ -8425,17 +8547,22 @@ impl FermiConsole {
     // story: how much evidence has your fleet gathered lately, roughly
     // what did it cost, and which forecasts are the active ones.
     //
-    // Cost is *estimated* — ABW doesn't yet expose a per-forecast
-    // cost rollup, so we approximate as
+    // Cost is *estimated* — `episodes` records real per-run cost but has
+    // no forecast_id, so runs can't be attributed to a forecast. We
+    // approximate as
     //   sum over agents in `agents_used` of (avg_cost_per_run × 1).
     // That's an honest lower bound ("this forecast has consumed at
     // least one run of each of these agents") and is clearly labeled
     // "est." in the UI so nobody mistakes it for authoritative spend.
-    // A follow-up commit can swap this for a real rollup without
+    // Attributing episodes to forecasts would make it exact without
     // changing the visual shell.
     fn render_dashboard_research_card(&self, cx: &Context<Self>) -> impl IntoElement {
         // Index server agent execution_stats so we can look up
-        // avg_cost_per_run by agent_id in O(1).
+        // avg_cost_per_run by agent_id in O(1). `execution_stats` is
+        // measured from `episodes` server-side; it used to be read off
+        // never-written counters on the `agents` row, which is why every
+        // agent was unpriceable and this card said "cost n/a" throughout.
+        // See `agents::MeasuredExecStats`.
         let mut avg_cost_by_id: std::collections::HashMap<String, f64> =
             std::collections::HashMap::new();
         for sc in &self.agent_cards {
@@ -8456,25 +8583,50 @@ impl FermiConsole {
             }
         }
 
-        // Walk the operator's own forecasts, summing evidence and
+        // Walk every forecast the operator can see, summing evidence and
         // estimated cost. `agents_used` shape from the server is an
         // array of `{agent_id, driver_refs: […]}` objects.
+        //
+        // These three lists come from `list_forecasts` with no `scope`, so
+        // they mix the operator's own forecasts with ones shared with them —
+        // same set the Active Forecasts tile counts. The Mine / Shared chips
+        // split that mix by comparing `owner_id` to `current_user_id`.
+        let scope = self.dashboard_research_scope;
+        let me = self.current_user_id.as_deref();
         let mut total_evidence: usize = 0;
         let mut total_est_cost: f64 = 0.0;
+        // Chip counts, computed over the unfiltered set so a chip can say
+        // how much it would show before you click it (and disable itself
+        // when the answer is nothing). `all_rows` is counted rather than
+        // summed from the other two: until `current_user_id` lands, `admits`
+        // answers true for both Mine and Shared, so their sum would
+        // double-count.
+        let mut all_rows: usize = 0;
+        let mut mine_rows: usize = 0;
+        let mut shared_rows: usize = 0;
         // Per-row: (forecast, evidence_count, est_cost, agent_ids)
         let mut rows: Vec<(&Forecast, usize, f64, Vec<String>)> = Vec::new();
-        let all_own: Vec<&Forecast> = self
+        let visible: Vec<&Forecast> = self
             .active_forecasts
             .iter()
             .chain(self.draft_forecasts.iter())
             .chain(self.resolved_forecasts.iter())
             .collect();
-        for f in &all_own {
+        for f in &visible {
+            // The list projection ships `evidence_count` rather than the
+            // `evidence` array (items carry full source text). Prefer the
+            // count; fall back to measuring the array so forecasts hydrated
+            // from the detail endpoint — and older API builds that predate
+            // the count — still register.
             let evidence_count = f
-                .evidence
-                .as_ref()
-                .and_then(|v| v.as_array())
-                .map(|a| a.len())
+                .evidence_count
+                .map(|n| n.max(0) as usize)
+                .or_else(|| {
+                    f.evidence
+                        .as_ref()
+                        .and_then(|v| v.as_array())
+                        .map(|a| a.len())
+                })
                 .unwrap_or(0);
             let agent_ids: Vec<String> = f
                 .agents_used
@@ -8490,13 +8642,26 @@ impl FermiConsole {
                         .collect()
                 })
                 .unwrap_or_default();
+            let researched = evidence_count > 0 || !agent_ids.is_empty();
+            if researched {
+                all_rows += 1;
+                if ResearchScope::Mine.admits(&f.owner_id, me) {
+                    mine_rows += 1;
+                }
+                if ResearchScope::Shared.admits(&f.owner_id, me) {
+                    shared_rows += 1;
+                }
+            }
+            if !scope.admits(&f.owner_id, me) {
+                continue;
+            }
             let est_cost: f64 = agent_ids
                 .iter()
                 .filter_map(|id| avg_cost_by_id.get(id).copied())
                 .sum();
             total_evidence += evidence_count;
             total_est_cost += est_cost;
-            if evidence_count > 0 || !agent_ids.is_empty() {
+            if researched {
                 rows.push((*f, evidence_count, est_cost, agent_ids));
             }
         }
@@ -8507,18 +8672,43 @@ impl FermiConsole {
             let kb = b.0.updated_at.as_ref().or(b.0.created_at.as_ref());
             kb.cmp(&ka)
         });
+        let matching_rows = rows.len();
         let top: Vec<_> = rows.into_iter().take(5).collect();
 
         let header_summary = if total_evidence == 0 && total_est_cost == 0.0 {
             "no research yet".to_string()
-        } else {
+        } else if total_est_cost > 0.0 {
             format!(
                 "{} evidence · ⚡ {:.2} est.",
                 total_evidence, total_est_cost
             )
+        } else {
+            // Evidence but no priceable agents. Say so rather than
+            // printing "⚡ 0.00 est.", which reads as "this was free".
+            format!("{} evidence · cost n/a", total_evidence)
         };
 
         let is_empty = top.is_empty();
+        // Distinguish "no research anywhere" from "none in this scope". The
+        // first is an onboarding prompt; the second means the chip you're on
+        // is the wrong one, and telling you to go hire an agent would be
+        // actively misleading.
+        let empty_message = if all_rows > 0 && matching_rows == 0 {
+            match scope {
+                ResearchScope::Mine => {
+                    "No research on forecasts you own. Switch to Shared to see \
+                     research on forecasts shared with you."
+                }
+                ResearchScope::Shared => {
+                    "No research on forecasts shared with you. Switch to Mine \
+                     to see research on your own."
+                }
+                ResearchScope::All => "No agent runs found.",
+            }
+        } else {
+            "No agent runs on your forecasts yet. Open a forecast in the \
+             Composer and hire an agent to gather evidence."
+        };
 
         div()
             .flex()
@@ -8559,9 +8749,44 @@ impl FermiConsole {
                     )
                     .child(
                         div()
-                            .text_size(ui::TEXT_BASE)
-                            .text_color(theme::fg_dim())
-                            .child(header_summary),
+                            .flex()
+                            .items_center()
+                            .gap(ui::s(8.0))
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap(ui::s(6.0))
+                                    .child(research_scope_chip(
+                                        "research-chip-all",
+                                        &format!("All ({})", all_rows),
+                                        ResearchScope::All,
+                                        scope,
+                                        false,
+                                        cx,
+                                    ))
+                                    .child(research_scope_chip(
+                                        "research-chip-mine",
+                                        &format!("👤 Mine ({})", mine_rows),
+                                        ResearchScope::Mine,
+                                        scope,
+                                        mine_rows == 0,
+                                        cx,
+                                    ))
+                                    .child(research_scope_chip(
+                                        "research-chip-shared",
+                                        &format!("📥 Shared ({})", shared_rows),
+                                        ResearchScope::Shared,
+                                        scope,
+                                        shared_rows == 0,
+                                        cx,
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .text_size(ui::TEXT_BASE)
+                                    .text_color(theme::fg_dim())
+                                    .child(header_summary),
+                            ),
                     ),
             )
             // Body
@@ -8571,10 +8796,7 @@ impl FermiConsole {
                         .p(ui::s(16.0))
                         .text_size(ui::TEXT_BASE)
                         .text_color(theme::fg_muted())
-                        .child(
-                            "No agent runs on your forecasts yet. Open a forecast \
-                             in the Composer and hire an agent to gather evidence.",
-                        ),
+                        .child(empty_message),
                 )
             })
             .children(top.into_iter().map(|(f, ev_count, est_cost, agent_ids)| {
@@ -20419,6 +20641,49 @@ fn activity_filter_chip(
         .when(!disabled, |el| {
             el.on_click(cx.listener(move |this, _e, _w, cx| {
                 this.dashboard_activity_filter = kind;
+                cx.notify();
+            }))
+        })
+        .child(label.to_string())
+}
+
+/// Interactive ownership chip for the Dashboard's Research card. Same
+/// visual language as [`activity_filter_chip`], but sets
+/// `dashboard_research_scope`. `disabled` when that scope has nothing to
+/// show, so the operator can see the split exists without clicking into an
+/// empty list.
+fn research_scope_chip(
+    id: &'static str,
+    label: &str,
+    kind: ResearchScope,
+    current: ResearchScope,
+    disabled: bool,
+    cx: &Context<FermiConsole>,
+) -> impl IntoElement {
+    let active = kind == current;
+    let (bg_color, fg_color, border_color) = if disabled {
+        (theme::BG, theme::FG_MUTED, theme::BORDER)
+    } else if active {
+        (theme::BG_HOVER, theme::FG, theme::CYAN)
+    } else {
+        (theme::BG, theme::FG_DIM, theme::BORDER)
+    };
+    div()
+        .id(SharedString::from(id))
+        .px(ui::s(8.0))
+        .py(ui::s(2.0))
+        .rounded(ui::s(10.0))
+        .border_1()
+        .border_color(rgb(border_color))
+        .bg(rgb(bg_color))
+        .text_size(ui::TEXT_SM)
+        .text_color(rgb(fg_color))
+        .when(!disabled, |el| {
+            el.cursor_pointer().hover(|s| s.bg(theme::bg_hover()))
+        })
+        .when(!disabled, |el| {
+            el.on_click(cx.listener(move |this, _e, _w, cx| {
+                this.dashboard_research_scope = kind;
                 cx.notify();
             }))
         })

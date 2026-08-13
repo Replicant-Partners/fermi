@@ -3305,6 +3305,14 @@ impl CockpitState {
     /// missing card directory says nothing about whether an agent can
     /// run. Gating routing on it demoted every specialist to
     /// `macro_forecaster` on installs without the directory.
+    /// Public wrapper so the chat dispatcher can validate an
+    /// `assign_agent` proposal before mutating the AST. Assigning an
+    /// agent nothing can execute produces a driver that looks researched
+    /// and never will be.
+    pub fn agent_is_routable_pub(&self, agent_id: &str) -> bool {
+        self.agent_is_routable(agent_id)
+    }
+
     fn agent_is_routable(&self, agent_id: &str) -> bool {
         if FERMI_ORCHESTRA.contains(&agent_id) {
             return true;
@@ -6465,6 +6473,172 @@ impl CockpitState {
             text: format!("✓ Evidence added to '{}'", driver_name),
         });
         cx.notify();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Chat-proposed model edits — the symbolic write
+    // ═══════════════════════════════════════════════════════════════
+    //
+    // Fermi could previously only navigate the console. It could tell
+    // you "manager_continuity should be 0.65, Guardiola has left" and
+    // then you had to go and type it, which left the neuro-symbolic
+    // loop open at exactly the point where it should close.
+    //
+    // These are the writes. Validation lives in
+    // `fermi_console::mutations` (pure, tested); these methods do the
+    // AST mutation and the operator-visible bookkeeping. Every one of
+    // them is reached only by the operator clicking an action chip, and
+    // every one honours `refuse_write`.
+
+    /// Overwrite a continuous driver's triangular distribution.
+    ///
+    /// Returns `Err` with an operator-facing reason; the caller surfaces
+    /// it in the chat transcript so a rejected edit is visible rather
+    /// than silently dropped.
+    pub fn apply_driver_distribution(
+        &mut self,
+        driver_name: &str,
+        edit: fermi_console::mutations::DistributionEdit,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        if let Some(reason) = self.refuse_write() {
+            return Err(reason);
+        }
+        let Some(driver) = self.program.driver(driver_name) else {
+            return Err(format!("no driver named `{driver_name}` on this forecast"));
+        };
+        if driver.driver_type == DriverType::Binary {
+            return Err(format!(
+                "`{driver_name}` is a binary driver — use set_driver_probability"
+            ));
+        }
+
+        let before = driver
+            .distribution
+            .as_ref()
+            .and_then(|d| match d {
+                Distribution::Triangular { p50, .. } => Some(expr_to_f64(p50)),
+                _ => None,
+            })
+            .unwrap_or(1.0);
+
+        let Some(driver_mut) = self.program.driver_mut(driver_name) else {
+            return Err(format!("no driver named `{driver_name}`"));
+        };
+        driver_mut.distribution = Some(Distribution::Triangular {
+            p5: Expression::Number(edit.p5),
+            p50: Expression::Number(edit.p50),
+            p95: Expression::Number(edit.p95),
+        });
+
+        self.messages.push(AssistantMessage {
+            node: format!("driver:{driver_name}"),
+            kind: MessageKind::Info,
+            text: format!(
+                "✓ Fermi set {} to p5={:.2} p50={:.2} p95={:.2} (p50 was {:.2})",
+                driver_name, edit.p5, edit.p50, edit.p95, before
+            ),
+        });
+
+        // Keep the editor buffers in step so opening Edit doesn't show
+        // stale values and then write them back over this edit.
+        if matches!(self.focused_node, FocusedNode::Driver(ref d) if d == driver_name) {
+            self.populate_editor_from_driver(driver_name, cx);
+        }
+        self.mark_dirty();
+        self.regenerate_cached_fpl_if_safe();
+        cx.notify();
+        Ok(())
+    }
+
+    /// Overwrite a binary driver's probability and impact multiplier.
+    pub fn apply_driver_binary(
+        &mut self,
+        driver_name: &str,
+        edit: fermi_console::mutations::BinaryEdit,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        if let Some(reason) = self.refuse_write() {
+            return Err(reason);
+        }
+        let Some(driver) = self.program.driver(driver_name) else {
+            return Err(format!("no driver named `{driver_name}` on this forecast"));
+        };
+        if driver.driver_type != DriverType::Binary {
+            return Err(format!(
+                "`{driver_name}` is continuous — use set_driver_distribution"
+            ));
+        }
+
+        let Some(driver_mut) = self.program.driver_mut(driver_name) else {
+            return Err(format!("no driver named `{driver_name}`"));
+        };
+        driver_mut.probability = Some(edit.probability);
+        driver_mut.impact_multiplier = Some(edit.impact_multiplier);
+
+        self.messages.push(AssistantMessage {
+            node: format!("driver:{driver_name}"),
+            kind: MessageKind::Info,
+            text: format!(
+                "✓ Fermi set {} to p={:.0}% impact ×{:.2}",
+                driver_name,
+                edit.probability * 100.0,
+                edit.impact_multiplier
+            ),
+        });
+
+        if matches!(self.focused_node, FocusedNode::Driver(ref d) if d == driver_name) {
+            self.populate_editor_from_driver(driver_name, cx);
+        }
+        self.mark_dirty();
+        self.regenerate_cached_fpl_if_safe();
+        cx.notify();
+        Ok(())
+    }
+
+    /// Replace the question's base rate.
+    ///
+    /// Runs the same structural critique a UI-entered base rate gets, so
+    /// a chat-authored anchor cannot route around `calibration`.
+    pub fn apply_base_rate_edit(
+        &mut self,
+        edit: fermi_console::mutations::BaseRateEdit,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        if let Some(reason) = self.refuse_write() {
+            return Err(reason);
+        }
+        let Some(q) = self.program.question_mut() else {
+            return Err("no question on this forecast".into());
+        };
+        q.base_rate = Some(BaseRate {
+            reference_class: edit.reference_class.clone(),
+            historical_frequency: edit.historical_frequency,
+            sample_size: edit.sample_size,
+            source: "fermi_chat".into(),
+            reasoning: edit.reasoning.clone(),
+            generated_by: GeneratedBy::Agent("fermi".into()),
+        });
+
+        self.messages.push(AssistantMessage {
+            node: "question".into(),
+            kind: MessageKind::Info,
+            text: format!(
+                "✓ Fermi set the base rate to {:.1}% — \"{}\"{}",
+                edit.historical_frequency * 100.0,
+                edit.reference_class,
+                edit.sample_size
+                    .map(|n| format!(" (n={n})"))
+                    .unwrap_or_default(),
+            ),
+        });
+
+        self.check_base_rate();
+        self.persist_base_rate(cx);
+        self.mark_dirty();
+        self.regenerate_cached_fpl_if_safe();
+        cx.notify();
+        Ok(())
     }
 
     /// Accept a pending p50 suggestion — applies the value to the driver.

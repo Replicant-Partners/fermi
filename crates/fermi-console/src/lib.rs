@@ -70,6 +70,18 @@
 //! that was never named and billed the user for the failure. Both directions
 //! of a wrong answer cost credits, so the predicate is asserted.
 //!
+//! [`flow`] decides what the research key does. Two of its three
+//! outcomes are irreversible — decomposition discards the whole
+//! forecast, running staged research bills real money — so the branch
+//! is a pure function with tests rather than an `if` ladder inside an
+//! event handler.
+//!
+//! [`mutations`] validates the model edits Fermi proposes in chat — the
+//! symbolic write in the neuro-symbolic loop. These are writes to a
+//! forecast authored by a language model, so every field is checked
+//! before it reaches the AST: a backwards triangular distribution does
+//! not fail loudly, it silently produces a nonsense forecast.
+//!
 //! Candidates to migrate here as they're decoupled from GPUI: the FPL
 //! action-marker parser in `chat.rs` and the Anthropic error extractor
 //! in `cockpit.rs`, both of which currently have tests that can't run.
@@ -77,6 +89,8 @@
 pub mod agent_naming;
 pub mod calibration;
 pub mod drivers;
+pub mod flow;
+pub mod mutations;
 pub mod plot;
 pub mod roster;
 pub mod routing;
