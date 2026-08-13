@@ -1,8 +1,29 @@
 # CI has never been green: the migration ratchet was born tripped
 
-**Status:** fixed — baseline met (26/26), all downstream steps pass locally
+**Status:** RESOLVED — CI green at `1b818ee5`, [run 31749678602][run]
 **Affects:** `main` 2026-08-07 → 2026-08-13 (`CI / Test Suite`)
 **Reproduce:** `./scripts/migration-baseline-probe.sh`
+
+[run]: https://github.com/Replicant-Partners/fermi/actions/runs/31749678602
+
+First green `CI` run on `main` in the queryable history — the previous 100
+runs, back to 2026-07-27, all failed. `Test Suite` went from stopping at
+step 9 of 25 (1m09s) to completing all 25 (16m20s):
+
+```
+✓ Set up database                    ✓ Run agent-bestiary-memory unit tests
+✓ Lint — env-sourced credentials     ✓ Run API integration tests
+✓ Lint — SQL column refs             ✓ Schema trust contract — hygiene
+✓ Lint — user-reference columns FK   ✓ Schema trust contract — live (advisory)
+✓ Lint — agent taxonomy              ✓ Rollup contract — tripwire
+✓ Check all binaries compile         ✓ Rollup contract — live (advisory)
+✓ Run unit tests (non-DB crates)     ✓ Run api-server binary unit tests
+```
+
+Four stale assertions were hiding behind the tripped ratchet, none of them a
+production defect and all four introduced after 2026-08-07 — entirely inside
+the window where the gate could not report. See "What the skipped steps were
+hiding" below.
 
 ## Resolution
 
@@ -36,7 +57,10 @@ pass drops from 26 failures to 15.
 ### What the skipped steps were hiding
 
 With the ratchet clear, the steps that had been skipped on every push for
-weeks ran for the first time — and two were genuinely failing:
+weeks ran for the first time — and four assertions were failing. Every one
+was a deliberate, documented behaviour change whose test was never updated;
+none was a production defect. Two of the four demanded the return of a bug
+that had been deliberately fixed:
 
 1. **`evaluator-faithfulness` unit test `is_prefilter`.** The implementation
    was deliberately changed from `PreFilter` to `Dimensional`, with a
@@ -52,15 +76,42 @@ weeks ran for the first time — and two were genuinely failing:
    Fixed with the gate's own documented remedy,
    `scripts/taxonomy.py apply --derived`; it touched exactly that one field.
 
-Neither was detectable while CI stopped at the database step. Both were
-introduced after 2026-08-07, i.e. entirely within the window where the gate
-could not report.
+3. **`agent-bestiary-memory` — embeddings without provenance.**
+   `test_vector_similarity_search` and `test_consolidation_workflow` both
+   wrote episodes via `store_episode`, which is `#[deprecated]` precisely
+   because it "writes NULL provenance even when an embedding is present" —
+   and migration 136 added `episodes_embedding_has_provenance` to make that
+   row illegal. Moved to `store_episode_with_provenance`.
 
-Run them yourself without a database:
+4. **`test_consolidation_workflow` demanded the data-loss bug back.**
+   Underneath (3): it asserted a run leaves zero unconsolidated episodes.
+   But the worker is built with `ConsolidationWorker::new`, so it has no
+   extraction model, and step 7 of `consolidate_agent` deliberately does
+   *not* consume the episodes in that case — a gate added because marking
+   them anyway "turned a recoverable outage into permanent data loss": 62
+   agents, 1,035 episodes consumed, empty ontology, nothing eligible for
+   retry. The assertion now checks the guard, making it a regression test
+   for the fix rather than a demand for its reversal.
+
+None was detectable while CI stopped at the database step. All were
+introduced after 2026-08-07, i.e. entirely within the window where the gate
+could not report. That is the cost of a permanently-red check.
+
+Run them yourself:
 
 ```bash
-./scripts/ci-skipped-steps.sh
+./scripts/ci-skipped-steps.sh            # the eight needing no database
+
+eval "$(./scripts/local-test-db.sh start)"   # CI-equivalent database
+cargo test --lib -p agent-bestiary-memory -- --test-threads=1
+cargo test --test api_tests -- --test-threads=1
+./scripts/local-test-db.sh stop
 ```
+
+Note `schema_trust_contract` must be run **without** `DATABASE_URL` to match
+CI's blocking "hygiene" step; its live tier self-skips when the variable is
+unset and is `continue-on-error` when it is set. Exporting the variable makes
+it look like a regression when it is the documented advisory tier.
 
 ### Still to do
 
@@ -252,7 +303,7 @@ its container on exit.
       locally via `scripts/ci-skipped-steps.sh`).
 - [x] `BASELINE` not raised — the count returned to 26, so `ci.yml` is
       unchanged and its comment still matches the constant beside it.
-- [ ] A green CI run exists on `main`. *(Requires the DB-backed steps that
-      cannot be checked locally: the API integration tests and the live
-      schema-trust verification.)*
-- [ ] `Security Audit` — still red, separately. See below.
+- [x] A green CI run exists on `main` — [31749678602][run] at `1b818ee5`.
+- [ ] `Security Audit` — still red, separately. Does not fail the run:
+      that job carries `continue-on-error: true` (ci.yml:395), which is
+      why the run above is green despite it. See below.
