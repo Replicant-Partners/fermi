@@ -48,7 +48,18 @@ const HTTP_TIMEOUT_SECS: u64 = 25;
 /// Forecasting the wrong station is a larger error than any modelling choice.
 ///
 /// (icao, name, municipality, iso2, lat, lon, elevation_m, tz)
-const STATIONS: &[(&str, &str, &str, &str, f64, f64, i32, &str)] = &[
+type StationRow = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    f64,
+    f64,
+    i32,
+    &'static str,
+);
+
+const STATIONS: &[StationRow] = &[
     (
         "CYYZ",
         "Toronto Pearson International Airport",
@@ -558,7 +569,9 @@ const STATIONS: &[(&str, &str, &str, &str, f64, f64, i32, &str)] = &[
 /// this wrong silently shifts every probability.
 ///
 /// (series_slug_stem, icao, unit, bucket_step, resolution_source)
-const SERIES_MAP: &[(&str, &str, &str, f64, &str)] = &[
+type SeriesEntry = (&'static str, &'static str, &'static str, f64, &'static str);
+
+const SERIES_MAP: &[SeriesEntry] = &[
     ("nyc", "KLGA", "fahrenheit", 2.0, "weather_underground"),
     ("chicago", "KORD", "fahrenheit", 2.0, "weather_underground"),
     ("dallas", "KDAL", "fahrenheit", 2.0, "weather_underground"),
@@ -664,9 +677,7 @@ fn station_by_icao(icao: &str) -> Option<Station> {
 /// Accepts `"NYC"`, `"New York"`, `"nyc-daily-weather"`,
 /// `"highest-temperature-in-nyc-on-august-14-2026"` — matching on the longest
 /// stem first so `"kuala-lumpur"` isn't shadowed by a shorter key.
-fn resolve_series(
-    query: &str,
-) -> Option<&'static (&'static str, &'static str, &'static str, f64, &'static str)> {
+fn resolve_series(query: &str) -> Option<&'static SeriesEntry> {
     let norm = query.to_ascii_lowercase().replace([' ', '_'], "-");
 
     // Common aliases that don't appear literally in the slug.
@@ -679,9 +690,9 @@ fn resolve_series(
         _ => norm.clone(),
     };
 
-    let mut best: Option<&'static (&str, &str, &str, f64, &str)> = None;
+    let mut best: Option<&'static SeriesEntry> = None;
     for entry in SERIES_MAP {
-        if aliased.contains(entry.0) && best.map_or(true, |b| entry.0.len() > b.0.len()) {
+        if aliased.contains(entry.0) && best.is_none_or(|b| entry.0.len() > b.0.len()) {
             best = Some(entry);
         }
     }
@@ -1119,9 +1130,6 @@ fn settlement_spec(input: &Value) -> Result<String, String> {
 
     out(spec_json(&s, Some(series), variable, Some(city)))
 }
-
-/// (series_slug_stem, icao, unit, bucket_step, resolution_source)
-type SeriesEntry = (&'static str, &'static str, &'static str, f64, &'static str);
 
 fn spec_json(
     s: &Station,
