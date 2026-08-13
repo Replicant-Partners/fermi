@@ -4809,7 +4809,14 @@ mod tests {
         ];
 
         for query in &queries {
-            let embedding = embedder.generate(query).await.unwrap();
+            // Provenanced, not bare: migration 136 added
+            // `episodes_embedding_has_provenance`, so a row carrying an
+            // embedding with NULL model_id/version/dim is now rejected — which
+            // is exactly what the deprecated `store_episode` writes. This test
+            // used it and has been failing ever since, invisibly, because CI
+            // stopped at the migration ratchet long before the DB tests. See
+            // docs/plans/CI_MIGRATION_RATCHET.md.
+            let prov = embedder.generate_provenanced(query).await.unwrap();
             let episode = Episode {
                 episode_id: Uuid::new_v4(),
                 agent_id,
@@ -4821,7 +4828,7 @@ mod tests {
                 execution_time_ms: 1000,
                 tokens_used: Some(100),
                 cost_usd: Some(Decimal::new(1, 3)),
-                embedding: Some(embedding),
+                embedding: Some(prov.vector.clone()),
                 consolidated: false,
                 tags: vec![],
                 provenance: crate::Provenance::AutoPass,
@@ -4832,7 +4839,10 @@ mod tests {
                 model_used: None,
             };
 
-            store.store_episode(episode).await.unwrap();
+            store
+                .store_episode_with_provenance(episode, Some(&prov), None)
+                .await
+                .unwrap();
         }
 
         // Search for AMD-related episodes

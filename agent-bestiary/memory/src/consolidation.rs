@@ -1075,6 +1075,19 @@ mod tests {
 
         // Create test episodes with failures
         for i in 0..10 {
+            // Provenanced, not bare: migration 136's
+            // `episodes_embedding_has_provenance` rejects a row that carries an
+            // embedding with NULL model_id/version/dim, which is what the
+            // deprecated `store_episode` writes. Constructed by hand rather
+            // than via an embedder because the vector here is a fixed stub and
+            // the clustering assertions below depend on it staying identical.
+            let prov = crate::ProvenancedEmbedding {
+                vector: vec![0.1; 1024],
+                source_text: format!("Test query {}", i),
+                model_id: "test/consolidation-fixture".to_string(),
+                model_version: "test-v1".to_string(),
+                dim: 1024,
+            };
             let episode = Episode {
                 episode_id: Uuid::new_v4(),
                 agent_id: agent.agent_id,
@@ -1094,7 +1107,7 @@ mod tests {
                 execution_time_ms: 1000,
                 tokens_used: Some(100),
                 cost_usd: Some(rust_decimal::Decimal::new(1, 3)),
-                embedding: Some(vec![0.1; 1024]),
+                embedding: Some(prov.vector.clone()),
                 consolidated: false,
                 tags: vec![],
                 provenance: crate::Provenance::AutoPass,
@@ -1104,7 +1117,10 @@ mod tests {
                 provider_used: None,
                 model_used: None,
             };
-            store.store_episode(episode).await.unwrap();
+            store
+                .store_episode_with_provenance(episode, Some(&prov), None)
+                .await
+                .unwrap();
         }
 
         // Run consolidation
@@ -1116,12 +1132,33 @@ mod tests {
         assert_eq!(result.episodes_processed, 10);
         assert!(result.rules_extracted > 0 || result.clusters_identified == 0);
 
-        // Verify episodes are marked as consolidated
+        // Episodes must NOT be consumed by a run that had no extractor.
+        //
+        // This worker is built with `ConsolidationWorker::new`, so `self.llm`
+        // is None and neither the rules nor the facts path can produce
+        // anything. Step 7 of `consolidate_agent` therefore leaves the
+        // episodes unconsolidated on purpose, so they can be re-dreamt once a
+        // model is available.
+        //
+        // This assertion used to require `remaining.len() == 0` — i.e. it
+        // demanded exactly the behaviour that turned an LLM outage into
+        // permanent data loss for 62 agents and 1,035 episodes, and which the
+        // gate was added to prevent. It has been failing since that fix
+        // landed, invisibly, because CI stopped at the migration ratchet long
+        // before the DB tests ran. See docs/plans/CI_MIGRATION_RATCHET.md.
+        //
+        // Asserting the guard instead makes this a regression test for the
+        // data-loss fix rather than a demand for its return.
         let remaining = store
             .get_unconsolidated_episodes(agent.agent_id)
             .await
             .unwrap();
-        assert_eq!(remaining.len(), 0);
+        assert_eq!(
+            remaining.len(),
+            10,
+            "a consolidation run with no extraction model must leave every \
+             episode re-dreamable; marking them consumed is the data-loss bug"
+        );
 
         println!("✅ Consolidation workflow works!");
         println!("   Episodes processed: {}", result.episodes_processed);
