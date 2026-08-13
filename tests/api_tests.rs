@@ -11,7 +11,7 @@
 
 use fermi_auth::{
     credit_charge, credit_deposit, credit_get_balance, credit_get_transactions, credit_grant,
-    get_or_create_wallet,
+    get_or_create_wallet, Wallet,
 };
 use sqlx::postgres::PgConnectOptions;
 use sqlx::{PgPool, Row};
@@ -49,6 +49,52 @@ fn test_user_id() -> String {
     format!("test_user_{}", Uuid::new_v4().to_string()[..8].to_string())
 }
 
+/// Create a wallet for a test user with a deterministic zero balance.
+///
+/// `get_or_create_wallet` auto-grants `ONBOARDING_GRANT` (default 100) to
+/// new *user* wallets — see `fermi-auth/src/credits.rs`. That is deliberate
+/// product behaviour, promised on the sign-in card ("Every new account gets
+/// 100 free credits to start"), and these tests should not fight it.
+///
+/// But it is not what they are testing. They exercise grant / deposit /
+/// charge arithmetic, and every assertion below counts from a known
+/// starting balance. Reading the onboarding amount into those numbers would
+/// couple thirteen tests to a product decision that is explicitly tunable
+/// via env var, so that retuning the grant — or setting it to zero for a
+/// promotion — would fail the credit suite for no good reason.
+///
+/// So: create the wallet through the real accessor, then strip the grant
+/// back out and re-read. Only `user` wallets receive the grant; `workspace`
+/// and `agent` wallets can keep calling `get_or_create_wallet` directly.
+async fn fresh_user_wallet(pool: &PgPool, user_id: &str) -> Wallet {
+    let wallet = get_or_create_wallet(pool, "user", user_id)
+        .await
+        .expect("create test wallet");
+
+    sqlx::query("DELETE FROM credit_ledger WHERE wallet_id = $1")
+        .bind(wallet.wallet_id)
+        .execute(pool)
+        .await
+        .expect("clear onboarding ledger entry");
+
+    sqlx::query(
+        "UPDATE wallets
+            SET balance = 0, granted_balance = 0, purchased_balance = 0,
+                total_deposited = 0, total_spent = 0
+          WHERE wallet_id = $1",
+    )
+    .bind(wallet.wallet_id)
+    .execute(pool)
+    .await
+    .expect("zero test wallet");
+
+    // Re-read through the same accessor the tests use. The row now exists,
+    // so this takes the existing-wallet path and does not re-grant.
+    get_or_create_wallet(pool, "user", user_id)
+        .await
+        .expect("re-read test wallet")
+}
+
 /// Cleanup: delete wallet and ledger entries for a test user
 async fn cleanup_wallet(pool: &PgPool, owner_id: &str) {
     // Delete ledger entries first (FK constraint)
@@ -82,7 +128,7 @@ async fn test_wallet_creation() {
     let pool = test_pool().await;
     let user_id = test_user_id();
 
-    let wallet = get_or_create_wallet(&pool, "user", &user_id).await.unwrap();
+    let wallet = fresh_user_wallet(&pool, &user_id).await;
     assert_eq!(wallet.owner_type, "user");
     assert_eq!(wallet.owner_id, user_id);
     assert_eq!(wallet.balance, 0);
@@ -101,7 +147,7 @@ async fn test_credit_grant() {
     let pool = test_pool().await;
     let user_id = test_user_id();
 
-    let wallet = get_or_create_wallet(&pool, "user", &user_id).await.unwrap();
+    let wallet = fresh_user_wallet(&pool, &user_id).await;
     let tx = credit_grant(&pool, wallet.wallet_id, 100, "Test onboarding grant")
         .await
         .unwrap();
@@ -123,7 +169,7 @@ async fn test_credit_deposit() {
     let pool = test_pool().await;
     let user_id = test_user_id();
 
-    let wallet = get_or_create_wallet(&pool, "user", &user_id).await.unwrap();
+    let wallet = fresh_user_wallet(&pool, &user_id).await;
     let tx = credit_deposit(&pool, wallet.wallet_id, 500, "Stripe purchase")
         .await
         .unwrap();
@@ -150,7 +196,7 @@ async fn test_credit_charge_success() {
     let pool = test_pool().await;
     let user_id = test_user_id();
 
-    let wallet = get_or_create_wallet(&pool, "user", &user_id).await.unwrap();
+    let wallet = fresh_user_wallet(&pool, &user_id).await;
     credit_grant(&pool, wallet.wallet_id, 100, "Setup")
         .await
         .unwrap();
@@ -182,7 +228,7 @@ async fn test_credit_charge_insufficient_balance() {
     let pool = test_pool().await;
     let user_id = test_user_id();
 
-    let wallet = get_or_create_wallet(&pool, "user", &user_id).await.unwrap();
+    let wallet = fresh_user_wallet(&pool, &user_id).await;
     credit_grant(&pool, wallet.wallet_id, 10, "Small grant")
         .await
         .unwrap();
@@ -221,7 +267,7 @@ async fn test_credit_charge_exact_balance() {
     let pool = test_pool().await;
     let user_id = test_user_id();
 
-    let wallet = get_or_create_wallet(&pool, "user", &user_id).await.unwrap();
+    let wallet = fresh_user_wallet(&pool, &user_id).await;
     credit_grant(&pool, wallet.wallet_id, 50, "Exact test")
         .await
         .unwrap();
@@ -244,7 +290,7 @@ async fn test_credit_invalid_amounts() {
     let pool = test_pool().await;
     let user_id = test_user_id();
 
-    let wallet = get_or_create_wallet(&pool, "user", &user_id).await.unwrap();
+    let wallet = fresh_user_wallet(&pool, &user_id).await;
 
     // Zero grant should fail
     assert!(credit_grant(&pool, wallet.wallet_id, 0, "Zero")
@@ -276,7 +322,7 @@ async fn test_transaction_ledger() {
     let pool = test_pool().await;
     let user_id = test_user_id();
 
-    let wallet = get_or_create_wallet(&pool, "user", &user_id).await.unwrap();
+    let wallet = fresh_user_wallet(&pool, &user_id).await;
 
     // Create a series of transactions
     credit_grant(&pool, wallet.wallet_id, 100, "Onboarding")
@@ -330,7 +376,7 @@ async fn test_workspace_wallet_isolation() {
     let workspace_id = format!("test_ws_{}", Uuid::new_v4().to_string()[..8].to_string());
 
     // Create user wallet and workspace wallet
-    let user_wallet = get_or_create_wallet(&pool, "user", &user_id).await.unwrap();
+    let user_wallet = fresh_user_wallet(&pool, &user_id).await;
     let ws_wallet = get_or_create_wallet(&pool, "workspace", &workspace_id)
         .await
         .unwrap();
@@ -650,7 +696,7 @@ async fn test_charge_and_distribute_basic() {
     let agent2_id = Uuid::new_v4();
 
     // Setup: create user wallet with funds
-    let user_wallet = get_or_create_wallet(&pool, "user", &user_id).await.unwrap();
+    let user_wallet = fresh_user_wallet(&pool, &user_id).await;
     credit_grant(&pool, user_wallet.wallet_id, 100, "Test funds")
         .await
         .unwrap();
@@ -734,7 +780,7 @@ async fn test_charge_and_distribute_no_agents() {
     let pool = test_pool().await;
     let user_id = test_user_id();
 
-    let user_wallet = get_or_create_wallet(&pool, "user", &user_id).await.unwrap();
+    let user_wallet = fresh_user_wallet(&pool, &user_id).await;
     credit_grant(&pool, user_wallet.wallet_id, 50, "Test funds")
         .await
         .unwrap();
@@ -765,7 +811,7 @@ async fn test_charge_and_distribute_insufficient_funds() {
     let pool = test_pool().await;
     let user_id = test_user_id();
 
-    let user_wallet = get_or_create_wallet(&pool, "user", &user_id).await.unwrap();
+    let user_wallet = fresh_user_wallet(&pool, &user_id).await;
     credit_grant(&pool, user_wallet.wallet_id, 3, "Small funds")
         .await
         .unwrap();
@@ -802,7 +848,7 @@ async fn test_charge_and_distribute_single_agent() {
     let user_id = test_user_id();
     let agent_id = Uuid::new_v4();
 
-    let user_wallet = get_or_create_wallet(&pool, "user", &user_id).await.unwrap();
+    let user_wallet = fresh_user_wallet(&pool, &user_id).await;
     credit_grant(&pool, user_wallet.wallet_id, 100, "Test funds")
         .await
         .unwrap();
@@ -856,7 +902,7 @@ async fn test_charge_and_distribute_four_agents() {
     let pool = test_pool().await;
     let user_id = test_user_id();
 
-    let user_wallet = get_or_create_wallet(&pool, "user", &user_id).await.unwrap();
+    let user_wallet = fresh_user_wallet(&pool, &user_id).await;
     credit_grant(&pool, user_wallet.wallet_id, 100, "Test funds")
         .await
         .unwrap();
@@ -931,7 +977,7 @@ async fn test_platform_read_charge() {
     let pool = test_pool().await;
     let user_id = test_user_id();
 
-    let wallet = get_or_create_wallet(&pool, "user", &user_id).await.unwrap();
+    let wallet = fresh_user_wallet(&pool, &user_id).await;
     credit_grant(&pool, wallet.wallet_id, 10, "Test funds")
         .await
         .unwrap();
@@ -971,7 +1017,7 @@ async fn test_platform_read_charge_insufficient() {
     let pool = test_pool().await;
     let user_id = test_user_id();
 
-    let wallet = get_or_create_wallet(&pool, "user", &user_id).await.unwrap();
+    let wallet = fresh_user_wallet(&pool, &user_id).await;
     // No credits granted — wallet has 0 balance
 
     let result = charge_gas(

@@ -45,6 +45,30 @@
   .sr-dot{width:7px;height:7px;flex-shrink:0;}
   .sr-name{flex:1;font-size:0.76rem;color:var(--fg2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .sr-meta{font-size:0.62rem;color:var(--fg4);flex-shrink:0;}
+  /* Rank chip. Absent (not zero) for unranked specimens — see rankChip(). */
+  .sr-rank{font-size:0.58rem;flex-shrink:0;width:14px;height:14px;line-height:14px;
+    text-align:center;border:1px solid var(--bg3);color:var(--fg4);}
+  .sr-rank.r-1,.sr-rank.r-2{border-color:var(--fg4);color:var(--fg3);}
+  .sr-rank.r-3{border-color:var(--aqua);color:var(--aqua);}
+  .sr-rank.r-4,.sr-rank.r-5{border-color:var(--green);color:var(--green);}
+
+  /* ── Evolution panel ── */
+  .rank-badge{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
+  .rank-badge .rb-level{font-size:1.4rem;width:34px;height:34px;line-height:32px;
+    text-align:center;border:1px solid var(--aqua);color:var(--aqua);}
+  .rank-badge .rb-name{font-size:0.8rem;color:var(--fg2);text-transform:uppercase;
+    letter-spacing:1.5px;}
+  .dim-row{display:grid;grid-template-columns:78px 44px 62px 1fr;gap:8px;align-items:center;
+    padding:4px 0;border-bottom:1px dashed var(--bg2);font-size:0.7rem;}
+  .dim-row:last-child{border-bottom:none;}
+  .dr-name{color:var(--fg3);text-transform:uppercase;letter-spacing:0.6px;font-size:0.62rem;}
+  .dr-tier{color:var(--fg4);font-size:0.62rem;}
+  .dr-ev{color:var(--fg4);}
+  .pip{display:inline-block;width:9px;height:9px;margin-right:2px;border:1px solid var(--bg3);}
+  .pip.on{background:var(--aqua);border-color:var(--aqua);}
+  .fcast{margin-top:10px;padding-top:8px;border-top:1px solid var(--bg2);}
+  .fcast .v.good{color:var(--green);}
+  .fcast .v.bad{color:var(--red,#cc241d);}
 
   /* provenance colours — shared with habitat bars */
   .p-approved,.d-approved{background:var(--green);}
@@ -225,7 +249,48 @@ const groupKey = (s, by) => {
   return tax(s)[by] || "Incertae sedis";   // unclassified — a real naturalist's bucket
 };
 
-/* ── Register ─────────────────────────────────────────────────── */
+/* Rank chip for the register. Unranked specimens get NO chip rather than a
+   zero — the majority of the catalogue is untried, and a column of zeroes would
+   read as a population of failures. */
+function rankChip(s) {
+  const ev = s.evolution;
+  if (!ev || !ev.ranked) return "";
+  return `<span class="sr-rank r-${ev.level}" title="${esc(ev.rank || "")}">${ev.level}</span>`;
+}
+
+/* ── Forecasting credential ────────────────────────────────────
+   Public on purpose: a track record is the specimen's credential.
+
+   Skill is the headline, not the raw Brier. On an outcome-skewed question set
+   (a 48-team tournament where 47 resolve NO) a forecaster that knows nothing
+   scores ~98%, so a bare Brier reads as near-perfect and means almost nothing.
+   Skill is measured against that base rate, so it cannot flatter. */
+function fcast(ev) {
+  const f = ev.forecasting || {};
+  if (!f.n_resolved_forecasts) return "";
+  const pct = v => v == null ? "—" : `${(v * 100).toFixed(1)}%`;
+  const skill = f.brier_skill_score;
+  const cls = skill == null ? "" : (skill > 0 ? " good" : " bad");
+  return `
+    <div class="fcast">
+      <div class="port-label">Forecasting record</div>
+      <div class="kv"><span class="k">Resolved forecasts</span>
+        <span class="v">${f.n_resolved_forecasts}</span></div>
+      <div class="kv"><span class="k">Skill over base rate</span>
+        <span class="v mono${cls}">${skill == null ? "—" : skill.toFixed(3)}</span></div>
+      <div class="kv"><span class="k">Brier</span>
+        <span class="v mono">${f.brier_mean == null ? "—" : f.brier_mean.toFixed(4)}</span></div>
+      <div class="kv"><span class="k">Base-rate baseline</span>
+        <span class="v mono">${f.brier_baseline == null ? "—" : f.brier_baseline.toFixed(4)}</span></div>
+      <div class="kv"><span class="k">Outcome base rate</span>
+        <span class="v mono">${pct(f.outcome_base_rate)}</span></div>
+      ${skill != null && skill <= 0 ? `<div class="caveat">Brier looks strong only because
+        the outcomes are one-sided — this specimen does not beat simply predicting the
+        base rate.</div>` : ""}
+    </div>`;
+}
+
+/* ── Register ───────────────────────────────────────────── */
 function renderRegister() {
   const q = filters.q.toLowerCase();
   let rows = SPEC.filter(s => {
@@ -251,6 +316,7 @@ function renderRegister() {
           <span class="sr-dot d-${esc(provOf(s))}"></span>
           <span class="sr-name">${esc(s.agent_id)}</span>
           <span class="sr-meta">${esc(s.agent_type || "")}</span>
+          ${rankChip(s)}
         </div>`).join("")}
     </div>`;
   }).join("") : `<div style="padding:20px 14px" class="empty">No specimens match.</div>`;
@@ -355,6 +421,36 @@ function renderSheet(s) {
   // 304 MCP tools are declared across the corpus and no surface showed them.
   // What an agent can actually call is a material property, not a footnote:
   // it is most of what distinguishes two agents with the same prompt shape.
+  // ── Evolution — what this specimen has actually earned ────────────────
+  //
+  // Ranks come from outcomes, never from activity: eval runs, dream cycles and
+  // forecast counts contribute nothing on their own. So this panel is a record
+  // of demonstrated capability rather than of effort spent.
+  //
+  // An unranked specimen is shown as pending, not as the bottom rung — most of
+  // the catalogue has never been exercised, and "untried" is a different claim
+  // from "measured and found wanting".
+  const ev = s.evolution || null;
+  const TIER_WORD = ["none", "emerging", "solid", "deep"];
+  const evolutionHtml = !ev ? `<div class="empty">No evolution record.</div>`
+    : !ev.ranked ? `<div class="caveat">Unranked — pending usage data. This specimen has
+         not been exercised, so there is nothing to grade yet. Untried, not failing.</div>`
+    : `
+      <div class="rank-badge">
+        <span class="rb-level">${ev.level}</span>
+        <span class="rb-name">${esc(ev.rank || "")}</span>
+      </div>
+      ${ev.capped_by ? `<div class="caveat">${esc(ev.capped_by)}</div>` : ""}
+      ${(ev.dimensions || []).map(d => `
+        <div class="dim-row">
+          <span class="dr-name">${esc(d.dimension)}</span>
+          <span class="dr-pips">${[0,1,2].map(k =>
+            `<span class="pip${d.tier > k ? " on" : ""}"></span>`).join("")}</span>
+          <span class="dr-tier">${esc(TIER_WORD[d.tier] || "")}</span>
+          <span class="dr-ev">${esc(d.evidence || "")}</span>
+        </div>`).join("")}
+      ${fcast(ev)}`;
+
   const instrumentsHtml = `
     ${mcpTools.length ? `<div class="port-label">Callable tools (${mcpTools.length})</div>
       ${mcpTools.map(t => `<div class="tool-row">
@@ -436,6 +532,11 @@ function renderSheet(s) {
       <div class="panel wide">
         <div class="panel-title">I/O contract — the material interface</div>
         ${ioHtml}
+      </div>
+
+      <div class="panel wide">
+        <div class="panel-title">Evolution — what it has earned</div>
+        ${evolutionHtml}
       </div>
 
       <div class="panel wide">
@@ -622,5 +723,9 @@ function select(id) {
   }
 })();
 </script>
+  <!-- Admin "view as user" banner; no-op unless impersonating. -->
+
+  <script src="/static/js/impersonation-banner.js"></script>
+
 </body>
 </html>

@@ -3,6 +3,7 @@
 /// This library implements the FPL language processing engine,
 /// including lexer, parser, semantic analyzer, and execution engine.
 pub mod ast;
+pub mod attribution;
 pub mod distributions;
 pub mod evaluator;
 pub mod executor;

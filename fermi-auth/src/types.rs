@@ -52,19 +52,100 @@ pub struct ApiKey {
     pub scopes: Vec<String>,
 }
 
-/// Authentication principal — either a user session or an API key
+/// An active admin "view as user" session.
+///
+/// The defining rule: **`effective` is the identity the platform acts
+/// on.** `real` exists for the audit trail and for the exit path, and
+/// must never widen what the session can see or do. See
+/// [`AuthPrincipal::can_admin`] for why that matters.
+#[derive(Debug, Clone)]
+pub struct Impersonation {
+    /// The platform admin who started the session.
+    pub real: User,
+    /// The account being viewed. This is who the request "is".
+    pub effective: User,
+    /// `impersonation_sessions.session_id` — the audit anchor.
+    pub session_id: Uuid,
+    /// `read_only` | `assist`. Enforced by the guard middleware.
+    pub mode: ImpersonationMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImpersonationMode {
+    /// Safe HTTP methods only. The default and, today, the only mode
+    /// the mint endpoint will issue.
+    ReadOnly,
+    /// Mutations permitted and individually logged. Reserved for a
+    /// future consented-support flow.
+    Assist,
+}
+
+impl ImpersonationMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ImpersonationMode::ReadOnly => "read_only",
+            ImpersonationMode::Assist => "assist",
+        }
+    }
+
+    /// Unknown values fall back to the *most restrictive* mode. A typo
+    /// or a future value read by an old binary must never widen access.
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "assist" => ImpersonationMode::Assist,
+            _ => ImpersonationMode::ReadOnly,
+        }
+    }
+}
+
+/// Authentication principal — a user session, an API key, or an admin
+/// viewing the platform as another user.
 #[derive(Debug, Clone)]
 pub enum AuthPrincipal {
     User(User),
     ApiKey(ApiKey),
+    /// Boxed: `Impersonation` holds two `User`s, and this variant is
+    /// rare, so inlining it would bloat every `AuthPrincipal` on the
+    /// stack for the 99.9% case.
+    Impersonated(Box<Impersonation>),
 }
 
 impl AuthPrincipal {
+    /// The identity the platform acts as.
+    ///
+    /// Under impersonation this is the **target** user, which is what
+    /// makes "see the system as the user sees it" work across every
+    /// handler without per-handler changes: they all already call this.
     pub fn user_id(&self) -> String {
         match self {
             AuthPrincipal::User(user) => user.user_id.clone(),
             AuthPrincipal::ApiKey(key) => key.user_id.clone(),
+            AuthPrincipal::Impersonated(imp) => imp.effective.user_id.clone(),
         }
+    }
+
+    /// The human ultimately responsible for this request.
+    ///
+    /// Equal to [`user_id`](Self::user_id) except under impersonation,
+    /// where it is the admin. **Audit only** — never use it for access
+    /// control, or impersonation silently becomes privilege retention.
+    pub fn real_user_id(&self) -> String {
+        match self {
+            AuthPrincipal::Impersonated(imp) => imp.real.user_id.clone(),
+            other => other.user_id(),
+        }
+    }
+
+    pub fn impersonation(&self) -> Option<&Impersonation> {
+        match self {
+            AuthPrincipal::Impersonated(imp) => Some(imp),
+            _ => None,
+        }
+    }
+
+    pub fn is_impersonating(&self) -> bool {
+        matches!(self, AuthPrincipal::Impersonated(_))
     }
 
     /// Return the user ID as a UUID, for binding to UUID columns in the DB.
@@ -75,36 +156,77 @@ impl AuthPrincipal {
         Uuid::parse_str(&self.user_id()).ok()
     }
 
+    /// Write capability of the **effective** identity.
+    ///
+    /// Note this is the role-level check only; in `read_only` mode the
+    /// guard middleware rejects mutating requests before a handler is
+    /// ever reached, so a `true` here does not imply a write will land.
     pub fn can_write(&self) -> bool {
         match self {
             AuthPrincipal::User(user) => user.role.can_write(),
             AuthPrincipal::ApiKey(key) => key.scopes.contains(&"write".to_string()),
+            AuthPrincipal::Impersonated(imp) => imp.effective.role.can_write(),
         }
     }
 
+    /// Admin capability of the **effective** identity.
+    ///
+    /// This is the single most important line in the impersonation
+    /// design. Returning the *admin's* role here would (a) defeat the
+    /// entire feature — you'd keep seeing the admin view of everything,
+    /// which is precisely what you were trying to escape — and (b) turn
+    /// a diagnostic tool into an ambient privilege-laundering path.
+    ///
+    /// Consequence, by design: while impersonating a normal user you
+    /// cannot reach admin endpoints, including the one that started the
+    /// session. Exiting is therefore a dedicated route that reads the
+    /// admin's untouched session cookie, not this principal.
     pub fn can_admin(&self) -> bool {
         match self {
             AuthPrincipal::User(user) => user.role.can_admin(),
             AuthPrincipal::ApiKey(key) => key.scopes.contains(&"admin".to_string()),
+            AuthPrincipal::Impersonated(imp) => imp.effective.role.can_admin(),
         }
     }
 
+    /// True for anything backed by a user session, including an
+    /// impersonated one — callers using this to mean "not an API key"
+    /// (e.g. email-bearing flows like invite acceptance) still get the
+    /// right answer, against the effective user.
     pub fn is_user(&self) -> bool {
-        matches!(self, AuthPrincipal::User(_))
+        matches!(
+            self,
+            AuthPrincipal::User(_) | AuthPrincipal::Impersonated(_)
+        )
     }
 
     pub fn is_api_key(&self) -> bool {
         matches!(self, AuthPrincipal::ApiKey(_))
     }
 
-    pub fn role_str(&self) -> &str {
+    /// The effective user's `User` record, if this principal is backed
+    /// by one. Lets call sites reach `email` / `display_name` without
+    /// having to know whether impersonation is in play.
+    pub fn as_user(&self) -> Option<&User> {
         match self {
-            AuthPrincipal::User(user) => match user.role {
+            AuthPrincipal::User(user) => Some(user),
+            AuthPrincipal::Impersonated(imp) => Some(&imp.effective),
+            AuthPrincipal::ApiKey(_) => None,
+        }
+    }
+
+    pub fn role_str(&self) -> &str {
+        fn role_name(role: UserRole) -> &'static str {
+            match role {
                 UserRole::Admin => "admin",
                 UserRole::Developer => "developer",
                 UserRole::Viewer => "viewer",
-            },
+            }
+        }
+        match self {
+            AuthPrincipal::User(user) => role_name(user.role),
             AuthPrincipal::ApiKey(_) => "developer",
+            AuthPrincipal::Impersonated(imp) => role_name(imp.effective.role),
         }
     }
 }

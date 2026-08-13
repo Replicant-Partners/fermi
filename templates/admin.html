@@ -352,6 +352,7 @@
         <button class="tab" data-tab="apps">Apps</button>
         <button class="tab" data-tab="ownership">Ownership</button>
         <button class="tab" data-tab="waitlist">Waitlist</button>
+        <button class="tab" data-tab="economics">Economics</button>
         <button class="tab" data-tab="ledger">Credit Ledger</button>
         <button class="tab" data-tab="orchestras">Orchestras</button>
       </div>
@@ -614,6 +615,54 @@
         <div id="ownership-buckets"></div>
       </div>
 
+      <!-- Economics Tab -->
+      <div class="tab-content" id="tab-economics">
+        <div style="margin-bottom: 14px; color: var(--fg3); font-size: 0.85rem">
+          Real LLM cost vs. credit revenue, attributed by the funding principal
+          recorded on each episode at execution time. Platform-service agents
+          are funded by
+          <code>abw-system</code>&rsquo;s provider keys — this is what they cost
+          and whether they pay for themselves.
+          <span style="margin-left: 12px">
+            Window
+            <select
+              id="econ-days"
+              onchange="loadEconomics()"
+              style="margin: 0 6px"
+            >
+              <option value="7">7 days</option>
+              <option value="30" selected>30 days</option>
+              <option value="90">90 days</option>
+              <option value="365">1 year</option>
+            </select>
+          </span>
+          <span>
+            Credit value $
+            <input
+              id="econ-credit-usd"
+              type="number"
+              step="0.001"
+              min="0"
+              value="0.015"
+              onchange="loadEconomics()"
+              style="width: 80px"
+              title="Credits sell between 1.0c and 2.0c depending on tier. Adjust to test the assumption."
+            />
+          </span>
+          <button
+            class="btn"
+            onclick="loadEconomics()"
+            style="margin-left: 12px; font-size: 0.75rem"
+          >
+            ⟳ Refresh
+          </button>
+        </div>
+        <div id="econ-caveat"></div>
+        <div id="econ-totals" style="margin-bottom: 16px"></div>
+        <div id="econ-principals" style="margin-bottom: 20px"></div>
+        <div id="econ-agents"></div>
+      </div>
+
       <!-- Ledger Tab -->
       <div class="tab-content" id="tab-ledger">
         <div class="ledger-filters">
@@ -851,6 +900,7 @@
               <td style="color:var(--fg3);">${joined}</td>
               <td>
                 <button class="btn btn-sm btn-green" onclick="openGrantModal('${escAttr(u.user_id)}', '${escAttr(u.display_name || u.user_id)}')">Grant</button>
+                <button class="btn btn-sm" onclick="viewAsUser('${escAttr(u.user_id)}', '${escAttr(u.display_name || u.email || u.user_id)}')" title="Open a read-only session that sees the platform exactly as this user does">View as</button>
               </td>`;
             tbody.appendChild(tr);
           });
@@ -1222,6 +1272,164 @@
         }
       }
 
+      // ── Platform economics ──────────────────────────────────
+      //
+      // Cost is real USD (modelled from tokens x a per-model rate card);
+      // revenue is credits. The two are different currencies, so the
+      // caveat banner is rendered first and never collapsed — a margin
+      // figure read without its assumptions is worse than no figure.
+      const fmtUsd = (n) =>
+        (n < 0 ? "-$" : "$") + Math.abs(n ?? 0).toFixed(2);
+      const fmtNum = (n) => (n ?? 0).toLocaleString();
+
+      async function loadEconomics() {
+        const days = document.getElementById("econ-days").value;
+        const creditUsd = document.getElementById("econ-credit-usd").value;
+        const totalsEl = document.getElementById("econ-totals");
+        totalsEl.innerHTML =
+          '<div style="color:var(--fg3)">Loading…</div>';
+        try {
+          const res = await fetch(
+            `/api/admin/economics/platform?days=${encodeURIComponent(days)}&credit_usd=${encodeURIComponent(creditUsd)}`,
+          );
+          if (!res.ok) {
+            totalsEl.innerHTML = `<div style="color:var(--red)">Failed: ${escHtml(await res.text())}</div>`;
+            return;
+          }
+          const d = await res.json();
+          const cb = d.cost_basis || {};
+          const t = d.totals || {};
+
+          document.getElementById("econ-caveat").innerHTML = `
+            <div style="border-left:3px solid var(--yellow);background:rgba(250,189,47,.07);padding:10px 12px;margin-bottom:14px;font-size:.8rem;color:var(--fg2);line-height:1.5">
+              <strong style="color:var(--yellow)">Modelled, not measured.</strong>
+              Cost = tokens × per-model rate, with <em>no input/output split</em>
+              (real pricing differs several-fold between them).
+              Episodes before <code>${escHtml(cb.mixed_history_before || "")}</code>
+              use a flat $3/Mtok estimate — Opus understated ~5×, Haiku
+              overstated ~12×, local Ollama runs charged as if paid.
+              USD revenue assumes <strong>$${cb.credit_usd_assumed}</strong>/credit
+              (${escHtml(cb.credit_usd_source || "")}; real range $0.01–$0.02 by tier).
+              Credits and dollars are different currencies — treat the margin as
+              a scenario, not an account balance.
+            </div>`;
+
+          const marginPct =
+            t.margin_pct_modelled === null || t.margin_pct_modelled === undefined
+              ? "—"
+              : t.margin_pct_modelled.toFixed(1) + "%";
+          const marginColor =
+            (t.margin_usd_modelled ?? 0) >= 0 ? "var(--green)" : "var(--red)";
+          totalsEl.innerHTML = `
+            <div class="stats-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px">
+              <div class="stat-card"><div class="stat-label">Cost (real USD)</div>
+                <div class="stat-value" style="color:var(--red)">${fmtUsd(t.cost_usd)}</div></div>
+              <div class="stat-card"><div class="stat-label">Revenue (credits)</div>
+                <div class="stat-value" style="color:var(--yellow)">${fmtNum(t.revenue_credits)}</div></div>
+              <div class="stat-card"><div class="stat-label">Revenue (modelled USD)</div>
+                <div class="stat-value">${fmtUsd(t.revenue_usd_modelled)}</div></div>
+              <div class="stat-card"><div class="stat-label">Margin (modelled)</div>
+                <div class="stat-value" style="color:${marginColor}">${fmtUsd(t.margin_usd_modelled)}</div>
+                <div style="color:var(--fg3);font-size:.75rem">${marginPct}</div></div>
+            </div>`;
+
+          const principals = d.by_funding_principal || [];
+          document.getElementById("econ-principals").innerHTML = `
+            <h3 style="margin:0 0 8px;font-size:.9rem;color:var(--fg2)">By funding principal</h3>
+            <table><thead><tr>
+              <th>Principal</th><th>Executions</th><th>Tokens</th>
+              <th>Cost (USD)</th><th>Missing cost</th>
+            </tr></thead><tbody>
+            ${
+              principals.length
+                ? principals
+                    .map(
+                      (p) => `<tr>
+                <td><code>${escHtml(p.funding_principal)}</code></td>
+                <td>${fmtNum(p.executions)}</td>
+                <td>${fmtNum(p.tokens)}</td>
+                <td style="color:var(--red)">${fmtUsd(p.cost_usd)}</td>
+                <td style="color:${p.episodes_missing_cost > 0 ? "var(--yellow)" : "var(--fg3)"}">${fmtNum(p.episodes_missing_cost)}</td>
+              </tr>`,
+                    )
+                    .join("")
+                : '<tr><td colspan="5" style="color:var(--fg3)">No executions in window.</td></tr>'
+            }
+            </tbody></table>`;
+
+          const agents = d.by_agent || [];
+          document.getElementById("econ-agents").innerHTML = `
+            <h3 style="margin:0 0 8px;font-size:.9rem;color:var(--fg2)">By agent (top 200 by cost)</h3>
+            <table><thead><tr>
+              <th>Agent</th><th>Tier</th><th>Funded by</th><th>Model</th>
+              <th>Runs</th><th>Tokens</th><th>Cost</th>
+              <th>Revenue (cr)</th><th>Margin</th>
+            </tr></thead><tbody>
+            ${
+              agents.length
+                ? agents
+                    .map(
+                      (a) => `<tr>
+                <td>${escHtml(a.agent_name)}</td>
+                <td style="color:var(--fg3)">${escHtml(a.tier || "")}</td>
+                <td><code style="font-size:.8em">${escHtml(a.funding_principal)}</code></td>
+                <td style="color:var(--fg3);font-size:.8em">${escHtml(a.model || "—")}</td>
+                <td>${fmtNum(a.executions)}</td>
+                <td>${fmtNum(a.tokens)}</td>
+                <td style="color:var(--red)">${fmtUsd(a.cost_usd)}</td>
+                <td style="color:var(--yellow)">${fmtNum(a.revenue_credits)}</td>
+                <td style="color:${(a.margin_usd_modelled ?? 0) >= 0 ? "var(--green)" : "var(--red)"}">${fmtUsd(a.margin_usd_modelled)}</td>
+              </tr>`,
+                    )
+                    .join("")
+                : '<tr><td colspan="9" style="color:var(--fg3)">No executions in window.</td></tr>'
+            }
+            </tbody></table>`;
+        } catch (e) {
+          totalsEl.innerHTML = `<div style="color:var(--red)">Failed: ${escHtml(e.message)}</div>`;
+        }
+      }
+
+      // ── View as user (SPEC_33) ────────────────────────────────
+      //
+      // Opens a short-lived, read-only session that resolves to the
+      // target's identity, so the platform behaves exactly as it does
+      // for them. Admin rights are dropped for the duration — that is
+      // the point, since can_admin() short-circuits RBAC and visibility
+      // and is precisely what stops an admin reproducing a user's bug.
+      //
+      // The reason is mandatory: it lands in the audit log and is shown
+      // to the user in their own impersonation history.
+      async function viewAsUser(userId, displayName) {
+        const reason = prompt(
+          `Start a read-only "view as" session for ${displayName}?\n\n` +
+            "Why? (recorded in the audit log and visible to the user, min 10 chars)",
+          "",
+        );
+        if (reason === null) return;
+        if (reason.trim().length < 10) {
+          alert("A reason of at least 10 characters is required.");
+          return;
+        }
+        try {
+          const res = await fetch("/api/admin/impersonate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify({ target_user_id: userId, reason: reason.trim() }),
+          });
+          if (!res.ok) {
+            alert("Could not start session: " + (await res.text()));
+            return;
+          }
+          // The impersonation cookie is now set; land on the dashboard,
+          // which is where a user's own view begins.
+          window.location.href = "/dashboard";
+        } catch (e) {
+          alert("Could not start session: " + e.message);
+        }
+      }
+
       // ── User grant ────────────────────────────────────────────
       let grantTargetUserId = "";
       function openGrantModal(userId, displayName) {
@@ -1469,6 +1677,7 @@
       // --- Tabs ---
       let ownershipLoaded = false;
       let orchestrasLoaded = false;
+      let economicsLoaded = false;
       document.querySelectorAll(".tab").forEach((tab) => {
         tab.addEventListener("click", () => {
           document
@@ -1483,6 +1692,10 @@
             .classList.add("active");
           if (tab.dataset.tab === "ownership" && !ownershipLoaded) {
             loadOwnershipAudit();
+          }
+          if (tab.dataset.tab === "economics" && !economicsLoaded) {
+            loadEconomics();
+            economicsLoaded = true;
           }
           if (tab.dataset.tab === "apps" && !appsLoaded) {
             loadApps();
@@ -1901,5 +2114,8 @@
         loadLedger();
       });
     </script>
+    <!-- Admin "view as user" banner. No-op unless the current session
+         is an active impersonation. -->
+    <script src="/static/js/impersonation-banner.js"></script>
   </body>
 </html>

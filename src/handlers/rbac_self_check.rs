@@ -63,12 +63,15 @@ pub async fn rbac_self_check_handler(
     let commit_short: String = commit.chars().take(12).collect();
     let server_version = env!("CARGO_PKG_VERSION").to_string();
 
-    let (principal_email, principal_auth_provider) = match &principal {
-        AuthPrincipal::User(u) => (
+    // Reports the effective identity, so running this diagnostic inside
+    // a view-as session describes the user being debugged — which is the
+    // whole point of the session.
+    let (principal_email, principal_auth_provider) = match principal.as_user() {
+        Some(u) => (
             Some(u.email.clone()),
             Some(format!("{:?}", u.auth_provider).to_lowercase()),
         ),
-        AuthPrincipal::ApiKey(_) => (None, Some("api_key".to_string())),
+        None => (None, Some("api_key".to_string())),
     };
 
     // Lookup: does users.user_id = principal.user_id() find a row?

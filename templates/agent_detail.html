@@ -140,6 +140,40 @@
         border: 1px solid var(--bg2);
       }
 
+      /* ── Evolution badge ── */
+      .evo-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+      .evo-level {
+        font-size: 1.5em; width: 38px; height: 38px; line-height: 36px;
+        text-align: center; border: 1px solid var(--aqua, #689d6a); color: var(--aqua, #689d6a);
+      }
+      .evo-rank {
+        font-size: 0.95em; text-transform: uppercase; letter-spacing: 2px; color: var(--fg0);
+      }
+      .evo-capped {
+        font-size: 0.8em; color: var(--fg3); border-left: 2px solid var(--yellow, #d79921);
+        padding-left: 8px; margin-bottom: 10px;
+      }
+      .evo-dim {
+        display: grid; grid-template-columns: 90px 46px 66px 1fr; gap: 10px;
+        align-items: center; padding: 5px 0; font-size: 0.82em;
+        border-bottom: 1px dashed var(--bg2, #3c3836);
+      }
+      .evo-dim-name { color: var(--fg3); text-transform: uppercase; font-size: 0.75em; letter-spacing: 0.8px; }
+      .evo-dim-tier { color: var(--fg3); font-size: 0.8em; }
+      .evo-dim-ev { color: var(--fg3); }
+      .evo-pip {
+        display: inline-block; width: 10px; height: 10px; margin-right: 3px;
+        border: 1px solid var(--bg3, #504945);
+      }
+      .evo-pip.on { background: var(--aqua, #689d6a); border-color: var(--aqua, #689d6a); }
+      .evo-next { margin-top: 10px; font-size: 0.85em; color: var(--fg2); }
+      .evo-fcast { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--bg2, #3c3836); }
+      /* Regression is owner-only; the endpoint omits it for other viewers. */
+      .evo-regressed {
+        margin-top: 10px; font-size: 0.82em; color: var(--yellow, #d79921);
+        border-left: 2px solid var(--yellow, #d79921); padding-left: 8px;
+      }
+
       .section-title {
         font-size: 0.95em;
         font-weight: 400;
@@ -1127,6 +1161,15 @@
                     </div>
                   </div>
 
+                  <!-- Evolution badge. Filled by loadEvolution() after render:
+                       it needs a second request, and the overview should not
+                       block on it. Owner view additionally shows the high-water
+                       mark and any regression, which are private. -->
+                  <div class="section" id="evolution-section">
+                    <div class="section-title">Evolution</div>
+                    <div id="evolution-body" style="color:var(--fg3);font-size:0.85em">Loading…</div>
+                  </div>
+
                   ${
                     mcpTools.length > 0
                       ? `
@@ -1431,6 +1474,8 @@
               loadEpisodes(0);
             }
           });
+
+          loadEvolution(agentId);
         } catch (error) {
           console.error("Error loading agent:", error);
           document.getElementById("agent-content").innerHTML = `
@@ -1677,6 +1722,115 @@
               <span style="color:var(--red)">above zero → baseline better</span>
             </div>
           </div>`;
+      }
+
+      // ── Evolution badge ──────────────────────────────────────────────
+      //
+      // Ranks are earned from OUTCOMES, never from activity: eval runs, dream
+      // cycles and forecast counts contribute nothing on their own. That is the
+      // whole point of the ladder, and the reason it replaces a maturity stage
+      // that advanced on eval-run count alone.
+      //
+      // The endpoint decides visibility: `peak_level` and `regressed` come back
+      // only for owners and admins, so this renders them if present rather than
+      // deciding for itself. Regression is private by design — a public one
+      // would be a walk of shame on someone else's agent.
+      async function loadEvolution(agentId) {
+        const body = document.getElementById("evolution-body");
+        if (!body) return;
+        const TIER_WORD = ["none", "emerging", "solid", "deep"];
+        try {
+          const res = await fetch(
+            `/api/agents/${encodeURIComponent(agentId)}/evolution`,
+          );
+          if (!res.ok) {
+            body.textContent = "Evolution unavailable.";
+            return;
+          }
+          const ev = await res.json();
+
+          // Untried agents carry NO rank. Showing the bottom rung would read as
+          // a verdict on an agent nobody has exercised, and most of the
+          // catalogue is in exactly that state.
+          if (!ev.ranked) {
+            body.innerHTML = `<div style="color:var(--fg3)">Unranked — pending usage data.
+              This agent has not been exercised, so there is nothing to grade yet.
+              Untried, not failing.</div>`;
+            return;
+          }
+
+          const dims = (ev.dimensions || [])
+            .map(
+              (d) => `
+              <div class="evo-dim">
+                <span class="evo-dim-name">${d.dimension}</span>
+                <span class="evo-pips">${[0, 1, 2]
+                  .map(
+                    (k) =>
+                      `<span class="evo-pip${d.tier > k ? " on" : ""}"></span>`,
+                  )
+                  .join("")}</span>
+                <span class="evo-dim-tier">${TIER_WORD[d.tier] || ""}</span>
+                <span class="evo-dim-ev">${escapeHtml(d.evidence || "")}</span>
+              </div>`,
+            )
+            .join("");
+
+          // Skill, not raw Brier, is the headline. On an outcome-skewed set a
+          // forecaster that knows nothing scores ~99%, so the raw number
+          // flatters; skill is measured against that base rate.
+          const f = ev.forecasting || {};
+          const skill = f.brier_skill_score;
+          const forecasting = f.n_resolved_forecasts
+            ? `<div class="evo-fcast">
+                 <div class="field-label" style="margin-bottom:6px">Forecasting record (public)</div>
+                 <div class="field-grid">
+                   <div class="field-item"><div class="field-label">Resolved</div>
+                     <div class="field-value">${f.n_resolved_forecasts}</div></div>
+                   <div class="field-item"><div class="field-label">Skill over base rate</div>
+                     <div class="field-value" style="color:${
+                       skill == null ? "var(--fg3)" : skill > 0 ? "var(--green)" : "var(--red, #cc241d)"
+                     }">${skill == null ? "—" : skill.toFixed(3)}</div></div>
+                   <div class="field-item"><div class="field-label">Brier</div>
+                     <div class="field-value">${f.brier_mean == null ? "—" : f.brier_mean.toFixed(4)}</div></div>
+                   <div class="field-item"><div class="field-label">Base-rate baseline</div>
+                     <div class="field-value">${f.brier_baseline == null ? "—" : f.brier_baseline.toFixed(4)}</div></div>
+                 </div>
+                 ${
+                   skill != null && skill <= 0
+                     ? `<div style="color:var(--fg3);font-size:0.8em;margin-top:6px">A strong-looking
+                        Brier here only reflects one-sided outcomes — this agent does not beat
+                        simply predicting the base rate.</div>`
+                     : ""
+                 }
+               </div>`
+            : "";
+
+          // Owner-only fields. Absent for other viewers, so this renders them
+          // conditionally rather than assuming.
+          const priv =
+            ev.regressed === true
+              ? `<div class="evo-regressed">Regressed — previously reached
+                   <strong>${ev.peak_rank || ev.peak_level}</strong>. Visible to you only.</div>`
+              : ev.peak_level != null && ev.peak_level > ev.level
+                ? `<div style="color:var(--fg3);font-size:0.8em;margin-top:6px">Peak:
+                     ${ev.peak_rank || ev.peak_level} (visible to you only)</div>`
+                : "";
+
+          body.innerHTML = `
+            <div class="evo-head">
+              <span class="evo-level">${ev.level}</span>
+              <span class="evo-rank">${escapeHtml(ev.rank || "")}</span>
+            </div>
+            ${ev.capped_by ? `<div class="evo-capped">${escapeHtml(ev.capped_by)}</div>` : ""}
+            ${dims}
+            <div class="evo-next"><strong>Next:</strong> ${escapeHtml(ev.next_step || "")}</div>
+            ${forecasting}
+            ${priv}
+          `;
+        } catch (e) {
+          body.textContent = "Evolution unavailable.";
+        }
       }
 
       async function loadExecutionActivity() {
@@ -6199,5 +6353,9 @@
         }
       }
     </script>
+    <!-- Admin "view as user" banner; no-op unless impersonating. -->
+
+    <script src="/static/js/impersonation-banner.js"></script>
+
   </body>
 </html>

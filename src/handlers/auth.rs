@@ -308,7 +308,33 @@ pub async fn auth_logout() -> Result<Response, (StatusCode, String)> {
 /// the raw `user_id` UUID. Without this join, callers authenticated via
 /// `FERMI_API_KEY` see the UUID as "who am I" — which is what the console
 /// operator was hitting.
+/// While impersonating, this reports the **target** user — that is the
+/// point: every surface that renders "who am I" should render them. The
+/// `impersonation` block is added alongside so the UI can show the
+/// exit banner; it is the only place the admin's real identity leaks
+/// into a response, and it is additive so existing clients ignore it.
 pub async fn auth_me(State(state): State<AppState>, principal: AuthPrincipal) -> Json<Value> {
+    if let Some(imp) = principal.impersonation() {
+        return Json(json!({
+            "user_id": imp.effective.user_id,
+            "email": imp.effective.email,
+            "display_name": imp.effective.display_name,
+            "role": imp.effective.role,
+            "auth_provider": imp.effective.auth_provider,
+            "github_username": imp.effective.github_username,
+            "impersonation": {
+                "active": true,
+                "mode": imp.mode.as_str(),
+                "session_id": imp.session_id,
+                "real_user_id": imp.real.user_id,
+                "real_email": imp.real.email,
+                "viewing_as": imp.effective.display_name
+                    .clone()
+                    .unwrap_or_else(|| imp.effective.email.clone()),
+            },
+        }));
+    }
+
     match principal {
         AuthPrincipal::User(user) => Json(json!({
             "user_id": user.user_id,
@@ -317,6 +343,17 @@ pub async fn auth_me(State(state): State<AppState>, principal: AuthPrincipal) ->
             "role": user.role,
             "auth_provider": user.auth_provider,
             "github_username": user.github_username,
+        })),
+        // Unreachable: the early return above owns this case. Kept as an
+        // explicit arm (rather than a `_` wildcard) so that adding a
+        // future principal variant is still a compile error here.
+        AuthPrincipal::Impersonated(imp) => Json(json!({
+            "user_id": imp.effective.user_id,
+            "email": imp.effective.email,
+            "display_name": imp.effective.display_name,
+            "role": imp.effective.role,
+            "auth_provider": imp.effective.auth_provider,
+            "github_username": imp.effective.github_username,
         })),
         AuthPrincipal::ApiKey(key) => {
             // Best-effort lookup — if the row is missing (dev fixture,
@@ -528,15 +565,20 @@ fn is_safe_cli_callback(url: &str) -> bool {
 }
 
 fn principal_display(p: &AuthPrincipal) -> String {
-    match p {
-        AuthPrincipal::User(u) => u.display_name.clone().unwrap_or_else(|| {
+    // Renders the effective identity: inside a view-as session every
+    // "who am I" surface should show the user being viewed.
+    match p.as_user() {
+        Some(u) => u.display_name.clone().unwrap_or_else(|| {
             if !u.email.is_empty() {
                 u.email.clone()
             } else {
                 u.user_id.clone()
             }
         }),
-        AuthPrincipal::ApiKey(k) => format!("api_key:{}", k.name),
+        None => match p {
+            AuthPrincipal::ApiKey(k) => format!("api_key:{}", k.name),
+            _ => p.user_id(),
+        },
     }
 }
 

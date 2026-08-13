@@ -243,10 +243,22 @@ pub async fn topup_dreaming_budget_handler(
 
 // ─── Consolidation trigger ─────────────────────────────────────────
 
+#[derive(Debug, serde::Deserialize, Default)]
+pub struct ConsolidateQuery {
+    /// Run even when no extraction LLM is available.
+    ///
+    /// A degraded run cannot produce facts or semantic rules — those paths are
+    /// gated on the LLM — so it is almost never what an operator wants. Opt-in
+    /// only, and the response says plainly what was given up.
+    #[serde(default)]
+    pub allow_degraded: bool,
+}
+
 pub async fn consolidate_agent_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Path(agent_id): Path<String>,
+    Query(q): Query<ConsolidateQuery>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
     let user_id = principal.user_id();
     let db_agent = resolve_agent(&state, &agent_id).await?;
@@ -292,7 +304,44 @@ pub async fn consolidate_agent_handler(
         ));
     }
 
-    // Only charge gas after confirming there's work to do
+    // ── Preflight the extractor BEFORE charging or consuming anything ───────
+    //
+    // `build_extraction_llm` is a chain of `?` on an Option: a missing
+    // ontologist card, an unresolvable agent, or — most likely — no funded
+    // provider credential for the platform principal all return None.
+    //
+    // Until now that None was handled by running consolidation ANYWAY with no
+    // extractor. The run consumed its episodes, completed the job, debited a
+    // dreaming credit and produced nothing. It reported success and learned
+    // nothing, which is indistinguishable from a healthy cycle on every
+    // surface the platform had.
+    //
+    // Measured cost of that on this deployment: two batch runs (2026-05-16 and
+    // 2026-06-22) burned 91 cycles over ~1,500 episodes for exactly zero
+    // entities, facts and rules, and left 62 agents with an empty ontology and
+    // no episodes left to retry with.
+    //
+    // So resolve it here, up front. No extractor means no learning is possible,
+    // and the correct response is to refuse before spending anything rather
+    // than to succeed at nothing.
+    let extraction_llm = build_extraction_llm(&state).await;
+    if extraction_llm.is_none() && !q.allow_degraded {
+        return Err((
+            // 424: the request is fine, a dependency it needs is not.
+            StatusCode::FAILED_DEPENDENCY,
+            "No extraction model available for consolidation. The `ontologist` agent's \
+             provider credential could not be resolved, so this cycle could consolidate \
+             episodes but could not extract any entities, facts or rules from them — it \
+             would consume the episodes and learn nothing. Fund the ontologist's provider \
+             credential for the platform principal, or pass ?allow_degraded=true to run \
+             anyway (heuristic entities only; no facts, no rules)."
+                .to_string(),
+        ));
+    }
+    let degraded = extraction_llm.is_none();
+
+    // Only charge gas after confirming there's work to do AND that the work can
+    // actually produce something.
     let wallet = get_or_create_wallet(&state.db, "user", &user_id)
         .await
         .map_err(|e| {
@@ -314,6 +363,36 @@ pub async fn consolidate_agent_handler(
     // Phase 3.1 (Spec 21): spawn consolidation as background job, return 202 immediately.
     // Gas is charged before spawn so a job that never starts still has a visible charge.
     let job_id = uuid::Uuid::new_v4();
+    let spawn_llm = extraction_llm;
+
+    // Create the job row NOW, under the id we are about to hand the client.
+    //
+    // This used to be missing entirely, and the consequence was the most
+    // confusing possible failure: consolidation worked perfectly — episodes
+    // consolidated, rules extracted, a job row created, updated and completed
+    // — but the worker did all of that under an id it generated internally,
+    // while the client was handed this fabricated one. Every status poll and
+    // every refresh looked up a row that had never existed, so the UI reported
+    // success and then showed nothing. Both writes below were `let _ =`, so
+    // "0 rows affected" was invisible.
+    //
+    // Creating it here also means the job is visible as `running` the instant
+    // the client gets its 202, instead of only appearing once the work ends.
+    state
+        .memory_store
+        .create_consolidation_job_with_id(
+            job_id,
+            db_agent.agent_id,
+            episodes[0].episode_id,
+            episodes[episodes.len() - 1].episode_id,
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to create consolidation job: {}", e),
+            )
+        })?;
     let spawn_state = state.clone();
     let spawn_agent_id = db_agent.agent_id;
     let spawn_agent_name = agent_id.clone();
@@ -325,7 +404,9 @@ pub async fn consolidate_agent_handler(
         // Extraction brain = the `ontologist` system agent (card-configured
         // provider/model, funded by abw-system's stored key). No env-var key
         // path — that was the old system-tier shortcut this model replaces.
-        let worker = match build_extraction_llm(&spawn_state).await {
+        // Already resolved (and required) before gas was charged; reuse it so
+        // the run cannot silently differ from what preflight approved.
+        let worker = match spawn_llm {
             Some(llm) => ConsolidationWorker::with_llm(
                 spawn_state.memory_store.clone(),
                 lock,
@@ -341,35 +422,36 @@ pub async fn consolidate_agent_handler(
             ),
         };
 
-        match worker.consolidate_agent(spawn_agent_id, 0.5, 2).await {
+        // Pass the client's job_id through so the worker's own statistics and
+        // completion land on the row the client is polling.
+        match worker
+            .consolidate_agent_with_job(spawn_agent_id, 0.5, 2, Some(job_id))
+            .await
+        {
             Ok(result) => {
-                // Debit dreaming credit
-                let _ = sqlx::query(
+                // Debit dreaming credit. Logged rather than swallowed: silently
+                // failing to debit means the budget shown to the operator drifts
+                // from what was actually spent, and `last_consolidated_at` is
+                // what the maturity view reads to say when an agent last dreamt.
+                if let Err(e) = sqlx::query(
                     "UPDATE agents SET dreaming_credits_used = dreaming_credits_used + 1, \
                      last_consolidated_at = NOW() WHERE agent_id = $1",
                 )
                 .bind(spawn_agent_id)
                 .execute(&spawn_state.db)
-                .await;
+                .await
+                {
+                    tracing::error!(
+                        agent_id = %spawn_agent_id, error = %e,
+                        "[consolidation] failed to debit dreaming credit / stamp \
+                         last_consolidated_at — budget and maturity will read stale"
+                    );
+                }
 
-                // Update job record if it exists
-                let _ = spawn_state
-                    .memory_store
-                    .update_consolidation_job(
-                        job_id,
-                        result.episodes_processed as i32,
-                        result.clusters_identified as i32,
-                        result.rules_extracted as i32,
-                        result.rules_verified as i32,
-                        result.rules_rejected as i32,
-                        result.entities_created as i32,
-                        result.facts_created as i32,
-                    )
-                    .await;
-                let _ = spawn_state
-                    .memory_store
-                    .complete_consolidation_job(job_id, "completed", None)
-                    .await;
+                // The worker already recorded statistics and marked the job
+                // completed against this same job_id, so there is nothing to
+                // update here. Re-completing it would only risk clobbering the
+                // worker's numbers with a second write.
 
                 // Spawn dream narrator
                 let ep = result.episodes_processed;
@@ -467,7 +549,17 @@ pub async fn consolidate_agent_handler(
             "status": "accepted",
             "job_id": job_id,
             "agent_id": agent_id,
-            "message": "Consolidation started.",
+            "message": if degraded {
+                "Consolidation started in DEGRADED mode: no extraction model, so no facts \
+                 or semantic rules can be produced. Episodes will be left unconsolidated \
+                 so they can be re-dreamt once an extractor is available."
+            } else {
+                "Consolidation started."
+            },
+            // Surfaced so a caller can tell "ran" from "ran and could learn".
+            // Conflating those is what let 91 cycles report success while
+            // extracting nothing.
+            "degraded": degraded,
             "poll": format!("/api/agents/{}/consolidation/jobs/{}", agent_id, job_id),
             "dreaming_credits_remaining": spawn_remaining - 1,
         })),

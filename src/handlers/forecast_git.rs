@@ -421,14 +421,19 @@ async fn materialise(pool: &PgPool, forecast_id: &str) -> Result<Vec<(String, St
 ///
 /// ## Why a sweep instead of more hooks
 ///
-/// Two writers still mutate forecasts without committing — the Polymarket
-/// auto-resolution sweeper and `refit_workspace` — and both are background
-/// tasks holding only a `PgPool`. Threading the git manager into them means
-/// changing `spawn_resolution_sweeper`, `sweep_resolutions_once`,
-/// `apply_settlement`, and `refit_workspace`'s whole recursive chain plus
-/// its three call sites.
+/// `refit_workspace` still mutates forecasts without committing, and it is
+/// a background task holding only a `PgPool`; threading the git manager
+/// through its recursive chain plus three call sites is invasive.
 ///
-/// That work would fix today's two gaps and do nothing about tomorrow's.
+/// The Polymarket auto-resolution sweeper *was* the other such writer and
+/// is now hooked directly (`apply_settlement`), because that one could not
+/// be left to this sweep: resolution is terminal, so a forecast that
+/// reached it unversioned could never be repaired by any later write. The
+/// general lesson stands for the rest — a bypass on a *terminal* path
+/// needs its own hook; a bypass on a reversible path can wait for the
+/// sweep.
+///
+/// Hooks alone would fix today's gaps and do nothing about tomorrow's.
 /// The failure mode here is structural: history depends on every writer
 /// remembering, and writers don't. This codebase already learned that once
 /// — nine writers touch `predicted_probability` and none of them filtered
@@ -454,9 +459,20 @@ async fn materialise(pool: &PgPool, forecast_id: &str) -> Result<Vec<(String, St
 /// message says so explicitly rather than letting a reader infer a human
 /// was involved.
 ///
-/// Scoped to forecasts that already have a workspace — the sweep must not
-/// bulk-provision repos for the whole corpus. Interactive paths provision
-/// lazily; this only keeps existing histories honest.
+/// ## Why it is not scoped to forecasts that already have a workspace
+///
+/// It used to be: the query `JOIN`ed `teams`, on the reasoning that the
+/// sweep must not bulk-provision repos for the whole corpus. But a
+/// forecast with no workspace is precisely one whose hook has never fired
+/// — the exact drift this exists to catch — so the net was scoped to
+/// exclude its own catch. Worse, the two conditions coincide: the writers
+/// that bypass the hook are the reason a forecast still has no workspace.
+///
+/// The `LEFT JOIN` lets `ensure_forecast_repo` provision those lazily,
+/// which is not a bulk backfill: the recency window plus `LIMIT 200` mean
+/// only forecasts touched in the last few minutes are ever considered, so
+/// the cost still tracks activity rather than corpus size. A dormant
+/// forecast is still never provisioned.
 pub fn spawn_history_reconciler(db: PgPool, git: std::sync::Arc<WorkspaceGitManager>) {
     let interval_secs: u64 = std::env::var("FERMI_HISTORY_RECONCILE_SECS")
         .ok()
@@ -492,7 +508,7 @@ async fn reconcile_once(pool: &PgPool, git: &WorkspaceGitManager, window_secs: u
     let rows = match sqlx::query(
         "SELECT f.id
            FROM fermi_forecasts f
-           JOIN teams t ON t.id = f.workspace_id
+           LEFT JOIN teams t ON t.id = f.workspace_id
           WHERE f.updated_at > NOW() - ($1 || ' seconds')::interval
           ORDER BY f.updated_at DESC
           LIMIT 200",

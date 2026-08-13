@@ -113,6 +113,15 @@ pub const SCHEMA_TABLES: &[&str] = &[
     "forecast_commitments",
     "forecast_splits",
     "forecast_spacetime",
+    // Combinatorial credit assignment (mig-187, mig-188). Declared here as
+    // well as in SCHEMA_COLUMNS: a column entry whose relation is undeclared
+    // produces a check that can never pass and never says why, which is what
+    // `every_column_belongs_to_a_declared_relation` exists to prevent.
+    // See docs/architecture/COMBINATORIAL_CREDIT_ASSIGNMENT.md
+    "forecast_agent_claims",
+    "forecast_attributions",
+    "forecast_agent_credit",
+    "forecast_agent_interactions",
     // Workspaces / teams
     "teams",
     "team_members",
@@ -243,6 +252,42 @@ pub const SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("fermi_forecasts", "updated_at"),
     // v0.11.2 — manager-effect placeholder (Team Brier − Counterfactual Brier)
     ("fermi_forecasts", "counterfactual_brier"),
+    // ── forecast_agent_claims (mig-187) ────────────────────────────
+    // Append-only ledger of each agent's individual quantitative claim.
+    // Load-bearing for per-agent credit: the params write it shadows is
+    // current-state only, so if these columns go missing the claims are
+    // lost silently and cannot be reconstructed after the fact.
+    ("forecast_agent_claims", "claim_id"),
+    ("forecast_agent_claims", "workspace_id"),
+    ("forecast_agent_claims", "agent_id"),
+    ("forecast_agent_claims", "agent_name"),
+    ("forecast_agent_claims", "driver"),
+    ("forecast_agent_claims", "p50"),
+    ("forecast_agent_claims", "neutral_value"),
+    ("forecast_agent_claims", "claimed_at"),
+    // ── forecast attribution (mig-188) ───────────────────────────
+    // Per-agent Shapley credit and its validity gates. `efficiency_residual`
+    // and `reconstruction_error` are load-bearing: a consumer that reads
+    // shapley_value without filtering on them can act on credit derived from
+    // Monte Carlo noise, or from a reconstruction of a forecast that never
+    // existed. Losing those columns must fail loudly, not degrade quietly.
+    ("forecast_attributions", "forecast_id"),
+    ("forecast_attributions", "neutralisation"),
+    ("forecast_attributions", "seed"),
+    ("forecast_attributions", "p_baseline"),
+    ("forecast_attributions", "p_full"),
+    ("forecast_attributions", "team_improvement"),
+    ("forecast_attributions", "efficiency_residual"),
+    ("forecast_attributions", "reconstruction_error"),
+    ("forecast_agent_credit", "forecast_id"),
+    ("forecast_agent_credit", "neutralisation"),
+    ("forecast_agent_credit", "agent_id"),
+    ("forecast_agent_credit", "agent_name"),
+    ("forecast_agent_credit", "shapley_value"),
+    ("forecast_agent_interactions", "forecast_id"),
+    ("forecast_agent_interactions", "agent_a"),
+    ("forecast_agent_interactions", "agent_b"),
+    ("forecast_agent_interactions", "interaction_index"),
     // ── users ──────────────────────────────────────────────────────
     ("users", "id"),
     ("users", "user_id"), // TEXT, the substrate identity (v0.10.9 realign)

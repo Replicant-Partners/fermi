@@ -18,7 +18,8 @@ use fermi::agent_backend::{
 };
 use fermi::ast;
 use fermi_auth::{
-    auth_middleware, optional_auth_middleware, AuthPrincipal, AuthState, OAuthConfig,
+    auth_middleware, impersonation_guard, optional_auth_middleware, AuthPrincipal, AuthState,
+    OAuthConfig,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -969,6 +970,27 @@ async fn run_migrations(db: &PgPool) {
         // counterfactual subset re-runs that exact Shapley attribution needs
         // (src/attribution/).
         "migrations/187_forecast_agent_claims.sql",
+        // Persisted per-agent Shapley credit + pairwise interaction indices.
+        // efficiency_residual and reconstruction_error are validity gates, not
+        // metadata: a row with either far from zero describes a forecast that
+        // was not actually measured. See
+        // docs/architecture/COMBINATORIAL_CREDIT_ASSIGNMENT.md
+        "migrations/188_forecast_attributions.sql",
+        // Admin "view as user" audit substrate. impersonation_sessions is
+        // authoritative for liveness — the guard middleware refuses any
+        // request whose session row is absent, ended, or expired — so the
+        // stateless JWT can be revoked. impersonation_events is the
+        // per-request trail, including blocked mutation attempts.
+        // See docs/specs/SPEC_33_IMPERSONATION.md.
+        "migrations/189_impersonation_audit.sql",
+        // High-water mark for the evolution badge. The badge is computed live
+        // from outcomes; only the peak is stored, because regression cannot be
+        // detected without remembering the best rank previously reached.
+        "migrations/190_agent_evolution.sql",
+        // The one forecast-keyed table that never declared its reference, so
+        // deleting a forecast left its agent schedules behind. Clears the
+        // backlog, then lets Postgres enforce it.
+        "migrations/191_forecast_schedules_fk.sql",
     ];
 
     for file in &migration_files {
@@ -2033,7 +2055,7 @@ async fn main() {
     // Brier was computed, and Loop 5 went cold. Paced and bounded; see
     // handlers::polymarket::spawn_resolution_sweeper. Disable with
     // PM_RESOLUTION_SWEEP_SECS=0.
-    handlers::polymarket::spawn_resolution_sweeper(state.db.clone());
+    handlers::polymarket::spawn_resolution_sweeper(state.db.clone(), state.workspace_git.clone());
 
     // Spec 31: catch forecast state changes that bypassed the commit hook.
     //
@@ -2255,10 +2277,41 @@ async fn main() {
             "/api/observatory/fleet/agents",
             get(handlers::observatory::fleet_agents_handler),
         )
+        // Loop 5a mechanism probe — asks whether the Brier chain moves a
+        // signal correctly, which is a different question from whether the
+        // resulting score is good. Admin-only: counts span all tenants.
+        .route(
+            "/api/observatory/loops/brier/mechanism",
+            get(handlers::observatory::loop5_mechanism_handler),
+        )
+        // Loop 1 maturity — has an agent actually dreamt, and did the
+        // ontologist build anything? Separates "the cycle ran" from "the agent
+        // learned", which every previous surface conflated.
+        .route(
+            "/api/observatory/loops/dreaming/maturity",
+            get(handlers::dreaming_maturity::fleet_dreaming_maturity_handler),
+        )
+        // Loop 4 — composition proposals derived from Shapley attribution.
+        // `composition_versions` has had an accept/reject flow since mig-113
+        // but nothing ever generated a proposal, so the loop was structurally
+        // complete and permanently empty. GET computes; POST files one for a
+        // human to decide on.
+        .route(
+            "/api/workspaces/:workspace_id/composition/suggestions",
+            get(handlers::composition_evolution::composition_suggestions_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/composition/suggestions/materialise",
+            post(handlers::composition_evolution::materialise_composition_proposal_handler),
+        )
         // Dyads
         .route(
             "/api/observatory/dyads/auto-form",
             post(handlers::observatory::auto_form_dyads_handler),
+        )
+        .route(
+            "/api/observatory/agents/:agent_id/backfill-social",
+            post(handlers::observatory::backfill_social_handler),
         )
         .route(
             "/api/observatory/dyads/:dyad_id",
@@ -2288,10 +2341,6 @@ async fn main() {
         .route(
             "/api/observatory/hitl",
             get(handlers::observatory::list_hitl_queue_handler),
-        )
-        .route(
-            "/api/observatory/agents/:agent_id/backfill-social",
-            post(handlers::observatory::backfill_social_handler),
         )
         .route(
             "/api/observatory/hitl/:event_id/action",
@@ -2545,6 +2594,13 @@ async fn main() {
             "/observatory/hitl",
             get(handlers::pages::observatory_hitl_view),
         )
+        // Layers run outermost-last: optional_auth → rate_limit →
+        // impersonation_guard → handler. The guard must sit *inside*
+        // the auth layer so the principal is already resolved.
+        .layer(middleware::from_fn_with_state(
+            auth_state.clone(),
+            impersonation_guard,
+        ))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             rate_limit_middleware,
@@ -2798,6 +2854,16 @@ async fn main() {
         .route(
             "/api/agents/:agent_id/consolidate",
             post(handlers::consolidation::consolidate_agent_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/dreaming",
+            get(handlers::dreaming_maturity::agent_dreaming_maturity_handler),
+        )
+        // Evolution badge — earned progression across four loop-backed
+        // dimensions, with a stored high-water mark so regression is visible.
+        .route(
+            "/api/agents/:agent_id/evolution",
+            get(handlers::evolution::agent_evolution_handler),
         )
         .route(
             "/api/agents/:agent_id/consolidation/jobs/:job_id",
@@ -3671,6 +3737,37 @@ async fn main() {
             "/api/polymarket/check-resolutions",
             post(handlers::polymarket::check_resolutions_handler),
         )
+        // ── Admin "view as user" (SPEC_33) ─────────────────────────────
+        // Read-only impersonation for support/debugging. The guard in
+        // fermi_auth::middleware enforces the contract; these routes only
+        // mint, end, and report. `/end` is intentionally not admin-gated
+        // — an impersonated principal is not an admin, so gating it would
+        // trap the operator inside the session.
+        .route(
+            "/api/admin/impersonate",
+            post(handlers::impersonation::start_impersonation_handler),
+        )
+        .route(
+            "/api/admin/impersonate/end",
+            post(handlers::impersonation::end_impersonation_handler),
+        )
+        .route(
+            "/api/admin/impersonate/sessions",
+            get(handlers::impersonation::list_impersonation_sessions_handler),
+        )
+        // Transparency counterpart: any user can see who viewed their
+        // account and why.
+        .route(
+            "/api/me/impersonation-history",
+            get(handlers::impersonation::my_impersonation_history_handler),
+        )
+        // Platform economics — cost (real USD) vs. revenue (credits) by
+        // funding principal. Answers "what do platform-service agents
+        // cost me, and do they pay for themselves?"
+        .route(
+            "/api/admin/economics/platform",
+            get(handlers::economics::platform_economics_handler),
+        )
         // Admin routes (handlers check can_admin())
         .route(
             "/api/admin/stats",
@@ -4383,6 +4480,13 @@ async fn main() {
             "/api/observe/sessions/:session_id/experience",
             get(handlers::observations::observation_experience_handler),
         )
+        // Inside `auth_middleware` (see the public-router note above):
+        // enforces the read-only contract and writes the audit trail
+        // for any request carrying an impersonated principal.
+        .layer(middleware::from_fn_with_state(
+            auth_state.clone(),
+            impersonation_guard,
+        ))
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             auth_middleware,
@@ -5626,9 +5730,24 @@ pub(crate) fn agent_output_to_episode(
         },
         execution_time_ms: output.execution_time_ms as i64,
         tokens_used: output.tokens_used.map(|t| t as i32),
+        // Cost is priced off the provider/model that actually served the
+        // run, not a flat rate. This used to hardcode $3/Mtok for
+        // everything, which mispriced Opus by 5x low, Haiku by 12x high,
+        // and charged for local Ollama runs that cost nothing — making
+        // any margin analysis built on it fiction. `calculate_cost`
+        // already existed in the registry with a per-model rate card; it
+        // simply was not wired to the persistence path.
+        //
+        // Still an estimate: there is no input/output token split, and
+        // real provider pricing differs several-fold between the two.
+        // See docs/plans/PLATFORM_ECONOMICS.md.
         cost_usd: output.tokens_used.map(|t| {
-            rust_decimal::Decimal::from_f64_retain((t as f64 / 1_000_000.0) * 3.0)
-                .unwrap_or_default()
+            let usd = fermi::agent_backend::registry::calculate_cost(
+                output.metadata.provider.as_deref().unwrap_or(""),
+                output.metadata.model_used.as_deref().unwrap_or(""),
+                t,
+            );
+            rust_decimal::Decimal::from_f64_retain(usd).unwrap_or_default()
         }),
         embedding: None,
         consolidated: false,

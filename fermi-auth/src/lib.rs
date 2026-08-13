@@ -14,8 +14,14 @@ pub mod visibility;
 
 // Re-export commonly used types
 pub use error::AuthError;
-pub use jwt::{create_session_token, validate_session_token};
-pub use middleware::{auth_middleware, optional_auth_middleware, AuthState};
+pub use jwt::{
+    create_impersonation_token, create_session_token, validate_session_token,
+    IMPERSONATION_DURATION_SECS,
+};
+pub use middleware::{
+    auth_middleware, cookie_value, impersonation_guard, optional_auth_middleware, AuthState,
+    IMPERSONATION_COOKIE, IMPERSONATION_EXIT_PATH,
+};
 pub use oidc::{
     build_github_auth_url, build_google_auth_url, generate_state, github_exchange_code,
     github_fetch_user_info, google_exchange_code, google_fetch_user_info, sync_user,
@@ -43,8 +49,9 @@ pub use teams::{
     set_member_capabilities, share_object, update_member_role,
 };
 pub use types::{
-    ApiKey, AuthPrincipal, AuthProvider, MemberType, ObjectShare, ObjectType, Permission,
-    ShareType, Team, TeamCapability, TeamMember, TeamRole, User, UserRole, Visibility,
+    ApiKey, AuthPrincipal, AuthProvider, Impersonation, ImpersonationMode, MemberType, ObjectShare,
+    ObjectType, Permission, ShareType, Team, TeamCapability, TeamMember, TeamRole, User, UserRole,
+    Visibility,
 };
 pub use visibility::{can_access, can_access_anonymous, can_edit, can_view, AccessLevel};
 

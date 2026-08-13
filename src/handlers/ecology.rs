@@ -73,9 +73,19 @@ pub async fn ecology_specimens_handler(
         }
     }
 
+    // Evolution badges for the whole fleet in one round trip. Per-agent
+    // computation here would be ~100 queries on a page load; see
+    // `evolution::fleet_evolution`.
+    let badges = crate::handlers::evolution::fleet_evolution(&state.db).await;
+
     let specimens: Vec<Value> = agents
         .iter()
         .filter(|a| a.status.eq_ignore_ascii_case("published"))
+        // Integration-test scaffolding (`test_agent_<uuid>`) is hidden from the
+        // ecological view for the same reason it is hidden from rosters: it is
+        // not part of the population anyone is asking about, and it dominates
+        // the counts. Policy is hide-not-delete.
+        .filter(|a| !crate::handlers::is_test_cruft(&a.agent_name))
         .map(|a| {
             let mut v = crate::handlers::agents::build_agent_json(&state, a, None, 0);
 
@@ -108,6 +118,22 @@ pub async fn ecology_specimens_handler(
                 // Every published agent is implicitly in xaman_ek; only
                 // explicit habitats carry a provenance worth showing.
                 obj.insert("habitats".into(), Value::Array(habitats));
+
+                // Evolution: the earned rank, plus the forecasting track record
+                // that backs it. Public shape only — `public_badge_json` is the
+                // single constructor, so regression and the high-water mark
+                // cannot leak onto an anonymous-readable surface.
+                //
+                // An agent nobody has exercised comes back `ranked: false` with
+                // no rank name rather than the bottom rung: untried is not the
+                // same claim as measured-and-failing.
+                if let Some(f) = badges.get(&a.agent_id) {
+                    let ev = crate::handlers::evolution::compute_evolution(f.inputs, f.peak_level);
+                    obj.insert(
+                        "evolution".into(),
+                        crate::handlers::evolution::public_badge_json(&ev, f),
+                    );
+                }
             }
             v
         })
@@ -337,6 +363,34 @@ pub async fn ecology_overview_handler(
     .await
     .unwrap_or((0, 0));
 
+    // ── Evolution census: how much of the population has actually earned ────
+    //
+    // The distinction that makes this honest is `unranked`. Most agents have
+    // never been exercised, and folding them into the bottom rank would read as
+    // a population of failures rather than a population of untried specimens.
+    // Test scaffolding is excluded, as everywhere else in this view.
+    let badges = crate::handlers::evolution::fleet_evolution(&state.db).await;
+    let mut by_rank: std::collections::BTreeMap<String, i64> = Default::default();
+    let mut unranked = 0i64;
+    let mut with_forecasting_record = 0i64;
+    let mut beating_base_rate = 0i64;
+    for (_, f) in badges.iter() {
+        let ev = crate::handlers::evolution::compute_evolution(f.inputs, f.peak_level);
+        if ev.ranked {
+            *by_rank
+                .entry(ev.rank.clone().unwrap_or_else(|| "unknown".into()))
+                .or_insert(0) += 1;
+        } else {
+            unranked += 1;
+        }
+        if f.inputs.n_forecasts > 0 {
+            with_forecasting_record += 1;
+            if f.brier_skill.map(|s| s > 0.0).unwrap_or(false) {
+                beating_base_rate += 1;
+            }
+        }
+    }
+
     Ok(Json(json!({
         "population": {
             "published": total,
@@ -344,6 +398,16 @@ pub async fn ecology_overview_handler(
             "by_tier": by_tier,
             "by_niche": by_niche,
             "by_provider": by_provider,
+        },
+        "evolution": {
+            "by_rank": by_rank,
+            // Not a rank of zero: these have produced no usage data at all, so
+            // there is nothing to grade yet.
+            "unranked_pending_usage": unranked,
+            "with_forecasting_record": with_forecasting_record,
+            "beating_base_rate": beating_base_rate,
+            "note": "Ranks are earned from outcomes, not activity. `unranked_pending_usage` \
+                     agents have never been exercised — untried, not failing.",
         },
         "habitats": habitats,
         "governance": {

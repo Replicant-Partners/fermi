@@ -471,6 +471,10 @@
     <!-- Theme Toggle Script -->
     <script src="/static/js/theme-toggle.js"></script>
 
+    <!-- Admin "view as user" banner. No-op unless the session is an
+         active impersonation. See docs/specs/SPEC_33_IMPERSONATION.md. -->
+    <script src="/static/js/impersonation-banner.js"></script>
+
     {% block extra_js %}{% endblock %}
   </body>
 </html>

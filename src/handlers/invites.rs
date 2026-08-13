@@ -776,10 +776,12 @@ fn require_caller_is_invitee(
     principal: &AuthPrincipal,
 ) -> Result<(), (StatusCode, String)> {
     let caller_user_id = principal.user_id();
-    let caller_email = match principal {
-        AuthPrincipal::User(u) => Some(u.email.to_lowercase()),
-        AuthPrincipal::ApiKey(_) => None,
-    };
+    // `as_user` covers impersonated sessions too, yielding the *target's*
+    // mailbox — correct here: while viewing as someone, mailbox ownership
+    // is theirs, not the admin's. (Accepting an invite is a mutation, so
+    // the read-only guard blocks it regardless; this keeps the identity
+    // semantics right rather than relying on that.)
+    let caller_email = principal.as_user().map(|u| u.email.to_lowercase());
 
     if let Some(ref uid) = row.invitee_user_id {
         if uid == &caller_user_id {

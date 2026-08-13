@@ -58,8 +58,15 @@ pub(crate) async fn ensure_user_row(
     }
 
     // Missing users row. Try to backfill from the AuthPrincipal.
-    match principal {
-        AuthPrincipal::User(user) => {
+    //
+    // `as_user` also matches an impersonated principal, yielding the
+    // *target's* details — the right identity to provision, since the
+    // row we found missing is theirs. In practice the read-only guard
+    // blocks the write handlers that call this, and the target's row
+    // provably exists (it was loaded to mint the session), so this is
+    // belt-and-braces rather than a live path.
+    match principal.as_user() {
+        Some(user) => {
             let provider_str = match user.auth_provider {
                 AuthProvider::Google => "google",
                 AuthProvider::GitHub => "github",
@@ -194,7 +201,7 @@ pub(crate) async fn ensure_user_row(
             );
             Ok(())
         }
-        AuthPrincipal::ApiKey(_) => {
+        None => {
             // API key with orphan user_id — data integrity issue we
             // can't recover from here. The API key's user_id column
             // should FK to users(user_id), but if the row is gone we
@@ -1502,6 +1509,13 @@ pub async fn resolve_forecast_handler(
     // rather than vanishing into a detached task; the function is
     // idempotent per (agent, forecast) and cheap.
     record_forecast_calibration_signals(pool, &forecast_id, brier_score).await;
+
+    // Per-agent Shapley credit from counterfactual subset re-runs. Unlike the
+    // calibration signal above — which is a TEAM score copied onto every roster
+    // member, and so cannot distinguish them — this attributes the forecast's
+    // improvement to individual agents. Spawned rather than awaited: it costs
+    // 2^n model runs and must not delay the resolution response.
+    crate::handlers::attribution::spawn_attribution(pool, &forecast_id);
 
     // Retrospectively fill the trajectory's calibration columns now that
     // ground truth exists. See fn docs — these columns had no writer at

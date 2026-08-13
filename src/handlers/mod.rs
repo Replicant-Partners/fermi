@@ -31,6 +31,7 @@ pub mod agents;
 /// See docs/specs/SPEC_32_DRIVER_ANNOTATIONS.md.
 pub mod annotations;
 pub mod apps;
+pub mod attribution;
 pub mod auth;
 pub mod bayesops;
 pub mod beacons;
@@ -39,16 +40,23 @@ pub mod billing;
 /// activity feeds. See docs/specs/SPEC_26_TEAM_COLLABORATION.md.
 pub mod collab;
 pub mod composition;
+pub mod composition_evolution;
 pub mod consolidation;
 pub mod creatures;
 pub mod dashboard;
+pub mod dreaming_maturity;
 /// Ecology — population, habitats, niches and governance provenance.
 /// The "what lives here" lens, sibling to the Observatory's clinical one.
 pub mod ecology;
+/// Platform economics — real LLM cost vs. credit revenue, attributed by
+/// the funding principal recorded at execution time (SPEC_28).
+/// See docs/plans/PLATFORM_ECONOMICS.md.
+pub mod economics;
 pub mod eval;
 pub mod eval_brier;
 pub mod eval_judge;
 pub mod eval_projection;
+pub mod evolution;
 pub mod execution;
 pub mod execution_stream;
 pub mod forecast_benchmark;
@@ -57,6 +65,10 @@ pub mod forecast_benchmark;
 pub mod forecast_git;
 pub mod forecasts;
 pub mod governance;
+/// Admin "view as user" — short-lived, read-only, fully audited
+/// impersonation for support and debugging.
+/// See docs/specs/SPEC_33_IMPERSONATION.md.
+pub mod impersonation;
 pub mod invites;
 pub mod kg;
 pub mod lifecycle;
