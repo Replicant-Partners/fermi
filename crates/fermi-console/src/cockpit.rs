@@ -54,6 +54,7 @@ use fermi_console::agent_naming::{
     evidence_id, sanitize_name,
 };
 use fermi_console::calibration::{critique_base_rate, Severity as CalibrationSeverity};
+use fermi_console::negotiate;
 use fermi_console::routing::{
     detect_domain, domain_specialist, select_agent_for_driver, FERMI_ORCHESTRA,
 };
@@ -871,6 +872,17 @@ pub struct CockpitState {
     /// empty result comes back.
     pub server_agent_cards_fetched: bool,
 
+    /// The last query the console composed into `agent_query_input`, and
+    /// which agent it was composed for.
+    ///
+    /// The suggestion lands in the same text field the user types into, so
+    /// "machine pre-fill" and "human intent" are indistinguishable by
+    /// inspection — which is how a prompt written for the *recommended*
+    /// agent came to be sent verbatim to whichever agent the user actually
+    /// clicked. Remembering what we wrote, and for whom, is what lets
+    /// `negotiate::resolve_query` tell them apart.
+    pub query_prefill: Option<negotiate::Prefill>,
+
     // ── Polymarket Price History ──────────────────────────────────
     /// Time-series of crowd prices, sampled at `pm_poll_interval`.
     /// Each entry is (timestamp_epoch_secs, price 0.0–1.0).
@@ -1282,6 +1294,7 @@ impl CockpitState {
             server_agent_cards: Vec::new(),
             server_agent_cards_loading: false,
             server_agent_cards_fetched: false,
+            query_prefill: None,
             pm_price_history: Vec::new(),
             pm_poll_interval: None,
             pm_last_refresh_at: None,
@@ -3050,6 +3063,10 @@ impl CockpitState {
             let mut assigned_count = 0;
 
             let mut skipped: Vec<String> = Vec::new();
+            // Agents that declared no output contract to compose against.
+            // Worth naming: an undeclared agent gets the generic request and
+            // is the likeliest to return something the driver can't consume.
+            let mut undeclared: Vec<String> = Vec::new();
 
             for driver_name in &driver_names {
                 let driver = self.program.driver(driver_name);
@@ -3113,22 +3130,33 @@ impl CockpitState {
                 // Reuse Fermi's bespoke query only when we kept Fermi's
                 // agent — a query written for a macro forecaster asks a
                 // football analyst the wrong questions.
+                //
+                // Otherwise compose from what the chosen agent declares.
+                // This used to consult a hardcoded table of agent ids, so an
+                // agent the console had never heard of — which is every
+                // third-party design — could only receive the generic
+                // fallback no matter how precisely its card described it.
                 let query = match suggestion {
                     Some((suggested_agent, suggested_query))
                         if suggested_agent == &agent_to_use =>
                     {
                         suggested_query.clone()
                     }
-                    _ => formulate_research_query(
-                        &question_text,
-                        &driver_display,
-                        &rationale,
-                        &agent_to_use,
-                        &domain,
-                        p5,
-                        p50,
-                        p95,
-                    ),
+                    _ => {
+                        let task = self.research_task_for(driver_name);
+                        let contract = self.contract_for(&agent_to_use);
+                        let composed = negotiate::compose_query(&task, contract.as_ref());
+                        log::info!(
+                            "[negotiate] {} → {} (query source: {})",
+                            driver_name,
+                            agent_to_use,
+                            composed.source.as_str()
+                        );
+                        if matches!(composed.source, negotiate::QuerySource::Undeclared) {
+                            undeclared.push(agent_to_use.clone());
+                        }
+                        composed.text
+                    }
                 };
 
                 // Bind the agent to this driver. The bound name is the
@@ -3217,6 +3245,27 @@ impl CockpitState {
                          until this driver has a description and a p5/p50/p95. \
                          Fill it in, then re-run decomposition.",
                         driver_name
+                    ),
+                });
+            }
+
+            // Name the agents we had to ask generically. Their replies are
+            // the ones least likely to parse into findings, and the fix is
+            // on the agent's card, not here.
+            undeclared.sort();
+            undeclared.dedup();
+            if !undeclared.is_empty() {
+                self.messages.push(AssistantMessage {
+                    node: "agents".into(),
+                    kind: MessageKind::Tip,
+                    text: format!(
+                        "Asked generically: {}. {} declared no fermi_contract \
+                         finding_labels, so there is no output contract to \
+                         compose against and the reply may not parse into \
+                         findings. Declaring labels on the agent's card fixes \
+                         this for every forecast, without a console change.",
+                        undeclared.join(", "),
+                        if undeclared.len() == 1 { "It" } else { "They" },
                     ),
                 });
             }
@@ -3323,6 +3372,67 @@ impl CockpitState {
         self.server_agent_cards
             .iter()
             .any(|c| c.get("agent_id").and_then(|v| v.as_str()) == Some(agent_id))
+    }
+
+    /// What `agent_id` declares about how it expects to be invoked.
+    ///
+    /// Checked against the server roster first (authoritative, and the only
+    /// place a third-party agent's contract exists) then the on-disk curated
+    /// registry. `None` means the agent declares nothing to compose from —
+    /// not that it is unknown.
+    fn contract_for(&self, agent_id: &str) -> Option<negotiate::AgentContract> {
+        if let Some(card) = self.server_agent_cards.iter().find(|c| {
+            ["agent_id", "agent_name"]
+                .iter()
+                .any(|k| c.get(*k).and_then(|v| v.as_str()) == Some(agent_id))
+        }) {
+            let c = negotiate::AgentContract::from_card(card);
+            if c.is_declared() {
+                return Some(c);
+            }
+        }
+        let card = self.registry.get(agent_id).ok()?;
+        let json = serde_json::to_value(&card).ok()?;
+        let c = negotiate::AgentContract::from_card(&json);
+        c.is_declared().then_some(c)
+    }
+
+    /// The task to be researched for `driver_name`, independent of who ends
+    /// up doing it.
+    ///
+    /// Four call sites used to extract this same driver context inline and
+    /// had already drifted on the fallback triple.
+    fn research_task_for(&self, driver_name: &str) -> negotiate::ResearchTask {
+        let driver = self.program.driver(driver_name);
+        let (p5, p50, p95) = driver
+            .and_then(|d| d.distribution.as_ref())
+            .map(|dist| match dist {
+                Distribution::Triangular { p5, p50, p95 } => {
+                    (expr_to_f64(p5), expr_to_f64(p50), expr_to_f64(p95))
+                }
+                _ => (0.8, 1.0, 1.2),
+            })
+            .unwrap_or((0.8, 1.0, 1.2));
+
+        negotiate::ResearchTask {
+            question: self
+                .program
+                .question()
+                .map(|q| q.text.clone())
+                .unwrap_or_default(),
+            driver_display: driver
+                .and_then(|d| d.display_name.as_deref())
+                .unwrap_or(driver_name)
+                .to_string(),
+            driver_name: driver_name.to_string(),
+            rationale: driver
+                .and_then(|d| d.rationale.as_deref())
+                .unwrap_or("")
+                .to_string(),
+            p5,
+            p50,
+            p95,
+        }
     }
 
     fn discover_research_agents(&self) -> Vec<(String, String)> {
@@ -4536,58 +4646,33 @@ impl CockpitState {
         self.focused_node = FocusedNode::AgentPicker(driver_name.to_string());
         self.right_tab = RightTab::Edit;
 
-        // Pre-fill the query input with a domain-specific suggested query
-        let driver = self.program.driver(driver_name);
-        let driver_display = driver
-            .and_then(|d| d.display_name.as_deref())
-            .unwrap_or(driver_name)
-            .to_string();
-        let rationale = driver
-            .and_then(|d| d.rationale.as_deref())
-            .unwrap_or("")
-            .to_string();
-        let question = self
-            .program
-            .question()
-            .map(|q| q.text.clone())
-            .unwrap_or_default();
-        let domain = detect_domain(&question);
-
-        let (p5, p50, p95) = driver
-            .and_then(|d| d.distribution.as_ref())
-            .map(|dist| match dist {
-                Distribution::Triangular { p5, p50, p95 } => {
-                    (expr_to_f64(p5), expr_to_f64(p50), expr_to_f64(p95))
-                }
-                _ => (0.8, 1.0, 1.2),
-            })
-            .unwrap_or((0.8, 1.0, 1.2));
+        // Pre-fill the query input with a suggested query
+        let task = self.research_task_for(driver_name);
+        let domain = detect_domain(&task.question);
 
         // Determine the recommended agent for this driver. Same routing
         // the auto-assign path uses, so the picker's "Recommended" card
         // agrees with what Fermi actually spawned — they used to be two
         // independent keyword ladders that disagreed.
         let (recommended, _reason) =
-            select_agent_for_driver(driver_name, &rationale, &domain, None, &|a| {
+            select_agent_for_driver(driver_name, &task.rationale, &domain, None, &|a| {
                 self.agent_is_routable(a)
             });
 
-        // Generate the suggested query
-        let suggested_query = formulate_research_query(
-            &question,
-            &driver_display,
-            &rationale,
-            &recommended,
-            &domain,
-            p5,
-            p50,
-            p95,
-        );
+        // Compose from what the recommended agent declares. Remember which
+        // agent it was composed for: if the user picks a different one, the
+        // prompt has to be re-composed rather than inherited.
+        let contract = self.contract_for(&recommended);
+        let composed = negotiate::compose_query(&task, contract.as_ref());
+        let flattened = composed.text.replace('\n', " ").replace("  ", " ");
+        self.query_prefill = Some(negotiate::Prefill {
+            text: flattened.clone(),
+            agent_id: recommended.clone(),
+        });
 
         // Pre-fill the query input so the user sees what will be asked
-        self.agent_query_input.update(cx, |input, cx| {
-            input.set_text(&suggested_query.replace('\n', " ").replace("  ", " "), cx)
-        });
+        self.agent_query_input
+            .update(cx, |input, cx| input.set_text(&flattened, cx));
 
         // Clear the driver research input for fresh input
         self.driver_research_input
@@ -4598,7 +4683,7 @@ impl CockpitState {
             kind: MessageKind::Info,
             text: format!(
                 "🔬 Research panel for '{}' — recommended: {} (edit query below to customize)",
-                driver_display, recommended
+                task.driver_display, recommended
             ),
         });
 
@@ -5808,22 +5893,51 @@ impl CockpitState {
         schedule: Schedule,
         cx: &mut Context<Self>,
     ) {
-        let question_text = self
-            .program
-            .question()
-            .map(|q| q.text.clone())
-            .unwrap_or_default();
+        // Resolve what to actually send.
+        //
+        // This used to be `if input.is_empty() { default } else { input }`,
+        // which treats a stale machine pre-fill as deliberate user intent.
+        // The picker composes its suggestion when it *opens*, for the
+        // *recommended* agent — so clicking any other agent in "Or choose a
+        // different agent" sent that agent a prompt written for someone
+        // else. `resolve_query` re-composes an untouched pre-fill for the
+        // agent actually chosen, and never touches text a human edited.
+        let task = self.research_task_for(driver_name);
+        let contract = self.contract_for(agent_id);
+        let box_text = self.agent_query_input.read(cx).text().to_string();
+        let resolved = negotiate::resolve_query(
+            &box_text,
+            self.query_prefill.as_ref(),
+            agent_id,
+            &task,
+            contract.as_ref(),
+        );
+        let query = resolved.text.clone();
 
-        // Use custom query from input, or generate a default
-        let custom_query = self.agent_query_input.read(cx).text().to_string();
-        let query = if custom_query.trim().is_empty() {
-            format!(
-                "Research evidence for the '{}' driver in the forecast: \"{}\"",
-                driver_name, question_text
-            )
-        } else {
-            custom_query
-        };
+        // Say so when a prompt was swapped. Silently replacing it would
+        // trade one invisible mismatch for another.
+        if let Some(previous) = resolved.recomposed_from.as_deref() {
+            self.messages.push(AssistantMessage {
+                node: format!("driver:{}", driver_name),
+                kind: MessageKind::Info,
+                text: format!(
+                    "Query re-composed for {} — the suggestion in the box was \
+                     written for {}, whose output contract is different. \
+                     Edit it before running if you want something else.",
+                    agent_id, previous
+                ),
+            });
+        }
+        log::info!(
+            "[negotiate] {} → {} (query source: {}{})",
+            driver_name,
+            agent_id,
+            resolved.source.as_str(),
+            match resolved.recomposed_from.as_deref() {
+                Some(p) => format!(", recomposed from {}", p),
+                None => String::new(),
+            }
+        );
 
         let schedule_label = match &schedule {
             Schedule::Once => "once".to_string(),
@@ -14838,17 +14952,12 @@ fn render_agent_picker(
         });
     let recommended: &str = &recommended_agent;
 
-    // Pre-fill the query with a domain-specific formulation
-    let suggested_query = formulate_research_query(
-        &question_text,
-        &driver_display,
-        &rationale,
-        recommended,
-        &domain,
-        p5,
-        p50,
-        p95,
-    );
+    // Pre-fill the query with the recommended agent's own declared shape.
+    let suggested_query = negotiate::compose_query(
+        &state.research_task_for(driver_name),
+        state.contract_for(recommended).as_ref(),
+    )
+    .text;
 
     // Get all available agents for the "Other agents" section.
     //
@@ -26906,122 +27015,6 @@ fn generate_evidence_wiki(
     ));
 
     md
-}
-
-/// Formulate a domain-specific research query for an agent+driver combination.
-/// The query tells the agent exactly what data points to look for, includes the
-/// current driver parameters (p50), and asks for a specific parameter adjustment.
-fn formulate_research_query(
-    question: &str,
-    driver_display: &str,
-    rationale: &str,
-    agent_id: &str,
-    domain: &str,
-    p5: f64,
-    p50: f64,
-    p95: f64,
-) -> String {
-    let params = format!(
-        "Current estimate: p5={:.2}, p50={:.2}, p95={:.2}",
-        p5, p50, p95
-    );
-
-    match (domain, agent_id) {
-        (d, "nba_analyst") if d.contains("nba") || d.contains("basketball") => format!(
-            "For the forecast: \"{question}\"\n\n\
-             Analyze the '{driver_display}' driver.\n{params}\n\n\
-             PROVIDE SPECIFIC DATA:\n\
-             1. Current relevant stats (NetRtg, record, splits, trends)\n\
-             2. Historical base rate for this factor (with sample size)\n\
-             3. Elo-based adjustment or statistical impact estimate\n\
-             4. Suggested p50 multiplier based on your findings\n\
-             5. Confidence (0.0-1.0)\n\n\
-             Context: {rationale}\n\n\
-             Be quantitative — specific numbers, win rates, percentages."
-        ),
-
-        (_, "biotech_analyst") => format!(
-            "For the forecast: \"{question}\"\n\n\
-             Research the '{driver_display}' driver.\n{params}\n\n\
-             Return findings using these labels:\n\
-             [BASE RATE] phase + historical POS with sample size\n\
-             [TRIAL DATA] specific endpoint result (n, p-value, comparator)\n\
-             [FDA STATUS] current designation or action with date\n\
-             [COMPETITIVE] competitor count, approval status, differentiation\n\
-             [MECHANISTIC] biological plausibility with ontology IDs\n\
-             [MULTIPLIER] Suggested p50: X.XX (p5: X.XX, p95: X.XX) — rationale\n\n\
-             Context: {rationale}\n\
-             Confidence (0.0-1.0) in your assessment."
-        ),
-
-        (d, "macro_forecaster") if d.contains("finance") || d.contains("stock") => format!(
-            "For the forecast: \"{question}\"\n\n\
-             Research the '{driver_display}' driver.\n{params}\n\n\
-             PROVIDE:\n\
-             1. Current value of the key metric for this driver\n\
-             2. Historical trend (3-month, 12-month, relevant cycle)\n\
-             3. Analyst consensus or market expectations\n\
-             4. Comparable precedents with outcomes\n\
-             5. Suggested p50 multiplier based on findings\n\n\
-             Context: {rationale}\n\
-             Be specific — include named sources, dates, dollar figures."
-        ),
-
-        (_, "sentiment_analyzer") => format!(
-            "For the forecast: \"{question}\"\n\n\
-             Analyze sentiment around '{driver_display}'.\n\n\
-             PROVIDE:\n\
-             1. Sentiment classification (strongly bearish → strongly bullish)\n\
-             2. Key narrative themes in recent coverage\n\
-             3. Sentiment trend (improving/stable/deteriorating)\n\
-             4. Expert vs public opinion divergence\n\
-             5. How sentiment should adjust the probability\n\n\
-             Context: {rationale}"
-        ),
-
-        (_, "equity_analyst") => format!(
-            "For the forecast: \"{question}\"\n\n\
-             Analyze the '{driver_display}' driver using live financial data.\n{params}\n\n\
-             PULL FROM FMP API:\n\
-             1. Company profile (price, market cap, sector, beta, 52-week range)\n\
-             2. Income statement (revenue, margins, EPS for last 2-3 years)\n\
-             3. Key ratios (P/E, P/B, P/S, EV/EBITDA, ROE, ROIC, debt/equity)\n\
-             4. DCF intrinsic value vs current price\n\
-             5. Analyst consensus estimates (revenue and EPS, low/avg/high)\n\n\
-             THEN PROVIDE:\n\
-             - Growth trajectory assessment (accelerating/stable/decelerating)\n\
-             - Valuation assessment (undervalued/fair/overvalued with % gap)\n\
-             - Suggested p50 multiplier based on financial data\n\
-             - Confidence (0.0-1.0) in your assessment\n\n\
-             Context: {rationale}\n\n\
-             Ground every claim in specific numbers from FMP data."
-        ),
-
-        (_, "entity_investigator") => format!(
-            "For the forecast: \"{question}\"\n\n\
-             Investigate entities relevant to '{driver_display}'.\n\n\
-             PROVIDE:\n\
-             1. Key decision-makers and their positions\n\
-             2. Organizational dynamics (strategy, leadership, M&A)\n\
-             3. Financial health or resource position\n\
-             4. Relationships and dependencies\n\
-             5. How findings should adjust the probability\n\n\
-             Context: {rationale}"
-        ),
-
-        // General fallback — works for any agent
-        _ => format!(
-            "For the forecast: \"{question}\"\n\n\
-             Research evidence for the '{driver_display}' driver.\n{params}\n\n\
-             PROVIDE:\n\
-             1. Key data points relevant to this driver (with sources and dates)\n\
-             2. Historical base rate or comparable precedent\n\
-             3. Suggested p50 multiplier adjustment based on your findings\n\
-             4. Confidence (0.0-1.0) in your assessment\n\n\
-             Context: {rationale}\n\n\
-             Be specific and quantitative — numbers, percentages, named sources."
-        ),
-    }
 }
 
 /// Generate a Fermi decomposition template for the given domain.

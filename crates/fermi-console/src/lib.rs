@@ -64,6 +64,15 @@
 //! what evidence a forecast is built on, so it is assertion-worthy by
 //! definition.
 //!
+//! [`negotiate`] composes the query an agent is sent from what that agent's
+//! card *declares*, rather than from a hardcoded match on its identifier. The
+//! match was a closed world: an agent designed by someone else could only
+//! ever receive the generic fallback, so the console could only ask
+//! well-formed questions of agents enumerated at compile time — optimising
+//! for known patterns and foreclosing new ones. It also contradicted the
+//! declarations it duplicated. This is the seam where heterogeneous fleets
+//! either compose or don't, so it is asserted rather than eyeballed.
+//!
 //! [`drivers`] answers "is this driver ready to spend money on?". A
 //! forgotten `triangular(0, 0, 0)` placeholder used to be dispatched to a
 //! real research agent, which burned its whole iteration budget on a driver
@@ -91,6 +100,7 @@ pub mod calibration;
 pub mod drivers;
 pub mod flow;
 pub mod mutations;
+pub mod negotiate;
 pub mod plot;
 pub mod roster;
 pub mod routing;

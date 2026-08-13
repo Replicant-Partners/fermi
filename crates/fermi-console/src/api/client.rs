@@ -167,6 +167,14 @@ pub struct Forecast {
     pub iterations: Option<i32>,
     pub drivers: Option<JsonValue>,
     pub evidence: Option<JsonValue>,
+    /// Number of accumulated evidence items. The **list** projection
+    /// returns this count instead of the `evidence` array itself (the items
+    /// carry full source text and would bloat every page), so anything
+    /// summarising research over a list must read this field. `None` on the
+    /// detail endpoint and against older API builds — callers should fall
+    /// back to `evidence.as_array().len()`.
+    #[serde(default)]
+    pub evidence_count: Option<i64>,
     pub agents_used: Option<JsonValue>,
     pub status: String,
     pub actual_outcome: Option<bool>,
@@ -576,6 +584,15 @@ pub struct AgentCard {
     pub tags: Option<Vec<String>>,
     pub performance: Option<JsonValue>,
     pub usage: Option<JsonValue>,
+    // Declaration fields, all `serde(default)`: a server that predates
+    // them simply omits them from the payload, and the console keeps
+    // deserialising instead of failing the whole catalogue fetch.
+    #[serde(default)]
+    pub accepts: Option<Vec<String>>,
+    #[serde(default)]
+    pub prompt_template: Option<String>,
+    #[serde(default)]
+    pub fermi_contract: Option<JsonValue>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
