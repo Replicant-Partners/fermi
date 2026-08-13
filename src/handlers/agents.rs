@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 use agent_bestiary_memory::{Agent, AgentUpdate, Episode};
 
+use crate::agent_economics::{measured_exec_stats, MeasuredExecStats};
 use crate::{
     resolve_agent, resolve_agent_card, AppState, GeminiContent, GeminiGenerationConfig, GeminiPart,
     GeminiRequest, GeminiResponse,
@@ -67,11 +68,18 @@ fn agent_visible_to_caller(agent: &Agent, caller: Option<&AuthPrincipal>) -> boo
 /// merge the catalogue uses — taxonomy, valence, domain knowledge and the
 /// accepts/produces interfaces all live in the card, not the table, so a
 /// second hand-rolled merge would quietly diverge.
+///
+/// `measured` supplies execution stats derived from `episodes` (see
+/// [`crate::agent_economics`] for why the `agents` row can't be trusted for
+/// them). Pass `None` only where run stats are irrelevant to the caller;
+/// the output is then tagged `source: "agents_row"` so a consumer can tell
+/// an unmeasured zero from a measured one.
 pub(crate) fn build_agent_json(
     state: &AppState,
     agent: &Agent,
     owner_display: Option<String>,
     workspace_count: i64,
+    measured: Option<&MeasuredExecStats>,
 ) -> Value {
     let card = state.registry.get(&agent.agent_name).ok();
     let card_json = card.as_ref().and_then(|_c| {
@@ -109,6 +117,12 @@ pub(crate) fn build_agent_json(
         "produces": agent.produces,
         "workflow_template": agent.workflow_template,
         "prompt_template": agent.prompt_template,
+        // The agent's own declaration of how it expects to be invoked and
+        // what it will hand back. Withholding it forces a caller to
+        // hardcode assumptions keyed on specific agent ids, which locks out
+        // every agent that caller has never heard of.
+        "fermi_contract": agent.fermi_contract,
+        "output_contract": agent.output_contract,
         "requires_secrets": agent.requires_secrets,
         "model_params": agent.model_params,
         "capabilities": {
@@ -122,12 +136,31 @@ pub(crate) fn build_agent_json(
             "last_updated": agent.last_consolidated_at,
             "current_commit": agent.current_ontology_commit,
         },
-        "execution_stats": {
-            "total_executions": agent.total_executions,
-            "successful_executions": agent.successful_executions,
-            "failed_executions": agent.failed_executions,
-            "total_cost_usd": agent.total_cost_usd,
-            "avg_execution_time_ms": agent.avg_execution_time_ms,
+        "execution_stats": match measured {
+            Some(m) => json!({
+                "total_executions": m.executions,
+                "successful_executions": m.successful,
+                "failed_executions": m.failed,
+                "total_cost_usd": m.cost_usd,
+                "tokens_used": m.tokens_used,
+                "avg_execution_time_ms": m.avg_execution_time_ms,
+                // Non-zero means `total_cost_usd` is a partial sum. A
+                // consumer presenting spend should say so rather than
+                // pass an incomplete figure off as a total.
+                "episodes_missing_cost": m.episodes_missing_cost,
+                "source": "episodes",
+            }),
+            // No rollup was loaded. Report the row's counters but label
+            // them, so a consumer seeing zeros can tell "never ran" apart
+            // from "nobody measured".
+            None => json!({
+                "total_executions": agent.total_executions,
+                "successful_executions": agent.successful_executions,
+                "failed_executions": agent.failed_executions,
+                "total_cost_usd": agent.total_cost_usd,
+                "avg_execution_time_ms": agent.avg_execution_time_ms,
+                "source": "agents_row",
+            }),
         },
         "dreaming": {
             "budget_credits": agent.dreaming_budget_credits,
@@ -345,6 +378,11 @@ pub async fn list_agents(
             || params.tags.is_some()
             || params.orchestra.is_some();
 
+        // Real run stats for this page, measured from `episodes`. Scoped to
+        // the page so the query stays O(1) as the catalogue grows.
+        let page_uuids: Vec<Uuid> = page_agents.iter().map(|a| a.agent_id).collect();
+        let exec_stats = measured_exec_stats(&state.db, &page_uuids).await;
+
         if !page_agents.is_empty() || total > 0 || filter_requested {
             let agents: Vec<Value> = page_agents
                 .iter()
@@ -355,7 +393,13 @@ pub async fn list_agents(
                         .and_then(|oid| owner_names.get(oid))
                         .cloned();
                     let ws_count = workspace_counts.get(&a.agent_id).copied().unwrap_or(0);
-                    build_agent_json(&state, a, owner_display, ws_count)
+                    build_agent_json(
+                        &state,
+                        a,
+                        owner_display,
+                        ws_count,
+                        exec_stats.get(&a.agent_id),
+                    )
                 })
                 .collect();
             return Json(json!({
@@ -458,11 +502,17 @@ pub async fn get_agent_handler(
         None
     };
 
+    // Measured run stats — keeps parity with list_agents, which is the
+    // point: detail and list disagreeing about how many times an agent has
+    // run is exactly the kind of drift that hides a dead column.
+    let exec_stats = measured_exec_stats(&state.db, &[agent.agent_id]).await;
+
     Ok(Json(build_agent_json(
         &state,
         &agent,
         owner_display,
         workspace_count,
+        exec_stats.get(&agent.agent_id),
     )))
 }
 

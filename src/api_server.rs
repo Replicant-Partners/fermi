@@ -1,3 +1,13 @@
+// `build_agent_json` assembles one large `json!` literal per agent, and an
+// agent card has grown enough declaration fields (accepts, produces,
+// prompt_template, fermi_contract, output_contract, capabilities, execution
+// stats...) that `serde_json`'s recursive macro expansion exceeds the default
+// limit of 128 under `--test`, which adds expansion depth. Non-test builds
+// fit, so this surfaces as "cargo check passes but cargo test won't compile".
+// Raising the limit is what the compiler itself advises; `fermi-console`'s
+// binary carries the same attribute for the same class of reason.
+#![recursion_limit = "256"]
+
 use axum::{
     extract::State,
     http::{header, HeaderValue, StatusCode},
@@ -57,6 +67,14 @@ mod handlers;
 // reach the module. The `pub(crate) use` keeps existing `crate::schema_trust`
 // paths (e.g. in handlers/admin.rs) working unchanged.
 pub(crate) use fermi::schema_trust;
+
+// Agent economics — measured run counts and cost, derived from `episodes`.
+// Re-exported from the library for the same reason `schema_trust` is: one
+// compiled copy, reachable from `cargo test`. Handlers use
+// `crate::agent_economics::*`; a second copy of an aggregate definition is
+// how "successful runs only" creeps into one of them and the platform
+// starts under-reporting spend.
+pub(crate) use fermi::agent_economics;
 
 #[derive(Clone)]
 struct RateLimiter {
@@ -991,6 +1009,12 @@ async fn run_migrations(db: &PgPool) {
         // deleting a forecast left its agent schedules behind. Clears the
         // backlog, then lets Postgres enforce it.
         "migrations/191_forecast_schedules_fk.sql",
+        // One definition of agent economics, derived from `episodes`. The
+        // five `agents.*_executions` / cost counters were never wired to
+        // the execution path, so every consumer — marketplace pricing,
+        // profiles, rosters, the ecology lens, and a deletion safety
+        // guard — read a permanent zero.
+        "migrations/192_agent_execution_rollup.sql",
     ];
 
     for file in &migration_files {

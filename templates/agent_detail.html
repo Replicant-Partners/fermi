@@ -589,6 +589,10 @@
         line-height: 1.5;
         word-break: break-word;
       }
+      .detail-error.degraded {
+        color: var(--orange);
+        border-color: var(--orange);
+      }
       .episodes-pagination {
         display: flex;
         justify-content: center;
@@ -4778,9 +4782,12 @@
           // Failure block first. If this run didn't succeed, the reason is
           // the only thing the reader came for — it outranks timing.
           if (ep.error_details || ep.failure_reason) {
-            const label =
-              ep.status === "success" ? "Degraded" : "Failure Reason";
-            html += `<div class="detail-error">
+            // A run can succeed and still not be clean (tool loop capped
+            // out, answer came from the flush turn). That's a degradation,
+            // not an error, and it shouldn't be painted like one.
+            const degraded = ep.status === "success";
+            const label = degraded ? "Degraded" : "Failure Reason";
+            html += `<div class="detail-error${degraded ? " degraded" : ""}">
               <div style="text-transform:uppercase;letter-spacing:0.05em;font-size:0.85em;margin-bottom:4px">${label}</div>
               <div>${escapeHtml(ep.error_details || ep.failure_reason)}</div>
               ${ep.stop_reason ? `<div style="color:var(--fg3);margin-top:6px;font-size:0.9em">LLM stop reason: <strong>${escapeHtml(ep.stop_reason)}</strong></div>` : ""}

@@ -850,10 +850,32 @@ pub async fn list_forecasts_handler(
     };
 
     let where_clause = conditions.join(" AND ");
+    // Research rollups. The dashboard's Research card summarises "which of
+    // my forecasts have been researched, by whom, how much evidence" — it
+    // can only do that if the LIST projection carries the answer. It used
+    // to read `evidence` / `agents_used` off list rows, but neither column
+    // was ever selected here, so the card was structurally empty no matter
+    // how much research had run.
+    //
+    // We ship a COUNT rather than the `evidence` array itself: evidence
+    // items carry full source text and would multiply every list page's
+    // payload by an order of magnitude for a number the UI then throws
+    // away. `agents_used` ships whole — it's a short array of
+    // `{agent_id, driver_refs}` and the card needs the ids to price runs.
+    //
+    // The `jsonb_typeof` guard mirrors `ops::detect_ungrounded`: the
+    // columns are `NOT NULL DEFAULT '[]'` but a bad writer could leave an
+    // object there, and `jsonb_array_length` errors rather than returning
+    // NULL on non-arrays — that would 500 the whole list.
     let sql = format!(
         "SELECT f.id, f.owner_id::text AS owner_id, f.question_text, f.domain, f.predicted_probability,
                 f.status, f.brier_score, f.actual_outcome, f.target_date, f.visibility,
                 f.tags, f.created_at, f.updated_at, f.resolved_at, f.team_id,
+                COALESCE(jsonb_array_length(
+                    CASE WHEN jsonb_typeof(f.evidence) = 'array'
+                         THEN f.evidence ELSE '[]'::jsonb END), 0) AS evidence_count,
+                CASE WHEN jsonb_typeof(f.agents_used) = 'array'
+                     THEN f.agents_used ELSE '[]'::jsonb END AS agents_used,
                 COALESCE(u.display_name, u.name, u.email, u.user_id) AS owner_display_name
          FROM fermi_forecasts f
          LEFT JOIN users u ON u.user_id = f.owner_id
@@ -917,6 +939,11 @@ pub async fn list_forecasts_handler(
                 "updated_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("updated_at").ok().map(|t| t.to_rfc3339()),
                 "resolved_at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("resolved_at").ok().flatten().map(|t| t.to_rfc3339()),
                 "team_id": r.try_get::<Option<Uuid>, _>("team_id").ok().flatten().map(|u| u.to_string()),
+                // Research rollups (see the projection comment). `evidence`
+                // itself is deliberately absent from list rows — clients that
+                // need the items fetch the detail endpoint.
+                "evidence_count": r.try_get::<i32, _>("evidence_count").ok().unwrap_or(0),
+                "agents_used": r.try_get::<JsonValue, _>("agents_used").ok(),
                 // Spec 26 collaboration context.
                 "access": id.as_ref()
                     .and_then(|i| provenance.get(i))

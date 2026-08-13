@@ -64,22 +64,41 @@ pub async fn get_profile_handler(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Agent count + execution stats
+    // Agent count + execution stats.
+    //
+    // Counted from `agent_execution_rollup` (i.e. from `episodes`), not
+    // from `agents.total_executions` — nothing in the codebase writes that
+    // column, so summing it reported 0 runs for every profile on the
+    // platform. See migrations/192 and src/rollup_trust.rs.
+    //
+    // LEFT JOIN + COALESCE because an agent with no episodes is absent
+    // from the view, not present with a zero; an inner join would drop
+    // never-run agents out of `agent_count` too. The outer `SUM` over
+    // bigint yields NUMERIC, hence the explicit ::bigint for the i64 read.
     let stats_row = sqlx::query(
         "SELECT COUNT(*) as agent_count,
-                COALESCE(SUM(total_executions), 0) as total_executions
-         FROM agents WHERE user_id = $1",
+                COALESCE(SUM(COALESCE(r.executions, 0)), 0)::bigint as total_executions
+         FROM agents a
+         LEFT JOIN agent_execution_rollup r ON r.agent_id = a.agent_id
+         WHERE a.user_id = $1",
     )
     .bind(&user_id)
     .fetch_one(&state.db)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Public agents
+    // Public agents. Ranked and reported on measured runs from
+    // `agent_execution_rollup`; ordering by the write-orphaned
+    // `agents.total_executions` sorted a permanently-zero column, so the
+    // "top 20" was effectively arbitrary. See migrations/192 and
+    // src/rollup_trust.rs.
     let public_agents = sqlx::query(
-        "SELECT agent_name, display_alias, agent_type, description, total_executions
-         FROM agents WHERE user_id = $1 AND visibility = 'public'
-         ORDER BY total_executions DESC LIMIT 20",
+        "SELECT a.agent_name, a.display_alias, a.agent_type, a.description,
+                COALESCE(r.executions, 0) as total_executions
+         FROM agents a
+         LEFT JOIN agent_execution_rollup r ON r.agent_id = a.agent_id
+         WHERE a.user_id = $1 AND a.visibility = 'public'
+         ORDER BY COALESCE(r.executions, 0) DESC LIMIT 20",
     )
     .bind(&user_id)
     .fetch_all(&state.db)
@@ -94,7 +113,10 @@ pub async fn get_profile_handler(
                 "display_alias": r.try_get::<Option<String>, _>("display_alias").unwrap_or(None),
                 "agent_type": r.try_get::<String, _>("agent_type").unwrap_or_default(),
                 "description": r.try_get::<Option<String>, _>("description").unwrap_or(None),
-                "total_executions": r.try_get::<i32, _>("total_executions").unwrap_or(0),
+                // bigint from the view, not the INTEGER column it replaced:
+                // an i32 read here fails to decode and silently falls back
+                // to 0, which is the bug this query was changed to fix.
+                "total_executions": r.try_get::<i64, _>("total_executions").unwrap_or(0),
             })
         })
         .collect();

@@ -42,22 +42,40 @@ pub async fn get_public_profile_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .ok_or((StatusCode::NOT_FOUND, "User not found".to_string()))?;
 
-    // Stats
+    // Stats.
+    //
+    // Runs come from `agent_execution_rollup` (derived from `episodes`),
+    // not from `agents.total_executions` — nothing writes that column, so
+    // every public profile advertised 0 executions regardless of how much
+    // the owner's agents had actually run. See migrations/192 and
+    // src/rollup_trust.rs.
+    //
+    // LEFT JOIN + COALESCE: agents with no episodes are absent from the
+    // view, and they must still be counted in `agent_count`. `SUM` over
+    // bigint returns NUMERIC, so cast to ::bigint for the i64 read below.
     let stats_row = sqlx::query(
         "SELECT COUNT(*) as agent_count,
-                COALESCE(SUM(total_executions), 0) as total_executions
-         FROM agents WHERE user_id = $1 AND visibility = 'public'",
+                COALESCE(SUM(COALESCE(r.executions, 0)), 0)::bigint as total_executions
+         FROM agents a
+         LEFT JOIN agent_execution_rollup r ON r.agent_id = a.agent_id
+         WHERE a.user_id = $1 AND a.visibility = 'public'",
     )
     .bind(&user_id)
     .fetch_one(&state.db)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Public agents
+    // Public agents, ranked by measured runs from the rollup view. The
+    // previous ORDER BY read `agents.total_executions`, which is never
+    // written, so this list was ordered by a constant zero. See
+    // migrations/192 and src/rollup_trust.rs.
     let agent_rows = sqlx::query(
-        "SELECT agent_name, display_alias, agent_type, description, total_executions
-         FROM agents WHERE user_id = $1 AND visibility = 'public'
-         ORDER BY total_executions DESC LIMIT 20",
+        "SELECT a.agent_name, a.display_alias, a.agent_type, a.description,
+                COALESCE(r.executions, 0) as total_executions
+         FROM agents a
+         LEFT JOIN agent_execution_rollup r ON r.agent_id = a.agent_id
+         WHERE a.user_id = $1 AND a.visibility = 'public'
+         ORDER BY COALESCE(r.executions, 0) DESC LIMIT 20",
     )
     .bind(&user_id)
     .fetch_all(&state.db)
@@ -72,7 +90,10 @@ pub async fn get_public_profile_handler(
                 "display_alias": r.try_get::<Option<String>, _>("display_alias").unwrap_or(None),
                 "agent_type": r.try_get::<String, _>("agent_type").unwrap_or_default(),
                 "description": r.try_get::<Option<String>, _>("description").unwrap_or(None),
-                "total_executions": r.try_get::<i32, _>("total_executions").unwrap_or(0),
+                // The view's `executions` is bigint; reading it as i32
+                // would fail to decode and fall through to 0, reproducing
+                // the zero-runs bug this query was rewritten to fix.
+                "total_executions": r.try_get::<i64, _>("total_executions").unwrap_or(0),
             })
         })
         .collect();

@@ -78,16 +78,39 @@ pub async fn ecology_specimens_handler(
     // `evolution::fleet_evolution`.
     let badges = crate::handlers::evolution::fleet_evolution(&state.db).await;
 
-    let specimens: Vec<Value> = agents
+    // The population this lens describes.
+    //
+    // Integration-test scaffolding (`test_agent_<uuid>`) is hidden from the
+    // ecological view for the same reason it is hidden from rosters: it is
+    // not part of the population anyone is asking about, and it dominates
+    // the counts. Policy is hide-not-delete.
+    let population: Vec<_> = agents
         .iter()
         .filter(|a| a.status.eq_ignore_ascii_case("published"))
-        // Integration-test scaffolding (`test_agent_<uuid>`) is hidden from the
-        // ecological view for the same reason it is hidden from rosters: it is
-        // not part of the population anyone is asking about, and it dominates
-        // the counts. Policy is hide-not-delete.
         .filter(|a| !crate::handlers::is_test_cruft(&a.agent_name))
+        .collect();
+
+    // Measured execution stats for the whole population in one round trip.
+    //
+    // This lens *does* render run counts: the specimen sheet's "Vital signs"
+    // panel shows Runs, Succeeded and Cost to date straight off
+    // `execution_stats`. Passing `None` to `build_agent_json` fell back to
+    // `agents.total_executions` / `successful_executions` / `total_cost_usd`,
+    // which no code path writes — so every specimen in the register read 0
+    // runs and $0.0000 spent, including agents with hundreds of real
+    // episodes. See migrations/192 and src/rollup_trust.rs.
+    //
+    // Agents with no episodes are absent from the rollup, so a missing entry
+    // becomes `MeasuredExecStats::default()` — "never ran", which is true.
+    let specimen_ids: Vec<uuid::Uuid> = population.iter().map(|a| a.agent_id).collect();
+    let exec_stats = crate::agent_economics::measured_exec_stats(&state.db, &specimen_ids).await;
+
+    let specimens: Vec<Value> = population
+        .iter()
         .map(|a| {
-            let mut v = crate::handlers::agents::build_agent_json(&state, a, None, 0);
+            let measured = exec_stats.get(&a.agent_id).copied().unwrap_or_default();
+            let mut v =
+                crate::handlers::agents::build_agent_json(&state, a, None, 0, Some(&measured));
 
             // mig-186 — taxonomy from the DB row wins over the on-disk card.
             //

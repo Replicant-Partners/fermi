@@ -599,6 +599,14 @@ pub async fn admin_list_agents_handler(
         HashMap::new()
     };
 
+    // Run counts measured from `episodes`. The `agents.total_executions`
+    // column this used to read is never written by any code path, so the
+    // admin agent list reported 0 executions for every agent on the
+    // platform — including ones with hundreds of real runs. See
+    // migrations/192 and src/rollup_trust.rs.
+    let agent_uuids: Vec<uuid::Uuid> = filtered.iter().map(|a| a.agent_id).collect();
+    let exec_stats = fermi::agent_economics::measured_exec_stats(&state.db, &agent_uuids).await;
+
     let agents_json: Vec<Value> = filtered
         .iter()
         .map(|a| {
@@ -607,6 +615,7 @@ pub async fn admin_list_agents_handler(
                 .as_deref()
                 .and_then(|oid| owner_names.get(oid))
                 .cloned();
+            let m = exec_stats.get(&a.agent_id).copied().unwrap_or_default();
             json!({
                 "id": a.agent_name,
                 "agent_id": a.agent_id,
@@ -616,8 +625,9 @@ pub async fn admin_list_agents_handler(
                 "owner_display_name": owner_name,
                 "visibility": a.visibility,
                 "status": a.status,
-                "execution_count": a.total_executions,
-                "total_executions": a.total_executions,
+                "execution_count": m.executions,
+                "total_executions": m.executions,
+                "total_cost_usd": m.cost_usd,
                 "tier": a.tier,
                 "model": a.model,
                 "description": a.description,
@@ -2562,10 +2572,23 @@ pub async fn admin_legacy_agent_slugs_handler(
 // of these hold:
 //
 //   * `agent_name LIKE '<prefix>%'` (default prefix: `test_agent_`)
-//   * `total_executions = 0`         (never ran real workload)
+//   * no rows in `episodes`          (never ran real workload)
 //   * `created_at < NOW() - INTERVAL '<older_than_hours> hours'`
 //                                     (default: 24h grace period)
 //   * `tier NOT IN ('curated','system')`  (never touch platform agents)
+//
+// The never-ran gate reads `episodes` — the write-time record of every
+// run — and NOT `agents.total_executions`. That column is never written
+// by any code path (see migrations/192 and src/rollup_trust.rs), so it is
+// zero for every row in the table, and a `total_executions = 0` predicate
+// was therefore vacuous: it eliminated nothing and protected nothing. The
+// guard read like defense-in-depth while contributing none.
+//
+// Nothing was ever wrongly deleted, because the prefix, tier and age
+// gates are individually sufficient. But a safety criterion that cannot
+// fail is worse than an absent one: it makes the remaining gates look
+// more redundant than they are, so the next person to relax one thinks
+// there are four backstops when there are three.
 //
 // Deliberately NOT gated on `visibility` or `status` — the leaking
 // test fixtures in `agent-bestiary/memory/src/` create rows with
@@ -2624,14 +2647,16 @@ pub async fn admin_cleanup_test_cruft_handler(
     //    Postgres literal we can bind directly; use `make_interval`
     //    which does accept a bound integer.
     let rows = sqlx::query(
-        "SELECT agent_id, agent_name, tier, visibility, status, \
-                created_at, total_executions \
-           FROM agents \
-          WHERE agent_name LIKE $1 \
-            AND total_executions = 0 \
-            AND created_at < NOW() - make_interval(hours => $2::int) \
-            AND tier NOT IN ('curated', 'system') \
-          ORDER BY created_at ASC",
+        "SELECT a.agent_id, a.agent_name, a.tier, a.visibility, a.status, \
+                a.created_at, \
+                COALESCE(r.executions, 0) AS executions \
+           FROM agents a \
+           LEFT JOIN agent_execution_rollup r ON r.agent_id = a.agent_id \
+          WHERE a.agent_name LIKE $1 \
+            AND r.agent_id IS NULL \
+            AND a.created_at < NOW() - make_interval(hours => $2::int) \
+            AND a.tier NOT IN ('curated', 'system') \
+          ORDER BY a.created_at ASC",
     )
     .bind(&like_pattern)
     .bind(older_than_hours as i32)
@@ -2688,7 +2713,7 @@ pub async fn admin_cleanup_test_cruft_handler(
                 "created_at":   created_at.to_rfc3339(),
                 "prefix":       prefix,
                 "older_than_hours": older_than_hours,
-                "reason":       "orphan test-fixture row — total_executions=0, older than grace period",
+                "reason":       "orphan test-fixture row — no episodes, older than grace period",
             });
 
             // Log FIRST so the audit trail exists even if the

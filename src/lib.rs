@@ -54,6 +54,18 @@ pub mod email;
 // is why an unsatisfiable contract survived eight releases unnoticed.
 pub mod schema_trust;
 
+// Rollup trust contract — the sibling that asks whether a column is
+// telling the truth, not merely whether it exists. `schema_trust` would
+// have caught `agents.total_executions` disappearing; it could not catch
+// the column being present, correctly typed, and permanently zero because
+// nothing ever wrote it. Content drift needs its own contract.
+pub mod rollup_trust;
+
+// Agent economics — one definition of "how much has this agent run, and
+// what did it cost", measured from `episodes` rather than from the
+// denormalised counters on `agents` that no code path maintains.
+pub mod agent_economics;
+
 // Agent taxonomy (SPEC_30) — the derived ranks. Lives in the lib so both
 // the API (classifying agents at creation) and the parity test can reach
 // it; `scripts/taxonomy.py` remains the editorial tool for on-disk cards.
