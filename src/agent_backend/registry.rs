@@ -62,8 +62,26 @@ impl AgentRegistry {
                 if card_path.exists() {
                     match self.load_agent_card(&card_path) {
                         Ok(card) => {
-                            self.register(card)?;
-                            loaded_count += 1;
+                            // A single already-registered id must not
+                            // abort the directory walk. It used to (`?`),
+                            // which meant loading a directory twice — or
+                            // hitting one duplicate id — left the registry
+                            // populated with an arbitrary prefix of the
+                            // orchestra, since read_dir order is not
+                            // stable. Callers then saw agents "missing"
+                            // for reasons unrelated to their cards.
+                            let agent_id = card.agent_id.clone();
+                            match self.register(card) {
+                                Ok(()) => loaded_count += 1,
+                                Err(RegistryError::AgentExists(_)) => {
+                                    tracing::debug!(
+                                        "Agent {} already registered; skipping {}",
+                                        agent_id,
+                                        card_path.display()
+                                    );
+                                }
+                                Err(e) => return Err(e),
+                            }
                         }
                         Err(e) => {
                             eprintln!(
@@ -354,7 +372,7 @@ impl std::error::Error for RegistryError {}
 /// Local providers (ollama) carry no per-token cost — the user
 /// owns the inference hardware. Return 0.0 so total_cost_usd
 /// stays accurate as "cloud spend only."
-fn calculate_cost(provider: &str, model: &str, tokens: u32) -> f64 {
+pub fn calculate_cost(provider: &str, model: &str, tokens: u32) -> f64 {
     // Local providers: no per-token charge
     if provider == "ollama" {
         return 0.0;
