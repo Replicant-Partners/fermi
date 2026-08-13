@@ -823,6 +823,26 @@ pub struct CockpitState {
     /// Simple modal-less confirm pattern for a destructive action.
     pub delete_forecast_armed: bool,
 
+    /// Same arm/confirm pattern for re-decomposition.
+    ///
+    /// `orchestrate_question` does `self.program = Program::empty()`,
+    /// which discards every driver, estimate, evidence item, agent
+    /// assignment and base rate. It used to do that unconditionally on
+    /// Ctrl+Enter, so the shortcut that decomposes a *new* question also
+    /// silently destroyed hours of work on an existing one.
+    pub redecompose_armed: bool,
+
+    /// Agents assigned to drivers by decomposition but NOT yet executed.
+    ///
+    /// Decomposition used to fan out and fire every agent immediately,
+    /// which bills real money (~$6 for a five-driver forecast) before the
+    /// operator has seen — let alone approved — which specialist landed
+    /// on which driver. Given Fermi's routing is still improving, that
+    /// spends the budget on the wrong agents.
+    ///
+    /// Entries are `(base_agent_id, tracking_id, driver_name, query)`.
+    pub pending_research: Vec<(String, String, String, String)>,
+
     // ── Server-backed agent card cache (v0.8.13) ─────────────────
     //
     // The local `state.registry` is populated from `agents/curated/` on
@@ -1257,6 +1277,8 @@ impl CockpitState {
             cascade_preview_trigger: None,
             cascade_preview_loading: false,
             delete_forecast_armed: false,
+            redecompose_armed: false,
+            pending_research: Vec::new(),
             server_agent_cards: Vec::new(),
             server_agent_cards_loading: false,
             server_agent_cards_fetched: false,
@@ -2273,9 +2295,71 @@ impl CockpitState {
             self.forecast_id,
         );
 
+        // ── Guard the overwrite ────────────────────────────────────
+        //
+        // Below, this method does `self.program = Program::empty()`. That
+        // discards every driver, hand-tuned estimate, evidence item,
+        // agent assignment and base rate on the forecast. It ran
+        // unconditionally, so the shortcut for decomposing a NEW question
+        // silently destroyed work on an existing one — including research
+        // the operator had paid for.
+        //
+        // Same arm/confirm idiom as `arm_delete_forecast`: state what
+        // would be lost, require a second press. Not gated behind
+        // `is_locked` because a locked forecast can still be re-asked.
+        if !self.redecompose_armed {
+            let n_drivers = self.program.drivers().len();
+            let n_evidence = self.program.evidence_items().len();
+            let n_agents = self
+                .program
+                .agents()
+                .iter()
+                .filter(|a| !a.driver_refs.is_empty())
+                .count();
+
+            if n_drivers > 0 || n_evidence > 0 {
+                self.redecompose_armed = true;
+                self.messages.push(AssistantMessage {
+                    node: "question".into(),
+                    kind: MessageKind::Warning,
+                    text: format!(
+                        "Re-decomposing discards {} driver{}, {} evidence item{} and {} agent \
+                         assignment{} — including any estimates you edited by hand. \
+                         Press {} again within 5s to confirm, or edit drivers directly instead.",
+                        n_drivers,
+                        if n_drivers == 1 { "" } else { "s" },
+                        n_evidence,
+                        if n_evidence == 1 { "" } else { "s" },
+                        n_agents,
+                        if n_agents == 1 { "" } else { "s" },
+                        crate::keys::chord("Enter"),
+                    ),
+                });
+                cx.notify();
+                // Auto-disarm so the confirm doesn't sit primed forever
+                // and catch a later, unrelated Ctrl+Enter.
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_secs(5))
+                        .await;
+                    this.update(cx, |state, cx| {
+                        if state.redecompose_armed {
+                            state.redecompose_armed = false;
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+                })
+                .detach();
+                return;
+            }
+        }
+        self.redecompose_armed = false;
+
         self.orchestration_running = true;
         self.clear_messages();
         self.agent_runs.clear();
+        self.pending_research.clear();
         self.sim_results = None;
         self.sim_error = None;
         self.session_cost = 0.0;
@@ -3048,28 +3132,27 @@ impl CockpitState {
                     confidence_threshold: None,
                 });
 
-                // Track execution
-                self.agent_runs.push(AgentExecution {
-                    agent_name: compound_name,
-                    base_agent_id: agent_to_use.clone(),
-                    status: AgentRunStatus::Running,
-                    evidence_count: 0,
-                    confidence: None,
-                    error: None,
-                    credits_charged: None,
-                    started_at: Some(
-                        std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs(),
-                    ),
-                    completed_at: None,
-                    latest_finding: None,
-                });
-
-                // Execute the ABW agent; track it under its bound name so
-                // evidence lands on this driver.
-                self.fire_agent(&agent_to_use, &compound_for_fire, &query, cx);
+                // STAGE the run; do not fire it.
+                //
+                // This used to call `fire_agent` immediately for every
+                // driver, so decomposition spent real money (~$6 on a
+                // five-driver forecast) before the operator had seen which
+                // specialist landed on which driver. With routing still
+                // improving, that reliably bought the wrong research — and
+                // there was no way to inspect the assignment first, because
+                // the spend and the assignment were the same action.
+                //
+                // Agents are bound to drivers in the AST above, so they
+                // appear on the driver cards for review, re-assignment or
+                // deletion. Execution is now a separate, explicit step:
+                // `run_pending_research`.
+                self.pending_research.push((
+                    agent_to_use.clone(),
+                    compound_for_fire,
+                    driver_name.clone(),
+                    query.clone(),
+                ));
+                let _ = compound_name;
                 assigned_count += 1;
             }
 
@@ -3091,15 +3174,75 @@ impl CockpitState {
 
             self.messages.push(AssistantMessage {
                 node: "question".into(),
-                kind: MessageKind::Info,
+                kind: MessageKind::Suggestion,
                 text: format!(
-                    "🔬 Auto-assigned {} agents to {} drivers: {}. Evidence streaming in…",
+                    "🔬 Staged {} agents on {} drivers: {}. \
+                     Nothing has run yet and nothing has been billed — review the \
+                     assignments on each driver card, re-assign anything that looks wrong, \
+                     then press {} to run them (or use Run Now per driver).",
                     assigned_count,
                     driver_names.len(),
-                    summary.join(", ")
+                    summary.join(", "),
+                    crate::keys::chord("Enter"),
                 ),
             });
         }
+    }
+
+    /// Execute the research staged by decomposition.
+    ///
+    /// The second half of the split that `process_macro_forecaster_result`
+    /// used to do in one go. Separating them is the whole point: the
+    /// operator gets to see and correct agent×driver assignments before
+    /// any of them bills.
+    pub fn run_pending_research(&mut self, cx: &mut Context<Self>) {
+        if self.pending_research.is_empty() {
+            return;
+        }
+        if let Some(reason) = self.refuse_write() {
+            self.messages.push(AssistantMessage {
+                node: "question".into(),
+                kind: MessageKind::Warning,
+                text: reason,
+            });
+            cx.notify();
+            return;
+        }
+
+        let staged = std::mem::take(&mut self.pending_research);
+        let n = staged.len();
+
+        for (base_agent_id, tracking_id, _driver, query) in &staged {
+            self.agent_runs.push(AgentExecution {
+                agent_name: tracking_id.clone(),
+                base_agent_id: base_agent_id.clone(),
+                status: AgentRunStatus::Running,
+                evidence_count: 0,
+                confidence: None,
+                error: None,
+                credits_charged: None,
+                started_at: Some(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                ),
+                completed_at: None,
+                latest_finding: None,
+            });
+            self.fire_agent(base_agent_id, tracking_id, query, cx);
+        }
+
+        self.messages.push(AssistantMessage {
+            node: "question".into(),
+            kind: MessageKind::Info,
+            text: format!(
+                "⟳ Running {} staged agent{}. Evidence streaming in…",
+                n,
+                if n == 1 { "" } else { "s" }
+            ),
+        });
+        cx.notify();
     }
 
     /// Discover research-relevant agents for the Fermi orchestra.
@@ -6114,7 +6257,42 @@ impl CockpitState {
              5. Rate the evidence quality (0.0-1.0) based on source reliability and relevance"
         );
 
-        let compound = bound_agent_name("market_research", driver_name);
+        // Which analyst reads the URL?
+        //
+        // This was hardcoded to `market_research`, so pasting a link
+        // about Guardiola's succession onto a football driver summoned a
+        // market analyst — while `football_analyst` sat assigned to that
+        // very driver, unused. Prefer whoever is already on the driver;
+        // fall back to domain routing; only then to the generalist.
+        let analyst = self
+            .program
+            .agents()
+            .iter()
+            .filter(|a| a.driver_refs.iter().any(|d| d == driver_name))
+            .map(|a| base_agent_id(&a.name, &a.driver_refs).to_string())
+            .find(|id| self.agent_is_routable(id))
+            .unwrap_or_else(|| {
+                let question = self
+                    .program
+                    .question()
+                    .map(|q| q.text.clone())
+                    .unwrap_or_default();
+                let rationale = self
+                    .program
+                    .driver(driver_name)
+                    .and_then(|d| d.rationale.clone())
+                    .unwrap_or_default();
+                select_agent_for_driver(
+                    driver_name,
+                    &rationale,
+                    &detect_domain(&question),
+                    None,
+                    &|a| self.agent_is_routable(a),
+                )
+                .0
+            });
+
+        let compound = bound_agent_name(&analyst, driver_name);
         self.program.add_agent(AgentStmt {
             name: compound.clone(),
             agent_type: Some("research".into()),
@@ -6127,7 +6305,7 @@ impl CockpitState {
         });
         self.agent_runs.push(AgentExecution {
             agent_name: compound.clone(),
-            base_agent_id: "market_research".into(),
+            base_agent_id: analyst.clone(),
             status: AgentRunStatus::Running,
             evidence_count: 0,
             confidence: None,
@@ -6146,10 +6324,13 @@ impl CockpitState {
         self.messages.push(AssistantMessage {
             node: format!("driver:{}", driver_name),
             kind: MessageKind::Info,
-            text: format!("📎 Analyzing URL for '{}': {}…", driver_display, url),
+            text: format!(
+                "📎 {} is analyzing URL for '{}': {}…",
+                analyst, driver_display, url
+            ),
         });
 
-        self.fire_agent("market_research", &compound, &query, cx);
+        self.fire_agent(&analyst, &compound, &query, cx);
         cx.notify();
     }
 
@@ -7636,7 +7817,16 @@ impl CockpitState {
                 // and the confidence interval moves. Flag for autosave
                 // so a subsequent close of the composer doesn't lose
                 // this simulation.
-                self.mark_dirty();
+                //
+                // But NOT when this forecast isn't ours to write. Opening
+                // a forecast someone shared with you and pressing the
+                // simulate key used to queue an autosave that rewrote the
+                // shared artefact's index and appended revisions to its
+                // history. Simulating is a read — it must stay one when
+                // the write would be refused.
+                if self.refuse_write().is_none() {
+                    self.mark_dirty();
+                }
                 // Spec 23 R-2: refresh server-side pending fits after every
                 // sim run so the sparkline badges reflect any fits the refit
                 // hook may have produced since we last looked.
@@ -11748,15 +11938,26 @@ fn render_action_bar(state: &CockpitState, cx: &mut Context<CockpitState>) -> gp
         .unwrap_or(false);
     let has_drivers = !state.program.drivers().is_empty();
 
-    // ── Research chip ──────────────────────────────────────────────
+    // ── Research chip ─────────────────────────────────────────
+    //
+    // Four states, because this one key now covers a review step and a
+    // destructive confirm. Both used to be invisible: decomposition fired
+    // agents on the same press that assigned them, and re-decomposing
+    // wiped the forecast with no warning.
+    let n_staged = state.pending_research.len();
     let (research_icon, research_label, research_accent) = if state.orchestration_running {
-        ("⟳", "Researching…", theme::GOLD)
+        ("⟳", "Researching…".to_string(), theme::GOLD)
+    } else if n_staged > 0 {
+        // Money is about to be spent; say how much of it.
+        ("▶", format!("Run {} staged", n_staged), theme::GOLD)
+    } else if state.redecompose_armed {
+        ("⚠", "Overwrite — confirm".to_string(), theme::RED)
     } else if has_drivers {
-        ("✓", "Research", theme::GREEN)
+        ("✓", "Research".to_string(), theme::GREEN)
     } else if next == NextAction::Research {
-        ("💡", "Research", theme::CYAN)
+        ("💡", "Research".to_string(), theme::CYAN)
     } else {
-        ("", "Research", theme::FG_MUTED)
+        ("", "Research".to_string(), theme::FG_MUTED)
     };
     let research_disabled = !has_question || state.orchestration_running || locked;
 
@@ -14504,10 +14705,25 @@ fn render_agent_picker(
         available_agents.push((id.to_string(), display, Vec::<String>::new()));
     }
 
+    // Local cards are optional (they depend on where the console was
+    // launched from), so fall through to the server roster before giving
+    // up — otherwise the recommended card renders with no description at
+    // all on a packaged install.
     let recommended_desc = state
         .registry
         .get(recommended)
+        .ok()
         .map(|c| c.metadata.description.clone())
+        .filter(|d| !d.is_empty())
+        .or_else(|| {
+            state
+                .server_agent_cards
+                .iter()
+                .find(|c| c.get("agent_id").and_then(|v| v.as_str()) == Some(recommended))
+                .and_then(|c| c.get("description").and_then(|v| v.as_str()))
+                .map(|s| s.to_string())
+                .filter(|d| !d.is_empty())
+        })
         .unwrap_or_default();
 
     let dn = driver_name.to_string();
@@ -14688,6 +14904,9 @@ fn render_agent_picker(
                                     .gap(ui::s(8.0))
                                     .child(
                                         div()
+                                            .flex_none()
+                                            .overflow_hidden()
+                                            .whitespace_nowrap()
                                             .text_size(ui::TEXT_BASE)
                                             .text_color(rgb(theme::CYAN))
                                             .font_weight(FontWeight::SEMIBOLD)
@@ -14695,14 +14914,19 @@ fn render_agent_picker(
                                             // the bound name (which contains
                                             // a redundant driver suffix).
                                             .child(base_id.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(ui::TEXT_XS)
-                                            .text_color(rgb(theme::FG_DIM))
-                                            .min_w(ui::s(0.0))
-                                            .child(desc),
                                     ),
+                            )
+                            // Description on its own full-width line. As a
+                            // shrinkable flex item beside the agent id it
+                            // got squeezed to a one-character column and
+                            // wrapped one letter per line — same defect as
+                            // the driver editor's scheduled-research rows.
+                            .child(
+                                div()
+                                    .w_full()
+                                    .text_size(ui::TEXT_XS)
+                                    .text_color(rgb(theme::FG_DIM))
+                                    .child(desc),
                             )
                             // Same three actions as the Recommended card,
                             // re-issued so auto-assigned agents are
@@ -14822,6 +15046,8 @@ fn render_agent_picker(
                         .gap(ui::s(8.0))
                         .child(
                             div()
+                                .flex_none()
+                                .whitespace_nowrap()
                                 .text_size(ui::TEXT_LG)
                                 .text_color(rgb(theme::CYAN))
                                 .font_weight(FontWeight::BOLD)
@@ -14829,6 +15055,8 @@ fn render_agent_picker(
                         )
                         .child(
                             div()
+                                .flex_none()
+                                .whitespace_nowrap()
                                 .text_size(ui::TEXT_XS)
                                 .text_color(rgb(theme::GREEN))
                                 .px(ui::s(4.0))
@@ -21483,6 +21711,38 @@ fn render_forecast_invites_section(
 /// Schedules tab show it?" — the tab used to only enumerate
 /// FPL-declared `Schedule::Every` blocks, which meant ambient
 /// assignments (the normal path for fresh forecasts) never appeared.
+/// Agent×driver pairs bound in the AST that have no persisted schedule.
+///
+/// The Schedules tab used to gate its whole "things you could schedule"
+/// list on `schedules.is_empty()`, so saving your FIRST cadence made
+/// every remaining pair vanish — with no way to schedule or dismiss
+/// them, and no indication they still existed. Answering "what is left
+/// to schedule?" directly is both correct and stable as schedules
+/// accumulate.
+///
+/// Keyed on the BASE agent id, because that is what the schedule API
+/// stores; comparing against the bound AST name would never match and
+/// every pair would look unscheduled forever.
+fn unscheduled_agent_driver_pairs(state: &CockpitState) -> Vec<(String, String, String)> {
+    let mut out: Vec<(String, String, String)> = Vec::new();
+    for a in state.program.agents() {
+        if a.name == "fermi" {
+            continue;
+        }
+        let base = base_agent_id(&a.name, &a.driver_refs).to_string();
+        for driver in &a.driver_refs {
+            let already = state
+                .schedules
+                .iter()
+                .any(|s| s.enabled && s.driver_name == *driver && s.agent_id == base);
+            if !already {
+                out.push((base.clone(), driver.clone(), a.query.clone()));
+            }
+        }
+    }
+    out
+}
+
 fn render_on_demand_agents_list(
     _state: &CockpitState,
     on_demand: &[(String, String, String)],
@@ -22167,6 +22427,14 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
             })
             .collect();
 
+        // Anything still unscheduled, rendered BELOW the active list.
+        //
+        // This is the fix for the reported disappearance: saving one
+        // weekly cadence used to drop the operator into this branch, which
+        // rendered only persisted schedules and silently dropped every
+        // other agent×driver pair off the page mid-task.
+        let leftover = unscheduled_agent_driver_pairs(state);
+
         div()
             .flex()
             .flex_col()
@@ -22182,9 +22450,14 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
                             .text_size(ui::TEXT_BASE)
                             .text_color(rgb(theme::FG_DIM))
                             .child(format!(
-                                "{} active schedule{} • auto-fires on cockpit open when overdue",
+                                "{} active schedule{} • auto-fires on cockpit open when overdue{}",
                                 schedules.len(),
-                                if schedules.len() == 1 { "" } else { "s" }
+                                if schedules.len() == 1 { "" } else { "s" },
+                                if leftover.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(" • {} still unscheduled", leftover.len())
+                                },
                             )),
                     )
                     .child(
@@ -22207,6 +22480,9 @@ fn render_schedules_tab(state: &CockpitState, cx: &mut Context<CockpitState>) ->
                     ),
             )
             .children(groups)
+            .when(!leftover.is_empty(), |el| {
+                el.child(render_on_demand_agents_list(state, &leftover, cx))
+            })
             .into_any_element()
     };
 

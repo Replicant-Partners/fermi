@@ -228,6 +228,15 @@ pub fn invalid_tool_declarations(
 }
 
 fn builtin_tools() -> Vec<BuiltinToolDef> {
+    let mut tools = builtin_tools_core();
+    // Weather / prediction-market stack. Kept in its own module because it is
+    // a coherent domain with its own research provenance, but registered here
+    // so it goes through the same phantom-tool validation as everything else.
+    tools.extend(crate::agent_backend::weather_tools::tool_defs());
+    tools
+}
+
+fn builtin_tools_core() -> Vec<BuiltinToolDef> {
     vec![
         BuiltinToolDef {
             name: "search_knowledge",
@@ -2020,6 +2029,13 @@ impl ToolRegistry {
             // Polymarket tools for prediction_market agent and general orchestra use
             "polymarket_search" => execute_polymarket_search(input).await,
             "polymarket_event" => execute_polymarket_event(input).await,
+            // Weather / prediction-market stack (src/agent_backend/weather_tools.rs)
+            name if crate::agent_backend::weather_tools::handles(name) => {
+                match crate::agent_backend::weather_tools::dispatch(name, input).await {
+                    Some(r) => r,
+                    None => Err(format!("Unknown weather tool: {name}")),
+                }
+            }
             // SimOps — Universal Resource Efficiency Engine (SOSA-aligned)
             "simops_cascade_forward" => {
                 crate::agent_backend::simops_tools::execute_simops_cascade_forward(input).await

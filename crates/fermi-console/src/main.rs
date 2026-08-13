@@ -7062,6 +7062,21 @@ impl FermiConsole {
                     cx.notify();
                     return;
                 }
+                // Ctrl+Enter is a three-state action, not one action:
+                //
+                //   staged research pending  -> run it
+                //   otherwise                -> decompose (which arms a
+                //                               confirm when it would
+                //                               overwrite existing work)
+                //
+                // Decomposition no longer fires agents itself, so the
+                // operator gets a review step between "assign" and "spend"
+                // without needing to learn a second shortcut.
+                if !cockpit.pending_research.is_empty() {
+                    cockpit.run_pending_research(cx);
+                    cx.notify();
+                    return;
+                }
                 let question = cockpit.question_input.read(cx).text().to_string();
                 if !question.trim().is_empty() {
                     cockpit.orchestrate_question(&question, cx);

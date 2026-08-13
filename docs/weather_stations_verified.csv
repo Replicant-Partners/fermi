@@ -1,0 +1,51 @@
+icao,name,municipality,iso2,lat,lon,elevation_m,timezone
+CYYZ,Toronto Pearson International Airport,Toronto,CA,43.67594,-79.62942,173,America/Toronto
+EDDM,Munich Airport,Munich,DE,48.35380,11.78610,453,Europe/Berlin
+EFHK,Helsinki Vantaa Airport,Helsinki,FI,60.31836,24.96334,55,Europe/Helsinki
+EGLC,London City Airport,London,GB,51.50530,0.05528,6,Europe/London
+EHAM,Amsterdam Airport Schiphol,Amsterdam,NL,52.30860,4.76389,-3,Europe/Amsterdam
+EPWA,Warsaw Chopin Airport,Warsaw,PL,52.16570,20.96710,110,Europe/Warsaw
+FACT,Cape Town International Airport,Cape Town,ZA,-33.97403,18.60433,46,Africa/Johannesburg
+HKO,Hong Kong Observatory Headquarters,Hong Kong,HK,22.30194,114.17417,32,Asia/Hong_Kong
+KATL,Hartsfield Jackson Atlanta International Airport,Atlanta,US,33.63670,-84.42810,313,America/New_York
+KAUS,Austin Bergstrom International Airport,Austin,US,30.19753,-97.66201,165,America/Chicago
+KBKF,Buckley Space Force Base,Aurora,US,39.70170,-104.75200,1726,America/Denver
+KDAL,Dallas Love Field,Dallas,US,32.84478,-96.84765,148,America/Chicago
+KLAX,Los Angeles International Airport,Los Angeles,US,33.94250,-118.40800,38,America/Los_Angeles
+KLGA,LaGuardia Airport,New York,US,40.77720,-73.87260,6,America/New_York
+KMIA,Miami International Airport,Miami,US,25.79601,-80.28975,2,America/New_York
+KNYC,New York Central Park,New York,US,40.77890,-73.96920,43,America/New_York
+KORD,Chicago O'Hare International Airport,Chicago,US,41.97860,-87.90480,207,America/Chicago
+KSEA,Seattle-Tacoma International Airport,Seattle,US,47.44794,-122.31028,132,America/Los_Angeles
+KSFO,San Francisco International Airport,San Francisco,US,37.61981,-122.37482,4,America/Los_Angeles
+LEMD,Adolfo Suarez Madrid-Barajas Airport,Madrid,ES,40.49341,-3.57225,609,Europe/Madrid
+LFPB,Paris-Le Bourget International Airport,Paris,FR,48.96228,2.43654,66,Europe/Paris
+LIMC,Milan Malpensa International Airport,Milan,IT,45.63060,8.72811,234,Europe/Rome
+LLBG,Ben Gurion International Airport,Tel Aviv,IL,32.01140,34.88670,41,Asia/Jerusalem
+LTAC,Esenboga International Airport,Ankara,TR,40.12810,32.99510,952,Europe/Istanbul
+LTFM,Istanbul Airport,Istanbul,TR,41.27487,28.73214,99,Europe/Istanbul
+MMMX,Mexico City Benito Juarez International Airport,Mexico City,MX,19.43582,-99.07033,2230,America/Mexico_City
+NZWN,Wellington International Airport,Wellington,NZ,-41.32684,174.80686,12,Pacific/Auckland
+OEJN,King Abdulaziz International Airport,Jeddah,SA,21.68024,39.15744,15,Asia/Riyadh
+OPKC,Jinnah International Airport,Karachi,PK,24.90650,67.16080,30,Asia/Karachi
+RCSS,Taipei Songshan International Airport,Taipei,TW,25.06724,121.55282,5,Asia/Taipei
+RJTT,Tokyo Haneda International Airport,Tokyo,JP,35.54968,139.78696,11,Asia/Tokyo
+RKPK,Gimhae International Airport,Busan,KR,35.17950,128.93800,2,Asia/Seoul
+RKSI,Incheon International Airport,Seoul,KR,37.46910,126.45100,7,Asia/Seoul
+RPLL,Ninoy Aquino International Airport,Manila,PH,14.50860,121.02000,23,Asia/Manila
+SAEZ,Ezeiza International Airport - Ministro Pistarini,Buenos Aires,AR,-34.82220,-58.53580,20,America/Argentina/Buenos_Aires
+SBGR,Sao Paulo-Guarulhos International Airport,Sao Paulo,BR,-23.43127,-46.46995,750,America/Sao_Paulo
+UUWW,Vnukovo International Airport,Moscow,RU,55.59150,37.26150,209,Europe/Moscow
+VILK,Chaudhary Charan Singh International Airport,Lucknow,IN,26.76060,80.88930,125,Asia/Kolkata
+WMKK,Kuala Lumpur International Airport,Kuala Lumpur,MY,2.74558,101.71000,21,Asia/Kuala_Lumpur
+WSSS,Singapore Changi Airport,Singapore,SG,1.35019,103.99400,7,Asia/Singapore
+ZBAA,Beijing Capital International Airport,Beijing,CN,40.07735,116.59670,35,Asia/Shanghai
+ZGGG,Guangzhou Baiyun International Airport,Guangzhou,CN,23.39240,113.29900,15,Asia/Shanghai
+ZGSZ,Shenzhen Bao'an International Airport,Shenzhen,CN,22.63947,113.80326,4,Asia/Shanghai
+ZHCC,Zhengzhou Xinzheng International Airport,Zhengzhou,CN,34.52650,113.84916,151,Asia/Shanghai
+ZHHH,Wuhan Tianhe International Airport,Wuhan,CN,30.77480,114.21372,34,Asia/Shanghai
+ZSJN,Jinan Yaoqiang International Airport,Jinan,CN,36.85720,117.21600,23,Asia/Shanghai
+ZSPD,Shanghai Pudong International Airport,Shanghai,CN,31.14340,121.80500,4,Asia/Shanghai
+ZSQD,Qingdao Jiaodong International Airport,Qingdao,CN,36.36195,120.08817,9,Asia/Shanghai
+ZUCK,Chongqing Jiangbei International Airport,Chongqing,CN,29.71225,106.65189,416,Asia/Shanghai
+ZUUU,Chengdu Shuangliu International Airport,Chengdu,CN,30.55826,103.94597,495,Asia/Shanghai

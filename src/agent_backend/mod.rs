@@ -38,6 +38,9 @@ pub mod registry;
 pub mod simops_tools;
 pub mod tool_executor;
 pub mod tools;
+/// Weather forecasting + prediction-market tools backing the `weather_oracle`
+/// composition. Research provenance: `docs/WEATHER_MARKETS_RESEARCH.md`.
+pub mod weather_tools;
 
 #[allow(ambiguous_glob_reexports)]
 pub use agent_card::*;
