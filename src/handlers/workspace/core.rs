@@ -193,13 +193,21 @@ pub async fn get_workspace_handler(
 
     let is_composition = mission.is_some() || strategist_uuid.is_some();
 
-    // Get workspace agents from junction table
+    // Get workspace agents from junction table.
+    //
+    // Run counts come from `agent_execution_rollup`, not
+    // `agents.total_executions` — nothing writes that column, so this panel
+    // reported 0 runs for every agent on the roster. LEFT JOIN so an agent
+    // that has genuinely never run still appears in the workspace.
+    // See migrations/192 and src/rollup_trust.rs.
     let agent_rows = sqlx::query(
-        "SELECT a.agent_id, a.agent_name, a.description, a.total_executions,
+        "SELECT a.agent_id, a.agent_name, a.description,
+                COALESCE(x.executions, 0) AS executions,
                 a.display_alias, a.agent_type, a.tags, wa.relationship,
                 a.sample_queries, a.accepts, a.produces, a.prompt_template
          FROM workspace_agents wa
          JOIN agents a ON a.agent_id = wa.agent_id
+         LEFT JOIN agent_execution_rollup x ON x.agent_id = a.agent_id
          WHERE wa.workspace_id = $1
          ORDER BY wa.added_at DESC",
     )
@@ -218,7 +226,11 @@ pub async fn get_workspace_handler(
                 "description": r.try_get::<Option<String>, _>("description").unwrap_or(None),
                 "agent_type": r.try_get::<String, _>("agent_type").unwrap_or_default(),
                 "tags": r.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
-                "total_executions": r.try_get::<i32, _>("total_executions").unwrap_or(0),
+                // `executions` is bigint in the rollup view; the old column
+                // was INTEGER. An i32 read here would fail to decode and
+                // fall through to 0, reproducing the bug behind a fixed
+                // query. Wire key unchanged for existing clients.
+                "total_executions": r.try_get::<i64, _>("executions").unwrap_or(0),
                 "relationship": r.try_get::<String, _>("relationship").unwrap_or_default(),
                 "sample_queries": r.try_get::<Option<Vec<String>>, _>("sample_queries").unwrap_or(None),
                 "accepts": r.try_get::<Option<Vec<String>>, _>("accepts").unwrap_or(None),
@@ -286,13 +298,18 @@ pub async fn list_workspace_agents_handler(
         .parse()
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
 
-    // Query workspace_agents junction table joined with agents
+    // Query workspace_agents junction table joined with agents.
+    // Run counts from the rollup view, for the same reason as
+    // `get_workspace_handler` above: `agents.total_executions` is never
+    // written. See migrations/192 and src/rollup_trust.rs.
     let rows = sqlx::query(
-        "SELECT a.agent_id, a.agent_name, a.agent_type, a.description, a.total_executions,
+        "SELECT a.agent_id, a.agent_name, a.agent_type, a.description,
+                COALESCE(x.executions, 0) AS executions,
                 a.display_alias, a.model,
                 wa.relationship, wa.added_by, wa.added_at
          FROM workspace_agents wa
          JOIN agents a ON a.agent_id = wa.agent_id
+         LEFT JOIN agent_execution_rollup x ON x.agent_id = a.agent_id
          WHERE wa.workspace_id = $1
          ORDER BY wa.added_at DESC",
     )
@@ -311,7 +328,9 @@ pub async fn list_workspace_agents_handler(
                 "agent_type": r.try_get::<String, _>("agent_type").unwrap_or_default(),
                 "model": r.try_get::<String, _>("model").unwrap_or_default(),
                 "description": r.try_get::<Option<String>, _>("description").unwrap_or(None),
-                "total_executions": r.try_get::<i32, _>("total_executions").unwrap_or(0),
+                // bigint from the rollup — see the note in
+                // `get_workspace_handler` on why this must not be i32.
+                "total_executions": r.try_get::<i64, _>("executions").unwrap_or(0),
                 "relationship": r.try_get::<String, _>("relationship").unwrap_or_default(),
                 "added_by": r.try_get::<String, _>("added_by").unwrap_or_default(),
                 "added_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("added_at").ok(),

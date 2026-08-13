@@ -179,13 +179,27 @@ pub async fn ecology_overview_handler(
     // Published, non-test. `NOT LIKE 'test\_agent\_%'` with escaped
     // underscores — unescaped, `_` is a single-char wildcard and would
     // also swallow innocent names.
+    //
+    // `runs` comes from `agent_execution_rollup` (i.e. from `episodes`), not
+    // from `SUM(agents.total_executions)` — nothing writes that column, so
+    // this aggregate reported 0 lifetime runs for the entire population
+    // while `episodes` held thousands. See migrations/192 and
+    // src/rollup_trust.rs.
+    //
+    // LEFT JOIN because an agent with no episodes is absent from the view
+    // rather than present with a zero; an inner join would silently drop
+    // never-run agents out of the `n` census counts as well. The outer SUM
+    // over bigint yields NUMERIC, hence the explicit ::bigint for the i64
+    // read below.
     let population = sqlx::query(
-        "SELECT tier, agent_type, COALESCE(llm_provider,'anthropic') AS provider,
-                COUNT(*) AS n, SUM(total_executions) AS runs
-           FROM public.agents
-          WHERE status = 'published'
-            AND agent_name NOT LIKE 'test\\_agent\\_%'
-          GROUP BY tier, agent_type, provider",
+        "SELECT a.tier, a.agent_type, COALESCE(a.llm_provider,'anthropic') AS provider,
+                COUNT(*) AS n,
+                COALESCE(SUM(COALESCE(r.executions, 0)), 0)::bigint AS runs
+           FROM public.agents a
+           LEFT JOIN public.agent_execution_rollup r ON r.agent_id = a.agent_id
+          WHERE a.status = 'published'
+            AND a.agent_name NOT LIKE 'test\\_agent\\_%'
+          GROUP BY a.tier, a.agent_type, provider",
     )
     .fetch_all(db)
     .await
@@ -199,11 +213,11 @@ pub async fn ecology_overview_handler(
     for r in &population {
         let n: i64 = r.try_get("n").unwrap_or(0);
         total += n;
-        total_runs += r
-            .try_get::<Option<i64>, _>("runs")
-            .ok()
-            .flatten()
-            .unwrap_or(0);
+        // `runs` is a non-null bigint (COALESCE + explicit cast in the
+        // query). The view's `executions` is bigint where the column it
+        // replaced was INTEGER — an i32 read here would fail to decode and
+        // fall back to 0, reproducing the bug this query was changed to fix.
+        total_runs += r.try_get::<i64, _>("runs").unwrap_or(0);
         *by_tier
             .entry(r.try_get("tier").unwrap_or_default())
             .or_default() += n;
@@ -219,12 +233,21 @@ pub async fn ecology_overview_handler(
     let mut habitats: Vec<Value> = Vec::new();
 
     // Fermi: explicit membership, so provenance is meaningful.
+    //
+    // Runs come from `agent_execution_rollup`. This used to join `agents`
+    // solely to read `a.total_executions`, which nothing writes — so the
+    // roster showed 0 runs against every member. `orchestra_fermi_members`
+    // is itself defined over `agents` (migrations/180, 185), so that join
+    // was only ever a detour to reach the dead counter and is dropped here;
+    // the LEFT JOIN to the rollup keeps members with no episodes on the
+    // roster, reported as 0 rather than omitted. See migrations/192 and
+    // src/rollup_trust.rs.
     let fermi_rows = sqlx::query(
         "SELECT m.agent_name, m.agent_type, m.tier, m.description,
                 m.membership_source, m.membership_granted_at, m.owner_user_id,
-                a.total_executions
+                COALESCE(r.executions, 0) AS runs
            FROM public.orchestra_fermi_members m
-           JOIN public.agents a ON a.agent_id = m.agent_id
+           LEFT JOIN public.agent_execution_rollup r ON r.agent_id = m.agent_id
           ORDER BY m.membership_source, m.agent_name",
     )
     .fetch_all(db)
@@ -246,7 +269,10 @@ pub async fn ecology_overview_handler(
                 "agent_type": r.try_get::<String,_>("agent_type").ok(),
                 "tier":       r.try_get::<String,_>("tier").ok(),
                 "description":r.try_get::<Option<String>,_>("description").ok().flatten(),
-                "runs":       r.try_get::<Option<i32>,_>("total_executions").ok().flatten().unwrap_or(0),
+                // bigint from the view, not the INTEGER column it replaced:
+                // an i32 read here fails to decode and silently falls back
+                // to 0, which is the bug this query was changed to fix.
+                "runs":       r.try_get::<i64,_>("runs").unwrap_or(0),
                 "membership_source": src,
                 "granted_at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>,_>("membership_granted_at")
                                 .ok().flatten().map(|d| d.to_rfc3339()),

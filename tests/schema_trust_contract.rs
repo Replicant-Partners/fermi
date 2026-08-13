@@ -61,13 +61,29 @@ fn fermi_leaderboard_is_declared_as_a_matview() {
 
 #[test]
 fn no_relation_is_declared_as_both_table_and_matview() {
-    for name in SCHEMA_TABLES {
-        assert!(
-            !SCHEMA_MATVIEWS.contains(name),
-            "{} is declared in both SCHEMA_TABLES and SCHEMA_MATVIEWS; a relation has \
-             exactly one relkind, so one of those declarations can never be satisfied",
-            name
-        );
+    // Three categories now, so check every pair. A relation has exactly one
+    // relkind; declaring it in two categories makes one declaration
+    // permanently unsatisfiable, which is the defect that made the whole
+    // contract un-enablable from v0.11.0 to v0.11.8.
+    let views = fermi::schema_trust::SCHEMA_VIEWS;
+    for (a_label, a, b_label, b) in [
+        (
+            "SCHEMA_TABLES",
+            SCHEMA_TABLES,
+            "SCHEMA_MATVIEWS",
+            SCHEMA_MATVIEWS,
+        ),
+        ("SCHEMA_TABLES", SCHEMA_TABLES, "SCHEMA_VIEWS", views),
+        ("SCHEMA_MATVIEWS", SCHEMA_MATVIEWS, "SCHEMA_VIEWS", views),
+    ] {
+        for name in a {
+            assert!(
+                !b.contains(name),
+                "{name} is declared in both {a_label} and {b_label}; a relation \
+                 has exactly one relkind, so one of those declarations can \
+                 never be satisfied"
+            );
+        }
     }
 }
 
@@ -76,6 +92,7 @@ fn relation_contracts_have_no_duplicates() {
     for (label, contract) in [
         ("SCHEMA_TABLES", SCHEMA_TABLES),
         ("SCHEMA_MATVIEWS", SCHEMA_MATVIEWS),
+        ("SCHEMA_VIEWS", fermi::schema_trust::SCHEMA_VIEWS),
     ] {
         let mut seen = HashSet::new();
         for name in contract {
@@ -103,9 +120,13 @@ fn schema_columns_have_no_duplicates() {
 /// same silent-permanent-failure shape as the matview bug.
 #[test]
 fn every_column_belongs_to_a_declared_relation() {
+    // Plain views count too: `pg_attribute` covers them, so a view's
+    // columns can be (and are) contracted. `agent_execution_rollup` is the
+    // first — see SCHEMA_VIEWS.
     let declared: HashSet<&str> = SCHEMA_TABLES
         .iter()
         .chain(SCHEMA_MATVIEWS.iter())
+        .chain(fermi::schema_trust::SCHEMA_VIEWS.iter())
         .copied()
         .collect();
 
@@ -119,7 +140,8 @@ fn every_column_belongs_to_a_declared_relation() {
 
     assert!(
         orphans.is_empty(),
-        "SCHEMA_COLUMNS references relations absent from SCHEMA_TABLES/SCHEMA_MATVIEWS: {:?}",
+        "SCHEMA_COLUMNS references relations absent from \
+         SCHEMA_TABLES/SCHEMA_MATVIEWS/SCHEMA_VIEWS: {:?}",
         orphans
     );
 }
@@ -152,6 +174,11 @@ fn every_verdict_axis_counts_toward_unhealthy() {
     let verdict = SchemaVerdict {
         missing_tables: vec!["t"],
         missing_matviews: vec!["mv"],
+        // migrations/192 added `agent_execution_rollup`, the first plain
+        // view in the contract. This canary is what made the new axis
+        // impossible to forget: it failed to compile until `missing_views`
+        // was wired into is_healthy()/total_issues().
+        missing_views: vec!["v"],
         relation_kind_mismatches: vec![("r", "table", "view".into())],
         missing_columns: vec![("t", "c")],
         missing_functions: vec![("f", "", "void")],
@@ -161,7 +188,7 @@ fn every_verdict_axis_counts_toward_unhealthy() {
 
     assert_eq!(
         verdict.total_issues(),
-        7,
+        8,
         "SchemaVerdict gained an axis that total_issues() does not count"
     );
     assert!(!verdict.is_healthy());
@@ -232,7 +259,11 @@ fn health_json_reports_matviews_and_distinguishes_kind_drift_from_absence() {
 
 #[test]
 fn contracted_relkinds_are_all_described() {
-    for k in TABLE_KINDS.iter().chain(MATVIEW_KINDS.iter()) {
+    for k in TABLE_KINDS
+        .iter()
+        .chain(MATVIEW_KINDS.iter())
+        .chain(fermi::schema_trust::VIEW_KINDS.iter())
+    {
         assert_ne!(
             describe_relkind(k),
             "unknown relkind",

@@ -190,6 +190,30 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
         run: cargo test --test schema_trust_contract -- --nocapture
 
+      # Rollup contract, offline tier. The tripwire for columns that EXIST
+      # but LIE: `agents.total_executions` was present, correctly typed,
+      # declared in SCHEMA_COLUMNS, and permanently zero because no code
+      # path wrote it. Six handlers read it and served zeros to users.
+      #
+      # Every check above passed the whole time — they all reason about
+      # shape, and this was a content failure. Blocking, and needs no
+      # database, so there is no reason for it not to be.
+      - name: Rollup contract — write-orphaned column tripwire
+        run: cargo test --test rollup_contract
+
+      # Live tier: do the denormalised columns actually agree with their
+      # source of truth? ADVISORY, for the same reason as the schema live
+      # tier — CI's database is seeded by `api_tests` and may not carry
+      # enough episodes to distinguish a stale column from an accurate one,
+      # which the contract deliberately treats as a failure rather than a
+      # pass. Run `scripts/rollup_contract_live.sh` against a real database
+      # for the authoritative answer.
+      - name: Rollup contract — live verification (advisory)
+        continue-on-error: true
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
+        run: cargo test --test rollup_contract -- --ignored --nocapture --test-threads=1
+
       # TODO: fermi-memory integration tests need rework — they insert episodes
       # without creating agents first, violating FK constraints added in migration 010.
       # Re-enable after updating tests to create agents before episodes.

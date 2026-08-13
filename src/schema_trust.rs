@@ -173,12 +173,34 @@ pub const SCHEMA_MATVIEWS: &[&str] = &[
     "fermi_leaderboard",
 ];
 
+/// Plain views the Rust code assumes exist.
+///
+/// Declared separately from [`SCHEMA_TABLES`] and [`SCHEMA_MATVIEWS`] for
+/// the same reason those are separate from each other: `relkind` tells them
+/// apart, and conflating kinds is what made the v0.11.0 contract
+/// unsatisfiable.
+///
+/// A view here is a *derived* definition — no refresh step, so it cannot go
+/// stale. That is the whole reason to prefer one over a matview or a
+/// denormalised column; see [`crate::rollup_trust`].
+pub const SCHEMA_VIEWS: &[&str] = &[
+    // migrations/192_agent_execution_rollup.sql. THE source of truth for
+    // agent run counts, cost and latency — the five `agents.*` counters it
+    // replaces are never written by any code path. Six user-facing
+    // surfaces read this view; if it disappears they all 500, which is
+    // strictly better than the silent zeros they used to serve.
+    "agent_execution_rollup",
+];
+
 /// `pg_class.relkind` values acceptable for a [`SCHEMA_TABLES`] entry:
 /// ordinary table or partitioned table.
 pub const TABLE_KINDS: &[&str] = &["r", "p"];
 
 /// `pg_class.relkind` values acceptable for a [`SCHEMA_MATVIEWS`] entry.
 pub const MATVIEW_KINDS: &[&str] = &["m"];
+
+/// `pg_class.relkind` values acceptable for a [`SCHEMA_VIEWS`] entry.
+pub const VIEW_KINDS: &[&str] = &["v"];
 
 /// Human-readable rendering of a `pg_class.relkind` code, for drift
 /// reports that an operator has to read at 3am.
@@ -218,6 +240,11 @@ pub const SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("agents", "user_id"), // was assumed as `owner_id` in v0.10.15/16
     ("agents", "created_at"),
     ("agents", "updated_at"), // v0.10.18/v0.10.27 — mig-166 got eaten by PgBouncer
+    // Present, correctly typed, and permanently zero — nothing writes it.
+    // Declared here because `Agent`'s SELECT list names it, so its absence
+    // WOULD 500 the row mapper. Its *emptiness* is a separate contract:
+    // see `crate::rollup_trust`, which exists because this check passes on
+    // a column that lies.
     ("agents", "total_executions"),
     ("agents", "description"),
     ("agents", "system_prompt"),
@@ -225,6 +252,19 @@ pub const SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("agents", "fork_pricing"),
     ("agents", "forked_from"),
     ("agents", "fork_count"),
+    // ── agent_execution_rollup (view, migrations/192) ───────────────
+    // Six user-facing surfaces read these. `pg_attribute` covers views as
+    // well as tables, so the column contract applies unchanged — which
+    // means renaming a column in the view definition is caught at boot
+    // rather than at the next page load.
+    ("agent_execution_rollup", "agent_id"),
+    ("agent_execution_rollup", "executions"),
+    ("agent_execution_rollup", "successful"),
+    ("agent_execution_rollup", "failed"),
+    ("agent_execution_rollup", "cost_usd"),
+    ("agent_execution_rollup", "tokens_used"),
+    ("agent_execution_rollup", "avg_execution_time_ms"),
+    ("agent_execution_rollup", "episodes_missing_cost"),
     // ── fermi_forecasts ────────────────────────────────────────────
     ("fermi_forecasts", "id"),
     ("fermi_forecasts", "owner_id"), // realigned TEXT via mig-165
@@ -381,6 +421,8 @@ pub struct SchemaVerdict {
     pub missing_tables: Vec<&'static str>,
     /// Materialized views that don't exist at all.
     pub missing_matviews: Vec<&'static str>,
+    /// Plain views that don't exist at all.
+    pub missing_views: Vec<&'static str>,
     /// Relations that exist under the contracted name but with the wrong
     /// `relkind` — e.g. a materialized view replaced by a plain table.
     /// `(name, expected_kind, found_kind(s))`.
@@ -401,6 +443,7 @@ impl SchemaVerdict {
     pub fn is_healthy(&self) -> bool {
         self.missing_tables.is_empty()
             && self.missing_matviews.is_empty()
+            && self.missing_views.is_empty()
             && self.relation_kind_mismatches.is_empty()
             && self.missing_columns.is_empty()
             && self.missing_functions.is_empty()
@@ -411,6 +454,7 @@ impl SchemaVerdict {
     pub fn total_issues(&self) -> usize {
         self.missing_tables.len()
             + self.missing_matviews.len()
+            + self.missing_views.len()
             + self.relation_kind_mismatches.len()
             + self.missing_columns.len()
             + self.missing_functions.len()
@@ -446,6 +490,17 @@ impl SchemaVerdict {
                 json!({
                     "name": name,
                     "present": !self.missing_matviews.contains(name),
+                    "kind_drift": kind_drift(name),
+                })
+            })
+            .collect();
+
+        let views: Vec<Value> = SCHEMA_VIEWS
+            .iter()
+            .map(|name| {
+                json!({
+                    "name": name,
+                    "present": !self.missing_views.contains(name),
                     "kind_drift": kind_drift(name),
                 })
             })
@@ -499,11 +554,13 @@ impl SchemaVerdict {
             "checked_at": chrono::Utc::now().to_rfc3339(),
             "tables":     tables,
             "matviews":   matviews,
+            "views":      views,
             "columns":    columns,
             "functions":  functions,
             "summary": {
                 "tables":    { "total": SCHEMA_TABLES.len(),    "missing": self.missing_tables.len() },
                 "matviews":  { "total": SCHEMA_MATVIEWS.len(),  "missing": self.missing_matviews.len() },
+                "views":     { "total": SCHEMA_VIEWS.len(),     "missing": self.missing_views.len() },
                 "relation_kind_drift": self.relation_kind_mismatches.len(),
                 "columns":   { "total": SCHEMA_COLUMNS.len(),   "missing": self.missing_columns.len() },
                 "functions": {
@@ -537,6 +594,7 @@ pub async fn verify(db: &PgPool) -> Result<SchemaVerdict, sqlx::Error> {
     let all_relations: Vec<&str> = SCHEMA_TABLES
         .iter()
         .chain(SCHEMA_MATVIEWS.iter())
+        .chain(SCHEMA_VIEWS.iter())
         .copied()
         .collect();
 
@@ -567,18 +625,32 @@ pub async fn verify(db: &PgPool) -> Result<SchemaVerdict, sqlx::Error> {
             .collect()
     };
 
-    for (contract, want_kinds, want_label, is_matview) in [
-        (SCHEMA_TABLES, TABLE_KINDS, "table", false),
-        (SCHEMA_MATVIEWS, MATVIEW_KINDS, "materialized view", true),
+    // Which verdict bucket an absent relation lands in. Three kinds now,
+    // so a bool no longer distinguishes them.
+    enum Slot {
+        Table,
+        Matview,
+        View,
+    }
+
+    for (contract, want_kinds, want_label, slot) in [
+        (SCHEMA_TABLES, TABLE_KINDS, "table", Slot::Table),
+        (
+            SCHEMA_MATVIEWS,
+            MATVIEW_KINDS,
+            "materialized view",
+            Slot::Matview,
+        ),
+        (SCHEMA_VIEWS, VIEW_KINDS, "view", Slot::View),
     ] {
         for &name in contract {
             let found = found_kinds(name);
 
             if found.is_empty() {
-                if is_matview {
-                    verdict.missing_matviews.push(name);
-                } else {
-                    verdict.missing_tables.push(name);
+                match slot {
+                    Slot::Table => verdict.missing_tables.push(name),
+                    Slot::Matview => verdict.missing_matviews.push(name),
+                    Slot::View => verdict.missing_views.push(name),
                 }
             } else if !found.iter().any(|k| want_kinds.contains(k)) {
                 // Present under the contracted name, wrong kind. This is

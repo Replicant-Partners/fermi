@@ -569,16 +569,27 @@ pub async fn list_orchestra_requests_handler(
 
     let status_filter = q.status.as_deref().unwrap_or("pending");
 
+    // `total_executions` is measured from `episodes` via
+    // `agent_execution_rollup`, not read off `agents.total_executions` —
+    // nothing in the codebase writes that column, so an admin reviewing a
+    // membership request saw "0 executions" for every applicant and had no
+    // track record to weigh. See migrations/192 and src/rollup_trust.rs.
+    //
+    // LEFT JOIN + COALESCE: an agent with no episodes is absent from the
+    // view, and an applicant that has genuinely never run must still appear
+    // in the inbox.
     let rows = sqlx::query(
         "SELECT r.request_id, r.orchestra_name, r.agent_id, r.requested_by, \
                 r.proposed_contract, r.rationale, r.status, \
                 r.reviewed_by, r.reviewed_at, r.review_note, \
                 r.created_at, r.updated_at, \
                 a.agent_name, a.agent_type, a.tier, a.description, \
-                a.status AS agent_status, a.total_executions, \
+                a.status AS agent_status, \
+                COALESCE(x.executions, 0) AS total_executions, \
                 COALESCE(u.display_name, u.email, u.user_id) AS requester_display \
            FROM public.orchestra_membership_requests r \
            JOIN public.agents a ON a.agent_id = r.agent_id \
+           LEFT JOIN public.agent_execution_rollup x ON x.agent_id = r.agent_id \
            LEFT JOIN public.users u ON u.user_id = r.requested_by \
           WHERE r.orchestra_name = $1 \
             AND ($2 = 'all' OR r.status = $2) \
@@ -605,7 +616,10 @@ pub async fn list_orchestra_requests_handler(
                     "tier":             r.try_get::<String, _>("tier").ok(),
                     "description":      r.try_get::<Option<String>, _>("description").ok().flatten(),
                     "status":           r.try_get::<String, _>("agent_status").ok(),
-                    "total_executions": r.try_get::<i32, _>("total_executions").ok(),
+                    // bigint from the view, not the INTEGER column it
+                    // replaced: an i32 read here fails to decode and yields
+                    // `null`, which is the bug this query was changed to fix.
+                    "total_executions": r.try_get::<i64, _>("total_executions").ok(),
                 },
                 "requester": {
                     "user_id":    r.try_get::<String, _>("requested_by").ok(),
@@ -1238,8 +1252,14 @@ async fn build_tier_digest_block(
     // names per tier without post-processing in Rust.
     //
     // ORDER BY agent_name is deterministic and human-scannable.
-    // A future refinement can order by total_executions once the
-    // xaman_ek view exposes it.
+    //
+    // A future refinement could rank exemplars by how much each agent has
+    // actually been used. Note that `agents.total_executions` is not the way
+    // to do it: nothing writes that column, so ordering by it would sort a
+    // permanently-zero value — i.e. no ordering at all. Both roster views
+    // expose `agent_id`, so the measured count is reachable with a
+    // `LEFT JOIN agent_execution_rollup` on the subselect. See
+    // migrations/192 and src/rollup_trust.rs.
     let sql = format!(
         "SELECT tier, \
                 COUNT(*) AS n_total, \

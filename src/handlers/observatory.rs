@@ -862,6 +862,18 @@ pub async fn fleet_agents_handler(
         sqlx::query("SELECT agent_id,COUNT(*) as tot,COUNT(*) FILTER (WHERE rubric IS NULL) as nor FROM eval_test_cases WHERE agent_id=ANY($1) AND is_active=true GROUP BY agent_id")
         .bind(&agent_ids).fetch_all(&state.db).await.unwrap_or_default()
         .iter().map(|r|(r.get("agent_id"),(r.get::<i64,_>("tot"),r.get::<i64,_>("nor")))).collect();
+    // Lifetime run counts measured from `episodes` via
+    // `agent_execution_rollup`. `a.total_executions` — what this used to
+    // report — is never written by any code path, so the fleet table showed
+    // 0 executions for every agent the clinician owns, including ones with
+    // hundreds of real runs. Note this is a different number from
+    // `eval_runs` below: executions are production runs, eval runs are
+    // deliberate tests. See migrations/192 and src/rollup_trust.rs.
+    //
+    // An agent with no episodes is absent from the rollup, so it falls
+    // through to `MeasuredExecStats::default()` — 0 runs, which is the
+    // truth rather than an unmeasured zero.
+    let exec_stats = crate::agent_economics::measured_exec_stats(&state.db, &agent_ids).await;
 
     let result: Vec<Value> = agents
         .iter()
@@ -875,6 +887,7 @@ pub async fn fleet_agents_handler(
                 .unwrap_or(serde_json::json!({}));
             let dyads = dyad_c.get(&a.agent_id).copied().unwrap_or(0);
             let (tct, tcnr) = tc_c.get(&a.agent_id).copied().unwrap_or((0, 0));
+            let measured = exec_stats.get(&a.agent_id).copied().unwrap_or_default();
             let health: Option<f64> = sc.as_object().and_then(|obj| {
                 let v: Vec<f64> = obj.values().filter_map(|x| x.as_f64()).collect();
                 if v.is_empty() {
@@ -886,7 +899,7 @@ pub async fn fleet_agents_handler(
             serde_json::json!({
                 "agent_id": a.agent_name, "agent_name": a.agent_name,
                 "agent_type": a.agent_type, "provider": a.llm_provider,
-                "persona_version": a.persona_version, "total_executions": a.total_executions,
+                "persona_version": a.persona_version, "total_executions": measured.executions,
                 "eval_runs": runs, "open_anomalies": anom, "dyad_count": dyads,
                 "maturity": maturity, "overall_health": health, "latest_scores": sc,
                 "care_plan": build_care_plan(runs,tct,tcnr,anom,&maturity,health),

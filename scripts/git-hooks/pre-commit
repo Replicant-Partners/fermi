@@ -9,6 +9,8 @@
 #   3. Owner-column lint    (v0.10.4 substrate: any new migration that
 #                            adds a user-reference column must FK to
 #                            users(user_id) or add to the allowlist)
+#   4. Rollup contract      (write-orphaned columns: no handler may read a
+#                            denormalised counter that nothing writes)
 #
 # Each runs independently — a failure in one doesn't suppress the other.
 #
@@ -37,6 +39,24 @@ staged_rs=$(git diff --cached --name-only --diff-filter=ACM \
             | grep '\.rs$' || true)
 if [ -n "$staged_rs" ]; then
     ./scripts/lint-schema-consistency.py $staged_rs || failed=1
+fi
+
+# ─── 4. Rollup contract, offline tier (only when .rs files are staged) ──
+#
+# The tripwire for the `agents.total_executions` class: a column that
+# exists, is correctly typed, is declared in SCHEMA_COLUMNS, and is
+# permanently zero because no code path writes it. Six handlers
+# independently reached for it and shipped zeros to users; every
+# shape-based check above passed the whole time, because none of them look
+# at values.
+#
+# Offline tier only — no database, so it's fast enough for a hook. The
+# live content check is `./scripts/rollup_contract_live.sh`.
+#
+# Scoped to the roots the contract actually scans, so editing an unrelated
+# .rs file doesn't pay for a test build.
+if [ -n "$staged_rs" ] && echo "$staged_rs" | grep -qE '^src/(handlers|api|apps)/|^src/(rollup_trust|agent_economics|schema_trust)\.rs$'; then
+    cargo test --test rollup_contract --quiet || failed=1
 fi
 
 exit $failed
