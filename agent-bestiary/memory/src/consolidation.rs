@@ -64,12 +64,32 @@ impl ConsolidationWorker {
         }
     }
 
-    /// Runs consolidation for a specific agent
+    /// Runs consolidation for a specific agent, creating its own job record.
     pub async fn consolidate_agent(
         &self,
         agent_id: Uuid,
         epsilon: f64,
         min_samples: usize,
+    ) -> Result<ConsolidationResult> {
+        self.consolidate_agent_with_job(agent_id, epsilon, min_samples, None)
+            .await
+    }
+
+    /// Runs consolidation, optionally recording progress against a job row the
+    /// caller already created.
+    ///
+    /// An async HTTP caller has to hand the client a job id *before* the work
+    /// begins. If the worker then invents its own id, every status poll looks
+    /// up a row that does not exist: the consolidation succeeds, the job row is
+    /// written and completed correctly under the worker's id, and the client
+    /// sees nothing at all. Passing `Some(job_id)` keeps the client's receipt
+    /// and the worker's bookkeeping on the same row.
+    pub async fn consolidate_agent_with_job(
+        &self,
+        agent_id: Uuid,
+        epsilon: f64,
+        min_samples: usize,
+        job_id: Option<Uuid>,
     ) -> Result<ConsolidationResult> {
         // Step 1: Acquire lock
         let acquired = self.lock.acquire(agent_id, 30).await?;
@@ -82,7 +102,7 @@ impl ConsolidationWorker {
 
         // Ensure lock is released even if we error
         let result = self
-            .consolidate_agent_internal(agent_id, epsilon, min_samples)
+            .consolidate_agent_internal(agent_id, epsilon, min_samples, job_id)
             .await;
 
         // Release lock
@@ -96,6 +116,7 @@ impl ConsolidationWorker {
         agent_id: Uuid,
         epsilon: f64,
         min_samples: usize,
+        existing_job_id: Option<Uuid>,
     ) -> Result<ConsolidationResult> {
         // Step 2: Fetch unconsolidated episodes
         let episodes = self.store.get_unconsolidated_episodes(agent_id).await?;
@@ -106,11 +127,32 @@ impl ConsolidationWorker {
 
         let episode_ids: Vec<Uuid> = episodes.iter().map(|e| e.episode_id).collect();
 
-        // Step 3: Create consolidation job
-        let job_id = self
-            .store
-            .create_consolidation_job(agent_id, episode_ids[0], episode_ids[episode_ids.len() - 1])
-            .await?;
+        // Step 3: Create consolidation job — or adopt the caller's, so the id
+        // the client is polling is the id this run reports against.
+        let job_id = match existing_job_id {
+            Some(id) => {
+                // Idempotent insert: the caller normally created the row
+                // already, but adopting an id that has no row would put us back
+                // to updating nothing.
+                self.store
+                    .create_consolidation_job_with_id(
+                        id,
+                        agent_id,
+                        episode_ids[0],
+                        episode_ids[episode_ids.len() - 1],
+                    )
+                    .await?
+            }
+            None => {
+                self.store
+                    .create_consolidation_job(
+                        agent_id,
+                        episode_ids[0],
+                        episode_ids[episode_ids.len() - 1],
+                    )
+                    .await?
+            }
+        };
 
         // Step 4: Cluster failure episodes
         let failure_episodes: Vec<Episode> = episodes
@@ -311,10 +353,35 @@ impl ConsolidationWorker {
             }
         }
 
-        // Step 7: Mark episodes as consolidated
-        self.store
-            .mark_episodes_consolidated(&episode_ids, job_id)
-            .await?;
+        // Step 7: Mark episodes as consolidated — but only if this run could
+        // actually learn from them.
+        //
+        // Consuming the input is what turned a recoverable outage into
+        // permanent data loss. When the extraction LLM was unavailable, this
+        // marked every episode consolidated anyway; the facts and rules paths
+        // are both gated on `self.llm`, so nothing could have been extracted.
+        // On this deployment that left 62 agents with 1,035 episodes marked
+        // consumed, an empty ontology, and zero episodes eligible for a retry:
+        // re-running dreaming did nothing because there was nothing left that
+        // counted as unconsolidated.
+        //
+        // A run WITH an extractor that finds nothing is different — that is a
+        // real "there was no durable knowledge here" answer, and consuming the
+        // episodes is correct. Otherwise a barren set would be reprocessed
+        // forever. So the condition is the presence of the extractor, not the
+        // size of the yield.
+        if self.llm.is_some() {
+            self.store
+                .mark_episodes_consolidated(&episode_ids, job_id)
+                .await?;
+        } else {
+            tracing::warn!(
+                agent_id = %agent_id,
+                episodes = episode_ids.len(),
+                "[consolidation] no extraction model — leaving episodes unconsolidated so \
+                 they can be re-dreamt once one is available"
+            );
+        }
 
         // Step 8: Update job statistics
         self.store
@@ -955,6 +1022,9 @@ mod tests {
             executor_type: "llm".to_string(),
             model: "test-model".to_string(),
             temperature: 0.3,
+            // None = undescribed ("Incertae sedis"), which is the right default
+            // for a consolidation fixture that says nothing about taxonomy.
+            taxonomy: None,
             mcp_servers: None,
             mcp_tools: None,
             description: None,

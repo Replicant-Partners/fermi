@@ -2,18 +2,125 @@
 //!
 //! Run with: `cargo test -p agent-bestiary-memory --test test_seed -- --test-threads=1`
 //! Requires DATABASE_URL environment variable.
+//!
+//! ## Why the fixture is shared rather than per-test
+//!
+//! `SeedData::seed` writes ~150 rows one statement at a time. Against a
+//! remote database that is ~3 minutes, and re-running it in every test made
+//! this file take 36 minutes for 14 tests — roughly 2,100 sequential round
+//! trips, of which all but ~150 were rebuilding a fixture that had just been
+//! torn down. A run that long also has real odds of catching one transient
+//! connection error, and any test that died mid-seed stranded the fixture and
+//! failed every later test on a duplicate key.
+//!
+//! So `setup` is idempotent: it seeds only when the fixture is missing and is
+//! otherwise a single COUNT. The data is read-only for almost every test, and
+//! the exceptions own their writes — the composition tests create their own
+//! workspace rows, and `test_seed_and_cleanup` deliberately tears the fixture
+//! down, after which the next `setup` simply rebuilds it.
+//!
+//! Cost, measured: 36 min → 7 min from cold, and ~3 min when the fixture is
+//! already present.
+//!
+//! ## The fixture outlives the run, on purpose
+//!
+//! Nothing deletes it at the end, which is what makes a warm run cheap. The
+//! rows are namespaced by deterministic ids (`^0000000[0-2]-`) and the agents
+//! are named `seed_*`, so they are easy to identify and safe to leave. Remove
+//! them with `scripts/clean_seed_fixtures.sh --apply` — worth doing before
+//! anything that asserts a global agent count.
 
 use agent_bestiary_memory::{CompositionVersion, MemoryStore, SeedData};
 use chrono::Utc;
+use std::sync::LazyLock;
+use tokio::sync::Mutex;
 use uuid::Uuid;
+
+/// Serialises the seed check so two tests can't both decide the fixture is
+/// missing and race to insert it. Ordinary runs are `--test-threads=1`, but a
+/// parallel run should degrade to "slow", not "duplicate key".
+static SEED_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 async fn setup() -> (MemoryStore, SeedData) {
     dotenvy::dotenv().ok();
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for tests");
     let store = MemoryStore::new(&database_url).await.unwrap();
     let seed = SeedData::build();
-    seed.seed(&store).await.unwrap();
+
+    let _guard = SEED_LOCK.lock().await;
+
+    let agent_ids: Vec<Uuid> = seed.agents.iter().map(|a| a.agent_id).collect();
+    let present: i64 = sqlx::query_scalar("SELECT count(*) FROM agents WHERE agent_id = ANY($1)")
+        .bind(&agent_ids)
+        .fetch_one(store.pool())
+        .await
+        .expect("count seeded agents");
+
+    if present != agent_ids.len() as i64 {
+        // Absent, or a previous run died partway through. Either way the
+        // fixture is not trustworthy: clear whatever survived, then rebuild.
+        // Without the clear, a partial fixture fails the reseed on the first
+        // row it already has.
+        seed.cleanup(&store).await.expect("clear partial fixture");
+        seed.seed(&store).await.expect("seed fixture");
+    }
+
     (store, seed)
+}
+
+/// A real workspace row, plus the user that has to own it.
+///
+/// `composition_versions.workspace_id` is a foreign key to `teams(id)`, and
+/// `teams.owner_id` is in turn a foreign key to `users(user_id)`. So a bare
+/// `Uuid::new_v4()` cannot stand in for a workspace the way these tests
+/// assumed — the insert fails with a 23503, and because the failure happens
+/// after `setup()` has already seeded, it leaves the fixture behind and every
+/// subsequent test in the file dies on a duplicate key instead.
+///
+/// Returns the ids so the caller can remove both afterwards.
+async fn create_test_workspace(store: &MemoryStore) -> (Uuid, String) {
+    let owner_id = format!("test_ws_owner_{}", Uuid::new_v4());
+
+    sqlx::query(
+        "INSERT INTO users (user_id, email, password_hash, password_salt)
+         VALUES ($1, $2, 'test-fixture', 'test-fixture')",
+    )
+    .bind(&owner_id)
+    .bind(format!("{}@test.invalid", owner_id))
+    .execute(store.pool())
+    .await
+    .expect("create workspace owner");
+
+    let workspace_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO teams (name, slug, owner_id, origin)
+         VALUES ($1, $2, $3, 'test_fixture')
+         RETURNING id",
+    )
+    .bind("Seed Test Workspace")
+    .bind(format!("test-ws-{}", Uuid::new_v4()))
+    .bind(&owner_id)
+    .fetch_one(store.pool())
+    .await
+    .expect("create test workspace");
+
+    (workspace_id, owner_id)
+}
+
+/// Tear down what `create_test_workspace` made. Best-effort: a failure here
+/// must not mask the assertion that the test actually cares about.
+async fn cleanup_test_workspace(store: &MemoryStore, workspace_id: Uuid, owner_id: &str) {
+    let _ = sqlx::query("DELETE FROM composition_versions WHERE workspace_id = $1")
+        .bind(workspace_id)
+        .execute(store.pool())
+        .await;
+    let _ = sqlx::query("DELETE FROM teams WHERE id = $1")
+        .bind(workspace_id)
+        .execute(store.pool())
+        .await;
+    let _ = sqlx::query("DELETE FROM users WHERE user_id = $1")
+        .bind(owner_id)
+        .execute(store.pool())
+        .await;
 }
 
 #[tokio::test]
@@ -34,8 +141,32 @@ async fn test_seed_and_cleanup() {
     assert!(names.contains(&"seed_geopolitical_risk"));
     assert!(names.contains(&"seed_crypto_sentiment"));
 
-    // Cleanup
+    // The other half of this test's name. `cleanup` deletes agents and leans
+    // on ON DELETE CASCADE for everything else, so assert the children are
+    // actually gone rather than trusting the cascade — an agents-only delete
+    // that left episodes behind is exactly the failure mode that would strand
+    // the fixture and poison later runs.
+    //
+    // This is the one test that removes the shared fixture. That is safe:
+    // `setup` rebuilds it on demand, so whichever test runs next re-seeds.
     seed.cleanup(&store).await.unwrap();
+
+    let agent_ids: Vec<Uuid> = seed.agents.iter().map(|a| a.agent_id).collect();
+    let remaining_agents: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM agents WHERE agent_id = ANY($1)")
+            .bind(&agent_ids)
+            .fetch_one(store.pool())
+            .await
+            .unwrap();
+    assert_eq!(remaining_agents, 0, "cleanup should remove seed agents");
+
+    let remaining_episodes: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM episodes WHERE agent_id = ANY($1)")
+            .bind(&agent_ids)
+            .fetch_one(store.pool())
+            .await
+            .unwrap();
+    assert_eq!(remaining_episodes, 0, "cleanup should cascade to episodes");
 }
 
 // ── Composition version tests ─────────────────────────────────────────────
@@ -43,7 +174,7 @@ async fn test_seed_and_cleanup() {
 #[tokio::test]
 async fn test_composition_version_create_and_list() {
     let (store, seed) = setup().await;
-    let workspace_id = Uuid::new_v4(); // synthetic workspace id
+    let (workspace_id, ws_owner) = create_test_workspace(&store).await;
 
     let version = CompositionVersion {
         composition_version_id: Uuid::new_v4(),
@@ -88,13 +219,13 @@ async fn test_composition_version_create_and_list() {
     );
 
     println!("✅ CompositionVersion create and list works!");
-    seed.cleanup(&store).await.unwrap();
+    cleanup_test_workspace(&store, workspace_id, &ws_owner).await;
 }
 
 #[tokio::test]
 async fn test_composition_version_reject_stores_note() {
-    let (store, seed) = setup().await;
-    let workspace_id = Uuid::new_v4();
+    let (store, _seed) = setup().await;
+    let (workspace_id, ws_owner) = create_test_workspace(&store).await;
 
     let version = CompositionVersion {
         composition_version_id: Uuid::new_v4(),
@@ -136,13 +267,13 @@ async fn test_composition_version_reject_stores_note() {
     assert!(v.accepted_by.is_none(), "Should not be accepted");
 
     println!("✅ CompositionVersion rejection with note works!");
-    seed.cleanup(&store).await.unwrap();
+    cleanup_test_workspace(&store, workspace_id, &ws_owner).await;
 }
 
 #[tokio::test]
 async fn test_composition_version_sequential_numbering() {
-    let (store, seed) = setup().await;
-    let workspace_id = Uuid::new_v4();
+    let (store, _seed) = setup().await;
+    let (workspace_id, ws_owner) = create_test_workspace(&store).await;
 
     // Create 3 versions for the same workspace
     for i in 0..3u32 {
@@ -173,7 +304,7 @@ async fn test_composition_version_sequential_numbering() {
     assert_eq!(versions[2].version_number, 1);
 
     println!("✅ CompositionVersion sequential numbering works!");
-    seed.cleanup(&store).await.unwrap();
+    cleanup_test_workspace(&store, workspace_id, &ws_owner).await;
 }
 
 // ── Valence round-trip test ──────────────────────────────────────────────────
@@ -190,29 +321,18 @@ async fn test_valence_persists_through_update() {
         "personality_traits": ["precise", "evidence-driven", "calibrated"]
     });
 
-    // Apply valence via AgentUpdate
+    // Apply valence via AgentUpdate.
+    //
+    // Spread the `Default` rather than listing every field as `None`. The
+    // exhaustive form broke this test the moment `AgentUpdate` grew
+    // `mcp_servers`, `mcp_tools`, `output_contract`, `valence` and
+    // `taxonomy` (commit 8983c063), which is a compile error in a test that
+    // does not care about any of those fields — it sets one and asserts it
+    // round-trips. `AgentUpdate` derives `Default`, so this states the
+    // intent directly and stays correct as the struct grows.
     let update = agent_bestiary_memory::AgentUpdate {
-        description: None,
-        system_prompt: None,
-        visibility: None,
-        tags: None,
-        model: None,
-        temperature: None,
-        education_budget_credits: None,
-        display_alias: None,
-        status: None,
-        fork_pricing: None,
-        accepts: None,
-        produces: None,
-        workflow_template: None,
-        prompt_template: None,
-        requires_secrets: None,
-        llm_provider: None,
-        model_ladder: None,
-        min_tier: None,
-        capability_gates: None,
-        model_params: None,
         valence: Some(valence.clone()),
+        ..Default::default()
     };
 
     store.update_agent(agent_id, &update).await.unwrap();
@@ -242,7 +362,6 @@ async fn test_valence_persists_through_update() {
     assert_eq!(traits.len(), 3);
 
     println!("✅ Agent valence round-trip through update works!");
-    seed.cleanup(&store).await.unwrap();
 }
 
 #[tokio::test]
@@ -280,8 +399,6 @@ async fn test_episode_queries() {
         4,
         "Expected 4 failure episodes with embeddings"
     );
-
-    seed.cleanup(&store).await.unwrap();
 }
 
 #[tokio::test]
@@ -308,8 +425,6 @@ async fn test_episode_similarity_search() {
         *distance < 0.01,
         "Self-similarity distance should be near 0"
     );
-
-    seed.cleanup(&store).await.unwrap();
 }
 
 #[tokio::test]
@@ -317,12 +432,43 @@ async fn test_rule_lifecycle() {
     let (store, seed) = setup().await;
     let agent_id = seed.market_research_agent().agent_id;
 
+    // `get_agent_semantic_rules` returns *active* rules only, by design: a
+    // deactivated rule must not influence an agent. The fixture writes 6 per
+    // agent and deactivates 2 (one Rejected, one superseded), so the getter
+    // is expected to yield 4.
+    //
+    // This previously asserted 6 and then filtered for active itself, which
+    // only makes sense against a getter that returns everything. The other
+    // three assertions below were already written for the active-only view,
+    // so 368 was the single line out of step.
     let rules = store.get_agent_semantic_rules(agent_id).await.unwrap();
-    assert_eq!(rules.len(), 6, "Expected 6 rules per agent");
+    assert_eq!(rules.len(), 4, "Expected 4 active rules per agent");
 
-    // Active rules: 4 (2 verified + 2 pending; rejected and superseded are deactivated)
+    // The getter's contract: everything it hands back is active.
     let active: Vec<_> = rules.iter().filter(|r| r.is_active).collect();
-    assert_eq!(active.len(), 4, "Expected 4 active rules");
+    assert_eq!(
+        active.len(),
+        4,
+        "get_agent_semantic_rules must return only active rules"
+    );
+
+    // The deactivation half of the lifecycle is invisible through the getter,
+    // so assert it against the table directly — otherwise "rejected and
+    // superseded get deactivated" is untested, which is the behaviour this
+    // test is named for.
+    let (total, inactive): (i64, i64) = sqlx::query_as(
+        "SELECT count(*), count(*) FILTER (WHERE NOT is_active)
+           FROM semantic_rules WHERE agent_id = $1",
+    )
+    .bind(agent_id)
+    .fetch_one(store.pool())
+    .await
+    .unwrap();
+    assert_eq!(total, 6, "Expected 6 rules per agent on disk");
+    assert_eq!(
+        inactive, 2,
+        "Expected rejected + superseded to be deactivated"
+    );
 
     // Verified rules among active
     let verified_active: Vec<_> = active
@@ -339,8 +485,6 @@ async fn test_rule_lifecycle() {
     // Rules with embeddings
     let with_embeddings: Vec<_> = rules.iter().filter(|r| r.embedding.is_some()).collect();
     assert_eq!(with_embeddings.len(), 4, "Expected 4 rules with embeddings");
-
-    seed.cleanup(&store).await.unwrap();
 }
 
 #[tokio::test]
@@ -376,8 +520,6 @@ async fn test_entity_graph() {
         !no_summary.is_empty(),
         "Expected at least 1 entity with no summary in seed data"
     );
-
-    seed.cleanup(&store).await.unwrap();
 }
 
 #[tokio::test]
@@ -412,8 +554,6 @@ async fn test_fact_connectivity() {
         !entity_facts.is_empty(),
         "First entity should have connected facts"
     );
-
-    seed.cleanup(&store).await.unwrap();
 }
 
 #[tokio::test]
@@ -465,8 +605,6 @@ async fn test_community_membership() {
             );
         }
     }
-
-    seed.cleanup(&store).await.unwrap();
 }
 
 #[tokio::test]
@@ -493,8 +631,6 @@ async fn test_consolidation_jobs() {
         .unwrap();
     let consolidated: Vec<_> = all_episodes.iter().filter(|e| e.consolidated).collect();
     assert_eq!(consolidated.len(), 10, "10 episodes should be consolidated");
-
-    seed.cleanup(&store).await.unwrap();
 }
 
 #[tokio::test]
@@ -529,13 +665,11 @@ async fn test_cross_agent_data_isolation() {
             "Episodes should be isolated between agents"
         );
     }
-
-    seed.cleanup(&store).await.unwrap();
 }
 
 #[tokio::test]
 async fn test_dreaming_budget_states() {
-    let (store, seed) = setup().await;
+    let (store, _seed) = setup().await;
 
     // market_research: 10 budget, 3 used (has remaining)
     let mr = store
@@ -560,6 +694,4 @@ async fn test_dreaming_budget_states() {
         .unwrap();
     assert_eq!(crypto.dreaming_budget_credits, 0);
     assert_eq!(crypto.dreaming_credits_used, 0);
-
-    seed.cleanup(&store).await.unwrap();
 }

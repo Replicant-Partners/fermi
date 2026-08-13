@@ -51,6 +51,13 @@ pub struct SeedData {
 }
 
 pub struct ConsolidationJobSeed {
+    /// Deterministic id, `make_uuid(agent_idx, 6, job_idx)`.
+    ///
+    /// The fixture has to know this before insert, because
+    /// `consolidated_episodes` points episodes at their consolidating job and
+    /// `episodes.consolidation_job_id` is a real foreign key. Letting the
+    /// store mint the id meant nothing could reference the job afterwards.
+    pub job_id: Uuid,
     pub agent_id: Uuid,
     pub episode_range_start: Uuid,
     pub episode_range_end: Uuid,
@@ -188,7 +195,7 @@ impl SeedData {
                 fermi_contract: None,
                 model_params: serde_json::Value::Object(serde_json::Map::new()),
                 valence: None,
-            taxonomy: None,
+                taxonomy: None,
                 output_contract: None,
             },
             Agent {
@@ -249,7 +256,7 @@ impl SeedData {
                 fermi_contract: None,
                 model_params: serde_json::Value::Object(serde_json::Map::new()),
                 valence: None,
-            taxonomy: None,
+                taxonomy: None,
                 output_contract: None,
             },
             Agent {
@@ -305,7 +312,7 @@ impl SeedData {
                 fermi_contract: None,
                 model_params: serde_json::Value::Object(serde_json::Map::new()),
                 valence: None,
-            taxonomy: None,
+                taxonomy: None,
                 output_contract: None,
             },
         ]
@@ -879,13 +886,14 @@ impl SeedData {
 
     /// Build 2 consolidation jobs per agent.
     fn build_consolidation_jobs(
-        _ai: u8,
+        ai: u8,
         agent_id: Uuid,
         episodes: &[Episode],
     ) -> Vec<ConsolidationJobSeed> {
         vec![
             // Completed job
             ConsolidationJobSeed {
+                job_id: make_uuid(ai, 6, 0),
                 agent_id,
                 episode_range_start: episodes[0].episode_id,
                 episode_range_end: episodes[9].episode_id,
@@ -901,6 +909,7 @@ impl SeedData {
             },
             // Failed job
             ConsolidationJobSeed {
+                job_id: make_uuid(ai, 6, 1),
                 agent_id,
                 episode_range_start: episodes[10].episode_id,
                 episode_range_end: episodes[17].episode_id,
@@ -1012,9 +1021,16 @@ impl SeedData {
         }
 
         // 7. Consolidation jobs
+        //
+        // Insert under the fixture's own id rather than letting the store
+        // mint one. Step 8 has to point episodes at the job that consolidated
+        // them, and `episodes.consolidation_job_id` carries a real foreign
+        // key (`fk_episodes_consolidation`), so the id must be knowable before
+        // the insert.
         for job in &self.consolidation_jobs {
             let job_id = store
-                .create_consolidation_job(
+                .create_consolidation_job_with_id(
+                    job.job_id,
                     job.agent_id,
                     job.episode_range_start,
                     job.episode_range_end,
@@ -1046,15 +1062,18 @@ impl SeedData {
         }
 
         // 8. Mark consolidated episodes
-        for (ep_ids, _job_id) in &self.consolidated_episodes {
-            // We can't use the stored job_id (create_consolidation_job generates its own),
-            // so we use mark_episodes_consolidated which just sets consolidated=true
-            // The episodes are already created with consolidated=true, so this is a no-op
-            // But we call it to exercise the method
-            let dummy_job_id = Uuid::new_v4();
-            store
-                .mark_episodes_consolidated(ep_ids, dummy_job_id)
-                .await?;
+        //
+        // Uses the real job id from step 7. This previously passed a fresh
+        // `Uuid::new_v4()`, on the stated reasoning that the call was "a
+        // no-op" because the episodes were already built with
+        // `consolidated = true`. It was not a no-op:
+        // `mark_episodes_consolidated` also writes `consolidation_job_id`,
+        // which is a foreign key into `consolidation_jobs`, so a random id
+        // failed the whole seed with a 23503 and left the fixture
+        // half-written. Every later run then died on a duplicate key from
+        // the stranded rows, which is why the real error was hard to see.
+        for (ep_ids, job_id) in &self.consolidated_episodes {
+            store.mark_episodes_consolidated(ep_ids, *job_id).await?;
         }
 
         // 9. Deactivate rejected/superseded rules
