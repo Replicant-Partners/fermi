@@ -841,8 +841,17 @@ pub struct CockpitState {
     /// on which driver. Given Fermi's routing is still improving, that
     /// spends the budget on the wrong agents.
     ///
-    /// Entries are `(base_agent_id, tracking_id, driver_name, query)`.
-    pub pending_research: Vec<(String, String, String, String)>,
+    /// Entries are `(base_agent_id, tracking_id, driver_name, query,
+    /// invocation_provenance)`. The last element records how the query was
+    /// arrived at, so the episode can be joined against outcome later — see
+    /// `negotiate::InvocationProvenance`.
+    pub pending_research: Vec<(
+        String,
+        String,
+        String,
+        String,
+        Option<negotiate::InvocationProvenance>,
+    )>,
 
     // ── Server-backed agent card cache (v0.8.13) ─────────────────
     //
@@ -3067,6 +3076,10 @@ impl CockpitState {
             // Worth naming: an undeclared agent gets the generic request and
             // is the likeliest to return something the driver can't consume.
             let mut undeclared: Vec<String> = Vec::new();
+            // Agents whose declared inputs contain nothing that takes free
+            // text — we are about to bind them to an interface they never
+            // advertised. Same defect class the pipeline audit found 13 of.
+            let mut mismatched: Vec<(String, negotiate::InputBinding)> = Vec::new();
 
             for driver_name in &driver_names {
                 let driver = self.program.driver(driver_name);
@@ -3136,26 +3149,51 @@ impl CockpitState {
                 // agent the console had never heard of — which is every
                 // third-party design — could only receive the generic
                 // fallback no matter how precisely its card described it.
-                let query = match suggestion {
+                let contract = self.contract_for(&agent_to_use);
+                let binding = negotiate::bind_input(contract.as_ref());
+                if binding.is_mismatch() {
+                    mismatched.push((agent_to_use.clone(), binding.clone()));
+                }
+
+                let (query, provenance) = match suggestion {
                     Some((suggested_agent, suggested_query))
                         if suggested_agent == &agent_to_use =>
                     {
-                        suggested_query.clone()
+                        // Fermi wrote this one. Record it as such rather than
+                        // claiming a contract we didn't compose against.
+                        let composed = negotiate::ComposedQuery {
+                            text: suggested_query.clone(),
+                            source: negotiate::QuerySource::UserAuthored,
+                            recomposed_from: None,
+                        };
+                        let p = negotiate::InvocationProvenance::new(
+                            &composed,
+                            &binding,
+                            contract.as_ref(),
+                            Some(driver_name),
+                        );
+                        (suggested_query.clone(), Some(p))
                     }
                     _ => {
                         let task = self.research_task_for(driver_name);
-                        let contract = self.contract_for(&agent_to_use);
                         let composed = negotiate::compose_query(&task, contract.as_ref());
                         log::info!(
-                            "[negotiate] {} → {} (query source: {})",
+                            "[negotiate] {} → {} (query source: {}, input: {})",
                             driver_name,
                             agent_to_use,
-                            composed.source.as_str()
+                            composed.source.as_str(),
+                            binding.as_str(),
                         );
                         if matches!(composed.source, negotiate::QuerySource::Undeclared) {
                             undeclared.push(agent_to_use.clone());
                         }
-                        composed.text
+                        let p = negotiate::InvocationProvenance::new(
+                            &composed,
+                            &binding,
+                            contract.as_ref(),
+                            Some(driver_name),
+                        );
+                        (composed.text, Some(p))
                     }
                 };
 
@@ -3195,6 +3233,7 @@ impl CockpitState {
                     compound_for_fire,
                     driver_name.clone(),
                     query.clone(),
+                    provenance,
                 ));
                 let _ = compound_name;
                 assigned_count += 1;
@@ -3252,6 +3291,25 @@ impl CockpitState {
             // Name the agents we had to ask generically. Their replies are
             // the ones least likely to parse into findings, and the fix is
             // on the agent's card, not here.
+            // An interface mismatch is louder than a missing contract: the
+            // agent did declare its inputs, and none of them is a question.
+            for (agent, binding) in &mismatched {
+                if let negotiate::InputBinding::NoTextInput(declared) = binding {
+                    self.messages.push(AssistantMessage {
+                        node: "agents".into(),
+                        kind: MessageKind::Warning,
+                        text: format!(
+                            "{} accepts {} — none of which is a free-text question, \
+                             yet it is about to be sent a research prompt. Either its \
+                             card understates what it takes, or it is the wrong agent \
+                             for a driver. Re-assign it, or fix `accepts` on the card.",
+                            agent,
+                            declared.join(", ")
+                        ),
+                    });
+                }
+            }
+
             undeclared.sort();
             undeclared.dedup();
             if !undeclared.is_empty() {
@@ -3295,7 +3353,7 @@ impl CockpitState {
         let staged = std::mem::take(&mut self.pending_research);
         let n = staged.len();
 
-        for (base_agent_id, tracking_id, _driver, query) in &staged {
+        for (base_agent_id, tracking_id, _driver, query, provenance) in &staged {
             self.agent_runs.push(AgentExecution {
                 agent_name: tracking_id.clone(),
                 base_agent_id: base_agent_id.clone(),
@@ -3313,7 +3371,7 @@ impl CockpitState {
                 completed_at: None,
                 latest_finding: None,
             });
-            self.fire_agent(base_agent_id, tracking_id, query, cx);
+            self.fire_agent_with(base_agent_id, tracking_id, query, provenance.clone(), cx);
         }
 
         self.messages.push(AssistantMessage {
@@ -3521,12 +3579,30 @@ impl CockpitState {
         query: &str,
         cx: &mut Context<Self>,
     ) {
+        self.fire_agent_with(base_agent_id, tracking_id, query, None, cx)
+    }
+
+    /// As [`Self::fire_agent`], but carrying the record of how the query was
+    /// composed so the server can stamp it onto the episode.
+    ///
+    /// Kept as a separate entry point because most callers (manual runs,
+    /// schedule fires, URL ingestion) have no negotiation record to pass and
+    /// should not be forced to invent one.
+    fn fire_agent_with(
+        &self,
+        base_agent_id: &str,
+        tracking_id: &str,
+        query: &str,
+        provenance: Option<negotiate::InvocationProvenance>,
+        cx: &mut Context<Self>,
+    ) {
         let base_id = base_agent_id.to_string();
         let tracking_id = tracking_id.to_string();
         let api = self.api.clone();
         let registry = self.registry.clone();
         let q = query.to_string();
         let sse_tx = self.sse_tx.clone();
+        let invocation = provenance.map(|p| p.to_json());
 
         cx.spawn(async move |this, cx| {
             log::info!("[composer] Firing {} (base: {})", tracking_id, base_id);
@@ -3555,7 +3631,11 @@ impl CockpitState {
                     "{}/api/agents/{}/execute/stream",
                     base_url, base_id_clone
                 );
-                let body = serde_json::json!({ "query": q_clone }).to_string();
+                let mut body_json = serde_json::json!({ "query": q_clone });
+                if let Some(ref inv) = invocation {
+                    body_json["invocation"] = inv.clone();
+                }
+                let body = body_json.to_string();
 
                 // Channel for SSE line events from HTTP stream → event processor
                 let (tx, mut rx) = mpsc::channel::<(String, String)>(32);
@@ -5914,6 +5994,22 @@ impl CockpitState {
         );
         let query = resolved.text.clone();
 
+        // Is this agent even declaring that it takes a free-text question?
+        let binding = negotiate::bind_input(contract.as_ref());
+        if let negotiate::InputBinding::NoTextInput(ref declared) = binding {
+            self.messages.push(AssistantMessage {
+                node: format!("driver:{}", driver_name),
+                kind: MessageKind::Warning,
+                text: format!(
+                    "{} declares it accepts {} — none of which is a free-text \
+                     question. Running it anyway; if the reply is unusable, the \
+                     card's `accepts` is the place to look.",
+                    agent_id,
+                    declared.join(", ")
+                ),
+            });
+        }
+
         // Say so when a prompt was swapped. Silently replacing it would
         // trade one invisible mismatch for another.
         if let Some(previous) = resolved.recomposed_from.as_deref() {
@@ -6003,7 +6099,16 @@ impl CockpitState {
             ),
         });
 
-        self.fire_agent(agent_id, &bound_name, &query, cx);
+        // Carry the negotiation record: this is the manual-picker path, and
+        // the one where a mismatch between prompt and agent was possible at
+        // all, so it is the path whose provenance is most worth recording.
+        let provenance = negotiate::InvocationProvenance::new(
+            &resolved,
+            &binding,
+            contract.as_ref(),
+            Some(driver_name),
+        );
+        self.fire_agent_with(agent_id, &bound_name, &query, Some(provenance), cx);
 
         // Persist recurring schedules to the backend (Once is fire-and-forget)
         if let (Some(fid), Some(hours)) = (self.forecast_id.clone(), interval_hours) {

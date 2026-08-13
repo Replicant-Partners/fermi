@@ -24,10 +24,30 @@ const TagRenderer = {
       pause_turn: 'var(--yellow)',
     },
     degraded: 'var(--orange)',
+    // How the caller decided to ask. `undeclared` means the agent published
+    // no output contract, so it got a generic prompt and its reply is the
+    // likeliest not to parse — a card-quality signal, not an agent-quality
+    // one, so it reads as a caution rather than an error.
+    qsrc: {
+      agent_template: 'var(--green)',
+      declared_contract: 'var(--green)',
+      user_authored: 'var(--blue)',
+      undeclared: 'var(--yellow)',
+    },
+    // Whether the prompt matched an input the agent actually advertises.
+    ibind: {
+      no_text_input: 'var(--red)',
+      undeclared: 'var(--yellow)',
+    },
+    recomposed: 'var(--blue)',
   },
 
   color(tag) {
-    const [cat, val] = tag.split(':');
+    // Split on the first colon only, so a value containing one (e.g. a
+    // model name like `model:claude-3:latest`) still resolves its category.
+    const idx = tag.indexOf(':');
+    const cat = idx === -1 ? tag : tag.slice(0, idx);
+    const val = idx === -1 ? '' : tag.slice(idx + 1);
     const entry = this._colors[cat];
     if (!entry) return 'var(--fg3)';
     if (typeof entry === 'string') return entry;

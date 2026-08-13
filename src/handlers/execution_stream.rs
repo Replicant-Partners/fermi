@@ -41,6 +41,12 @@ use crate::{
 #[derive(Debug, Deserialize)]
 pub struct StreamExecuteRequest {
     pub query: String,
+    /// How the caller decided to ask this question — see
+    /// [`crate::stamp_invocation`]. Optional so any existing caller keeps
+    /// working; this is the path the Fermi console actually uses, so it is
+    /// where the negotiation signal enters the record.
+    #[serde(default)]
+    pub invocation: Option<serde_json::Value>,
 }
 
 /// `POST /api/agents/:agent_id/execute/stream`
@@ -78,6 +84,7 @@ pub async fn execute_agent_stream_handler(
     let agent_db_id = db_agent.agent_id;
     let agent_name = db_agent.agent_name.clone();
     let query = body.query.clone();
+    let invocation = body.invocation.clone();
 
     // ── Enrich card with KG context from past dream cycles ─────────
     let t_kg = tokio::time::Instant::now();
@@ -230,6 +237,10 @@ pub async fn execute_agent_stream_handler(
                     &query,
                     &output,
                 );
+                // Record how the agent was asked, alongside how it did.
+                if let Some(ref inv) = invocation {
+                    crate::stamp_invocation(&mut episode, inv);
+                }
                 // Stamp the (agent, human) dyad — see execution.rs.
                 let dyad_id = agent_bestiary_memory::dyad_id(agent_db_id, &caller_clone);
                 episode.dyad_id = Some(dyad_id.clone());

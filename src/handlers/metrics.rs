@@ -52,6 +52,10 @@ pub async fn get_episode_detail_handler(
         .get("failure_reason")
         .cloned()
         .unwrap_or(Value::Null);
+    // How the caller decided to ask. Paired with the outcome fields above,
+    // this is what makes "was this a bad agent or a badly-posed question?"
+    // answerable per run instead of guessable in aggregate.
+    let invocation = context.get("invocation").cloned().unwrap_or(Value::Null);
 
     // Compute timing breakdown
     let total_ms = episode.execution_time_ms;
@@ -75,6 +79,7 @@ pub async fn get_episode_detail_handler(
         "error_details": episode.error_details,
         "stop_reason": stop_reason,
         "failure_reason": failure_reason,
+        "invocation": invocation,
         "execution_time_ms": total_ms,
         "tokens_used": episode.tokens_used,
         "cost_usd": episode.cost_usd,

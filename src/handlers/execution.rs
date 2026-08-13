@@ -29,6 +29,12 @@ use crate::{
 #[derive(Debug, Deserialize)]
 pub struct ExecuteRequest {
     query: String,
+    /// How the caller decided to ask this question — see
+    /// [`crate::stamp_invocation`]. Optional and free-form so a caller that
+    /// knows nothing about negotiation (curl, an older console, another
+    /// orchestra) keeps working unchanged.
+    #[serde(default)]
+    invocation: Option<serde_json::Value>,
 }
 
 pub async fn execute_agent_handler(
@@ -234,6 +240,10 @@ pub async fn execute_agent_handler(
 
     // 5. Store as ADM episode (with embedding + Spec 22 provenance)
     let mut episode = agent_output_to_episode(db_agent.agent_id, &body.query, &output);
+    // Record how the agent was asked, alongside how it did.
+    if let Some(ref inv) = body.invocation {
+        crate::stamp_invocation(&mut episode, inv);
+    }
     // Stamp the (agent, human) dyad so the social tracker can accumulate
     // rapport/trust/reciprocity for this pair. Without this the episode is
     // invisible to the companion loop.

@@ -69,6 +69,7 @@
 //! unrunnable (see the crate docs on rustc's stack overflow when expanding
 //! the GPUI element tree under `--test`).
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 
@@ -239,6 +240,128 @@ impl QuerySource {
             QuerySource::Undeclared => "undeclared",
             QuerySource::UserAuthored => "user_authored",
         }
+    }
+}
+
+/// Input labels that denote free-form natural-language text.
+///
+/// Deliberately narrow. A false positive here means staying quiet about a
+/// real interface mismatch; a false negative means crying wolf at a
+/// correctly-declared agent, which is how a check earns the right to be
+/// ignored. Vocabulary varies by designer — `weather_oracle` says
+/// `forecast-question`, `macro_data_agent` says `factor-x1-query` — so match
+/// on the shape of the word, not an enumeration of known labels.
+fn is_text_input(label: &str) -> bool {
+    let l = label.to_ascii_lowercase();
+    l.contains("query")
+        || l.contains("question")
+        || l.contains("prompt")
+        || matches!(l.as_str(), "content" | "topic" | "narrative" | "text")
+}
+
+/// How a free-text research prompt maps onto what the agent says it accepts.
+///
+/// The pipeline audit found thirteen stages binding an agent to an interface
+/// it never declared (`rabble_curator` handing `ar_beacon` a
+/// `creature-record` when `ar_beacon` accepts `description`/`location`). The
+/// console's research path can do the same thing: it sends free text to
+/// whichever agent routing picked, having never checked that the agent
+/// advertises a free-text input at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InputBinding {
+    /// The agent declares a question-shaped input. Carries the agent's own
+    /// label for it, so a report speaks the designer's vocabulary.
+    Declared(String),
+    /// The agent declares inputs, none of which take free text. Sending a
+    /// research prompt binds it to an interface it never advertised.
+    NoTextInput(Vec<String>),
+    /// The agent declares no inputs at all. Not a mismatch — an absence.
+    Undeclared,
+}
+
+impl InputBinding {
+    /// Stable label for logs and telemetry.
+    pub fn as_str(&self) -> String {
+        match self {
+            InputBinding::Declared(label) => format!("declared:{}", label),
+            InputBinding::NoTextInput(_) => "no_text_input".to_string(),
+            InputBinding::Undeclared => "undeclared".to_string(),
+        }
+    }
+
+    /// True only for a genuine mismatch — the agent declared its inputs and
+    /// none of them is text. An agent that declared nothing has not
+    /// contradicted anything.
+    pub fn is_mismatch(&self) -> bool {
+        matches!(self, InputBinding::NoTextInput(_))
+    }
+}
+
+/// Resolve which declared input a free-text prompt is being sent as.
+///
+/// Prefers the canonical `query` when present so the common case reports a
+/// stable label rather than whichever synonym happened to sort first.
+pub fn bind_input(contract: Option<&AgentContract>) -> InputBinding {
+    let accepts: &[String] = match contract {
+        Some(c) if !c.accepts.is_empty() => &c.accepts,
+        _ => return InputBinding::Undeclared,
+    };
+
+    if let Some(exact) = accepts.iter().find(|a| a.eq_ignore_ascii_case("query")) {
+        return InputBinding::Declared(exact.clone());
+    }
+    if let Some(shaped) = accepts.iter().find(|a| is_text_input(a)) {
+        return InputBinding::Declared(shaped.clone());
+    }
+    InputBinding::NoTextInput(accepts.to_vec())
+}
+
+/// The record of how one invocation came to be asked the way it was.
+///
+/// Travels with the run to the server, which stamps it onto the episode. The
+/// point is the join: outcome is already recorded per episode (status,
+/// failure reason, confidence, and eventually a Brier score once the forecast
+/// resolves), so recording *how the agent was asked* alongside it turns
+/// "which agents and compositions actually work" into a query rather than an
+/// opinion. Without it, a run that failed because the caller sent it the
+/// wrong shape of question is indistinguishable from one that failed on
+/// merit — and adaptation driven by that signal would learn the wrong thing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InvocationProvenance {
+    /// Which rung of the composition ladder produced the query.
+    pub query_source: String,
+    /// How the prompt mapped onto the agent's declared inputs.
+    pub input_binding: String,
+    /// Number of finding labels the agent declared. The crude proxy for
+    /// "how much did this agent tell us about itself", which is the axis we
+    /// want to correlate against outcome.
+    pub declared_label_count: usize,
+    /// Set when a stale pre-fill was discarded: the agent it was written for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recomposed_from: Option<String>,
+    /// The driver this run was researching, for joining back to the forecast.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub driver: Option<String>,
+}
+
+impl InvocationProvenance {
+    pub fn new(
+        composed: &ComposedQuery,
+        binding: &InputBinding,
+        contract: Option<&AgentContract>,
+        driver: Option<&str>,
+    ) -> Self {
+        Self {
+            query_source: composed.source.as_str().to_string(),
+            input_binding: binding.as_str(),
+            declared_label_count: contract.map(|c| c.finding_labels.len()).unwrap_or(0),
+            recomposed_from: composed.recomposed_from.clone(),
+            driver: driver.map(str::to_string),
+        }
+    }
+
+    pub fn to_json(&self) -> JsonValue {
+        serde_json::to_value(self).unwrap_or(JsonValue::Null)
     }
 }
 
@@ -796,5 +919,152 @@ mod tests {
         assert_eq!(QuerySource::DeclaredContract.as_str(), "declared_contract");
         assert_eq!(QuerySource::Undeclared.as_str(), "undeclared");
         assert_eq!(QuerySource::UserAuthored.as_str(), "user_authored");
+    }
+
+    // ── Input binding ────────────────────────────────────────
+
+    fn accepting(labels: &[&str]) -> AgentContract {
+        AgentContract {
+            accepts: labels.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn prefers_the_canonical_query_label() {
+        // sentiment_analyzer declares both `content` and `query`.
+        let b = bind_input(Some(&accepting(&["content", "query", "topic"])));
+        assert_eq!(b, InputBinding::Declared("query".into()));
+        assert_eq!(b.as_str(), "declared:query");
+        assert!(!b.is_mismatch());
+    }
+
+    /// Every Fermi orchestra member on disk declares *something*
+    /// question-shaped, but they disagree about what to call it. A check that
+    /// only recognised `query` would flag four correct cards.
+    #[test]
+    fn recognises_each_designers_own_word_for_a_question() {
+        for (labels, expected) in [
+            (
+                vec!["forecast-question", "market-question", "evidence-set"],
+                "forecast-question",
+            ),
+            (
+                vec![
+                    "country-code",
+                    "country-list",
+                    "indicator-request",
+                    "factor-x1-query",
+                ],
+                "factor-x1-query",
+            ),
+            (
+                vec![
+                    "country-code",
+                    "fixture-id",
+                    "venue-list",
+                    "factor-x6-query",
+                ],
+                "factor-x6-query",
+            ),
+            (
+                vec!["country-code", "confederation-query"],
+                "confederation-query",
+            ),
+        ] {
+            let b = bind_input(Some(&accepting(&labels)));
+            assert_eq!(
+                b,
+                InputBinding::Declared(expected.into()),
+                "misread {labels:?}"
+            );
+            assert!(!b.is_mismatch(), "false positive on {labels:?}");
+        }
+    }
+
+    #[test]
+    fn flags_an_agent_that_takes_no_free_text() {
+        // The `ar_beacon` shape from the pipeline audit.
+        let b = bind_input(Some(&accepting(&[
+            "description",
+            "location",
+            "gps-coordinates",
+        ])));
+        assert!(b.is_mismatch());
+        assert_eq!(b.as_str(), "no_text_input");
+        match b {
+            InputBinding::NoTextInput(declared) => assert_eq!(declared.len(), 3),
+            other => panic!("expected a mismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn declaring_nothing_is_an_absence_not_a_mismatch() {
+        assert_eq!(bind_input(None), InputBinding::Undeclared);
+        assert_eq!(bind_input(Some(&accepting(&[]))), InputBinding::Undeclared);
+        assert!(
+            !bind_input(None).is_mismatch(),
+            "silence must not read as contradiction"
+        );
+    }
+
+    // ── Provenance record ───────────────────────────────────
+
+    #[test]
+    fn provenance_captures_the_full_join_key() {
+        let c = AgentContract::from_card(&sentiment_card());
+        let composed = compose_query(&task(), Some(&c));
+        let binding = bind_input(Some(&c));
+        let p =
+            InvocationProvenance::new(&composed, &binding, Some(&c), Some("ai_product_execution"));
+
+        assert_eq!(p.query_source, "declared_contract");
+        assert_eq!(p.input_binding, "declared:query");
+        assert_eq!(p.declared_label_count, 5);
+        assert_eq!(p.driver.as_deref(), Some("ai_product_execution"));
+        assert_eq!(p.recomposed_from, None);
+
+        let j = p.to_json();
+        assert_eq!(j["query_source"], "declared_contract");
+        assert_eq!(j["declared_label_count"], 5);
+        // Absent optionals must not appear as nulls on the wire.
+        assert!(j.get("recomposed_from").is_none());
+    }
+
+    #[test]
+    fn provenance_records_an_undeclared_agent_as_such() {
+        let composed = compose_query(&task(), None);
+        let p = InvocationProvenance::new(&composed, &bind_input(None), None, None);
+        assert_eq!(p.query_source, "undeclared");
+        assert_eq!(p.input_binding, "undeclared");
+        assert_eq!(p.declared_label_count, 0);
+    }
+
+    #[test]
+    fn provenance_carries_a_recomposition_so_the_swap_is_auditable() {
+        let recommended = AgentContract::from_card(&sentiment_card());
+        let text = compose_query(&task(), Some(&recommended)).text;
+        let prefill = Prefill {
+            text: text.clone(),
+            agent_id: "sentiment_analyzer".into(),
+        };
+        let chosen = AgentContract::from_card(&third_party_card());
+
+        let resolved = resolve_query(
+            &text,
+            Some(&prefill),
+            "efra_critical_factor",
+            &task(),
+            Some(&chosen),
+        );
+        let p = InvocationProvenance::new(
+            &resolved,
+            &bind_input(Some(&chosen)),
+            Some(&chosen),
+            Some("d"),
+        );
+
+        assert_eq!(p.recomposed_from.as_deref(), Some("sentiment_analyzer"));
+        assert_eq!(p.to_json()["recomposed_from"], "sentiment_analyzer");
     }
 }

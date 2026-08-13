@@ -5683,6 +5683,70 @@ fn build_error_details(output: &AgentOutput) -> Option<String> {
     Some(format!("{} [{}]", base, facts.join(", ")))
 }
 
+/// Stamp a caller-supplied invocation record onto an episode.
+///
+/// The episode already records the *outcome* of a run — status, failure
+/// reason, confidence, tokens, and eventually a Brier score once the
+/// forecast it fed resolves. What it never recorded is *how the agent was
+/// asked*: whether the query was composed from the agent's own declared
+/// contract, from a template its designer wrote, or from a generic fallback
+/// because the agent declared nothing to compose against.
+///
+/// Without that, the two interesting failures are indistinguishable in the
+/// data. An agent that returned nothing useful because it was sent the wrong
+/// shape of question looks exactly like one that was asked properly and is
+/// simply bad at the job. Any adaptation loop learning from outcome alone
+/// would blame the agent for the caller's mistake — and would learn to
+/// prefer the agents the caller happens to know how to talk to, which is
+/// precisely the closed world worth escaping.
+///
+/// Written as tags as well as context because tags are queryable and already
+/// render in the observatory and episode list, so the signal is visible
+/// without a bespoke view.
+pub(crate) fn stamp_invocation(episode: &mut Episode, invocation: &serde_json::Value) {
+    let Some(obj) = invocation.as_object() else {
+        return;
+    };
+
+    // Bounded, lowercase, no whitespace: these become tag suffixes, and a
+    // caller-supplied string must not be able to invent arbitrary tags.
+    fn slug(v: Option<&serde_json::Value>) -> Option<String> {
+        let s = v?.as_str()?.trim();
+        if s.is_empty() || s.len() > 64 {
+            return None;
+        }
+        if !s
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ':' | '.'))
+        {
+            return None;
+        }
+        Some(s.to_ascii_lowercase())
+    }
+
+    if let Some(src) = slug(obj.get("query_source")) {
+        episode.tags.push(format!("qsrc:{}", src));
+    }
+    if let Some(bind) = slug(obj.get("input_binding")) {
+        // `declared:query` would read as a `declared` category with a
+        // `query` value; keep the whole thing under one namespace.
+        episode
+            .tags
+            .push(format!("ibind:{}", bind.replace(':', "-")));
+    }
+    if obj
+        .get("recomposed_from")
+        .and_then(|v| v.as_str())
+        .is_some()
+    {
+        episode.tags.push("recomposed:true".to_string());
+    }
+
+    if let Some(ctx) = episode.context.as_object_mut() {
+        ctx.insert("invocation".to_string(), invocation.clone());
+    }
+}
+
 pub(crate) fn agent_output_to_episode(
     agent_db_id: uuid::Uuid,
     query: &str,
@@ -6023,6 +6087,78 @@ mod failure_provenance_tests {
         );
         assert!(ep.tags.contains(&"stop:max_tokens".to_string()));
         assert!(ep.error_details.is_some());
+    }
+
+    #[test]
+    fn invocation_provenance_lands_as_queryable_tags_and_context() {
+        let out = output(AgentStatus::Success, None, Some("end_turn"));
+        let mut ep = agent_output_to_episode(uuid::Uuid::new_v4(), "q", &out);
+        stamp_invocation(
+            &mut ep,
+            &json!({
+                "query_source": "declared_contract",
+                "input_binding": "declared:query",
+                "declared_label_count": 5,
+                "driver": "ai_product_execution"
+            }),
+        );
+
+        assert!(ep.tags.contains(&"qsrc:declared_contract".to_string()));
+        // `declared:query` must not split into a `declared` category.
+        assert!(ep.tags.contains(&"ibind:declared-query".to_string()));
+        assert!(!ep.tags.iter().any(|t| t.starts_with("declared:")));
+        assert_eq!(
+            ep.context["invocation"]["declared_label_count"]
+                .as_u64()
+                .unwrap(),
+            5
+        );
+    }
+
+    #[test]
+    fn a_recomposed_run_is_tagged_so_the_swap_is_findable() {
+        let out = output(AgentStatus::Success, None, Some("end_turn"));
+        let mut ep = agent_output_to_episode(uuid::Uuid::new_v4(), "q", &out);
+        stamp_invocation(
+            &mut ep,
+            &json!({ "query_source": "declared_contract", "recomposed_from": "sentiment_analyzer" }),
+        );
+        assert!(ep.tags.contains(&"recomposed:true".to_string()));
+    }
+
+    #[test]
+    fn a_caller_cannot_inject_arbitrary_tags() {
+        // The invocation record is caller-supplied. It must not be able to
+        // forge a status, smuggle whitespace into a tag, or write unbounded
+        // strings into an indexed column.
+        let out = output(AgentStatus::Failed, Some("real failure"), Some("tool_use"));
+        let mut ep = agent_output_to_episode(uuid::Uuid::new_v4(), "q", &out);
+        let before = ep.tags.len();
+        stamp_invocation(
+            &mut ep,
+            &json!({
+                "query_source": "nice try status:success",
+                "input_binding": "x".repeat(500),
+            }),
+        );
+
+        assert_eq!(ep.tags.len(), before, "malformed values must be dropped");
+        assert_eq!(
+            ep.tags.iter().filter(|t| t.starts_with("status:")).count(),
+            1,
+            "the real status tag must remain the only one"
+        );
+        assert!(ep.tags.contains(&"status:error".to_string()));
+    }
+
+    #[test]
+    fn a_run_with_no_invocation_record_is_unchanged() {
+        let out = output(AgentStatus::Success, None, Some("end_turn"));
+        let mut ep = agent_output_to_episode(uuid::Uuid::new_v4(), "q", &out);
+        let before = ep.tags.clone();
+        stamp_invocation(&mut ep, &json!("not an object"));
+        assert_eq!(ep.tags, before);
+        assert!(ep.context.get("invocation").is_none());
     }
 
     #[test]
