@@ -53,6 +53,10 @@ use fermi_console::agent_naming::{
     base_agent_id, base_agent_id_for_driver, bound_agent_name, evidence_belongs_to_agent,
     evidence_id, sanitize_name,
 };
+use fermi_console::calibration::{critique_base_rate, Severity as CalibrationSeverity};
+use fermi_console::routing::{
+    detect_domain, domain_specialist, select_agent_for_driver, FERMI_ORCHESTRA,
+};
 use fermi_console::wire::{clamp_wire_interval_bound, clamp_wire_probability};
 
 // ════════════════════════════════════════════════════════════════════
@@ -2400,6 +2404,30 @@ impl CockpitState {
         // (key_findings/summary/sources/reasoning) which overrides the system prompt.
         // So we MUST include the decomposition schema in the query itself — the LLM
         // follows the last format instruction it sees in the user message.
+        // Tell Fermi what domain we detected and who the resident expert
+        // is. Without this it reliably answered "macro_forecaster" for
+        // every driver of a football question — the routing guard in
+        // `select_agent_for_driver` catches that, but it is far better
+        // for the suggestion (and the suggested_query that rides along
+        // with it) to be domain-aware in the first place.
+        let routing_directive = match domain_specialist(&domain) {
+            Some(specialist) => format!(
+                "This question is in the '{domain}' domain. The resident specialist is \
+                 `{specialist}` — assign it to EVERY driver inside its remit, and write \
+                 its suggested_query in the vocabulary it actually works in. Use a \
+                 generalist ONLY for drivers genuinely outside that remit (legal / \
+                 regulatory adjudication → entity_investigator, macroeconomic \
+                 conditions → macro_forecaster, public sentiment → sentiment_analyzer). \
+                 Defaulting every driver to macro_forecaster on a '{domain}' question \
+                 is a routing failure."
+            ),
+            None => format!(
+                "This question is in the '{domain}' domain, which has no single resident \
+                 specialist — route each driver to the orchestra member whose remit it \
+                 actually falls in rather than defaulting them all to one agent."
+            ),
+        };
+
         let structured_query = format!(
             "Decompose this forecast question into a probabilistic model.\n\n\
              Question: \"{}\"\n\n\
@@ -2425,8 +2453,9 @@ impl CockpitState {
              Include 3-6 independent drivers. Start from a real base rate with reference class. \
              For each driver set suggested_agent to one of: macro_forecaster, market_research, \
              sentiment_analyzer, entity_investigator, equity_analyst, biotech_analyst, \
-             nba_analyst, football_analyst.",
-            question
+             nba_analyst, football_analyst.\n\n\
+             ROUTING: {}",
+            question, routing_directive
         );
 
         self.agent_runs.push(AgentExecution {
@@ -2452,6 +2481,13 @@ impl CockpitState {
             kind: MessageKind::Info,
             text: "⟳ Fermi is decomposing your question into a probability model…".into(),
         });
+
+        // Warm the server roster now rather than lazily on first picker
+        // open. Auto-assign runs when Fermi returns (~60s later) and
+        // consults this roster to decide which specialists are routable;
+        // a cold roster silently narrows the orchestra to the curated
+        // members in `FERMI_ORCHESTRA`.
+        self.load_server_agent_cards(cx);
 
         self.fire_agent("fermi", "fermi", &structured_query, cx);
 
@@ -2927,18 +2963,6 @@ impl CockpitState {
             .collect();
 
         if !driver_names.is_empty() {
-            // Domain-specific primary agent (used as default when no better match)
-            let domain_agent = match domain.as_str() {
-                "sports_nba" | "basketball" => "nba_analyst",
-                "biotech" | "pharma" | "clinical" => "biotech_analyst",
-                "sports_football" | "sports_nfl" | "sports_other" => "football_analyst",
-                "finance" | "stocks" => "macro_forecaster",
-                "politics" | "geopolitics" => "macro_forecaster",
-                "technology" => "market_research",
-                "climate" => "macro_forecaster",
-                _ => "macro_forecaster",
-            };
-
             let mut assigned_count = 0;
 
             for driver_name in &driver_names {
@@ -2963,175 +2987,48 @@ impl CockpitState {
                     })
                     .unwrap_or((0.8, 1.0, 1.2));
 
-                // ── Per-driver agent selection ────────────────────
-                // Use fermi's suggestion if present and the agent exists in the
-                // registry; fall back to keyword heuristics otherwise.
-                let (agent_to_use, query) = if let Some((suggested_agent, suggested_query)) =
-                    fermi_suggestions.get(driver_name)
-                {
-                    let agent = if self.registry.get(suggested_agent.as_str()).is_ok() {
-                        log::info!(
-                            "[composer] Using fermi suggestion for {}: {}",
-                            driver_name,
-                            suggested_agent
-                        );
-                        suggested_agent.as_str()
-                    } else {
-                        log::warn!(
-                                "[composer] Fermi suggested {} for {} but agent not in registry — falling back",
-                                suggested_agent,
-                                driver_name
-                            );
-                        domain_agent
-                    };
-                    let agent = if self.registry.get(agent).is_ok() {
-                        agent
-                    } else {
-                        "macro_forecaster"
-                    };
-                    (agent.to_string(), suggested_query.clone())
-                } else {
-                    // Keyword heuristics — fermi didn't provide a suggestion
-                    let dl = driver_name.to_lowercase();
-                    let rl = rationale.to_lowercase();
-                    let combined = format!("{} {}", dl, rl);
+                // ── Per-driver agent selection ──────────────────
+                // Fermi's suggestion is one input among several, not the
+                // final word: it is domain-guarded and availability is
+                // resolved against the server roster, not the local card
+                // directory. See `select_agent_for_driver`.
+                let suggestion = fermi_suggestions.get(driver_name);
+                let (agent_to_use, reason) = select_agent_for_driver(
+                    driver_name,
+                    &rationale,
+                    &domain,
+                    suggestion.map(|(a, _)| a.as_str()),
+                    &|a| self.agent_is_routable(a),
+                );
 
-                    let heuristic_agent = if combined.contains("sentiment")
-                        || combined.contains("opinion")
-                        || combined.contains("perception")
-                        || combined.contains("buzz")
-                        || combined.contains("narrative")
-                        || combined.contains("social media")
-                        || combined.contains("public opinion")
-                    {
-                        "sentiment_analyzer"
-                    } else if combined.contains("entity")
-                        || combined.contains("ownership")
-                        || combined.contains("leadership")
-                        || combined.contains("management")
-                        || combined.contains("regulatory")
-                        || combined.contains("legal")
-                        || combined.contains("compliance")
-                        || combined.contains("investigation")
-                        || combined.contains("regime")
-                        || combined.contains("government")
-                        || combined.contains("military")
-                        || combined.contains("security apparatus")
-                        || combined.contains("cohesion")
-                        || combined.contains("supreme leader")
-                        || combined.contains("succession")
-                    {
-                        "entity_investigator"
-                    } else if combined.contains("protest")
-                        || combined.contains("revolution")
-                        || combined.contains("uprising")
-                        || combined.contains("momentum")
-                        || combined.contains("unrest")
-                        || combined.contains("civil")
-                        || combined.contains("dissent")
-                        || combined.contains("demonstration")
-                    {
-                        "sentiment_analyzer"
-                    } else if combined.contains("market")
-                        || combined.contains("competition")
-                        || combined.contains("competitor")
-                        || combined.contains("partnership")
-                        || combined.contains("revenue")
-                        || combined.contains("pricing")
-                        || combined.contains("demand")
-                        || combined.contains("adoption")
-                        || combined.contains("customer")
-                        || combined.contains("commercial")
-                        || combined.contains("sales")
-                    {
-                        "market_research"
-                    } else if combined.contains("macro")
-                        || combined.contains("economic")
-                        || combined.contains("gdp")
-                        || combined.contains("inflation")
-                        || combined.contains("interest rate")
-                        || combined.contains("fed")
-                        || combined.contains("recession")
-                        || combined.contains("valuation")
-                        || combined.contains("currency")
-                        || combined.contains("sanction")
-                        || combined.contains("crisis")
-                        || combined.contains("trade")
-                        || combined.contains("fiscal")
-                        || combined.contains("monetary")
-                    {
-                        "macro_forecaster"
-                    } else if combined.contains("policy")
-                        || combined.contains("geopolit")
-                        || combined.contains("diplomat")
-                        || combined.contains("interven")
-                        || combined.contains("external")
-                        || combined.contains("foreign")
-                        || combined.contains("international")
-                        || combined.contains("alliance")
-                        || combined.contains("nuclear")
-                    {
-                        "macro_forecaster"
-                    } else if combined.contains("clinical")
-                        || combined.contains("trial")
-                        || combined.contains("fda")
-                        || combined.contains("drug")
-                        || combined.contains("pipeline")
-                        || combined.contains("approval")
-                    {
-                        "biotech_analyst"
-                    } else if combined.contains("stock")
-                        || combined.contains("equity")
-                        || combined.contains("eps")
-                        || combined.contains("p/e")
-                        || combined.contains("earnings")
-                        || combined.contains("share price")
-                        || combined.contains("shareholder")
-                    {
-                        "equity_analyst"
-                    } else if combined.contains("energy")
-                        || combined.contains("oil")
-                        || combined.contains("gas")
-                        || combined.contains("renewable")
-                        || combined.contains("solar")
-                        || combined.contains("wind power")
-                        || combined.contains("carbon")
-                        || combined.contains("emission")
-                    {
-                        "energy_advisor"
-                    } else if combined.contains("nba")
-                        || combined.contains("basketball")
-                        || combined.contains("elo")
-                        || combined.contains("home court")
-                        || (combined.contains("injury")
-                            && (domain.contains("nba") || domain.contains("basketball")))
-                    {
-                        "nba_analyst"
-                    } else {
-                        let has_domain = self.registry.get(domain_agent).is_ok();
-                        if has_domain {
-                            domain_agent
-                        } else {
-                            "macro_forecaster"
-                        }
-                    };
+                log::info!(
+                    "[composer] {} → {} ({}; fermi suggested {:?}, domain {})",
+                    driver_name,
+                    agent_to_use,
+                    reason.as_str(),
+                    suggestion.map(|(a, _)| a.as_str()),
+                    domain,
+                );
 
-                    let agent = if self.registry.get(heuristic_agent).is_ok() {
-                        heuristic_agent
-                    } else {
-                        "macro_forecaster"
-                    };
-                    let q = formulate_research_query(
+                // Reuse Fermi's bespoke query only when we kept Fermi's
+                // agent — a query written for a macro forecaster asks a
+                // football analyst the wrong questions.
+                let query = match suggestion {
+                    Some((suggested_agent, suggested_query))
+                        if suggested_agent == &agent_to_use =>
+                    {
+                        suggested_query.clone()
+                    }
+                    _ => formulate_research_query(
                         &question_text,
                         &driver_display,
                         &rationale,
-                        agent,
+                        &agent_to_use,
                         &domain,
                         p5,
                         p50,
                         p95,
-                    );
-                    (agent.to_string(), q)
+                    ),
                 };
 
                 // Bind the agent to this driver. The bound name is the
@@ -3216,6 +3113,33 @@ impl CockpitState {
     /// orchestra by an admin has no card on this machine and does not
     /// carry the tag, so it was undiscoverable here even though the
     /// server considered it a full member.
+    /// Can this agent id actually be executed for a driver?
+    ///
+    /// Three sources, any of which is sufficient:
+    ///   1. [`FERMI_ORCHESTRA`] — the curated members, always resolvable
+    ///      server-side;
+    ///   2. the local card directory — populated only when the console
+    ///      found `agents/curated/` relative to its CWD or executable;
+    ///   3. the server roster — covers third-party members admitted to
+    ///      the orchestra that have no card on this machine.
+    ///
+    /// (2) alone was the old check, and it is the weakest of the three:
+    /// agents run through the ABW API, not the local registry, so a
+    /// missing card directory says nothing about whether an agent can
+    /// run. Gating routing on it demoted every specialist to
+    /// `macro_forecaster` on installs without the directory.
+    fn agent_is_routable(&self, agent_id: &str) -> bool {
+        if FERMI_ORCHESTRA.contains(&agent_id) {
+            return true;
+        }
+        if self.registry.get(agent_id).is_ok() {
+            return true;
+        }
+        self.server_agent_cards
+            .iter()
+            .any(|c| c.get("agent_id").and_then(|v| v.as_str()) == Some(agent_id))
+    }
+
     fn discover_research_agents(&self) -> Vec<(String, String)> {
         let mut out: Vec<(String, String)> = Vec::new();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -4273,7 +4197,50 @@ impl CockpitState {
     // Validation — the Assistant checks the program for issues
     // ═══════════════════════════════════════════════════════════════
 
+    /// Structurally critique the current base rate and surface findings.
+    ///
+    /// Its own method rather than inline in `run_validation_hints`
+    /// because the base rate outlives decomposition: it is also set by
+    /// `apply_base_rate_only` (agent refresh) and by the Polymarket
+    /// anchor button. A check that only ran once, at decomposition,
+    /// would miss every later edit.
+    fn check_base_rate(&mut self) {
+        // Collected before pushing so the immutable borrow of
+        // `self.program` ends before `self.messages` is touched.
+        let findings = self
+            .program
+            .question()
+            .and_then(|q| {
+                q.base_rate.as_ref().map(|br| {
+                    critique_base_rate(
+                        &q.text,
+                        &br.reference_class,
+                        br.historical_frequency,
+                        br.sample_size.and_then(|n| u32::try_from(n).ok()),
+                    )
+                })
+            })
+            .unwrap_or_default();
+
+        for f in findings {
+            self.messages.push(AssistantMessage {
+                node: "question".into(),
+                kind: match f.severity {
+                    CalibrationSeverity::Warn => MessageKind::Warning,
+                    CalibrationSeverity::Note => MessageKind::Info,
+                },
+                text: f.message,
+            });
+        }
+    }
+
     fn run_validation_hints(&mut self) {
+        // Base rate first: it is the number every driver multiplies, so
+        // a bad anchor scales through the entire model. Nothing used to
+        // inspect it — see `calibration` for the checks and why each
+        // threshold sits where it does.
+        self.check_base_rate();
+
         // Check each driver for issues
         for driver in self.program.drivers() {
             match driver.driver_type {
@@ -4411,47 +4378,21 @@ impl CockpitState {
             })
             .unwrap_or((0.8, 1.0, 1.2));
 
-        // Determine the recommended agent for this driver
-        let dl = driver_name.to_lowercase();
-        let rl = rationale.to_lowercase();
-        let combined = format!("{} {}", dl, rl);
-        let recommended = if combined.contains("sentiment") || combined.contains("opinion") {
-            "sentiment_analyzer"
-        } else if combined.contains("regulatory")
-            || combined.contains("legal")
-            || combined.contains("entity")
-        {
-            "entity_investigator"
-        } else if combined.contains("market")
-            || combined.contains("competition")
-            || combined.contains("revenue")
-            || combined.contains("commercial")
-        {
-            "market_research"
-        } else if combined.contains("clinical")
-            || combined.contains("trial")
-            || combined.contains("fda")
-        {
-            "biotech_analyst"
-        } else if combined.contains("nba") || combined.contains("basketball") {
-            "nba_analyst"
-        } else {
-            match domain.as_str() {
-                "sports_nba" | "basketball" => "nba_analyst",
-                "biotech" | "pharma" => "biotech_analyst",
-                "sports_football" | "sports_nfl" | "sports_other" => "football_analyst",
-                "finance" | "stocks" => "macro_forecaster",
-                "technology" => "market_research",
-                _ => "macro_forecaster",
-            }
-        };
+        // Determine the recommended agent for this driver. Same routing
+        // the auto-assign path uses, so the picker's "Recommended" card
+        // agrees with what Fermi actually spawned — they used to be two
+        // independent keyword ladders that disagreed.
+        let (recommended, _reason) =
+            select_agent_for_driver(driver_name, &rationale, &domain, None, &|a| {
+                self.agent_is_routable(a)
+            });
 
         // Generate the suggested query
         let suggested_query = formulate_research_query(
             &question,
             &driver_display,
             &rationale,
-            recommended,
+            &recommended,
             &domain,
             p5,
             p50,
@@ -6869,6 +6810,9 @@ impl CockpitState {
                 historical_frequency * 100.0
             ),
         });
+        // Critique the NEW anchor. A refreshed base rate is exactly as
+        // capable of being circular or under-powered as the original.
+        self.check_base_rate();
         cx.notify();
     }
 
@@ -7726,19 +7670,84 @@ impl CockpitState {
                     .is_some();
 
                 if is_probability_forecast {
+                    // A probability forecast whose model evaluates above
+                    // 1.0 is a MODELLING ERROR, not a display-range
+                    // problem. Saturating it to 0.99 turns "your model is
+                    // broken" into "your model is 99% confident", which
+                    // is the most dangerous possible failure mode for a
+                    // forecasting tool — it looks like a strong signal.
+                    //
+                    // Observed: a London-temperature question with a 0.3%
+                    // base rate produced mean 6.4 (p95 9.7) because the
+                    // auto-generated model was a bare multiplier chain
+                    // with no base-rate anchor. The UI showed 99.00%.
+                    //
+                    // So: surface it, and refuse to persist it.
+                    const PROB_TOLERANCE: f64 = 1.0 + 1e-9;
+                    if results.mean > PROB_TOLERANCE {
+                        let anchor = self
+                            .program
+                            .question()
+                            .and_then(|q| q.base_rate.as_ref())
+                            .map(|br| br.historical_frequency)
+                            .unwrap_or(0.0);
+                        let model_expr = self
+                            .program
+                            .model()
+                            .map(|m| m.expression.to_string())
+                            .unwrap_or_else(|| "(auto-generated from drivers)".into());
+                        log::error!(
+                            "[sim] Model evaluated to {:.4} on a probability forecast — \
+                             not a probability. Model: {}",
+                            results.mean,
+                            model_expr
+                        );
+                        self.sim_error = Some(format!(
+                            "Model evaluates to {:.2} — that is not a probability (p95 {:.2}). \
+                             The drivers are multipliers centred on 1.0, so their product is a \
+                             relative adjustment, not a forecast. Anchor the model on the base \
+                             rate — it should read `base_rate * driver_a * driver_b`, e.g. \
+                             `{:.4} * {}`. Edit it on the FPL tab. This result was NOT saved.",
+                            results.mean,
+                            results.p95,
+                            anchor,
+                            self.program
+                                .drivers()
+                                .iter()
+                                .map(|d| d.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(" * "),
+                        ));
+                        self.messages.push(AssistantMessage {
+                            node: "model".into(),
+                            kind: MessageKind::Error,
+                            text: format!(
+                                "Model evaluates to {:.2}, not a probability. Previously this \
+                                 was silently clamped to 99% and shown as a forecast. The \
+                                 model expression is missing its base-rate anchor.",
+                                results.mean
+                            ),
+                        });
+                        // Leave `predicted_probability` untouched and
+                        // undo the autosave flag set above, so a broken
+                        // run cannot overwrite the last good forecast or
+                        // land a fake 99% on the trajectory.
+                        self.dirty = false;
+                        cx.notify();
+                        return;
+                    }
                     // Lower clamp at 0.01 (1%) so the dashboard never
-                    // displays a meaningless 0%; upper clamp at 0.99 to
-                    // mirror the legacy behaviour and avoid dashboard
-                    // edge cases. Mean below 0.01 is still a real model
-                    // signal — log it so calibration work has access.
-                    if results.mean < 0.01 || results.mean > 0.99 {
+                    // displays a meaningless 0%. Mean below 0.01 is still
+                    // a real model signal — log it so calibration work
+                    // has access.
+                    if results.mean < 0.01 {
                         log::info!(
-                            "[sim] Mean {:.4} clamped to display range [0.01, 0.99]; \
+                            "[sim] Mean {:.4} clamped up to display floor 0.01; \
                              raw mean preserved in results.",
                             results.mean
                         );
                     }
-                    self.predicted_probability = results.mean.clamp(0.01, 0.99);
+                    self.predicted_probability = results.mean.clamp(0.01, 1.0);
                 } else {
                     // Non-probability forecast: just take the mean. The
                     // distribution surfaces in the histogram + p5/p95
@@ -7807,22 +7816,46 @@ impl CockpitState {
                     &parsed, 1000, // fewer iterations for speed
                 );
 
+                // Report FIRST-order indices as variance share.
+                //
+                // This line used to print total-order indices as
+                // "{n}% influence", which reads as a slice of a pie but
+                // is not one: total-order counts each interaction once
+                // per participating driver, so the numbers legitimately
+                // sum past 100%. A real run showed
+                // "synoptic (100% influence), seasonal (5%), climate
+                // (3%), uhi (2%)" = 110%, which looks like an arithmetic
+                // bug and quietly discredits the whole panel.
+                //
+                // First-order indices ARE additive shares and sum to
+                // <= 1. The shortfall is exactly the variance that only
+                // exists in driver interactions, so we name it instead
+                // of hiding it. The tornado bars keep showing
+                // total-order with its first/interaction split — that
+                // chart is about "what should I tighten", which is the
+                // question total-order answers.
                 let sensitivity_summary = if let Ok(ref sa) = sensitivity {
                     let top = sa.top_drivers(5);
                     let parts: Vec<String> = top
                         .iter()
                         .map(|ds| {
-                            format!(
-                                "{} ({:.0}% influence)",
-                                ds.driver_name,
-                                ds.total_order_index * 100.0
-                            )
+                            format!("{} {:.0}%", ds.driver_name, ds.first_order_index * 100.0)
                         })
                         .collect();
                     if parts.is_empty() {
                         "No sensitivity data available.".to_string()
                     } else {
-                        format!("Key drivers by influence: {}", parts.join(", "))
+                        let direct: f64 = sa
+                            .top_drivers(usize::MAX)
+                            .iter()
+                            .map(|ds| ds.first_order_index)
+                            .sum();
+                        let interaction = (1.0 - direct).clamp(0.0, 1.0);
+                        format!(
+                            "Variance share (direct): {} · {:.0}% from driver interactions",
+                            parts.join(", "),
+                            interaction * 100.0
+                        )
                     }
                 } else {
                     "Sensitivity analysis unavailable.".to_string()
@@ -7913,12 +7946,15 @@ impl CockpitState {
                     .iter()
                     .map(|d| {
                         let display = d.display_name.as_deref().unwrap_or(&d.name);
-                        // Include sensitivity if available
+                        // First-order, to match the variance-share line
+                        // below. Mixing the two indices in one message
+                        // (bare `[87%]` here, "% influence" there) made
+                        // two different quantities look like one.
                         let influence = sensitivity
                             .as_ref()
                             .ok()
                             .and_then(|sa| sa.get_driver_sensitivity(&d.name))
-                            .map(|ds| format!(" [{:.0}%]", ds.total_order_index * 100.0))
+                            .map(|ds| format!(" [{:.0}% var]", ds.first_order_index * 100.0))
                             .unwrap_or_default();
                         match d.driver_type {
                             DriverType::Continuous => {
@@ -14381,69 +14417,17 @@ fn render_agent_picker(
         .map(|q| q.text.clone())
         .unwrap_or_default();
     let domain = detect_domain(&question_text);
-    let dl = driver_name.to_lowercase();
-    let rl = rationale.to_lowercase();
-    let combined = format!("{} {}", dl, rl);
 
-    let recommended = if combined.contains("sentiment")
-        || combined.contains("opinion")
-        || combined.contains("perception")
-    {
-        "sentiment_analyzer"
-    } else if combined.contains("entity")
-        || combined.contains("regulatory")
-        || combined.contains("legal")
-        || combined.contains("ownership")
-    {
-        "entity_investigator"
-    } else if combined.contains("stock")
-        || combined.contains("valuation")
-        || combined.contains("earnings")
-        || combined.contains("eps")
-        || combined.contains("p/e")
-        || combined.contains("revenue growth")
-        || combined.contains("margin")
-        || combined.contains("balance sheet")
-        || combined.contains("cash flow")
-        || combined.contains("dcf")
-        || combined.contains("intrinsic value")
-        || combined.contains("share price")
-        || combined.contains("dividend")
-        || combined.contains("buyback")
-        || combined.contains("ticker")
-        || combined.contains("ipo")
-        || combined.contains("analyst estimate")
-    {
-        "equity_analyst"
-    } else if combined.contains("market")
-        || combined.contains("competition")
-        || combined.contains("partnership")
-        || combined.contains("revenue")
-        || combined.contains("commercial")
-    {
-        "market_research"
-    } else if combined.contains("clinical")
-        || combined.contains("trial")
-        || combined.contains("fda")
-        || combined.contains("drug")
-    {
-        "biotech_analyst"
-    } else if combined.contains("nba")
-        || combined.contains("basketball")
-        || combined.contains("elo")
-    {
-        "nba_analyst"
-    } else {
-        match domain.as_str() {
-            "sports_nba" | "basketball" => "nba_analyst",
-            "biotech" | "pharma" => "biotech_analyst",
-            "sports_football" | "sports_nfl" | "sports_other" => "market_research",
-            "stocks" | "equity" => "equity_analyst",
-            "finance" => "macro_forecaster",
-            "technology" => "market_research",
-            _ => "macro_forecaster",
-        }
-    };
+    // Third copy of the routing ladder, now retired. This one mapped
+    // `sports_football` to `market_research`, so the picker recommended
+    // a market analyst for football drivers while auto-assign was
+    // recommending something else entirely. One routing function now
+    // serves auto-assign, `open_agent_picker`, and this card.
+    let (recommended_agent, _reason) =
+        select_agent_for_driver(driver_name, &rationale, &domain, None, &|a| {
+            state.agent_is_routable(a)
+        });
+    let recommended: &str = &recommended_agent;
 
     // Pre-fill the query with a domain-specific formulation
     let suggested_query = formulate_research_query(
@@ -15730,15 +15714,31 @@ fn render_driver_editor_and_evidence(
                                 }
                             });
 
-                            // Description from registry (BASE id lookup)
-                            // — fall back to a generic label for agents
-                            // that aren't in the registry.
+                            // Description for the BASE id. The local
+                            // card directory is optional (it depends on
+                            // where the console was launched from), so
+                            // fall through to the server roster before
+                            // giving up on a generic label — otherwise
+                            // every agent reads "Research agent" on a
+                            // packaged install.
                             let desc = state
                                 .registry
                                 .get(&base_id)
                                 .ok()
                                 .map(|c| c.metadata.description.clone())
                                 .filter(|d| !d.is_empty())
+                                .or_else(|| {
+                                    state
+                                        .server_agent_cards
+                                        .iter()
+                                        .find(|c| {
+                                            c.get("agent_id").and_then(|v| v.as_str())
+                                                == Some(base_id.as_str())
+                                        })
+                                        .and_then(|c| c.get("description").and_then(|v| v.as_str()))
+                                        .map(|s| s.to_string())
+                                        .filter(|d| !d.is_empty())
+                                })
                                 .unwrap_or_else(|| "Research agent".into());
 
                             col = col.child(
@@ -15752,6 +15752,9 @@ fn render_driver_editor_and_evidence(
                                     .bg(rgb(theme::BG_ELEVATED))
                                     .border_1()
                                     .border_color(rgb(theme::BORDER))
+                                    // Identity row: agent id + schedule
+                                    // badge only. Both are flex_none so
+                                    // neither can be shrunk.
                                     .child(
                                         div()
                                             .flex()
@@ -15759,6 +15762,9 @@ fn render_driver_editor_and_evidence(
                                             .gap(ui::s(8.0))
                                             .child(
                                                 div()
+                                                    .flex_none()
+                                                    .overflow_hidden()
+                                                    .whitespace_nowrap()
                                                     .text_size(ui::TEXT_BASE)
                                                     .text_color(rgb(theme::CYAN))
                                                     .font_weight(FontWeight::SEMIBOLD)
@@ -15770,6 +15776,8 @@ fn render_driver_editor_and_evidence(
                                             .when(active_label.is_some(), |el| {
                                                 el.child(
                                                     div()
+                                                        .flex_none()
+                                                        .whitespace_nowrap()
                                                         .text_size(ui::TEXT_XS)
                                                         .text_color(rgb(theme::GREEN))
                                                         .px(ui::s(6.0))
@@ -15780,14 +15788,25 @@ fn render_driver_editor_and_evidence(
                                                         .border_color(rgb(theme::GREEN))
                                                         .child(active_label.unwrap().clone()),
                                                 )
-                                            })
-                                            .child(
-                                                div()
-                                                    .text_size(ui::TEXT_XS)
-                                                    .text_color(rgb(theme::FG_DIM))
-                                                    .min_w(ui::s(0.0))
-                                                    .child(desc),
-                                            ),
+                                            }),
+                                    )
+                                    // Description on its own full-width
+                                    // line. It used to share the identity
+                                    // row as a shrinkable flex item with
+                                    // `min_w(0)`, which let the flex
+                                    // solver squeeze it to a single
+                                    // character column — the description
+                                    // then wrapped one letter per line
+                                    // and blew the card's height out to
+                                    // ~250px. A block-level sibling has
+                                    // the card's full inner width and
+                                    // wraps on word boundaries.
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .text_size(ui::TEXT_XS)
+                                            .text_color(rgb(theme::FG_DIM))
+                                            .child(desc),
                                     )
                                     .child(
                                         div()
@@ -16571,8 +16590,13 @@ fn render_sensitivity_bars(state: &CockpitState, s: &SensitivityStyle) -> gpui::
         .items_center()
         .gap(ui::s(6.0))
         .text_size(s.header_size)
+        // Name the index explicitly. These bars are total-order, which
+        // does NOT sum to 1 across drivers — saying so here stops the
+        // chart being read as a pie. The chat narrative reports
+        // first-order shares, which do sum to 1; the two answer
+        // different questions and should not look interchangeable.
         .child(div().text_color(rgb(theme::FG_MUTED)).child(if has_sobol {
-            "Driver influence"
+            "Driver influence — Sobol total-order"
         } else {
             "Driver spread — run a sim for Sobol influence"
         }))
@@ -25765,8 +25789,8 @@ fn generate_fpl_text(program: &Program) -> String {
         lines.push(format!("model: {}", model.expression));
         lines.push(String::new());
     } else if !program.drivers().is_empty() {
-        // Auto-generate model from drivers
-        let parts: Vec<String> = program
+        // Auto-generate model from drivers.
+        let mut parts: Vec<String> = program
             .drivers()
             .iter()
             .map(|d| match d.driver_type {
@@ -25778,6 +25802,30 @@ fn generate_fpl_text(program: &Program) -> String {
             })
             .collect();
         if !parts.is_empty() {
+            // Anchor on the base rate when the question carries one.
+            //
+            // Drivers are probability MULTIPLIERS centred on 1.0, so
+            // their bare product is a relative adjustment, not a
+            // probability. Emitting `driver_a * driver_b * ...` on its
+            // own produced a mean of 6.4 for a question whose base rate
+            // was 0.3% — which `run_simulation` then clamped to 0.99 and
+            // displayed as a confident 99%.
+            //
+            // The design contract (see `run_simulation`) is that the
+            // model expression IS the forecast quantity and the cockpit
+            // never re-multiplies the base rate in afterwards. That
+            // contract is only satisfiable if the anchor is part of the
+            // expression, so put it there. Hand-authored FPL already
+            // does exactly this (`model: 0.0208 * socio * ...`); this
+            // brings auto-generated models in line.
+            if let Some(freq) = program
+                .question()
+                .and_then(|q| q.base_rate.as_ref())
+                .map(|br| br.historical_frequency)
+                .filter(|f| *f > 0.0)
+            {
+                parts.insert(0, format!("{}", freq));
+            }
             lines.push(format!("model: {}", parts.join(" * ")));
             lines.push(String::new());
         }
@@ -26490,173 +26538,6 @@ fn formulate_research_query(
              Be specific and quantitative — numbers, percentages, named sources."
         ),
     }
-}
-
-fn detect_domain(question: &str) -> String {
-    let q = question.to_lowercase();
-
-    // Sports — NBA / basketball (check BEFORE general sports)
-    if q.contains("nba")
-        || q.contains("lakers")
-        || q.contains("celtics")
-        || q.contains("knicks")
-        || q.contains("warriors")
-        || q.contains("nuggets")
-        || q.contains("bucks")
-        || q.contains("76ers")
-        || q.contains("basketball")
-        || (q.contains("playoff") && (q.contains("game") || q.contains("series")))
-    {
-        return "sports_nba".into();
-    }
-
-    // Sports — football / soccer
-    if q.contains("champions league")
-        || q.contains("premier league")
-        || q.contains("world cup")
-        || q.contains("euro 20")
-        || q.contains("europa league")
-        || q.contains("la liga")
-        || q.contains("bundesliga")
-        || q.contains("serie a")
-        || q.contains("ligue 1")
-        || q.contains("uefa")
-        || q.contains("fifa")
-        || q.contains("bayern")
-        || q.contains("barcelona")
-        || q.contains("real madrid")
-        || q.contains("manchester")
-        || q.contains("liverpool")
-        || q.contains("arsenal")
-        || q.contains("psg")
-        || q.contains("juventus")
-        || q.contains("inter milan")
-        || q.contains("soccer")
-        || q.contains("football") && !q.contains("nfl")
-    {
-        return "sports_football".into();
-    }
-
-    // Stocks / equity — specific company financial analysis
-    if q.contains("stock price")
-        || q.contains("share price")
-        || q.contains("earnings per share")
-        || q.contains("eps ")
-        || q.contains("p/e ratio")
-        || q.contains("dcf")
-        || q.contains("intrinsic value")
-        || q.contains("market cap")
-        || q.contains("ipo")
-        || q.contains("quarterly earnings")
-        || q.contains("revenue beat")
-        || q.contains("analyst estimate")
-        || q.contains("price target")
-        || q.contains("stock split")
-        || (q.contains("valuation") && (q.contains("company") || q.contains("stock")))
-    {
-        return "stocks".into();
-    }
-
-    // Sports — NFL
-    if q.contains("nfl")
-        || q.contains("super bowl")
-        || q.contains("touchdown")
-        || q.contains("quarterback")
-    {
-        return "sports_nfl".into();
-    }
-
-    // Sports — general / other
-    if q.contains("olympics")
-        || q.contains("tennis")
-        || q.contains("f1")
-        || q.contains("formula 1")
-        || q.contains("eurovision")
-    {
-        return "sports_other".into();
-    }
-
-    // Biotech / pharma
-    if q.contains("fda")
-        || q.contains("clinical trial")
-        || q.contains("drug")
-        || q.contains("pharma")
-        || q.contains("biotech")
-        || q.contains("approval")
-            && (q.contains("drug") || q.contains("therapy") || q.contains("treatment"))
-        || q.contains("phase 1")
-        || q.contains("phase 2")
-        || q.contains("phase 3")
-        || q.contains("oncology")
-        || q.contains("crispr")
-        || q.contains("mrna")
-    {
-        return "biotech".into();
-    }
-
-    // Finance / stocks
-    if q.contains("stock")
-        || q.contains("share price")
-        || q.contains("revenue")
-        || q.contains("earnings")
-        || q.contains("valuation")
-        || q.contains("ipo")
-        || q.contains("nasdaq")
-        || q.contains("s&p")
-        || q.contains("dow")
-        || q.contains("market cap")
-        || q.contains("dividend")
-        || q.contains("quarterly")
-    {
-        return "finance".into();
-    }
-
-    // Politics / geopolitics
-    if q.contains("election")
-        || q.contains("vote")
-        || q.contains("president")
-        || q.contains("congress")
-        || q.contains("senate")
-        || q.contains("parliament")
-        || q.contains("referendum")
-        || q.contains("war")
-        || q.contains("conflict")
-        || q.contains("nato")
-        || q.contains("sanctions")
-        || q.contains("treaty")
-    {
-        return "politics".into();
-    }
-
-    // Technology
-    if q.contains(" ai ")
-        || q.contains("artificial intelligence")
-        || q.contains("software")
-        || q.contains("chip")
-        || q.contains("semiconductor")
-        || q.contains("quantum")
-        || q.contains("spacex")
-        || q.contains("satellite")
-        || q.contains("autonomous")
-        || q.contains("robotics")
-    {
-        return "technology".into();
-    }
-
-    // Climate / energy
-    if q.contains("climate")
-        || q.contains("carbon")
-        || q.contains("emission")
-        || q.contains("renewable")
-        || q.contains("solar")
-        || q.contains("wind power")
-        || q.contains("nuclear") && q.contains("energy")
-        || q.contains("fusion")
-    {
-        return "climate".into();
-    }
-
-    "general".into()
 }
 
 /// Generate a Fermi decomposition template for the given domain.

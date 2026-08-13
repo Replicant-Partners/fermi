@@ -52,13 +52,27 @@
 //! id (404) and orphans the evidence that identifier produced, so the
 //! rules belong somewhere they can be asserted rather than guessed.
 //!
+//! [`calibration`] critiques the base rate — the one number every
+//! driver multiplies, and therefore the one worth checking hardest. It
+//! is structural (Wilson intervals, sample size, circular reference
+//! classes) rather than semantic, so its answers are defensible.
+//!
+//! [`routing`] decides which research specialist answers which driver.
+//! It got here the hard way: the ladder lived inline in `cockpit.rs`,
+//! could not be tested, and silently sent every driver of a Premier
+//! League question to `macro_forecaster`. Agent selection determines
+//! what evidence a forecast is built on, so it is assertion-worthy by
+//! definition.
+//!
 //! Candidates to migrate here as they're decoupled from GPUI: the FPL
 //! action-marker parser in `chat.rs` and the Anthropic error extractor
 //! in `cockpit.rs`, both of which currently have tests that can't run.
 
 pub mod agent_naming;
+pub mod calibration;
 pub mod plot;
 pub mod roster;
+pub mod routing;
 pub mod uiscale;
 pub mod updater;
 pub mod wire;
