@@ -1,8 +1,72 @@
 # CI has never been green: the migration ratchet was born tripped
 
-**Status:** bug, unresolved
-**Affects:** `main` since 2026-08-07 (`CI / Test Suite`)
+**Status:** fixed — baseline met (26/26), all downstream steps pass locally
+**Affects:** `main` 2026-08-07 → 2026-08-13 (`CI / Test Suite`)
 **Reproduce:** `./scripts/migration-baseline-probe.sh`
+
+## Resolution
+
+Migration 181 now applies to an empty database, so the count is back to 26
+and `BASELINE` needed no edit. Three declarations were missing — all the
+same defect, all fixed in 181 using the idiom the file already established
+for `users.id` ("a no-op in production and the thing that makes a rebuild
+faithful"):
+
+| declared | why it was missing |
+|---|---|
+| `users.password_hash` | referenced by 004b/171/181, created by none |
+| `users.password_salt` | same |
+| `users_auth_provider_check` admitting `'legacy'` | 004 creates the CHECK without it; 004b tries to widen it via `ADD COLUMN IF NOT EXISTS`, a no-op once the column exists, so the wider constraint never lands |
+
+That third one is the same class again, one layer down: a CHECK constraint
+cannot be widened by re-adding a column that is already there.
+
+Both columns are declared `NOT NULL DEFAULT ''` and then have the default
+dropped, so a rebuild matches production's audited "NOT NULL without
+default" rather than acquiring a default production does not have.
+Verified by `scripts/verify-users-shape.sh`, which also asserts 181 is
+re-runnable (it executes on every boot) and that `abw-system` does not
+duplicate across runs.
+
+Side effect worth noting: **mig 171 now succeeds on the second boot**,
+which is what 181's comment always claimed ("Restoring the identifier below
+also repairs 171") but could not deliver while 181 aborted first. Second
+pass drops from 26 failures to 15.
+
+### What the skipped steps were hiding
+
+With the ratchet clear, the steps that had been skipped on every push for
+weeks ran for the first time — and two were genuinely failing:
+
+1. **`evaluator-faithfulness` unit test `is_prefilter`.** The implementation
+   was deliberately changed from `PreFilter` to `Dimensional`, with a
+   rationale on `tier()`: a PreFilter short-circuits the whole registry
+   below 0.5, which would stop CharacterEval and Sotopia from ever running
+   on a low-grounding response. The assertion was never updated. Test
+   corrected to match the documented decision and renamed
+   `is_dimensional_not_a_prefilter`.
+
+2. **Taxonomy derived-rank gate.** `weather_market_analyst` declared
+   `order: Prognosticales` while its own `produces`
+   (`trade_recommendation`, `position-sizing`, …) derives `Consiliales`.
+   Fixed with the gate's own documented remedy,
+   `scripts/taxonomy.py apply --derived`; it touched exactly that one field.
+
+Neither was detectable while CI stopped at the database step. Both were
+introduced after 2026-08-07, i.e. entirely within the window where the gate
+could not report.
+
+Run them yourself without a database:
+
+```bash
+./scripts/ci-skipped-steps.sh
+```
+
+### Still to do
+
+The 26 remaining failures are untouched — this restored the signal, it did
+not fix the schema. The four clusters below are the real work, and each one
+lowers `BASELINE`.
 
 ## Symptom
 
@@ -183,8 +247,12 @@ its container on exit.
 
 ## Acceptance
 
-- [ ] 181 applies cleanly to an empty database.
-- [ ] `Test Suite` reaches the lint and compile steps.
-- [ ] `BASELINE` is lowered, never raised, and the number in `ci.yml`'s
-      comment matches the constant beside it.
-- [ ] A green CI run exists on `main`.
+- [x] 181 applies cleanly to an empty database.
+- [x] `Test Suite` reaches the lint and compile steps (all eight pass
+      locally via `scripts/ci-skipped-steps.sh`).
+- [x] `BASELINE` not raised — the count returned to 26, so `ci.yml` is
+      unchanged and its comment still matches the constant beside it.
+- [ ] A green CI run exists on `main`. *(Requires the DB-backed steps that
+      cannot be checked locally: the API integration tests and the live
+      schema-trust verification.)*
+- [ ] `Security Audit` — still red, separately. See below.

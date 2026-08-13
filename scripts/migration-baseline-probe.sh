@@ -20,7 +20,6 @@
 set -uo pipefail
 
 REF="${1:-}"
-PORT="${PORT:-55432}"
 CONTAINER="fermi-migration-probe-$$"
 WORKTREE=""
 
@@ -50,22 +49,34 @@ else
 fi
 
 # pgvector image, matching CI's service container.
-echo "Starting postgres on :$PORT …"
-docker run -d --name "$CONTAINER" \
+#
+# No published port: every query goes through `docker exec`, so binding one
+# only created a race against a previous run's teardown (and an unnecessary
+# collision with any local postgres).
+echo "Starting postgres …"
+if ! run_err=$(docker run -d --name "$CONTAINER" \
     -e POSTGRES_PASSWORD=postgres \
     -e POSTGRES_DB=fermi_test \
-    -p "$PORT":5432 \
-    pgvector/pgvector:pg16 >/dev/null 2>&1 || {
-        echo "error: could not start postgres container" >&2
-        exit 1
-    }
+    pgvector/pgvector:pg16 2>&1); then
+    echo "error: could not start postgres container" >&2
+    echo "$run_err" >&2
+    exit 1
+fi
 
-for _ in $(seq 1 60); do
-    if docker exec "$CONTAINER" pg_isready -U postgres >/dev/null 2>&1; then break; fi
+ready=0
+for _ in $(seq 1 90); do
+    if docker exec "$CONTAINER" pg_isready -U postgres -q >/dev/null 2>&1; then
+        ready=1
+        break
+    fi
     sleep 1
 done
-if ! docker exec "$CONTAINER" pg_isready -U postgres >/dev/null 2>&1; then
-    echo "error: postgres did not become ready" >&2
+if [ "$ready" -ne 1 ]; then
+    echo "error: postgres did not become ready in 90s" >&2
+    echo "--- container status ---" >&2
+    docker ps -a --filter "name=$CONTAINER" --format '{{.Status}}' >&2
+    echo "--- container logs (tail) ---" >&2
+    docker logs "$CONTAINER" 2>&1 | tail -20 >&2
     exit 1
 fi
 
@@ -89,24 +100,53 @@ else
     order_label="runner order"
 fi
 total=$(echo "$order" | grep -c .)
-echo "Applying $total migrations in $order_label…"
-echo
+baseline=$(grep -oE 'BASELINE=[0-9]+' .github/workflows/ci.yml | head -1 | cut -d= -f2)
 
-failed=0
-while IFS= read -r f; do
-    [ -z "$f" ] && continue
-    if [ ! -f "$f" ]; then
-        echo "  MISSING  $f"
-        failed=$((failed + 1))
-        continue
-    fi
-    if ! out=$("${PSQL[@]}" -v ON_ERROR_STOP=1 -q -f - < "$f" 2>&1); then
-        reason=$(echo "$out" | grep -oE '(ERROR|FATAL):.*' | head -1)
-        printf '  FAIL  %-52s %s\n' "$f" "${reason:-unknown error}"
-        failed=$((failed + 1))
-    fi
-done <<< "$order"
+# PASSES=2 re-applies the whole set to the same database.
+#
+# `run_migrations` re-executes every file on every boot, so "applies cleanly
+# twice" is a correctness requirement here rather than a nicety, and it is
+# the property CI does not check: its database is fresh every run, so a
+# migration that succeeds once and fails on re-run looks green in CI and
+# fails forever in production, silently, because run_migrations swallows the
+# error. That is exactly how mig 171 went broken-on-every-boot unnoticed.
+passes="${PASSES:-1}"
 
-echo
+run_pass() {
+    local pass_no="$1"
+    local failed=0
+    while IFS= read -r f; do
+        [ -z "$f" ] && continue
+        if [ ! -f "$f" ]; then
+            echo "  MISSING  $f"
+            failed=$((failed + 1))
+            continue
+        fi
+        if ! out=$("${PSQL[@]}" -v ON_ERROR_STOP=1 -q -f - < "$f" 2>&1); then
+            reason=$(echo "$out" | grep -oE '(ERROR|FATAL):.*' | head -1)
+            printf '  FAIL  %-52s %s\n' "$f" "${reason:-unknown error}"
+            failed=$((failed + 1))
+        fi
+    done <<< "$order"
+    echo "$failed" > "/tmp/probe_failed_${pass_no}_$$"
+}
+
+pass=1
+while [ "$pass" -le "$passes" ]; do
+    if [ "$passes" -gt 1 ]; then
+        echo "── pass $pass of $passes ──────────────────────────────────────"
+    fi
+    echo "Applying $total migrations in $order_label…"
+    echo
+    run_pass "$pass"
+    echo
+    echo "  pass $pass: $(cat "/tmp/probe_failed_${pass}_$$") failure(s)"
+    echo
+    pass=$((pass + 1))
+done
+
+failed=$(cat "/tmp/probe_failed_1_$$")
+rm -f /tmp/probe_failed_*_$$
+
 echo "RESULT: $failed migration(s) fail against an empty database"
-echo "        (.github/workflows/ci.yml BASELINE=$(grep -oE 'BASELINE=[0-9]+' .github/workflows/ci.yml | head -1 | cut -d= -f2))"
+echo "        (.github/workflows/ci.yml BASELINE=${baseline})"

@@ -60,6 +60,66 @@ BEGIN
     --   NOT NULL without default: email, password_hash, password_salt
     --   UNIQUE: users_email_key, users_user_id_unique
     --   CHECK users_role_check: role IN ('admin','developer','viewer')
+    --
+    -- Declare password_hash / password_salt for the same reason section 2
+    -- declares users.id: production has them, no migration creates them, and
+    -- the INSERT below names them. Migration 004 was edited in place after it
+    -- had been applied, so a database rebuilt from this repo has a `users`
+    -- table that production would not recognise.
+    --
+    -- Without this, the branch below marked "Fresh database" was the one
+    -- thing that could not run on a fresh database: it aborted on
+    -- `column "password_hash" of relation "users" does not exist`. That took
+    -- the CI ratchet from 26 failures to 27 in the same commit that froze the
+    -- baseline at 26, so the gate has been red on every push since
+    -- 2026-08-07 and mig 171 still fails here for the identical reason.
+    -- See docs/plans/CI_MIGRATION_RATCHET.md.
+    --
+    -- No-op in production. DEFAULT '' only exists so the ADD can satisfy
+    -- NOT NULL against rows 004/171 already inserted; it is dropped
+    -- immediately afterwards so a rebuilt schema matches production's
+    -- "NOT NULL without default" exactly rather than acquiring a default
+    -- production does not have. DROP DEFAULT is itself a no-op there.
+    ALTER TABLE public.users
+        ADD COLUMN IF NOT EXISTS password_hash text NOT NULL DEFAULT '';
+    ALTER TABLE public.users
+        ADD COLUMN IF NOT EXISTS password_salt text NOT NULL DEFAULT '';
+    ALTER TABLE public.users ALTER COLUMN password_hash DROP DEFAULT;
+    ALTER TABLE public.users ALTER COLUMN password_salt DROP DEFAULT;
+
+    -- Widen users_auth_provider_check to admit 'legacy'.
+    --
+    -- Same disease, third instance. Migration 004 creates the column with
+    --   CHECK (auth_provider IN ('email','github','google','ethereum'))
+    -- and 004b tries to widen it to include 'legacy' by re-declaring the
+    -- column with ADD COLUMN IF NOT EXISTS — which is a no-op once 004 has
+    -- created it, so the wider constraint never lands. A CHECK cannot be
+    -- widened by adding a column that is already there.
+    --
+    -- Production admits 'legacy': the audit found system@abw.local carrying
+    -- auth_provider='legacy', and 004b's UPDATE and this file's own
+    -- immunisation write below both depend on it. A database rebuilt from
+    -- this repo does not — so the INSERT below, and 004b's UPDATE, are
+    -- rejected. Declaring the real constraint here is the same move as
+    -- declaring users.id in section 2, for the same reason.
+    --
+    -- Guarded rather than forced: if any row already carries a value outside
+    -- the declared set, warn and leave the constraint alone rather than
+    -- aborting the whole block on a production shape we have not seen.
+    SELECT count(*) INTO v_rows
+      FROM users
+     WHERE auth_provider IS NOT NULL
+       AND auth_provider NOT IN ('email','github','google','ethereum','legacy');
+
+    IF v_rows > 0 THEN
+        RAISE WARNING '[mig 181] % user(s) carry an auth_provider outside the declared set; leaving users_auth_provider_check untouched', v_rows;
+    ELSE
+        ALTER TABLE public.users DROP CONSTRAINT IF EXISTS users_auth_provider_check;
+        ALTER TABLE public.users
+            ADD CONSTRAINT users_auth_provider_check
+            CHECK (auth_provider IN ('email','github','google','ethereum','legacy'));
+    END IF;
+
     IF NOT EXISTS (SELECT 1 FROM users WHERE user_id = 'abw-system') THEN
 
         IF EXISTS (SELECT 1 FROM users WHERE email = 'system@abw.local') THEN

@@ -325,10 +325,20 @@ mod tests {
         );
     }
 
+    /// Grounding is a quality signal, not a safety gate.
+    ///
+    /// This asserted `PreFilter` until the implementation was deliberately
+    /// changed to `Dimensional` (see the rationale on `tier()`: a PreFilter
+    /// short-circuits the whole registry below 0.5, which would stop
+    /// CharacterEval and Sotopia from ever running on a low-grounding
+    /// response). The assertion was not updated with it, so this test has
+    /// been failing ever since — invisibly, because CI stops at the
+    /// migration ratchet long before it reaches the test suite. See
+    /// docs/plans/CI_MIGRATION_RATCHET.md.
     #[test]
-    fn is_prefilter() {
+    fn is_dimensional_not_a_prefilter() {
         let ev = FaithfulnessEvaluator::new();
-        assert_eq!(ev.tier(), EvalTier::PreFilter);
+        assert_eq!(ev.tier(), EvalTier::Dimensional);
     }
 
     #[test]
