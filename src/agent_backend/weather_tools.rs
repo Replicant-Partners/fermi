@@ -2761,4 +2761,187 @@ TEMPERATURE (F)\n\
             .await
             .is_none());
     }
+
+    #[test]
+    fn weather_tools_are_registered_as_platform_tools() {
+        // The weather defs must actually reach `platform_tools()`, otherwise
+        // agent cards declaring them fail publication validation even though
+        // the dispatch arms exist.
+        let platform = crate::agent_backend::tools::platform_tool_names();
+        for def in tool_defs() {
+            assert!(
+                platform.contains(&def.name),
+                "'{}' is defined here but never reaches platform_tools(); the card validator \
+                 would reject it as a phantom tool",
+                def.name
+            );
+        }
+    }
+
+    /// Every tool the weather agent cards declare must be dispatchable.
+    ///
+    /// This is the test that would have caught the historical phantom-tool
+    /// class of bug: a card advertising a capability the runtime cannot
+    /// service, which reaches the model and fails at call time with
+    /// `Unknown tool: X`.
+    #[test]
+    fn weather_agent_cards_declare_no_phantom_tools() {
+        use std::path::Path;
+
+        let dir = [
+            Path::new("agents/curated"),
+            Path::new("../../agents/curated"),
+        ]
+        .into_iter()
+        .find(|p| p.exists())
+        .expect("run from the workspace root");
+
+        let platform = crate::agent_backend::tools::platform_tool_names();
+        let agents = [
+            "weather_oracle",
+            "weather_ensemble_forecaster",
+            "weather_calibrator",
+            "weather_market_analyst",
+        ];
+
+        let mut checked = 0;
+        for agent in agents {
+            let path = dir.join(agent).join("agent_card.json");
+            let raw = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+            let card: Value = serde_json::from_str(&raw)
+                .unwrap_or_else(|e| panic!("{} is not valid JSON: {e}", path.display()));
+
+            let tools = card["capabilities"]["mcp_tools"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{agent} has no mcp_tools array"));
+            assert!(!tools.is_empty(), "{agent} declares no tools");
+
+            for t in tools {
+                let name = t["name"].as_str().expect("tool name must be a string");
+                assert!(
+                    platform.contains(&name),
+                    "{agent} declares '{name}', which is not a dispatchable platform tool"
+                );
+                assert!(
+                    t["input_schema"].is_object(),
+                    "{agent} tool '{name}' has no input_schema object"
+                );
+                checked += 1;
+            }
+        }
+        assert!(
+            checked >= 14,
+            "expected to check more tool declarations, saw {checked}"
+        );
+    }
+
+    /// The `weather_oracle` card is the orchestra contract. Its shape is load
+    /// bearing: `validate_fermi_contract` in handlers/orchestras.rs requires a
+    /// non-empty `finding_labels` and a well-ordered `multiplier_range`.
+    #[test]
+    fn weather_oracle_fermi_contract_is_valid() {
+        use std::path::Path;
+
+        let dir = [
+            Path::new("agents/curated"),
+            Path::new("../../agents/curated"),
+        ]
+        .into_iter()
+        .find(|p| p.exists())
+        .expect("run from the workspace root");
+        let raw = std::fs::read_to_string(dir.join("weather_oracle/agent_card.json")).unwrap();
+        let card: Value = serde_json::from_str(&raw).unwrap();
+
+        let fc = &card["capabilities"]["fermi_contract"];
+        assert!(
+            fc.is_object(),
+            "weather_oracle must declare a fermi_contract"
+        );
+
+        let labels = fc["finding_labels"]
+            .as_array()
+            .expect("finding_labels array");
+        assert!(!labels.is_empty());
+        // The orchestra protocol expects a MULTIPLIER terminator.
+        assert!(
+            labels.iter().any(|l| l.as_str() == Some("MULTIPLIER")),
+            "finding_labels must include MULTIPLIER per the Fermi orchestra protocol"
+        );
+
+        let range = fc["multiplier_range"].as_array().expect("multiplier_range");
+        assert_eq!(range.len(), 2);
+        let lo = range[0].as_f64().unwrap();
+        let hi = range[1].as_f64().unwrap();
+        assert!(lo < hi, "multiplier_range min must be < max");
+
+        // Seed facts populate the CEP knowledge graph on first run, so they
+        // must carry the full shape the loader expects.
+        let seeds = fc["seed_facts"].as_array().expect("seed_facts array");
+        assert!(seeds.len() >= 5, "expected a substantive seed-fact set");
+        for (i, s) in seeds.iter().enumerate() {
+            for field in ["entity_type", "name", "description"] {
+                assert!(
+                    s[field].as_str().is_some_and(|v| !v.is_empty()),
+                    "seed_facts[{i}] missing '{field}'"
+                );
+            }
+            assert!(s["properties"].is_object(), "seed_facts[{i}] properties");
+            let c = s["confidence"].as_f64().unwrap_or(-1.0);
+            assert!(
+                (0.0..=1.0).contains(&c),
+                "seed_facts[{i}] confidence {c} out of range"
+            );
+        }
+    }
+
+    /// The composition must be internally consistent: every agent named in
+    /// `weather_oracle`'s dependencies and workflow stages must exist on disk.
+    #[test]
+    fn weather_oracle_composition_members_all_exist() {
+        use std::path::Path;
+
+        let dir = [
+            Path::new("agents/curated"),
+            Path::new("../../agents/curated"),
+        ]
+        .into_iter()
+        .find(|p| p.exists())
+        .expect("run from the workspace root");
+        let raw = std::fs::read_to_string(dir.join("weather_oracle/agent_card.json")).unwrap();
+        let card: Value = serde_json::from_str(&raw).unwrap();
+
+        let mut referenced: Vec<String> = Vec::new();
+        for key in ["required", "optional"] {
+            for a in card["dependencies"][key].as_array().unwrap_or(&vec![]) {
+                referenced.push(a.as_str().unwrap().to_string());
+            }
+        }
+        let stages = card["workflow_template"]["stages"]
+            .as_array()
+            .expect("workflow_template.stages");
+        assert!(stages.len() >= 4, "pipeline should have at least 4 stages");
+        for s in stages {
+            referenced.push(s["agent"].as_str().expect("stage agent").to_string());
+        }
+
+        for agent in &referenced {
+            assert!(
+                dir.join(agent).join("agent_card.json").exists(),
+                "weather_oracle references '{agent}' but no such agent card exists"
+            );
+        }
+
+        // The two required members must be the forecast and calibrate stages:
+        // pricing is optional (you can forecast without a market), but you can
+        // never price without calibrating first.
+        let required: Vec<&str> = card["dependencies"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert!(required.contains(&"weather_ensemble_forecaster"));
+        assert!(required.contains(&"weather_calibrator"));
+    }
 }

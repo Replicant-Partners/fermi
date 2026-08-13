@@ -8,6 +8,22 @@ const TagRenderer = {
     cost: { free: 'var(--green)', low: 'var(--green)', medium: 'var(--yellow)', high: 'var(--orange)' },
     model: 'var(--purple)',
     confidence: { high: 'var(--green)', medium: 'var(--yellow)', low: 'var(--red)' },
+    // Why the LLM stopped. `end_turn`/`stop` are clean exits; `max_tokens`,
+    // `length` and `tool_use` mean the run was cut short and the answer (if
+    // any) came from a flush turn. Colour accordingly so a list of episodes
+    // shows at a glance which runs actually finished.
+    stop: {
+      end_turn: 'var(--green)',
+      stop: 'var(--green)',
+      max_tokens: 'var(--red)',
+      length: 'var(--red)',
+      tool_use: 'var(--orange)',
+      tool_calls: 'var(--orange)',
+      refusal: 'var(--red)',
+      content_filter: 'var(--red)',
+      pause_turn: 'var(--yellow)',
+    },
+    degraded: 'var(--orange)',
   },
 
   color(tag) {

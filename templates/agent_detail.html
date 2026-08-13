@@ -568,6 +568,27 @@
         color: var(--fg3);
         font-size: 0.8em;
       }
+      /* Failure reason, shown inline under the row it belongs to. */
+      .episode-error {
+        color: var(--red);
+        font-size: 0.78em;
+        font-family: var(--font-mono, monospace);
+        line-height: 1.4;
+        padding: 0 0 8px 12px;
+        border-left: 2px solid var(--red);
+        margin: -4px 0 8px 0;
+        word-break: break-word;
+      }
+      .detail-error {
+        color: var(--red);
+        font-family: var(--font-mono, monospace);
+        background: var(--bg0, transparent);
+        border: 1px solid var(--red);
+        padding: 8px 10px;
+        margin-bottom: 12px;
+        line-height: 1.5;
+        word-break: break-word;
+      }
       .episodes-pagination {
         display: flex;
         justify-content: center;
@@ -4688,6 +4709,12 @@
               ? `$${Number(ep.cost_usd).toFixed(6)}`
               : "—";
             const safeId = ep.episode_id.replace(/"/g, "&quot;");
+            // The reason a run failed belongs on the row, not three clicks
+            // away. A list of identical FAILURE pills tells the owner
+            // nothing about whether they have one problem or five.
+            const errLine = ep.error_details
+              ? `<div class="episode-error">${escapeHtml(ep.error_details)}</div>`
+              : "";
             html += `
               <div class="episode-row clickable" onclick="toggleEpisodeDetail('${safeId}', this)" id="ep-row-${safeId}">
                 <div class="episode-query" title="${ep.query.replace(/"/g, "&quot;")}">${ep.query}</div>
@@ -4696,6 +4723,7 @@
                 <span class="episode-cost">${costStr}</span>
                 <span class="episode-time">${date}</span>
               </div>
+              ${errLine}
               <div class="episode-detail" id="ep-detail-${safeId}" style="display:none"></div>`;
           });
           html += "</div>";
@@ -4746,6 +4774,18 @@
           const ep = await res.json();
 
           let html = "";
+
+          // Failure block first. If this run didn't succeed, the reason is
+          // the only thing the reader came for — it outranks timing.
+          if (ep.error_details || ep.failure_reason) {
+            const label =
+              ep.status === "success" ? "Degraded" : "Failure Reason";
+            html += `<div class="detail-error">
+              <div style="text-transform:uppercase;letter-spacing:0.05em;font-size:0.85em;margin-bottom:4px">${label}</div>
+              <div>${escapeHtml(ep.error_details || ep.failure_reason)}</div>
+              ${ep.stop_reason ? `<div style="color:var(--fg3);margin-top:6px;font-size:0.9em">LLM stop reason: <strong>${escapeHtml(ep.stop_reason)}</strong></div>` : ""}
+            </div>`;
+          }
 
           // Timing waterfall bar
           const totalMs = ep.timing?.total_ms || ep.execution_time_ms || 0;

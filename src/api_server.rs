@@ -5615,6 +5615,50 @@ pub(crate) fn spawn_dyad_observation(
     });
 }
 
+/// Compose a diagnostic `error_details` string for a non-successful run.
+///
+/// Returns `None` for a clean success. For anything else it leads with the
+/// executor's own `failure_reason` when present (it is the most specific
+/// thing anyone knows about the run) and appends the execution shape that
+/// makes it actionable: how the LLM stopped, how many round-trips it took,
+/// how many tool calls it made, and how many tokens it burned.
+///
+/// The token count matters because a failed run is still billed. A caller
+/// looking at a $0.61 charge on a FAILURE row needs to see that the money
+/// went on 5 iterations and 15 tool calls that never produced final text —
+/// not just the word "failed".
+fn build_error_details(output: &AgentOutput) -> Option<String> {
+    let base = match (&output.status, output.metadata.failure_reason.as_deref()) {
+        (AgentStatus::Success, _) => return None,
+        (_, Some(reason)) => reason.to_string(),
+        (AgentStatus::Failed, None) => "execution failed (executor gave no reason)".to_string(),
+        (AgentStatus::Timeout, None) => "execution timed out".to_string(),
+        (AgentStatus::BelowConfidenceThreshold, None) => format!(
+            "below confidence threshold (confidence={:.2})",
+            output.confidence
+        ),
+    };
+
+    let mut facts = vec![format!(
+        "stop_reason={}",
+        output.metadata.stop_reason.as_deref().unwrap_or("unknown")
+    )];
+    facts.push(format!("iterations={}", output.loop_iterations));
+    facts.push(format!("tool_calls={}", output.tool_invocations.len()));
+    if let Some(t) = output.tokens_used {
+        facts.push(format!("tokens={}", t));
+    }
+    facts.push(format!("confidence={:.2}", output.confidence));
+    if let Some(ref m) = output.metadata.model_used {
+        facts.push(format!("model={}", m));
+    }
+    if let Some(ref p) = output.metadata.provider {
+        facts.push(format!("provider={}", p));
+    }
+
+    Some(format!("{} [{}]", base, facts.join(", ")))
+}
+
 pub(crate) fn agent_output_to_episode(
     agent_db_id: uuid::Uuid,
     query: &str,
@@ -5686,6 +5730,25 @@ pub(crate) fn agent_output_to_episode(
         tags.push("confidence:low".to_string());
     }
 
+    // Why the LLM stopped. The executors already know this (issue #3 /
+    // docs/specs/10_RESEARCH_AGENTS_EMPTY_LLM_OUTPUT.md) and it is the
+    // single most diagnostic field for a failure — `max_tokens` and
+    // `tool_use` mean completely different remediations. Tagging it makes
+    // the distinction visible in the episode list without an expand.
+    if let Some(ref sr) = output.metadata.stop_reason {
+        if !sr.is_empty() {
+            tags.push(format!("stop:{}", sr));
+        }
+    }
+
+    // A run that succeeded but not cleanly (e.g. tool loop capped out and
+    // the answer came from the flush turn) still carries a
+    // `failure_reason`. That is a degradation, not an error, and it was
+    // previously invisible in every surface.
+    if matches!(output.status, AgentStatus::Success) && output.metadata.failure_reason.is_some() {
+        tags.push("degraded:true".to_string());
+    }
+
     Episode {
         episode_id: uuid::Uuid::new_v4(),
         agent_id: agent_db_id,
@@ -5709,6 +5772,12 @@ pub(crate) fn agent_output_to_episode(
             "funding_principal": output.metadata.funding_principal,
             "credential_source": output.metadata.credential_source,
             "reasoning": output.metadata.reasoning,
+            // Failure provenance. Persisted in context (not only folded into
+            // `error_details`) so the raw executor verdict survives
+            // independently of the human-readable summary, and so the
+            // degraded-but-successful case has somewhere to live.
+            "stop_reason": output.metadata.stop_reason,
+            "failure_reason": output.metadata.failure_reason,
             "loop_iterations": output.loop_iterations,
             "tool_invocations": output.tool_invocations.iter().map(|t| json!({
                 "tool_name": t.tool_name,
@@ -5723,11 +5792,16 @@ pub(crate) fn agent_output_to_episode(
             AgentStatus::Failed | AgentStatus::Timeout => ExecutionStatus::Failure,
             AgentStatus::BelowConfidenceThreshold => ExecutionStatus::Partial,
         },
-        error_details: match output.status {
-            AgentStatus::Failed => Some("Execution failed".to_string()),
-            AgentStatus::Timeout => Some("Execution timed out".to_string()),
-            _ => None,
-        },
+        // The executors compute a precise reason — "tool loop produced empty
+        // content (stop_reason=tool_use, iterations=5, hit_iteration_cap)",
+        // "llm hit max_tokens; response is truncated" — and this function
+        // used to throw it away and substitute the constant "Execution
+        // failed". That constant is why every failure in the UI reads
+        // identically, why the failure notification's "check the execution
+        // history for details" pointed at no details, and why the
+        // consolidation pass (which clusters on `error_details`) saw one
+        // pattern where there were several. Compose the real thing.
+        error_details: build_error_details(output),
         execution_time_ms: output.execution_time_ms as i64,
         tokens_used: output.tokens_used.map(|t| t as i32),
         // Cost is priced off the provider/model that actually served the
@@ -5820,4 +5894,131 @@ pub(crate) async fn create_notification_for_surface(
     .bind(source)
     .execute(pool)
     .await;
+}
+
+#[cfg(test)]
+mod failure_provenance_tests {
+    use super::*;
+    use fermi::agent_backend::executor::{AgentMetadata, ToolInvocation};
+
+    fn output(
+        status: AgentStatus,
+        failure_reason: Option<&str>,
+        stop: Option<&str>,
+    ) -> AgentOutput {
+        AgentOutput {
+            agent_name: "efra_critical_factor".into(),
+            agent_type: "research".into(),
+            timestamp: chrono::Utc::now(),
+            status,
+            evidence: vec![],
+            confidence: 0.0,
+            sources_consulted: vec![],
+            execution_time_ms: 41_000,
+            tokens_used: Some(120_000),
+            metadata: AgentMetadata {
+                model_used: Some("claude-sonnet-4".into()),
+                provider: Some("anthropic".into()),
+                stop_reason: stop.map(str::to_string),
+                failure_reason: failure_reason.map(str::to_string),
+                ..Default::default()
+            },
+            tool_invocations: (1..=15)
+                .map(|i| ToolInvocation {
+                    tool_name: "web_search".into(),
+                    input: json!({}),
+                    output: String::new(),
+                    duration_ms: 574,
+                    iteration: i,
+                })
+                .collect(),
+            loop_iterations: 5,
+        }
+    }
+
+    #[test]
+    fn clean_success_records_no_error_details() {
+        let out = output(AgentStatus::Success, None, Some("end_turn"));
+        assert!(build_error_details(&out).is_none());
+    }
+
+    #[test]
+    fn failure_carries_the_executor_reason_not_a_constant() {
+        let out = output(
+            AgentStatus::Failed,
+            Some("tool loop produced empty content (stop_reason=tool_use, iterations=5, hit_iteration_cap)"),
+            Some("tool_use"),
+        );
+        let details = build_error_details(&out).expect("a failure must record why");
+        assert!(
+            details.contains("hit_iteration_cap"),
+            "executor reason must survive: {details}"
+        );
+        assert_ne!(details, "Execution failed");
+        // The execution shape a caller needs to act on it.
+        assert!(details.contains("stop_reason=tool_use"), "{details}");
+        assert!(details.contains("iterations=5"), "{details}");
+        assert!(details.contains("tool_calls=15"), "{details}");
+        assert!(details.contains("tokens=120000"), "{details}");
+    }
+
+    #[test]
+    fn failure_without_an_executor_reason_still_says_what_is_known() {
+        let out = output(AgentStatus::Failed, None, None);
+        let details = build_error_details(&out).unwrap();
+        assert!(details.contains("executor gave no reason"), "{details}");
+        assert!(details.contains("stop_reason=unknown"), "{details}");
+    }
+
+    #[test]
+    fn timeout_and_low_confidence_are_distinguishable() {
+        let t = build_error_details(&output(AgentStatus::Timeout, None, None)).unwrap();
+        let c = build_error_details(&output(AgentStatus::BelowConfidenceThreshold, None, None))
+            .unwrap();
+        assert!(t.contains("timed out"), "{t}");
+        assert!(c.contains("below confidence threshold"), "{c}");
+        assert_ne!(t, c);
+    }
+
+    #[test]
+    fn episode_persists_stop_and_failure_reason_in_context() {
+        let out = output(
+            AgentStatus::Failed,
+            Some("llm hit max_tokens; response is truncated"),
+            Some("max_tokens"),
+        );
+        let ep = agent_output_to_episode(uuid::Uuid::new_v4(), "Will GOOG hit 450?", &out);
+
+        assert_eq!(
+            ep.context.get("stop_reason").and_then(|v| v.as_str()),
+            Some("max_tokens")
+        );
+        assert_eq!(
+            ep.context.get("failure_reason").and_then(|v| v.as_str()),
+            Some("llm hit max_tokens; response is truncated")
+        );
+        assert!(ep.tags.contains(&"stop:max_tokens".to_string()));
+        assert!(ep.error_details.is_some());
+    }
+
+    #[test]
+    fn success_with_a_failure_reason_is_tagged_degraded_but_not_errored() {
+        // The tool loop capped out and the answer came from the flush turn:
+        // a real answer, but not a clean one. Previously invisible.
+        let out = output(
+            AgentStatus::Success,
+            Some("tool loop hit iteration cap (5); answer produced from flush turn"),
+            Some("end_turn"),
+        );
+        let ep = agent_output_to_episode(uuid::Uuid::new_v4(), "q", &out);
+        assert!(ep.tags.contains(&"degraded:true".to_string()));
+        assert!(
+            ep.error_details.is_none(),
+            "a degraded success is not a failure"
+        );
+        assert_eq!(
+            ep.context.get("failure_reason").and_then(|v| v.as_str()),
+            Some("tool loop hit iteration cap (5); answer produced from flush turn")
+        );
+    }
 }

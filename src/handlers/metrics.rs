@@ -43,6 +43,15 @@ pub async fn get_episode_detail_handler(
         .and_then(|v| v.as_str())
         .unwrap_or("");
     let evidence = context.get("evidence").cloned().unwrap_or(json!([]));
+    // Failure provenance as the executor recorded it, separate from the
+    // composed `error_details` summary. A caller diagnosing a FAILURE needs
+    // the raw stop_reason: `max_tokens` means "raise the cap", `tool_use`
+    // means "the tool loop never converged".
+    let stop_reason = context.get("stop_reason").cloned().unwrap_or(Value::Null);
+    let failure_reason = context
+        .get("failure_reason")
+        .cloned()
+        .unwrap_or(Value::Null);
 
     // Compute timing breakdown
     let total_ms = episode.execution_time_ms;
@@ -64,6 +73,8 @@ pub async fn get_episode_detail_handler(
         "query": episode.query,
         "status": episode.execution_status.to_string(),
         "error_details": episode.error_details,
+        "stop_reason": stop_reason,
+        "failure_reason": failure_reason,
         "execution_time_ms": total_ms,
         "tokens_used": episode.tokens_used,
         "cost_usd": episode.cost_usd,

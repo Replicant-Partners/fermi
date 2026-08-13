@@ -355,13 +355,24 @@ pub async fn execute_agent_handler(
         let db = state.db.clone();
         let uid = caller_id.clone();
         let aid = agent_id.clone();
+        // Put the reason in the notification itself. It used to say "check
+        // the agent's execution history for details" — which was a dead
+        // end, because the history stored the constant "Execution failed".
+        let body = match output.metadata.failure_reason.as_deref() {
+            Some(reason) => format!("{} (episode {})", reason, episode_id),
+            None => format!(
+                "No reason reported by the executor. stop_reason={}, episode {}",
+                output.metadata.stop_reason.as_deref().unwrap_or("unknown"),
+                episode_id
+            ),
+        };
         tokio::spawn(async move {
             create_notification(
                 &db,
                 &uid,
                 "execution_failure",
                 &format!("Execution failed: {}", aid),
-                Some("Check the agent's execution history for details."),
+                Some(&body),
             )
             .await;
         });
@@ -404,9 +415,18 @@ pub async fn execute_agent_handler(
             "key_findings": e.key_findings,
             "relevance": e.relevance,
         })).collect::<Vec<_>>(),
+        // Failure provenance travels with the response. Without these two
+        // fields a caller (the Fermi console's driver-research pass, for
+        // one) sees `"status": "Failed"` and has nothing to log, retry on,
+        // or show the person who paid for the run.
+        "failure_reason": output.metadata.failure_reason,
+        "stop_reason": output.metadata.stop_reason,
         "metadata": {
             "model_used": output.metadata.model_used,
+            "provider": output.metadata.provider,
             "reasoning": output.metadata.reasoning,
+            "failure_reason": output.metadata.failure_reason,
+            "stop_reason": output.metadata.stop_reason,
         }
     })))
 }

@@ -3049,8 +3049,21 @@ impl CockpitState {
         if !driver_names.is_empty() {
             let mut assigned_count = 0;
 
+            let mut skipped: Vec<String> = Vec::new();
+
             for driver_name in &driver_names {
                 let driver = self.program.driver(driver_name);
+
+                // Never spend a hire on a driver the user hasn't specified.
+                // A `triangular(0, 0, 0)` placeholder has no question in it
+                // for an agent to research, and it would zero out the model
+                // anyway. Skip it and say so, rather than billing for an
+                // execution that can only fail.
+                if driver.map(driver_is_unspecified).unwrap_or(false) {
+                    skipped.push(driver_name.clone());
+                    continue;
+                }
+
                 let rationale = driver
                     .and_then(|d| d.rationale.as_deref())
                     .unwrap_or("")
@@ -3181,11 +3194,29 @@ impl CockpitState {
                      assignments on each driver card, re-assign anything that looks wrong, \
                      then press {} to run them (or use Run Now per driver).",
                     assigned_count,
-                    driver_names.len(),
+                    driver_names.len() - skipped.len(),
                     summary.join(", "),
                     crate::keys::chord("Enter"),
                 ),
             });
+
+            // Name the placeholders that were left out, per driver, so the
+            // omission is visible where the fix is. Silently skipping would
+            // just move the confusion from "why did this fail?" to "why did
+            // this driver get no research?".
+            for driver_name in &skipped {
+                self.messages.push(AssistantMessage {
+                    node: format!("driver:{}", driver_name),
+                    kind: MessageKind::Warning,
+                    text: format!(
+                        "No agent staged for '{}': its estimate is still \
+                         triangular(0, 0, 0). An agent has nothing to research \
+                         until this driver has a description and a p5/p50/p95. \
+                         Fill it in, then re-run decomposition.",
+                        driver_name
+                    ),
+                });
+            }
         }
     }
 
@@ -24151,6 +24182,73 @@ mod extractor_tests {
     }
 }
 
+#[cfg(test)]
+mod placeholder_driver_tests {
+    use super::{driver_is_unspecified, generate_decomposition, make_continuous_driver};
+
+    #[test]
+    fn all_zero_triangular_is_unspecified() {
+        // Exactly what `add_manual_driver` seeds.
+        let d = make_continuous_driver(
+            "driver_3",
+            "Driver 3",
+            "",
+            0.0,
+            0.0,
+            0.0,
+            "Describe this driver and set your estimates",
+        );
+        assert!(driver_is_unspecified(&d));
+    }
+
+    #[test]
+    fn a_filled_in_driver_is_specified() {
+        let d = make_continuous_driver(
+            "ai_product_execution",
+            "AI Product Execution",
+            "multiplier",
+            0.8,
+            1.05,
+            1.3,
+            "Gemini shipping cadence vs expectations",
+        );
+        assert!(!driver_is_unspecified(&d));
+    }
+
+    #[test]
+    fn a_zero_p5_alone_is_not_a_placeholder() {
+        // Only the fully degenerate case counts. A legitimate estimate may
+        // bottom out at zero.
+        let d = make_continuous_driver("x", "X", "", 0.0, 1.0, 2.0, "real");
+        assert!(!driver_is_unspecified(&d));
+    }
+
+    #[test]
+    fn no_generated_template_driver_looks_like_a_placeholder() {
+        // The guard skips dispatch, so a false positive would silently
+        // starve a real driver of research. Every template must pass.
+        for domain in [
+            "finance",
+            "technology",
+            "politics",
+            "sports",
+            "nba",
+            "biotech",
+            "general",
+        ] {
+            let (drivers, _) = generate_decomposition("will X happen?", domain);
+            for d in &drivers {
+                assert!(
+                    !driver_is_unspecified(d),
+                    "template driver '{}' in domain '{}' reads as an unfilled placeholder",
+                    d.name,
+                    domain
+                );
+            }
+        }
+    }
+}
+
 /// Translate a raw backend error string into an operator-facing
 /// message. Two goals:
 ///   * Hide the raw SQL / sqlx wire format from the toast — seeing
@@ -26698,6 +26796,28 @@ fn generate_evidence_wiki(
     ));
 
     md
+}
+
+/// Whether a driver is still an unfilled placeholder from `add_manual_driver`.
+///
+/// `add_manual_driver` seeds a continuous driver as `Driver N` with a
+/// degenerate `triangular(0, 0, 0)` and a "describe this driver" rationale,
+/// on the expectation the user fills it in. Every generated template driver
+/// carries real values (0.7/1.0/1.4 and friends), so an all-zero triangular
+/// is unambiguously "not specified yet" rather than a deliberate estimate.
+///
+/// This matters because the dispatch pass hires an agent per driver. Without
+/// this check a forgotten placeholder is sent to a real agent as "Research
+/// evidence for the 'Driver 3' driver. Current estimate: p5=0.00, p50=0.00,
+/// p95=0.00" with an empty context — an unanswerable question that burns the
+/// agent's full iteration budget and bills the user for the failure.
+fn driver_is_unspecified(driver: &DriverStmt) -> bool {
+    match driver.distribution.as_ref() {
+        Some(Distribution::Triangular { p5, p50, p95 }) => {
+            expr_to_f64(p5) == 0.0 && expr_to_f64(p50) == 0.0 && expr_to_f64(p95) == 0.0
+        }
+        _ => false,
+    }
 }
 
 /// Formulate a domain-specific research query for an agent+driver combination.

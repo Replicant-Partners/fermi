@@ -2048,27 +2048,50 @@ impl ApiClient {
         path: &str,
         body: &B,
     ) -> Result<T, ApiError> {
+        self.post_with_timeout(path, body, None).await
+    }
+
+    /// POST with an optional per-request timeout override.
+    ///
+    /// The client-wide 120s budget is right for CRUD, and wrong for
+    /// anything that runs an LLM. A research agent that makes two or
+    /// three upstream API calls and then generates a long structured
+    /// response routinely takes three to four minutes — observed
+    /// successes at 3m39s against a 120s ceiling. Those runs burn tokens
+    /// upstream and *then* fail on our side, which is the worst of both:
+    /// the operator is billed for research they never receive.
+    async fn post_with_timeout<B: Serialize, T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<T, ApiError> {
         let url = self.url(path).await;
         let headers = self.headers().await?;
 
         log::debug!("[api] POST {}", url);
-        let response = self
-            .http
-            .post(&url)
-            .headers(headers)
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| {
-                log::error!("[api] POST {} network error: {}", url, e);
-                if e.is_timeout() {
-                    ApiError::Server(format!("Request timed out after 120s: {}", url))
-                } else if e.is_connect() {
-                    ApiError::Server(format!("Connection failed to {}: {}", url, e))
-                } else {
-                    ApiError::Network(e)
-                }
-            })?;
+        let mut req = self.http.post(&url).headers(headers).json(body);
+        if let Some(t) = timeout {
+            req = req.timeout(t);
+        }
+        let waited = timeout.unwrap_or_else(|| std::time::Duration::from_secs(120));
+        let response = req.send().await.map_err(|e| {
+            log::error!("[api] POST {} network error: {}", url, e);
+            if e.is_timeout() {
+                // Report the budget that actually applied. Hardcoding
+                // "120s" here made every override look like it hadn't
+                // taken effect.
+                ApiError::Server(format!(
+                    "Request timed out after {}s: {}",
+                    waited.as_secs(),
+                    url
+                ))
+            } else if e.is_connect() {
+                ApiError::Server(format!("Connection failed to {}: {}", url, e))
+            } else {
+                ApiError::Network(e)
+            }
+        })?;
 
         let status = response.status().as_u16();
         log::debug!("[api] POST {} → {}", url, status);
@@ -2476,15 +2499,23 @@ impl ApiClient {
         self.get(&format!("/api/agents/{}", agent_id)).await
     }
 
+    /// How long a single agent execution may take.
+    ///
+    /// Generous on purpose. A timeout here does not save any money — the
+    /// upstream LLM call is already in flight and will be billed — it
+    /// only decides whether we get to keep the result.
+    pub const AGENT_EXECUTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(420);
+
     /// Execute an agent with a query.
     pub async fn execute_agent(
         &self,
         agent_id: &str,
         query: &str,
     ) -> Result<AgentExecutionResult, ApiError> {
-        self.post(
+        self.post_with_timeout(
             &format!("/api/agents/{}/execute", agent_id),
             &json!({ "query": query }),
+            Some(Self::AGENT_EXECUTION_TIMEOUT),
         )
         .await
     }

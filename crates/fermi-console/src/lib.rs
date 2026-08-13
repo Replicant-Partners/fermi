@@ -64,12 +64,19 @@
 //! what evidence a forecast is built on, so it is assertion-worthy by
 //! definition.
 //!
+//! [`drivers`] answers "is this driver ready to spend money on?". A
+//! forgotten `triangular(0, 0, 0)` placeholder used to be dispatched to a
+//! real research agent, which burned its whole iteration budget on a driver
+//! that was never named and billed the user for the failure. Both directions
+//! of a wrong answer cost credits, so the predicate is asserted.
+//!
 //! Candidates to migrate here as they're decoupled from GPUI: the FPL
 //! action-marker parser in `chat.rs` and the Anthropic error extractor
 //! in `cockpit.rs`, both of which currently have tests that can't run.
 
 pub mod agent_naming;
 pub mod calibration;
+pub mod drivers;
 pub mod plot;
 pub mod roster;
 pub mod routing;

@@ -374,8 +374,15 @@ pub async fn execute_agent_stream_handler(
                     "loop_iterations": output.loop_iterations,
                     "metadata": {
                         "model_used": output.metadata.model_used,
+                        "provider": output.metadata.provider,
                         "reasoning": output.metadata.reasoning,
+                        "failure_reason": output.metadata.failure_reason,
+                        "stop_reason": output.metadata.stop_reason,
                     },
+                    // Mirrored at the top level so a streaming client can
+                    // branch on the failure without reaching into metadata.
+                    "failure_reason": output.metadata.failure_reason,
+                    "stop_reason": output.metadata.stop_reason,
                     "status": format!("{:?}", output.status),
                     "tokens_used": output.tokens_used,
                     "tool_invocations": output.tool_invocations.iter().map(|t| json!({
@@ -391,13 +398,22 @@ pub async fn execute_agent_stream_handler(
                     let db = state_clone.db.clone();
                     let uid = caller_clone.clone();
                     let aid = agent_id_clone.clone();
+                    // Carry the reason — see execution.rs for why the old
+                    // "check the execution history" text was a dead end.
+                    let body = match output.metadata.failure_reason.as_deref() {
+                        Some(reason) => reason.to_string(),
+                        None => format!(
+                            "No reason reported by the executor. stop_reason={}",
+                            output.metadata.stop_reason.as_deref().unwrap_or("unknown")
+                        ),
+                    };
                     tokio::spawn(async move {
                         create_notification(
                             &db,
                             &uid,
                             "execution_failure",
                             &format!("Execution failed: {}", aid),
-                            Some("Check the agent's execution history for details."),
+                            Some(&body),
                         )
                         .await;
                     });

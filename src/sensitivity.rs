@@ -116,14 +116,40 @@ pub fn variance_decomposition(
 
     // Step 2: For each driver, compute V(E[Y|X_i])
     for driver_name in &driver_names {
-        let conditional_variance = compute_conditional_variance(program, driver_name, m, n)?;
+        let (between, within) = compute_conditional_variance(program, driver_name, m, n)?;
 
-        // First-order Sobol index = V(E[Y|X_i]) / V(Y)
-        let sobol_first = (conditional_variance / baseline_variance).min(1.0).max(0.0);
+        // First-order Sobol index = V(E[Y|X_i]) / V(Y).
+        //
+        // The denominator is reconstructed from the SAME runs via the law
+        // of total variance, V(Y) = V(E[Y|X]) + E[V(Y|X)], rather than
+        // taken from the separate `baseline_variance` run above.
+        //
+        // That mismatch was a real defect, not a nicety. `between` came
+        // from `Executor::with_fixed_drivers`, `baseline_variance` from
+        // `Executor::execute` — two independent Monte Carlo runs through
+        // different code paths. When one driver dominates the variance
+        // (any binary driver does: it is a discrete jump, not a nudge)
+        // the ratio routinely exceeded 1 on estimator noise alone, and
+        // `.min(1.0)` then reported a confident, saturated `1.000`.
+        // Observed in production: a binary regulatory driver reported
+        // first-order 1.000 against total-order 0.892 — impossible, since
+        // total-order is total-order and must be the larger — with the
+        // five first-order indices summing to 1.13.
+        //
+        // Sharing the denominator makes the ratio well-defined in [0, 1]
+        // by construction, so there is nothing left to launder.
+        let total = between + within;
+        let sobol_first = if total > 0.0 {
+            (between / total).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
 
-        println!(
-            "  {} -> V(E[Y|X]) = {:.6}, S_i = {:.3}",
-            driver_name, conditional_variance, sobol_first
+        tracing::debug!(
+            driver = %driver_name,
+            between, within,
+            s_i = sobol_first,
+            "first-order Sobol"
         );
 
         contributions.insert(driver_name.clone(), sobol_first);
@@ -132,26 +158,44 @@ pub fn variance_decomposition(
     Ok(contributions)
 }
 
-/// Compute V(E[Y|X_i]) for a specific driver using conditional Monte Carlo
+/// Decompose Y's variance around one driver using conditional Monte Carlo.
+///
+/// Returns `(between, within)`:
+///   * `between` ≈ V(E[Y|X_i]) — the driver's own contribution
+///   * `within`  ≈ E[V(Y|X_i)] — everything else
+///
+/// By the law of total variance these sum to V(Y), which is why the
+/// caller can use them to form a ratio that cannot escape [0, 1].
 ///
 /// Algorithm:
 /// 1. Sample m values of X_i: x_i^(1), ..., x_i^(m)
 /// 2. For each x_i^(j):
 ///    - Fix X_i = x_i^(j)
-///    - Run n simulations → compute mean μ_j = E[Y|X_i=x_i^(j)]
-/// 3. Return variance of the conditional means: V(μ_1, ..., μ_m)
+///    - Run n simulations → conditional mean μ_j and variance s²_j
+/// 3. `between` = V(μ_1..μ_m) − mean(s²_j)/n, `within` = mean(s²_j)
+///
+/// The `− mean(s²_j)/n` term is a bias correction, not a fudge. Each μ_j
+/// is itself estimated from n draws, so it carries sampling noise of
+/// variance s²_j/n; the spread of the observed μ_j therefore overstates
+/// the spread of the true conditional means by exactly that much. With
+/// n=100 (the console's default: 1000 iterations / m=20) the
+/// uncorrected estimator inflates every index by ~1% of V(Y), and more
+/// when the driver is a discrete jump.
 fn compute_conditional_variance(
     program: &Program,
     driver_name: &str,
     m: usize,
     n: usize,
-) -> Result<f64, ExecutionError> {
+) -> Result<(f64, f64), ExecutionError> {
     // Sample m values of this driver from baseline
     let mut baseline_executor = Executor::new(m);
     let driver_samples = sample_single_driver(program, driver_name, &mut baseline_executor, m)?;
 
-    // Compute conditional mean for each sampled value
+    // Compute conditional mean AND within-condition variance for each
+    // sampled value. The latter used to be discarded, which is what made
+    // both the bias correction and the shared denominator impossible.
     let mut conditional_means = Vec::with_capacity(m);
+    let mut within_variances = Vec::with_capacity(m);
 
     for &driver_value in &driver_samples {
         // Fix this driver and run simulation
@@ -162,21 +206,30 @@ fn compute_conditional_variance(
         let conditional_results = conditional_executor.execute(program)?;
 
         conditional_means.push(conditional_results.mean);
+        within_variances.push(conditional_results.std_dev.powi(2));
     }
 
-    // Calculate variance of conditional means
-    if conditional_means.is_empty() {
-        return Ok(0.0);
+    let count = conditional_means.len();
+    if count < 2 {
+        // One conditioning value says nothing about how Y varies with X.
+        return Ok((0.0, within_variances.first().copied().unwrap_or(0.0)));
     }
 
-    let mean_of_means: f64 = conditional_means.iter().sum::<f64>() / conditional_means.len() as f64;
-    let variance: f64 = conditional_means
+    let mean_of_means: f64 = conditional_means.iter().sum::<f64>() / count as f64;
+    // Unbiased (m−1) denominator: with m=20 the population form
+    // understates the spread by 5%, straight into every index.
+    let raw_between: f64 = conditional_means
         .iter()
         .map(|&x| (x - mean_of_means).powi(2))
         .sum::<f64>()
-        / conditional_means.len() as f64;
+        / (count - 1) as f64;
 
-    Ok(variance)
+    let within: f64 = within_variances.iter().sum::<f64>() / count as f64;
+
+    // Remove the sampling noise each μ̂_j contributed to the spread.
+    let between = (raw_between - within / n as f64).max(0.0);
+
+    Ok((between, within))
 }
 
 /// Sample values from a single driver's distribution
@@ -282,10 +335,48 @@ fn compute_total_order_saltelli(
         .map(|(a, ab)| (a - ab).powi(2))
         .sum();
 
-    let s_ti = sum_sq_diff / (2.0 * n as f64 * baseline_variance);
+    // V(Y) must come from THIS estimator's own outputs.
+    //
+    // It used to be `baseline_variance`, computed by `Executor::execute`
+    // over the full program. But the numerator here comes from
+    // `evaluate_model_with_samples`, which evaluates the model expression
+    // directly against a sampled context — a different code path with
+    // its own sampling behaviour. Dividing one estimator's numerator by
+    // another's denominator is not a Sobol index; it is a ratio of two
+    // unrelated numbers that happens to look like one, and it is why
+    // total-order came back BELOW first-order (0.892 vs a saturated
+    // 1.000) for the same driver.
+    //
+    // Using V(A) keeps numerator and denominator on the same footing.
+    let mean_a: f64 = outputs_a.iter().sum::<f64>() / outputs_a.len() as f64;
+    let var_a: f64 = if outputs_a.len() > 1 {
+        outputs_a.iter().map(|&x| (x - mean_a).powi(2)).sum::<f64>() / (outputs_a.len() - 1) as f64
+    } else {
+        0.0
+    };
+    // Fall back to the caller's baseline only if this estimator saw no
+    // variance at all (degenerate model), so we never divide by zero.
+    let denom = if var_a > 0.0 {
+        var_a
+    } else {
+        baseline_variance
+    };
+    if denom <= 0.0 {
+        return Ok(0.0);
+    }
 
-    // Clamp to [0, 1]
-    Ok(s_ti.min(1.0).max(0.0))
+    let s_ti = sum_sq_diff / (2.0 * n as f64 * denom);
+
+    if s_ti > 1.05 {
+        // Now genuinely worth knowing about rather than silently flooring.
+        tracing::warn!(
+            driver = %target_driver,
+            s_ti,
+            "total-order Sobol estimate exceeded 1; clamping (estimator noise or too few samples)"
+        );
+    }
+
+    Ok(s_ti.clamp(0.0, 1.0))
 }
 
 /// Generate a sample matrix (n rows × k columns) where each row is one complete
@@ -518,7 +609,7 @@ pub fn full_sensitivity_analysis(
             baseline_variance,
         )?;
 
-        println!("  {} -> S_Ti = {:.3}", driver_name, total_order);
+        tracing::debug!(driver = %driver_name, s_ti = total_order, "total-order Sobol");
 
         total_order_indices.insert(driver_name.clone(), total_order);
     }
@@ -528,7 +619,23 @@ pub fn full_sensitivity_analysis(
 
     for driver_name in &driver_names {
         let first_order = *first_order_indices.get(driver_name).unwrap_or(&0.0);
-        let total_order = *total_order_indices.get(driver_name).unwrap_or(&first_order);
+        let total_order_raw = *total_order_indices.get(driver_name).unwrap_or(&first_order);
+
+        // Enforce S_Ti >= S_i. This is a definitional property, not a
+        // preference: the total effect includes the direct effect. Two
+        // independent Monte Carlo estimators can still violate it on
+        // noise, and when they do the honest repair is to raise the total
+        // rather than publish a negative interaction term. Callers
+        // (`fermi_console::plot::sobol`) were each re-deriving this
+        // defence; the contract belongs here so every consumer gets it.
+        let total_order = total_order_raw.max(first_order);
+        if total_order_raw + 1e-9 < first_order {
+            tracing::debug!(
+                driver = %driver_name,
+                first_order, total_order_raw,
+                "total-order below first-order; raised to preserve S_Ti >= S_i"
+            );
+        }
 
         // Compute standard error via bootstrap (using fewer resamples for speed)
         let standard_error = compute_bootstrap_se(
@@ -540,12 +647,12 @@ pub fn full_sensitivity_analysis(
         )
         .unwrap_or(0.05);
 
-        println!(
-            "  {} -> SE = {:.3}, 95% CI = [{:.3}, {:.3}]",
-            driver_name,
+        tracing::debug!(
+            driver = %driver_name,
             standard_error,
-            (total_order - 1.96 * standard_error).max(0.0),
-            (total_order + 1.96 * standard_error).min(1.0)
+            ci_low = (total_order - 1.96 * standard_error).max(0.0),
+            ci_high = (total_order + 1.96 * standard_error).min(1.0),
+            "Sobol standard error"
         );
 
         let sensitivity = DriverSensitivity {
@@ -580,16 +687,163 @@ pub fn full_sensitivity_analysis(
 mod tests {
     use super::*;
 
+    /// Parse an FPL source string into a Program the analyser can take.
+    fn program(src: &str) -> Program {
+        let tokens = crate::lexer::Lexer::new(src).tokenize().expect("tokenize");
+        crate::parser::Parser::new(tokens).parse().expect("parse")
+    }
+
+    /// The reported case: four continuous multipliers and one BINARY
+    /// driver, which is where the estimator broke.
+    ///
+    /// A binary driver is a discrete jump rather than a nudge, so it
+    /// dominates output variance. First-order was computed against a
+    /// denominator from a different Monte Carlo run, so the ratio
+    /// exceeded 1 on noise and `.min(1.0)` published a saturated
+    /// `1.000`; total-order divided ITS numerator by that same foreign
+    /// denominator and came back at 0.892. The console then read
+    /// "regulatory_risk dominates (100% of variance)" off an index that
+    /// was never computed.
+    const BINARY_DRIVER_FPL: &str = r#"
+question "Will Manchester City win the 2026-27 EPL?" {
+    base_rate {
+        reference_class: "EPL titles won by the pre-season favourite"
+        historical_frequency: 0.26
+        sample_size: 34
+        source: "manual"
+        generated_by: human
+    }
+}
+
+driver managerial_continuity continuous {
+    distribution: triangular(0.75, 1.05, 1.15)
+}
+
+driver squad_quality continuous {
+    distribution: triangular(0.85, 1.0, 1.15)
+}
+
+driver competitive_environment continuous {
+    distribution: triangular(0.8, 0.9, 1.1)
+}
+
+driver injury_congestion continuous {
+    distribution: triangular(0.85, 0.95, 1.05)
+}
+
+driver regulatory_risk binary {
+    probability: 0.15
+    impact_multiplier: 0.10
+}
+
+model: 0.26 * managerial_continuity * squad_quality * competitive_environment * injury_congestion * (if regulatory_risk then 0.10 else 1.0)
+
+simulate 2000 iterations
+"#;
+
     #[test]
-    fn test_variance_contribution_normalization() {
-        // Contributions should sum to approximately 1.0
-        // (allowing for numerical error)
-        // This will be tested with real programs
+    fn sobol_indices_stay_in_range() {
+        let analysis = full_sensitivity_analysis(&program(BINARY_DRIVER_FPL), 1000)
+            .expect("analysis should run");
+
+        for (name, s) in &analysis.driver_sensitivities {
+            assert!(
+                (0.0..=1.0).contains(&s.first_order_index),
+                "{name}: first-order {} outside [0,1]",
+                s.first_order_index
+            );
+            assert!(
+                (0.0..=1.0).contains(&s.total_order_index),
+                "{name}: total-order {} outside [0,1]",
+                s.total_order_index
+            );
+        }
     }
 
     #[test]
-    fn test_sobol_indices_range() {
-        // Sobol indices should be between 0 and 1
-        // Total-order >= First-order (always true)
+    fn total_order_is_never_below_first_order() {
+        // Definitional: the total effect contains the direct effect.
+        // Violating it means a negative interaction term, which the
+        // renderer would have to draw as a backwards bar.
+        let analysis = full_sensitivity_analysis(&program(BINARY_DRIVER_FPL), 1000)
+            .expect("analysis should run");
+
+        for (name, s) in &analysis.driver_sensitivities {
+            assert!(
+                s.total_order_index + 1e-9 >= s.first_order_index,
+                "{name}: total-order {} < first-order {} — impossible",
+                s.total_order_index,
+                s.first_order_index
+            );
+        }
+    }
+
+    #[test]
+    fn first_order_indices_do_not_over_explain_the_variance() {
+        // First-order indices are additive shares of V(Y) and cannot sum
+        // above 1; the shortfall is interaction variance. The broken
+        // estimator summed to 1.13 on this very model, which is what made
+        // the console print influence percentages totalling 110%.
+        //
+        // Tolerance is for Monte Carlo noise at 1000 iterations, not for
+        // structural slack.
+        let analysis = full_sensitivity_analysis(&program(BINARY_DRIVER_FPL), 1000)
+            .expect("analysis should run");
+
+        let sum: f64 = analysis
+            .driver_sensitivities
+            .values()
+            .map(|s| s.first_order_index)
+            .sum();
+
+        assert!(
+            sum <= 1.05,
+            "first-order indices sum to {sum}, which over-explains the variance"
+        );
+    }
+
+    #[test]
+    fn a_dominant_binary_driver_does_not_saturate_to_one() {
+        // The specific symptom: an index of exactly 1.000 was a clamped
+        // overflow masquerading as certainty. The binary driver here
+        // genuinely dominates, so it should rank first and carry a large
+        // share — but a real one, strictly inside the bound.
+        let analysis = full_sensitivity_analysis(&program(BINARY_DRIVER_FPL), 1000)
+            .expect("analysis should run");
+
+        assert_eq!(
+            analysis.ranked_drivers.first().map(String::as_str),
+            Some("regulatory_risk"),
+            "the binary jump should still dominate the ranking"
+        );
+
+        let s = &analysis.driver_sensitivities["regulatory_risk"];
+        assert!(
+            s.first_order_index < 1.0,
+            "first-order saturated at {} again",
+            s.first_order_index
+        );
+        assert!(
+            s.first_order_index > 0.2,
+            "a dominant binary driver should not read as negligible ({})",
+            s.first_order_index
+        );
+    }
+
+    #[test]
+    fn conditional_variance_splits_into_between_and_within() {
+        // Both halves must be non-negative, and their sum is V(Y) by the
+        // law of total variance — the property the first-order ratio now
+        // relies on for its denominator.
+        let prog = program(BINARY_DRIVER_FPL);
+        let (between, within) =
+            compute_conditional_variance(&prog, "regulatory_risk", 20, 100).expect("decompose");
+
+        assert!(between >= 0.0, "between-variance negative: {between}");
+        assert!(within >= 0.0, "within-variance negative: {within}");
+        assert!(
+            between + within > 0.0,
+            "model has variance; decomposition found none"
+        );
     }
 }

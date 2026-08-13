@@ -44,16 +44,39 @@
         "input_schema": {
           "type": "object",
           "properties": {
-            "station": { "type": "string" },
-            "latitude": { "type": "number" },
-            "longitude": { "type": "number" },
-            "timezone": { "type": "string" },
-            "target_date": { "type": "string" },
-            "variable": { "type": "string" },
-            "unit": { "type": "string" },
-            "window_days": { "type": "integer" },
-            "years_back": { "type": "integer" },
-            "thresholds": { "type": "array", "items": { "type": "number" } }
+            "station": {
+              "type": "string"
+            },
+            "latitude": {
+              "type": "number"
+            },
+            "longitude": {
+              "type": "number"
+            },
+            "timezone": {
+              "type": "string"
+            },
+            "target_date": {
+              "type": "string"
+            },
+            "variable": {
+              "type": "string"
+            },
+            "unit": {
+              "type": "string"
+            },
+            "window_days": {
+              "type": "integer"
+            },
+            "years_back": {
+              "type": "integer"
+            },
+            "thresholds": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            }
           }
         }
       },
@@ -63,11 +86,19 @@
         "input_schema": {
           "type": "object",
           "properties": {
-            "station": { "type": "string" },
-            "include_cli": { "type": "boolean" },
-            "hours_back": { "type": "integer" }
+            "station": {
+              "type": "string"
+            },
+            "include_cli": {
+              "type": "boolean"
+            },
+            "hours_back": {
+              "type": "integer"
+            }
           },
-          "required": ["station"]
+          "required": [
+            "station"
+          ]
         }
       },
       {
@@ -76,10 +107,16 @@
         "input_schema": {
           "type": "object",
           "properties": {
-            "fpl_program": { "type": "string" },
-            "iterations": { "type": "integer" }
+            "fpl_program": {
+              "type": "string"
+            },
+            "iterations": {
+              "type": "integer"
+            }
           },
-          "required": ["fpl_program"]
+          "required": [
+            "fpl_program"
+          ]
         }
       },
       {
@@ -88,10 +125,16 @@
         "input_schema": {
           "type": "object",
           "properties": {
-            "fpl_program": { "type": "string" },
-            "iterations": { "type": "integer" }
+            "fpl_program": {
+              "type": "string"
+            },
+            "iterations": {
+              "type": "integer"
+            }
           },
-          "required": ["fpl_program"]
+          "required": [
+            "fpl_program"
+          ]
         }
       }
     ],
@@ -122,9 +165,7 @@
   ],
   "dependencies": {
     "required": [],
-    "optional": [
-      "weather_ensemble_forecaster"
-    ]
+    "optional": []
   },
   "requires_secrets": [],
   "performance": {
