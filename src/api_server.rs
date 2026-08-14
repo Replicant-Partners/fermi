@@ -452,6 +452,13 @@ pub(crate) struct GeminiInlineData {
 async fn run_migrations(db: &PgPool) {
     let migration_files = [
         "migrations/004_add_users_table.sql",
+        // Positioned, not sorted. 195 declares the `users` columns that
+        // production has and no migration creates (`id`, `password_hash`,
+        // `password_salt`) plus the auth_provider CHECK that 004b fails to
+        // widen. It has to run before the files that depend on them — 004b,
+        // 005, 161, 165, 171 — which is here, not at the end of the list.
+        // See docs/plans/CI_MIGRATION_RATCHET.md.
+        "migrations/195_declare_the_ghost_schema.sql",
         // 004_migrate_users_for_auth.sql was merged into 004b — file does not exist
         "migrations/004b_migrate_users_for_auth.sql",
         "migrations/005_add_api_keys.sql",
@@ -544,6 +551,13 @@ async fn run_migrations(db: &PgPool) {
         "migrations/093_users_user_id_unique.sql",
         "migrations/091_swarm_participants.sql",
         "migrations/092_fix_social_layer.sql",
+        // Must sit between 048 (which creates `fermi_forecasts` with 13
+        // columns) and 094 (whose `CREATE TABLE IF NOT EXISTS` declares 28 and
+        // is therefore skipped entirely). Without it 094 aborts on an index
+        // over the `status` column it believes it created, never reaches its
+        // own `fermi_forecast_updates`, and takes 140/149/150/156/174/175/176
+        // down with it.
+        "migrations/196_reconcile_fermi_forecasts.sql",
         "migrations/094_fermi_forecasting.sql",
         "migrations/094_rabble_follows.sql",
         "migrations/095_saved_locations.sql",

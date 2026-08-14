@@ -31,14 +31,21 @@ CREATE INDEX IF NOT EXISTS idx_teams_strategist
     ON public.teams(coordination_strategist_id)
     WHERE coordination_strategist_id IS NOT NULL;
 
+-- COMMENT ... IS takes a string *literal*, not an expression, so the
+-- `||` these comments used to be written with was a hard syntax error —
+-- which is why this migration had never applied anywhere. The wrapping
+-- is kept via adjacent-literal continuation (two string constants
+-- separated by whitespace containing a newline are concatenated by the
+-- lexer into one constant), so the comment text is unchanged.
+
 COMMENT ON COLUMN public.teams.mission IS
-    'Free-text declaration of what this composition accomplishes. ' ||
-    'Captured during creation via the xamanEK-guided arc. ' ||
+    'Free-text declaration of what this composition accomplishes. '
+    'Captured during creation via the xamanEK-guided arc. '
     'See docs/COMPOSITION_AS_FIRST_CLASS.md §2 step 1.';
 
 COMMENT ON COLUMN public.teams.coordination_strategist_id IS
-    'Pointer to an agent tagged ''coordination_strategy'' that embodies ' ||
-    'how this composition coordinates work across its members. ' ||
+    'Pointer to an agent tagged ''coordination_strategy'' that embodies '
+    'how this composition coordinates work across its members. '
     'See docs/COMPOSITION_AS_FIRST_CLASS.md §3.';
 
 -- ─── §4 — tune-the-team RSI history ────────────────────────────────
@@ -61,7 +68,7 @@ CREATE INDEX IF NOT EXISTS idx_composition_versions_workspace
     ON public.composition_versions(workspace_id, version_number DESC);
 
 COMMENT ON TABLE public.composition_versions IS
-    'Snapshot history of (mission + strategist + members + weights). ' ||
-    'Each row is a version of the composition produced either by user ' ||
-    'edits or by tune-the-team RSI proposals from the strategist. ' ||
+    'Snapshot history of (mission + strategist + members + weights). '
+    'Each row is a version of the composition produced either by user '
+    'edits or by tune-the-team RSI proposals from the strategist. '
     'See docs/COMPOSITION_AS_FIRST_CLASS.md §4 + §6.';

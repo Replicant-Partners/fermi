@@ -78,9 +78,18 @@ CREATE INDEX IF NOT EXISTS idx_ejections_swarm
     ON rabble_ejections(swarm_id);
 CREATE INDEX IF NOT EXISTS idx_ejections_creature
     ON rabble_ejections(ejected_creature_id);
+-- No WHERE clause here on purpose. This index used to be partial on
+-- `permanent = true OR cooldown_until > NOW()`, which Postgres rejects
+-- outright (NOW() is STABLE, and index predicates must be IMMUTABLE) —
+-- so this migration had never applied. The predicate was also wrong on
+-- its own terms: it would be evaluated once at index-build time and
+-- then frozen, so rows would silently drop out of the index as their
+-- cooldown elapsed and the index would quietly stop matching reality.
+-- The full index still serves the (swarm_id, ejected_creature_id)
+-- lookup; callers filter on permanent / cooldown_until at query time,
+-- where NOW() is evaluated fresh.
 CREATE INDEX IF NOT EXISTS idx_ejections_active
-    ON rabble_ejections(swarm_id, ejected_creature_id)
-    WHERE permanent = true OR cooldown_until > NOW();
+    ON rabble_ejections(swarm_id, ejected_creature_id);
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 4. REPORTS — flag content/behavior for review

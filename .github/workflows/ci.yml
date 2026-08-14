@@ -99,18 +99,31 @@ jobs:
 
           # RATCHET, not a gate.
           #
-          # 26 migrations currently fail against an empty database — the set
-          # cannot rebuild the schema from scratch, because migrations have been
-          # edited in place after having been applied (e.g. nothing in the repo
-          # creates users.id, yet fermi-auth JOINs on it). Fixing that is Phase 2
-          # of docs/SCHEMA_AND_RULE_INTEGRITY_RECONCILIATION.md.
+          # 6 migrations currently fail against an empty database. Was 26 until
+          # migrations 195/196 declared the schema objects production has and no
+          # migration creates — see docs/plans/CI_MIGRATION_RATCHET.md for the
+          # full accounting. The cause was one shape repeated: `IF NOT EXISTS`
+          # silently skipping a schema change, with run_migrations swallowing
+          # the error that followed.
           #
-          # Until then: freeze the number so it cannot grow. Previously this loop
-          # ended in `|| true`, so newly-broken migrations were invisible in CI
-          # exactly as they are in production's runner.
+          # The remaining 6 are not one-line fixes:
+          #   006, 007  ordering — they ALTER agents/episodes, which the runner
+          #             creates later in the list; fixing means reordering
+          #   089, 095  PostGIS is absent from the pgvector service image; add
+          #             the extension or guard the two files
+          #   163       needs ar_beacons.location_name, which 089 adds
+          #   096       indexes activity_events(creature_id), a column no
+          #             migration creates and nothing writes — declaring it
+          #             would manufacture exactly the write-orphaned column the
+          #             rollup tripwire below exists to catch, so it needs an
+          #             owner's decision, not a guess
+          #
+          # Freeze the number so it cannot grow. Previously this loop ended in
+          # `|| true`, so newly-broken migrations were invisible in CI exactly
+          # as they are in production's runner.
           #
           # When you fix migrations, LOWER this number. Never raise it.
-          BASELINE=26
+          BASELINE=6
           if [ "$FAILED" -gt "$BASELINE" ]; then
             echo "::error::$FAILED migrations fail to apply, baseline is $BASELINE."
             echo "A migration that previously applied cleanly now does not."

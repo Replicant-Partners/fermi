@@ -60,4 +60,16 @@ WHERE cf.swarm_id IS NOT NULL
       SELECT 1 FROM swarm_participants sp
       WHERE sp.swarm_id = cf.swarm_id AND sp.user_id = cf.owner_id
   )
-ON CONFLICT ON CONSTRAINT idx_swarm_participants_unique_active DO NOTHING;
+-- Inference, not a constraint name.
+--
+-- This said `ON CONFLICT ON CONSTRAINT idx_swarm_participants_unique_active`,
+-- which cannot work: that name belongs to a partial UNIQUE INDEX (created
+-- above with `WHERE status = 'active'`), and `ON CONFLICT ON CONSTRAINT`
+-- accepts only a table constraint. A partial unique index cannot be promoted
+-- to one either — Postgres has no partial UNIQUE constraint. So this file has
+-- never applied anywhere, in CI or in production, and the backfill it performs
+-- has never run.
+--
+-- The index is still the right uniqueness rule; it just has to be inferred,
+-- which requires restating its predicate so Postgres can match it.
+ON CONFLICT (swarm_id, user_id) WHERE status = 'active' DO NOTHING;

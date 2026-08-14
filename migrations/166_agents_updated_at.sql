@@ -124,13 +124,18 @@ END $$;
 -- ── Post-migration validation ──────────────────────────────────────
 DO $$
 DECLARE
-    col_type    TEXT;
-    is_nullable TEXT;
-    col_default TEXT;
-    n_null      INTEGER;
+    col_type      TEXT;
+    -- Named v_is_nullable, not is_nullable: information_schema.columns has
+    -- a column of that name, and the SELECT below reads it unqualified, so
+    -- the bare name resolved to both the variable and the column and the
+    -- whole block failed with "column reference is ambiguous". The prefix
+    -- keeps the variable out of the query's namespace.
+    v_is_nullable TEXT;
+    col_default   TEXT;
+    n_null        INTEGER;
 BEGIN
     SELECT data_type, is_nullable, column_default
-      INTO col_type, is_nullable, col_default
+      INTO col_type, v_is_nullable, col_default
       FROM information_schema.columns
      WHERE table_schema = 'public'
        AND table_name   = 'agents'
@@ -139,9 +144,9 @@ BEGIN
     SELECT COUNT(*) INTO n_null FROM public.agents WHERE updated_at IS NULL;
 
     RAISE NOTICE '[mig 166] post-migration — updated_at: type=%, nullable=%, default=%, remaining_nulls=%',
-        COALESCE(col_type,    '(missing)'),
-        COALESCE(is_nullable, '(missing)'),
-        COALESCE(col_default, '(none)'),
+        COALESCE(col_type,      '(missing)'),
+        COALESCE(v_is_nullable, '(missing)'),
+        COALESCE(col_default,   '(none)'),
         n_null;
 
     IF n_null > 0 THEN
