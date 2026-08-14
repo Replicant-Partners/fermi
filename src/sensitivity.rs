@@ -187,22 +187,32 @@ fn compute_conditional_variance(
     m: usize,
     n: usize,
 ) -> Result<(f64, f64), ExecutionError> {
-    // Sample m values of this driver from baseline
-    let mut baseline_executor = Executor::new(m);
-    let driver_samples = sample_single_driver(program, driver_name, &mut baseline_executor, m)?;
+    let groups = conditioning_groups(program, driver_name, m)?;
+    if groups.values.len() < 2 {
+        // One conditioning value says nothing about how Y varies with X.
+        // Either the driver is deterministic, or its support has one point.
+        return Ok((0.0, 0.0));
+    }
+
+    // Spend the caller's budget across however many groups there actually
+    // are, rather than assuming m of them. A binary driver has two, so this
+    // gives each 10x the iterations for the same total cost — which is where
+    // the accuracy of μ̂_j now comes from, the conditioning dimension itself
+    // no longer being sampled.
+    let per_group = (m * n / groups.values.len()).max(n);
 
     // Compute conditional mean AND within-condition variance for each
-    // sampled value. The latter used to be discarded, which is what made
+    // conditioning value. The latter used to be discarded, which is what made
     // both the bias correction and the shared denominator impossible.
-    let mut conditional_means = Vec::with_capacity(m);
-    let mut within_variances = Vec::with_capacity(m);
+    let mut conditional_means = Vec::with_capacity(groups.values.len());
+    let mut within_variances = Vec::with_capacity(groups.values.len());
 
-    for &driver_value in &driver_samples {
+    for &driver_value in &groups.values {
         // Fix this driver and run simulation
         let mut fixed_drivers = HashMap::new();
         fixed_drivers.insert(driver_name.to_string(), driver_value);
 
-        let mut conditional_executor = Executor::with_fixed_drivers(n, fixed_drivers);
+        let mut conditional_executor = Executor::with_fixed_drivers(per_group, fixed_drivers);
         let conditional_results = conditional_executor.execute(program)?;
 
         conditional_means.push(conditional_results.mean);
@@ -210,9 +220,40 @@ fn compute_conditional_variance(
     }
 
     let count = conditional_means.len();
-    if count < 2 {
-        // One conditioning value says nothing about how Y varies with X.
-        return Ok((0.0, within_variances.first().copied().unwrap_or(0.0)));
+
+    if groups.exact {
+        // The weights ARE the driver's probabilities, so this is a population
+        // weighted variance — no (count−1) correction, because we are not
+        // estimating the conditioning distribution from a sample of it.
+        let w = &groups.weights;
+        let mean_of_means: f64 = w
+            .iter()
+            .zip(&conditional_means)
+            .map(|(wj, mj)| wj * mj)
+            .sum();
+        let raw_between: f64 = w
+            .iter()
+            .zip(&conditional_means)
+            .map(|(wj, mj)| wj * (mj - mean_of_means).powi(2))
+            .sum();
+        let within: f64 = w
+            .iter()
+            .zip(&within_variances)
+            .map(|(wj, sj)| wj * sj)
+            .sum();
+
+        // Bias of a weighted spread of noisy means. Each μ̂_j carries variance
+        // σ²_j/N, and μ̂̄ = Σ w_k μ̂_k is correlated with each of them, which
+        // works out to  (1/N) Σ w_j(1−w_j) σ²_j.  With equal weights and many
+        // groups this reduces to the mean-of-σ²/N term used below.
+        let bias: f64 = w
+            .iter()
+            .zip(&within_variances)
+            .map(|(wj, sj)| wj * (1.0 - wj) * sj)
+            .sum::<f64>()
+            / per_group as f64;
+
+        return Ok(((raw_between - bias).max(0.0), within));
     }
 
     let mean_of_means: f64 = conditional_means.iter().sum::<f64>() / count as f64;
@@ -227,9 +268,121 @@ fn compute_conditional_variance(
     let within: f64 = within_variances.iter().sum::<f64>() / count as f64;
 
     // Remove the sampling noise each μ̂_j contributed to the spread.
-    let between = (raw_between - within / n as f64).max(0.0);
+    let between = (raw_between - within / per_group as f64).max(0.0);
 
     Ok((between, within))
+}
+
+/// The values to condition a driver on, and how much probability mass each
+/// carries.
+struct ConditioningGroups {
+    values: Vec<f64>,
+    /// Parallel to `values`, summing to 1.
+    weights: Vec<f64>,
+    /// True when `values` enumerate the driver's ENTIRE support with its exact
+    /// probabilities, rather than being draws from its distribution.
+    exact: bool,
+}
+
+/// Enumerate conditioning values for one driver.
+///
+/// For a **binary or discrete** driver this returns the whole support with
+/// exact weights — two groups for a binary, one per declared value for a
+/// discrete. For a **continuous** driver it returns `m` draws, equally
+/// weighted, because enumerating an interval is not possible.
+///
+/// # Why binary drivers cannot be sampled here
+///
+/// This used to draw `m` values for every driver type alike. For a two-point
+/// support that is a coin-flipping estimator: with `m = 20` and
+/// `probability: 0.15`, all twenty draws come back `0.0` about 3.9% of the
+/// time and exactly one comes back `1.0` another 13.7%. In the first case
+/// every group has the same conditional mean, so the between-group term
+/// collapses to sampling noise and a driver that dominates the model reports
+/// an index of ~0.003. Measured: the dominant-binary test failed 8 times in
+/// 80 runs, and the console's Sobol panel had the same one-in-ten chance of
+/// calling a regulatory event, launch failure or manager departure
+/// negligible — which is exactly what binary drivers are for. See
+/// docs/plans/SOBOL_BINARY_DRIVER_CONDITIONING.md.
+///
+/// Conditioning on the support instead is exact rather than estimated,
+/// deterministic in the conditioning dimension, and cheaper: two groups can
+/// each take ten times the iterations for the same budget.
+fn conditioning_groups(
+    program: &Program,
+    driver_name: &str,
+    m: usize,
+) -> Result<ConditioningGroups, ExecutionError> {
+    let driver = program
+        .statements
+        .iter()
+        .find_map(|stmt| match stmt {
+            Statement::Driver(d) if d.name == driver_name => Some(d),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            ExecutionError::EvaluationError(format!("Driver {} not found", driver_name))
+        })?;
+
+    // Zero-mass groups are dropped: simulating them costs budget and tells us
+    // nothing, and a degenerate p of 0 or 1 correctly leaves one group, which
+    // the caller reads as "no conditional variation".
+    let keep_supported = |values: Vec<f64>, weights: Vec<f64>| {
+        let (values, weights): (Vec<f64>, Vec<f64>) = values
+            .into_iter()
+            .zip(weights)
+            .filter(|(_, w)| *w > 0.0)
+            .unzip();
+        ConditioningGroups {
+            values,
+            weights,
+            exact: true,
+        }
+    };
+
+    match driver.driver_type {
+        DriverType::Binary => {
+            // The executor samples a binary driver to exactly 1.0 or 0.0, so
+            // its support is those two points.
+            let p = driver.probability.unwrap_or(0.5).clamp(0.0, 1.0);
+            Ok(keep_supported(vec![0.0, 1.0], vec![1.0 - p, p]))
+        }
+        DriverType::Discrete => match (&driver.values, &driver.weights) {
+            (Some(values), Some(weights)) if !values.is_empty() => {
+                let total: f64 = weights.iter().sum();
+                if total <= 0.0 {
+                    // Malformed weights: fall back to uniform over the values
+                    // rather than dividing by zero.
+                    let w = 1.0 / values.len() as f64;
+                    return Ok(keep_supported(values.clone(), vec![w; values.len()]));
+                }
+                let normalised: Vec<f64> = weights.iter().map(|w| w / total).collect();
+                Ok(keep_supported(values.clone(), normalised))
+            }
+            // A discrete driver with no declared support is indistinguishable
+            // from a continuous one here; sample it.
+            _ => sampled_groups(program, driver_name, m),
+        },
+        DriverType::Continuous => sampled_groups(program, driver_name, m),
+    }
+}
+
+/// `m` equally-weighted draws from a driver's distribution — the only option
+/// for a continuous support.
+fn sampled_groups(
+    program: &Program,
+    driver_name: &str,
+    m: usize,
+) -> Result<ConditioningGroups, ExecutionError> {
+    let mut executor = Executor::new(m);
+    let values = sample_single_driver(program, driver_name, &mut executor, m)?;
+    let w = 1.0 / values.len().max(1) as f64;
+    let weights = vec![w; values.len()];
+    Ok(ConditioningGroups {
+        values,
+        weights,
+        exact: false,
+    })
 }
 
 /// Sample values from a single driver's distribution
@@ -827,6 +980,46 @@ simulate 2000 iterations
             s.first_order_index > 0.2,
             "a dominant binary driver should not read as negligible ({})",
             s.first_order_index
+        );
+    }
+
+    /// The index for a binary driver must not depend on the luck of the draw.
+    ///
+    /// This is the regression test for the conditioning bug. The estimator used
+    /// to sample `m = 20` values of every driver, including two-point ones: with
+    /// `probability: 0.15`, all twenty draws came back `0.0` about 3.9% of the
+    /// time and exactly one came back `1.0` another 13.7%, collapsing the
+    /// between-group term to noise. The result was a coin flip between ~0.87 and
+    /// ~0.003 — measured at 8 failures in 80 runs of the test above, and the
+    /// same one-in-ten chance of the console's Sobol panel calling a dominant
+    /// regulatory event negligible.
+    ///
+    /// Conditioning on the support removed the sampling from that dimension
+    /// entirely. Observed over 20 runs after the fix: min 0.862, max 0.880,
+    /// spread 0.018. The bounds here are loose enough not to be flaky and tight
+    /// enough that a return of the coin flip — which would put a sample near
+    /// zero and blow the spread out to ~0.87 — fails immediately.
+    #[test]
+    fn a_binary_driver_index_is_stable_across_runs() {
+        let mut indices = Vec::new();
+        for _ in 0..5 {
+            let analysis = full_sensitivity_analysis(&program(BINARY_DRIVER_FPL), 1000)
+                .expect("analysis should run");
+            indices.push(analysis.driver_sensitivities["regulatory_risk"].first_order_index);
+        }
+
+        let lo = indices.iter().cloned().fold(f64::INFINITY, f64::min);
+        let hi = indices.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+        assert!(
+            lo > 0.5,
+            "every run must agree the driver dominates; lowest was {lo} over {indices:?}"
+        );
+        assert!(
+            hi - lo < 0.2,
+            "index swings by {:.3} across runs ({indices:?}) — the conditioning \
+             dimension is being sampled again",
+            hi - lo
         );
     }
 
