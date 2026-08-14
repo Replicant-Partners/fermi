@@ -830,6 +830,47 @@ pub fn tool_defs() -> Vec<BuiltinToolDef> {
             is_delegation: false,
         },
         BuiltinToolDef {
+            name: "weather_dispersion_fit",
+            description: "Measure a station's actual forecast error by lead time, and return FITTED parameters for the bucket-ladder FPL. Replaces guessed calibration priors with measurement. Reconstructs up to 120 days of forecast-versus-outcome pairs from Open-Meteo's previous-runs archive (what the forecast said N days before each date, collapsed to a daily max in the station's own timezone), then reports per-lead sample size, mean bias, MAE and RMSE. THE KEY OUTPUT IS RMSE: for an unbiased forecast the RMSE *is* the standard deviation the predictive distribution should have, so it is the calibration target directly, with no spread-skill-ratio intermediate. Also returns today's ensemble spread per lead, both pooled across models and for a single reference model, and the inflation factor implied against each. CRITICAL AND COUNTERINTUITIVE: those two factors point in OPPOSITE directions at short lead. A pooled multi-model spread already contains between-model disagreement, so it is typically OVER-dispersive at 1-2 days (factor below 1); a single-model spread is UNDER-dispersive as the published literature reports (factor above 1). Applying a single-model-derived inflation to a pooled spread double-counts and over-widens. Keyless and free.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "station": {
+                        "type": "string",
+                        "description": "ICAO code from weather_settlement_spec, e.g. 'EGLC'. Supplies coordinates and the timezone that defines the calendar day."
+                    },
+                    "latitude": { "type": "number" },
+                    "longitude": { "type": "number" },
+                    "timezone": { "type": "string" },
+                    "variable": {
+                        "type": "string",
+                        "description": "Which daily aggregate to verify.",
+                        "enum": ["temperature_2m_max", "temperature_2m_min"],
+                        "default": "temperature_2m_max"
+                    },
+                    "unit": { "type": "string", "enum": ["celsius", "fahrenheit"], "default": "celsius" },
+                    "days_back": {
+                        "type": "integer",
+                        "description": "Days of history to verify against (default 120, the archive limit). More is better; below ~30 the RMSE estimate is too noisy to trade on.",
+                        "default": 120
+                    },
+                    "max_lead": {
+                        "type": "integer",
+                        "description": "Highest lead time to fit, 1-7. The archive exposes previous_day1..previous_day7.",
+                        "default": 7
+                    },
+                    "reference_model": {
+                        "type": "string",
+                        "description": "Single ensemble model for the under-dispersion comparison (default ecmwf_ifs025).",
+                        "default": "ecmwf_ifs025"
+                    }
+                },
+                "required": []
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
             name: "weather_station_observation",
             description: "Fetch actual observations for a US station from the National Weather Service (api.weather.gov, keyless) — the settlement-grade truth feed. Returns the running maximum and minimum SO FAR TODAY from the ~5-minute observation stream (this is the single largest source of intraday edge: after the diurnal peak has passed, the day's high is nearly determined while the market may still be priced off the morning forecast), plus the latest Climatological Report (CLI) with the official daily max/min, the 1991-2020 normals, and the records. IMPORTANT: CLI products are revised — a preliminary CLI can differ from the final by a full degree — and the tool reports both issuance times so you can tell which you have. US STATIONS ONLY; returns a clear explanation for non-US stations rather than a wrong number.",
             input_schema: json!({
@@ -931,7 +972,9 @@ pub fn handles(name: &str) -> bool {
         "weather_settlement_spec"
             | "weather_ensemble_forecast"
             | "weather_climatology"
+            | "weather_dispersion_fit"
             | "weather_station_observation"
+            | "weather_portfolio_risk"
             | "polymarket_weather_markets"
             | "polymarket_orderbook"
     )
@@ -944,7 +987,9 @@ pub async fn dispatch(name: &str, input: &Value) -> Option<Result<String, String
         "weather_settlement_spec" => Some(settlement_spec(input)),
         "weather_ensemble_forecast" => Some(ensemble_forecast(input).await),
         "weather_climatology" => Some(climatology(input).await),
+        "weather_dispersion_fit" => Some(dispersion_fit(input).await),
         "weather_station_observation" => Some(station_observation(input).await),
+        "weather_portfolio_risk" => Some(portfolio_risk(input).await),
         "polymarket_weather_markets" => Some(polymarket_markets(input).await),
         "polymarket_orderbook" => Some(polymarket_orderbook(input).await),
         _ => None,
@@ -1872,6 +1917,341 @@ async fn climatology(input: &Value) -> Result<String, String> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// weather_dispersion_fit
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Turns the calibration layer from assumed into measured.
+//
+// The insight that makes this cheap: for an unbiased forecast, the RMSE of the
+// forecast against the outcome IS the standard deviation the predictive
+// distribution should have. So there is no need to estimate a spread-skill
+// ratio and then invert it — measure RMSE per lead and use it directly as the
+// predictive sd. RMSE measured at the settlement gauge already contains model
+// error, cross-model uncertainty AND grid-to-station representativeness error,
+// none of which can be separated empirically and none of which need to be.
+//
+// Why this matters, concretely. The published under-dispersion result
+// (SSR ~ 0.85, so inflate variance by ~1.4x) is measured on SINGLE-MODEL
+// ensembles — IFS ENS, GenCast, U-Cast. Applying it to a POOLED multi-model
+// spread double-counts, because pooling members from models that disagree
+// about the level has already added the between-model variance as apparent
+// spread. Measured at EGLC over 120 days, lead 1:
+//
+//     RMSE                         0.91 C   <- the calibration target
+//     pooled 4-model spread        1.17 C   -> implied factor 0.78 (DEFLATE)
+//     ECMWF IFS spread alone       0.71 C   -> implied factor 1.28 (INFLATE)
+//
+// Both are correct; they answer different questions. The market's implied sd
+// on that date was 0.94 C — within noise of the measured RMSE, which is a
+// useful reminder that a liquid weather market is priced off verified forecast
+// error and is a strong benchmark rather than a soft target.
+//
+// The sign also flips with lead: at EGLC the pooled factor runs ~0.78 at lead 1
+// and ~1.29 at lead 7. A single inflation constant is wrong in both directions.
+
+/// Collapse an hourly series into per-local-day extremes.
+///
+/// Keyed on the local date string the API returns, so the aggregation window is
+/// the station's own calendar day — the same window the market settles on.
+fn hourly_to_daily_extreme(
+    times: &[String],
+    values: &[Option<f64>],
+    want_max: bool,
+) -> std::collections::BTreeMap<String, (f64, usize)> {
+    let mut out: std::collections::BTreeMap<String, (f64, usize)> =
+        std::collections::BTreeMap::new();
+    for (i, ts) in times.iter().enumerate() {
+        let Some(v) = values.get(i).copied().flatten() else {
+            continue;
+        };
+        let day = ts.chars().take(10).collect::<String>();
+        let e = out.entry(day).or_insert((v, 0));
+        if (want_max && v > e.0) || (!want_max && v < e.0) {
+            e.0 = v;
+        }
+        e.1 += 1;
+    }
+    out
+}
+
+/// Today's ensemble spread per lead index, for a given model selection.
+async fn spread_by_lead(
+    lat: f64,
+    lon: f64,
+    tz: &str,
+    unit: &str,
+    daily_var: &str,
+    models: &str,
+    days: usize,
+) -> Result<std::collections::BTreeMap<usize, (f64, usize)>, String> {
+    let params: Vec<(&str, String)> = vec![
+        ("latitude", lat.to_string()),
+        ("longitude", lon.to_string()),
+        ("daily", daily_var.to_string()),
+        ("models", models.to_string()),
+        ("timezone", tz.to_string()),
+        ("temperature_unit", unit.to_string()),
+        ("forecast_days", days.to_string()),
+    ];
+    let resp = get_json("https://ensemble-api.open-meteo.com/v1/ensemble", &params).await?;
+    let daily = resp
+        .get("daily")
+        .and_then(|v| v.as_object())
+        .ok_or("ensemble API returned no daily block")?;
+    let n_times = daily
+        .get("time")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+
+    let mut out = std::collections::BTreeMap::new();
+    for i in 0..n_times {
+        let vals: Vec<f64> = daily
+            .iter()
+            .filter(|(k, _)| k.as_str() != "time" && k.starts_with(daily_var))
+            .filter_map(|(_, v)| v.as_array().and_then(|a| a.get(i)).and_then(|x| x.as_f64()))
+            .collect();
+        if vals.len() > 2 {
+            out.insert(i, (std_dev(&vals), vals.len()));
+        }
+    }
+    Ok(out)
+}
+
+async fn dispersion_fit(input: &Value) -> Result<String, String> {
+    let (label, lat, lon, tz, _elev) = resolve_location(input)?;
+    let variable = input
+        .get("variable")
+        .and_then(|v| v.as_str())
+        .unwrap_or("temperature_2m_max");
+    let want_max = !variable.ends_with("_min");
+    let unit = input
+        .get("unit")
+        .and_then(|v| v.as_str())
+        .unwrap_or("celsius");
+    let days_back = input
+        .get("days_back")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(120)
+        .clamp(14, 120);
+    let max_lead = input
+        .get("max_lead")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(7)
+        .clamp(1, 7) as usize;
+    let reference_model = input
+        .get("reference_model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("ecmwf_ifs025");
+
+    // The archive exposes hourly `temperature_2m_previous_dayN`: what the
+    // forecast said N days before each valid hour. Daily aggregates are NOT
+    // available in this form (the API rejects them), so pull hourly and
+    // collapse to the local-day extreme ourselves.
+    // Both the max and the min aggregate come from the same hourly series; the
+    // `want_max` flag decides which extreme we collapse to. Only temperature is
+    // supported here because the archive's `_previous_dayN` hourly variables do
+    // not cover precipitation in a form that aggregates cleanly.
+    let hourly_var = "temperature_2m";
+    let mut fields = vec![hourly_var.to_string()];
+    for l in 1..=max_lead {
+        fields.push(format!("{hourly_var}_previous_day{l}"));
+    }
+
+    let params: Vec<(&str, String)> = vec![
+        ("latitude", lat.to_string()),
+        ("longitude", lon.to_string()),
+        ("hourly", fields.join(",")),
+        ("timezone", tz.clone()),
+        ("temperature_unit", unit.to_string()),
+        ("past_days", days_back.to_string()),
+        ("forecast_days", "1".to_string()),
+    ];
+    let resp = get_json(
+        "https://previous-runs-api.open-meteo.com/v1/forecast",
+        &params,
+    )
+    .await?;
+    let h = resp
+        .get("hourly")
+        .and_then(|v| v.as_object())
+        .ok_or("previous-runs API returned no hourly block")?;
+    let times: Vec<String> = h
+        .get("time")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    if times.is_empty() {
+        return Err("previous-runs API returned an empty time axis".into());
+    }
+
+    let col = |name: &str| -> Vec<Option<f64>> {
+        h.get(name)
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().map(|x| x.as_f64()).collect())
+            .unwrap_or_default()
+    };
+
+    // The verifying analysis: the same series, for dates now in the past.
+    let actual = hourly_to_daily_extreme(&times, &col(hourly_var), want_max);
+
+    // Require a near-complete day on both sides before scoring it, so a
+    // partial first/last day cannot masquerade as a large error.
+    const MIN_HOURS: usize = 20;
+
+    let mut per_lead: Vec<Value> = Vec::new();
+    let mut fitted: std::collections::BTreeMap<usize, (usize, f64, f64, f64)> =
+        std::collections::BTreeMap::new();
+
+    for l in 1..=max_lead {
+        let fc = hourly_to_daily_extreme(
+            &times,
+            &col(&format!("{hourly_var}_previous_day{l}")),
+            want_max,
+        );
+        let mut errs: Vec<f64> = Vec::new();
+        for (day, (fv, fh)) in &fc {
+            if *fh < MIN_HOURS {
+                continue;
+            }
+            if let Some((av, ah)) = actual.get(day) {
+                if *ah >= MIN_HOURS {
+                    errs.push(fv - av);
+                }
+            }
+        }
+        if errs.len() < 14 {
+            per_lead.push(json!({
+                "lead_days": l,
+                "n": errs.len(),
+                "usable": false,
+                "note": "fewer than 14 verifying days; not enough to fit"
+            }));
+            continue;
+        }
+        let n = errs.len();
+        let bias = mean(&errs);
+        let mae = mean(&errs.iter().map(|e| e.abs()).collect::<Vec<_>>());
+        let rmse = (errs.iter().map(|e| e * e).sum::<f64>() / n as f64).sqrt();
+        // SE of a mean and of an sd estimate. The latter is what bounds how
+        // tightly the predictive sd itself can be claimed.
+        let bias_se = rmse / (n as f64).sqrt();
+        let rmse_se = rmse / (2.0 * n as f64).sqrt();
+
+        // RMSE^2 = bias^2 + variance. If the model APPLIES the bias correction
+        // — which the bucket-ladder template does, via its station_bias driver
+        // — then the sd of what remains is the residual sd, not the RMSE.
+        // Using RMSE alongside an active bias driver counts the bias twice and
+        // over-widens. At EGLC lead 2 that is 1.43 versus 1.24, a 15% error in
+        // the wrong direction.
+        let resid_sd = (rmse * rmse - bias * bias).max(0.0).sqrt();
+        fitted.insert(l, (n, bias, resid_sd, rmse));
+
+        per_lead.push(json!({
+            "lead_days": l,
+            "n": n,
+            "usable": true,
+            "bias_forecast_minus_actual": r(bias, 3),
+            "bias_actual_minus_forecast": r(-bias, 3),
+            "bias_std_error": r(bias_se, 3),
+            "bias_is_significant": bias.abs() > 2.0 * bias_se,
+            "mae": r(mae, 3),
+            "rmse": r(rmse, 3),
+            "rmse_std_error": r(rmse_se, 3),
+            "residual_sd_after_bias_correction": r(resid_sd, 3),
+            "which_to_use": "rmse if you do NOT apply the bias correction; residual_sd_after_bias_correction if you DO. Never RMSE alongside an active bias driver."
+        }));
+    }
+
+    // Today's spread per lead, pooled and single-model, for the comparison
+    // that resolves the direction-of-correction confusion.
+    let horizon = (max_lead + 2).min(16);
+    let pooled = spread_by_lead(
+        lat,
+        lon,
+        &tz,
+        unit,
+        variable,
+        "ecmwf_ifs025,icon_global,gfs025,gem_global",
+        horizon,
+    )
+    .await
+    .unwrap_or_default();
+    let single = spread_by_lead(lat, lon, &tz, unit, variable, reference_model, horizon)
+        .await
+        .unwrap_or_default();
+
+    let mut comparison: Vec<Value> = Vec::new();
+    for (l, (n, _bias, resid_sd, rmse)) in &fitted {
+        let sp = pooled.get(l).map(|(s, _)| *s);
+        let si = single.get(l).map(|(s, _)| *s);
+        comparison.push(json!({
+            "lead_days": l,
+            "verifying_days": n,
+            "target_predictive_sd": r(*resid_sd, 3),
+            "rmse_if_no_bias_correction": r(*rmse, 3),
+            "pooled_multimodel_spread": sp.map(|s| r(s, 3)),
+            "reference_model_spread": si.map(|s| r(s, 3)),
+            "implied_factor_vs_pooled": sp.filter(|s| *s > 0.0).map(|s| r(resid_sd / s, 3)),
+            "implied_factor_vs_reference": si.filter(|s| *s > 0.0).map(|s| r(resid_sd / s, 3)),
+            "pooled_is_over_dispersive": sp.map(|s| *resid_sd < s)
+        }));
+    }
+
+    // Ready-to-paste FPL params, per lead.
+    let mut fpl: Vec<Value> = Vec::new();
+    for (l, (n, bias, resid_sd, rmse)) in &fitted {
+        let bias_obs_minus_fc = -bias;
+        let bias_se = rmse / (*n as f64).sqrt();
+        let sd_se = rmse / (2.0 * *n as f64).sqrt();
+        fpl.push(json!({
+            "lead_days": l,
+            "predictive_sd": r(*resid_sd, 3),
+            "predictive_sd_factor_p5": r(1.0 - 2.0 * sd_se / resid_sd, 3),
+            "predictive_sd_factor_p50": 1.0,
+            "predictive_sd_factor_p95": r(1.0 + 2.0 * sd_se / resid_sd, 3),
+            "bias_p5": r(bias_obs_minus_fc - 2.0 * bias_se, 3),
+            "bias_p50": r(bias_obs_minus_fc, 3),
+            "bias_p95": r(bias_obs_minus_fc + 2.0 * bias_se, 3),
+            "note": "bias is stated as OBSERVATION MINUS FORECAST, matching the station_bias driver's sign convention"
+        }));
+    }
+
+    out(json!({
+        "station": label,
+        "location": { "latitude": lat, "longitude": lon, "timezone": tz },
+        "variable": variable,
+        "unit": if variable.starts_with("temperature") { unit } else { "mm" },
+        "method": {
+            "source": "Open-Meteo previous-runs archive: hourly temperature_2m_previous_dayN, collapsed to the local-day extreme",
+            "days_requested": days_back,
+            "min_hours_per_day": MIN_HOURS,
+            "reference_model": reference_model,
+            "key_identity": "For an unbiased forecast the RMSE IS the standard deviation the predictive distribution should have. No spread-skill-ratio intermediate is needed, and RMSE measured at the gauge already contains model error, cross-model uncertainty and grid-to-station representativeness error together."
+        },
+        "per_lead_error": per_lead,
+        "dispersion_comparison": comparison,
+        "fitted_fpl_params": fpl,
+        "how_to_use": {
+            "step_1": "Take predictive_sd for your lead. That is the sd your predictive distribution should have — it is the calibration target, not a correction factor.",
+            "step_2": "Set the station_bias triple from bias_p5/p50/p95. Ignore a bias whose bias_is_significant is false; it is sampling noise.",
+            "step_3": "Do NOT additionally inflate for under-dispersion, and do NOT add a separate cross-model epistemic term. Both are already inside the measured RMSE. Adding them double-counts, which is the specific error that produced a 42%-too-wide distribution on the London case.",
+            "step_4": "Re-run this fit per station. Representativeness error is site-specific and does not transfer — DeepMC reports the same brittleness under transfer learning."
+        },
+        "caveats": [
+            "The verifying series is Open-Meteo's own analysis for past dates, not the market's settlement gauge. It is a close proxy at an airport site but not the settlement source, so treat the fitted sd as a floor rather than an exact figure.",
+            "Spread is from TODAY's ensemble run while RMSE is from the trailing window, so the implied factors mix a snapshot with an average. Spread varies with regime; the factor is a guide, and predictive_sd is the number to trust.",
+            "Leads are limited to 1-7 by the archive. Beyond lead 7, extrapolate with care or fall back to climatology.",
+            "RMSE assumes an approximately symmetric error distribution. For precipitation, or for temperature in a strongly skewed regime, prefer quantile-based calibration."
+        ]
+    }))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // weather_station_observation
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -2157,6 +2537,440 @@ async fn station_observation(input: &Value) -> Result<String, String> {
     }
 
     out(result)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// weather_portfolio_risk
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Two distinct correlation problems live in a weather portfolio, and the
+// intuitive one turns out to be the smaller.
+//
+// ## 1. Across stations — measured, and weaker than expected
+//
+// The intuition is that a European heatwave makes London, Paris, Amsterdam and
+// Munich one bet rather than four. That confuses correlated WEATHER with
+// correlated FORECAST ERROR. The weather is indeed highly correlated; the
+// errors largely are not, because the models resolve the synoptic pattern for
+// all of them and what remains is local. Measured at lead 2 over 120 days:
+//
+//     EGLC LFPB EHAM EDDM KLGA KLAX  pairwise error correlation 0.05 - 0.25
+//     N_eff = N^2 / sum(rho) = 36 / 8.51 = 4.23 of a naive 6
+//     Kelly haircut = sqrt(N_eff/N) = 0.84
+//
+// So cross-station diversification is real but the haircut is mild. An earlier
+// hand-waved estimate of "over-levers by sqrt(10)" was simply wrong, which is
+// the argument for measuring rather than reasoning about it.
+//
+// ## 2. Within a ladder — the one that actually matters
+//
+// A ladder's buckets are MUTUALLY EXCLUSIVE: exactly one resolves YES. Holding
+// three adjacent buckets is not three bets, it is one bet on where the centre
+// of the distribution sits. Per-bucket Kelly, summed, both over-stakes and
+// mis-allocates, because it ignores that the stakes on losing buckets are lost
+// with certainty whenever any sibling wins.
+//
+// The correct treatment is multi-outcome Kelly: choose fractions f_i to
+// maximise the expected log growth
+//
+//     G(f) = sum_i q_i * log(1 - sum_j f_j + f_i / p_i)
+//
+// which is what `ladder_kelly` solves. It routinely concentrates the stake on
+// far fewer buckets than per-bucket Kelly would suggest, and its total stake is
+// smaller.
+//
+// A further shared exposure worth naming: every bucket in a ladder is priced
+// off ONE centre estimate. If that centre is biased, all buckets in the ladder
+// are wrong together. Cross-station error correlation does not capture it,
+// because it is a single common factor within the ladder.
+
+/// Pearson correlation.
+fn corr(a: &[f64], b: &[f64]) -> f64 {
+    if a.len() != b.len() || a.len() < 3 {
+        return f64::NAN;
+    }
+    let (ma, mb) = (mean(a), mean(b));
+    let num: f64 = a.iter().zip(b).map(|(x, y)| (x - ma) * (y - mb)).sum();
+    let da: f64 = a.iter().map(|x| (x - ma).powi(2)).sum();
+    let db: f64 = b.iter().map(|y| (y - mb).powi(2)).sum();
+    if da <= 0.0 || db <= 0.0 {
+        return f64::NAN;
+    }
+    num / (da * db).sqrt()
+}
+
+/// Daily forecast-error series for one station at one lead.
+async fn error_series(
+    lat: f64,
+    lon: f64,
+    tz: &str,
+    unit: &str,
+    lead: usize,
+    days_back: i64,
+) -> Result<std::collections::BTreeMap<String, f64>, String> {
+    let field = format!("temperature_2m_previous_day{lead}");
+    let params: Vec<(&str, String)> = vec![
+        ("latitude", lat.to_string()),
+        ("longitude", lon.to_string()),
+        ("hourly", format!("temperature_2m,{field}")),
+        ("timezone", tz.to_string()),
+        ("temperature_unit", unit.to_string()),
+        ("past_days", days_back.to_string()),
+        ("forecast_days", "1".to_string()),
+    ];
+    let resp = get_json(
+        "https://previous-runs-api.open-meteo.com/v1/forecast",
+        &params,
+    )
+    .await?;
+    let h = resp
+        .get("hourly")
+        .and_then(|v| v.as_object())
+        .ok_or("previous-runs API returned no hourly block")?;
+    let times: Vec<String> = h
+        .get("time")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let col = |n: &str| -> Vec<Option<f64>> {
+        h.get(n)
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().map(|x| x.as_f64()).collect())
+            .unwrap_or_default()
+    };
+    let act = hourly_to_daily_extreme(&times, &col("temperature_2m"), true);
+    let fc = hourly_to_daily_extreme(&times, &col(&field), true);
+
+    let mut out = std::collections::BTreeMap::new();
+    for (day, (fv, fh)) in &fc {
+        if *fh < 20 {
+            continue;
+        }
+        if let Some((av, ah)) = act.get(day) {
+            if *ah >= 20 {
+                out.insert(day.clone(), fv - av);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Multi-outcome Kelly over a set of mutually exclusive outcomes.
+///
+/// Maximises `sum_i q_i * log(1 - sum_j f_j + f_i / p_i)` by projected gradient
+/// ascent. Returns the stake fraction per outcome. Exact enough for sizing —
+/// the objective is concave, so ascent converges to the global optimum, and any
+/// residual imprecision is far below the uncertainty in `q`.
+fn ladder_kelly(q: &[f64], p: &[f64]) -> Vec<f64> {
+    let n = q.len();
+    let mut f = vec![0.0f64; n];
+    let mut step = 0.02;
+    for _ in 0..20_000 {
+        let total: f64 = f.iter().sum();
+        // Gradient of G wrt f_k: sum_i q_i * (d/df_k wealth_i) / wealth_i
+        // wealth_i = 1 - total + f_i/p_i, so d/df_k = -1 + [i==k]/p_k
+        let mut grad = vec![0.0f64; n];
+        let mut ok = true;
+        let wealth: Vec<f64> = (0..n).map(|i| 1.0 - total + f[i] / p[i]).collect();
+        for w in &wealth {
+            if *w <= 1e-9 {
+                ok = false;
+            }
+        }
+        if !ok {
+            // Stepped into infeasible territory; pull back and shrink.
+            for v in f.iter_mut() {
+                *v *= 0.5;
+            }
+            step *= 0.5;
+            continue;
+        }
+        for k in 0..n {
+            let mut g = 0.0;
+            for i in 0..n {
+                let d = if i == k { 1.0 / p[k] - 1.0 } else { -1.0 };
+                g += q[i] * d / wealth[i];
+            }
+            grad[k] = g;
+        }
+        for k in 0..n {
+            f[k] = (f[k] + step * grad[k]).max(0.0);
+        }
+        // Keep the total staked strictly inside the simplex.
+        let t: f64 = f.iter().sum();
+        if t > 0.95 {
+            let s = 0.95 / t;
+            for v in f.iter_mut() {
+                *v *= s;
+            }
+        }
+        step *= 0.9997;
+    }
+    f
+}
+
+fn log_growth(f: &[f64], q: &[f64], p: &[f64]) -> f64 {
+    let total: f64 = f.iter().sum();
+    (0..q.len())
+        .map(|i| {
+            let w = 1.0 - total + f[i] / p[i];
+            if w <= 0.0 {
+                -1e9
+            } else {
+                q[i] * w.ln()
+            }
+        })
+        .sum()
+}
+
+async fn portfolio_risk(input: &Value) -> Result<String, String> {
+    let lead = input
+        .get("lead_days")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(2)
+        .clamp(1, 7) as usize;
+    let days_back = input
+        .get("days_back")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(120)
+        .clamp(30, 120);
+    let unit = input
+        .get("unit")
+        .and_then(|v| v.as_str())
+        .unwrap_or("celsius");
+
+    // ── Part 1: cross-station error correlation ──────────────────────────
+    let stations: Vec<String> = input
+        .get("stations")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut cross = Value::Null;
+    if stations.len() >= 2 {
+        let mut series: Vec<(String, std::collections::BTreeMap<String, f64>)> = Vec::new();
+        let mut rmse: Vec<Value> = Vec::new();
+        for code in &stations {
+            let Some(s) = station_by_icao(code) else {
+                return Err(format!(
+                    "unknown station '{code}'; call weather_settlement_spec for valid codes"
+                ));
+            };
+            let e = error_series(s.lat, s.lon, s.tz, unit, lead, days_back).await?;
+            let n = e.len() as f64;
+            let station_rmse = if n > 0.0 {
+                (e.values().map(|x| x * x).sum::<f64>() / n).sqrt()
+            } else {
+                f64::NAN
+            };
+            rmse.push(json!({ "station": s.icao, "n_days": e.len(), "rmse": r(station_rmse, 3) }));
+            series.push((s.icao.to_string(), e));
+        }
+
+        // Restrict to days every station has, so every correlation is computed
+        // on the same sample.
+        let mut common: Option<std::collections::BTreeSet<String>> = None;
+        for (_, e) in &series {
+            let keys: std::collections::BTreeSet<String> = e.keys().cloned().collect();
+            common = Some(match common {
+                None => keys,
+                Some(c) => c.intersection(&keys).cloned().collect(),
+            });
+        }
+        let common: Vec<String> = common.unwrap_or_default().into_iter().collect();
+
+        let vecs: Vec<Vec<f64>> = series
+            .iter()
+            .map(|(_, e)| common.iter().map(|d| e[d]).collect())
+            .collect();
+
+        let n = series.len();
+        let mut matrix: Vec<Value> = Vec::new();
+        let mut sum_rho = 0.0;
+        let mut pairs: Vec<(String, String, f64)> = Vec::new();
+        for i in 0..n {
+            let row: Vec<Value> = (0..n)
+                .map(|j| {
+                    let c = if i == j {
+                        1.0
+                    } else {
+                        corr(&vecs[i], &vecs[j])
+                    };
+                    sum_rho += if c.is_finite() { c } else { 0.0 };
+                    if i < j && c.is_finite() {
+                        pairs.push((series[i].0.clone(), series[j].0.clone(), c));
+                    }
+                    r(c, 3)
+                })
+                .collect();
+            matrix.push(json!({ "station": series[i].0, "row": row }));
+        }
+        pairs.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Effective number of independent bets. For equal-variance positions,
+        // portfolio variance scales with the sum of the correlation matrix, so
+        // N_eff = N^2 / sum(rho) and the stake haircut is sqrt(N_eff / N).
+        let n_eff = if sum_rho > 0.0 {
+            (n * n) as f64 / sum_rho
+        } else {
+            n as f64
+        };
+        let haircut = (n_eff / n as f64).sqrt().min(1.0);
+
+        // A station whose own error is far larger than its peers is a sizing
+        // hazard on its own, independent of correlation.
+        let rmses: Vec<f64> = rmse.iter().filter_map(|row| row["rmse"].as_f64()).collect();
+        let med = {
+            let mut s = rmses.clone();
+            s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            quantile(&s, 0.5)
+        };
+        let outliers: Vec<Value> = rmse
+            .iter()
+            .filter(|row| row["rmse"].as_f64().is_some_and(|v| v > 1.8 * med))
+            .map(|row| {
+                json!({
+                    "station": row["station"],
+                    "rmse": row["rmse"],
+                    "median_rmse": r(med, 3),
+                    "note": "forecast error far above peers — size this station down independently of correlation, and check whether its grid cell sits over water or terrain the model resolves poorly"
+                })
+            })
+            .collect();
+
+        cross = json!({
+            "lead_days": lead,
+            "common_days": common.len(),
+            "per_station_rmse": rmse,
+            "correlation_matrix": matrix,
+            "most_correlated_pairs": pairs.iter().take(5).map(|(a, b, c)| json!({
+                "a": a, "b": b, "correlation": r(*c, 3)
+            })).collect::<Vec<_>>(),
+            "sum_of_correlation_matrix": r(sum_rho, 3),
+            "naive_independent_bets": n,
+            "effective_independent_bets": r(n_eff, 2),
+            "kelly_stake_haircut": r(haircut, 3),
+            "variance_overstatement_if_ignored": r(n as f64 / n_eff, 2),
+            "rmse_outliers": outliers,
+            "interpretation": "This measures correlated FORECAST ERROR, not correlated weather. The two differ a great deal: models resolve the shared synoptic pattern for all stations, so what remains is largely local. Cross-station error correlation is typically 0.05-0.25 and the resulting haircut is mild — much milder than reasoning from 'a heatwave hits them all' would suggest."
+        });
+    }
+
+    // ── Part 2: within-ladder multi-outcome Kelly ────────────────────────
+    let mut ladder = Value::Null;
+    if let Some(items) = input.get("ladder").and_then(|v| v.as_array()) {
+        let labels: Vec<String> = items
+            .iter()
+            .map(|i| i["label"].as_str().unwrap_or("?").to_string())
+            .collect();
+        let q: Vec<f64> = items.iter().map(|i| f64_of(&i["model_prob"])).collect();
+        let p: Vec<f64> = items.iter().map(|i| f64_of(&i["price"])).collect();
+
+        if q.iter().any(|x| !x.is_finite()) || p.iter().any(|x| !(0.0..1.0).contains(x)) {
+            return Err("each ladder entry needs a finite model_prob and a price in (0,1)".into());
+        }
+        let q_sum: f64 = q.iter().sum();
+        let p_sum: f64 = p.iter().sum();
+        if q_sum > 1.02 {
+            return Err(format!(
+                "model probabilities sum to {q_sum:.3}. Ladder outcomes are mutually exclusive, \
+                 so they cannot exceed 1 — you have almost certainly read bucket labels as \
+                 one-sided thresholds instead of intervals."
+            ));
+        }
+        // A PARTIAL ladder manufactures a phantom arbitrage and the optimiser
+        // will happily lever into it. Submitting the 5 central buckets of an
+        // 11-bucket London ladder gave prices summing to 0.965 against model
+        // probabilities summing to 0.988 — an apparent 2.3% riskless edge that
+        // exists only because the omitted buckets cannot lose. Multi-outcome
+        // Kelly then staked 95% of bankroll, including on buckets with clearly
+        // negative edge.
+        if q_sum < 0.95 {
+            return Err(format!(
+                "model probabilities sum to only {q_sum:.3}, so this ladder is INCOMPLETE. \
+                 Multi-outcome Kelly requires the full mutually-exclusive set: with outcomes \
+                 missing, the omitted mass looks like free money and the optimiser levers into \
+                 a phantom arbitrage. Pass every bucket including the open tails ('N or below', \
+                 'N or higher'), or add a residual entry covering the remainder."
+            ));
+        }
+        if p_sum < 0.97 {
+            return Err(format!(
+                "prices sum to only {p_sum:.3}. Either the ladder is incomplete or there is a \
+                 genuine structural arbitrage — buy every outcome for {p_sum:.3} and collect 1.00. \
+                 Check completeness first; a real negRisk ladder normally sums slightly ABOVE 1 \
+                 because of the spread and taker fee."
+            ));
+        }
+
+        let f_opt = ladder_kelly(&q, &p);
+        let g_opt = log_growth(&f_opt, &q, &p);
+
+        // What per-bucket Kelly would have said, treating each as independent.
+        let f_naive: Vec<f64> = q
+            .iter()
+            .zip(&p)
+            .map(|(qi, pi)| ((qi - pi) / (1.0 - pi)).max(0.0))
+            .collect();
+        let g_naive = log_growth(&f_naive, &q, &p);
+
+        let total_opt: f64 = f_opt.iter().sum();
+        let total_naive: f64 = f_naive.iter().sum();
+
+        ladder = json!({
+            "outcomes": labels.iter().enumerate().map(|(i, l)| json!({
+                "label": l,
+                "model_prob": r(q[i], 4),
+                "price": r(p[i], 4),
+                "edge": r(q[i] - p[i], 4),
+                "multi_outcome_kelly_fraction": r(f_opt[i], 4),
+                "per_bucket_kelly_fraction": r(f_naive[i], 4)
+            })).collect::<Vec<_>>(),
+            "model_prob_sum": r(q_sum, 4),
+            "price_sum": r(p_sum, 4),
+            "ladder_overround": r(p_sum - 1.0, 4),
+            "total_stake_multi_outcome": r(total_opt, 4),
+            "total_stake_per_bucket_naive": r(total_naive, 4),
+            "naive_over_stakes_by": if total_opt > 1e-9 { r(total_naive / total_opt, 2) } else { Value::Null },
+            "hit_stake_cap": total_opt > 0.94,
+            "log_growth_multi_outcome": r(g_opt, 6),
+            "log_growth_per_bucket_naive": r(g_naive, 6),
+            "naive_is_worse_by": r(g_opt - g_naive, 6),
+            "why": "Ladder buckets are mutually exclusive: exactly one resolves YES, so holding several is ONE bet on where the centre sits, not several independent bets. Per-bucket Kelly ignores that a stake on every losing sibling is lost with certainty whenever any sibling wins, so it over-stakes and mis-allocates. Multi-outcome Kelly maximises expected log growth over the joint outcome and typically concentrates on fewer buckets.",
+            "shared_centre_warning": "Every bucket in a ladder is priced off ONE centre estimate. If that centre is biased, all of them are wrong together. Cross-station correlation cannot see this — it is a common factor inside the ladder. Before sizing, check the ensemble centre against the market's implied centre; a gap larger than the measured predictive sd means you are betting on the centre, not on the bucket."
+        });
+    }
+
+    out(json!({
+        "cross_station": cross,
+        "within_ladder": ladder,
+        "sizing_order": [
+            "1. Size each ladder with multi-outcome Kelly, never by summing per-bucket Kelly.",
+            "2. Apply the cross-station kelly_stake_haircut across ladders.",
+            "3. Cap by order-book depth at your limit price — walking the book converts edge into slippage.",
+            "4. Apply a fractional-Kelly multiplier (0.25 default) on top, because none of this is worth anything if the probabilities are not calibrated."
+        ],
+        "caveats": [
+            "Correlations are measured on Open-Meteo's analysis as the verifying truth, not on the market's settlement gauge.",
+            "A 120-day window at one lead is a single season. Error correlation is regime-dependent and will differ in winter.",
+            "N_eff assumes comparable position variance across stations. Check rmse_outliers before treating the haircut as uniform."
+        ]
+    }))
+}
+
+/// Numeric coercion that accepts both JSON numbers and numeric strings.
+fn f64_of(v: &Value) -> f64 {
+    v.as_f64()
+        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        .unwrap_or(f64::NAN)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2737,6 +3551,112 @@ TEMPERATURE (F)\n\
         assert_eq!(best_of(Some(&bids), true), Some((0.43, 519.0)));
         assert_eq!(best_of(Some(&asks), false), Some((0.44, 181.0)));
         assert_eq!(best_of(None, true), None);
+    }
+
+    // ── Portfolio risk ──────────────────────────────────────────────────
+
+    #[test]
+    fn ladder_kelly_matches_the_classic_horse_race_threshold() {
+        // Classic result: include outcome i iff q_i/p_i exceeds
+        //   (1 - sum_S q) / (1 - sum_S p)
+        // over the included set S. Negative-edge legs DO qualify as hedges
+        // when mutually exclusive, which is counterintuitive and worth pinning.
+        let q = vec![
+            0.0002, 0.0003, 0.0006, 0.0071, 0.0006, 0.0157, 0.1340, 0.3761, 0.3521, 0.1099, 0.0116,
+        ];
+        let p = vec![
+            0.0015, 0.0010, 0.0015, 0.0090, 0.0650, 0.1450, 0.3350, 0.2950, 0.1450, 0.0450, 0.0170,
+        ];
+        let f = ladder_kelly(&q, &p);
+
+        // Bucket 27/28/29 carry the positive edge and must be funded.
+        assert!(f[7] > 0.2, "bucket 27 underfunded: {}", f[7]);
+        assert!(f[8] > 0.2, "bucket 28 underfunded: {}", f[8]);
+        assert!(f[9] > 0.05, "bucket 29 underfunded: {}", f[9]);
+
+        // Bucket 26 has edge -0.20 but q/p = 0.40, above the ~0.315 threshold,
+        // so it is a legitimate hedge and must be funded despite negative EV.
+        assert!(
+            f[6] > 0.01,
+            "bucket 26 has negative edge but q/p above threshold — it is a hedge, got {}",
+            f[6]
+        );
+
+        // Buckets 24 and 25 have q/p of 0.009 and 0.108, far below threshold.
+        assert!(f[4] < 1e-3, "bucket 24 should be excluded, got {}", f[4]);
+        assert!(f[5] < 1e-3, "bucket 25 should be excluded, got {}", f[5]);
+
+        // Feasible: never stake more than the bankroll.
+        let total: f64 = f.iter().sum();
+        assert!(total > 0.0 && total < 1.0, "total stake {total} infeasible");
+        // And it must beat the naive per-bucket allocation on log growth.
+        let naive: Vec<f64> = q
+            .iter()
+            .zip(&p)
+            .map(|(qi, pi)| ((qi - pi) / (1.0 - pi)).max(0.0))
+            .collect();
+        assert!(
+            log_growth(&f, &q, &p) > log_growth(&naive, &q, &p),
+            "multi-outcome Kelly must dominate summed per-bucket Kelly"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_incomplete_ladder_is_rejected_not_levered_into() {
+        // Feeding only the central buckets of an 11-bucket ladder makes the
+        // omitted mass look like free money: prices summed to 0.965 against
+        // model probabilities of 0.988, and the optimiser staked 95% of
+        // bankroll on a phantom arbitrage.
+        let r = dispatch(
+            "weather_portfolio_risk",
+            &json!({ "ladder": [
+                { "label": "27", "model_prob": 0.376, "price": 0.295 },
+                { "label": "28", "model_prob": 0.352, "price": 0.145 }
+            ]}),
+        )
+        .await
+        .expect("dispatched");
+        let err = r.expect_err("an incomplete ladder must be rejected");
+        assert!(err.contains("INCOMPLETE"), "unhelpful error: {err}");
+    }
+
+    #[tokio::test]
+    async fn a_ladder_read_as_thresholds_is_rejected() {
+        // Reading "32C" as ">= 32C" for every bucket makes the probabilities
+        // sum far above 1 — the 6x error class this whole stack guards against.
+        let r = dispatch(
+            "weather_portfolio_risk",
+            &json!({ "ladder": [
+                { "label": "26", "model_prob": 0.95, "price": 0.335 },
+                { "label": "27", "model_prob": 0.80, "price": 0.295 },
+                { "label": "28", "model_prob": 0.45, "price": 0.145 }
+            ]}),
+        )
+        .await
+        .expect("dispatched");
+        let err = r.expect_err("probabilities summing above 1 must be rejected");
+        assert!(
+            err.contains("mutually exclusive"),
+            "error should name the cause: {err}"
+        );
+    }
+
+    #[test]
+    fn correlation_is_symmetric_and_bounded() {
+        let a = vec![1.0, -2.0, 3.0, 0.5, -1.5, 2.2, 0.1];
+        let b = vec![0.9, -1.8, 2.7, 0.4, -1.2, 2.0, 0.3];
+        let c = corr(&a, &b);
+        assert!((-1.0..=1.0).contains(&c), "correlation {c} out of range");
+        assert!(
+            (c - corr(&b, &a)).abs() < 1e-12,
+            "correlation must be symmetric"
+        );
+        assert!(
+            (corr(&a, &a) - 1.0).abs() < 1e-9,
+            "self-correlation must be 1"
+        );
+        // Too few points to be meaningful.
+        assert!(corr(&[1.0, 2.0], &[1.0, 2.0]).is_nan());
     }
 
     #[test]

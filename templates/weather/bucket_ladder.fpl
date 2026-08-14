@@ -1,0 +1,327 @@
+// WEATHER_BUCKET — probability that one daily temperature ladder bucket resolves YES.
+//
+// One instance = one bucket = one binary market. A full Polymarket ladder is 11
+// buckets, so a city-day is 11 instances sharing the same ensemble params and
+// differing only in (bucket_label, bucket_lo, bucket_hi). Spawn only the buckets
+// you intend to price; there is no need to instantiate the whole ladder.
+//
+// ═══════════════════════════════════════════════════════════════════════════
+// READ THIS BEFORE EDITING: why this is NOT shaped like team_prior.fpl
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// `team_prior.fpl` is multiplicative — `base_rate * d1^a * d2^b * ...`. That
+// form is right there and wrong here, and using it produced a real,
+// instructive failure: a London 32C forecast of 0.3% against a market of 13.5%
+// and an ensemble truth of 13.3%. Off by 44x.
+//
+// The reason is structural, not a tuning error. A multiplicative model can only
+// SCALE A BASE RATE. On 2026-08-14 the London ensemble mean was 33.4C against a
+// climatological mean of 22.1C — the predictive distribution had moved 11
+// degrees. No product of multipliers near 1.0 can express that, so the model
+// stayed pinned near its 0.3% climatological base rate while the actual answer
+// was two orders of magnitude away.
+//
+// A threshold question is not a scaled base rate. It is
+//
+//     P(bucket_lo <= T < bucket_hi)
+//
+// where T is a predictive distribution. So the `model:` expression here is a
+// BUCKET INDICATOR over a composed T, and the Monte Carlo mean of that
+// indicator IS the probability. Nothing multiplies the base rate.
+//
+// Consequence worth internalising: **the base_rate block below does not enter
+// the model.** It is the outside view — the Brier Skill Score denominator and
+// the sanity check the cockpit displays. If your calibrated probability is
+// worse than it, you have negative skill and should not trade. That is its
+// entire job.
+//
+// ═══════════════════════════════════════════════════════════════════════════
+// The drivers are an ERROR DECOMPOSITION, not a narrative
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Each driver is one named, separable source of error, so nothing is
+// double-counted and nothing is uncovered. Drivers named after weather
+// phenomena ("synoptic pattern", "urban heat island") feel more meteorological
+// but cannot be fitted, refuted, or fed by an observation stream.
+//
+//   ensemble_center      the forecast, with Monte Carlo error on its mean
+//   station_bias         MEASURED systematic residual at the gauge  ← learnable
+//   predictive_sd_factor estimation uncertainty in the MEASURED sd
+//   weather_draw         everything else, at its measured magnitude
+//
+// Four drivers, and — the important part — every magnitude is MEASURED against
+// 120 days of this station's own forecast-versus-outcome history by
+// `weather_dispersion_fit`. Nothing here is a literature prior.
+//
+// ═══════════════════════════════════════════════════════════════════════════
+// Measure the sd. Do not build it out of priors.
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Earlier drafts assembled the predictive sd from four separate priors —
+// sampling error, cross-model disagreement, a bias prior, and a literature
+// under-dispersion factor. That produced sd 1.33 at EGLC lead 1 against a
+// market-implied 0.94, i.e. 42% too wide, via three separate double-counts:
+//
+//   1. Cross-model disagreement was added INSIDE the spread term, treating
+//      "I do not know where the distribution sits" as "the world is more
+//      chaotic". It fattened both tails. sd went to 2.02 against a raw
+//      ensemble 1.167.
+//   2. The pooled multi-model spread ALREADY contains between-model variance,
+//      so using it and an epistemic driver counted the same thing twice.
+//   3. The published SSR ~ 0.85 under-dispersion result is measured on
+//      SINGLE-model ensembles. Applying its 1.18 inflation to a pooled spread
+//      inflated an already-inflated number. Measured at EGLC lead 1 the two
+//      point in opposite directions: 0.78 against pooled, 1.28 against ECMWF
+//      alone. Both correct; they answer different questions.
+//
+// The fix is not a fourth prior. It is to stop deriving the sd and measure it:
+//
+//     For an unbiased forecast the RMSE of forecast-versus-outcome IS the
+//     standard deviation the predictive distribution should have.
+//
+// RMSE measured at the gauge already contains model error, cross-model
+// uncertainty AND grid-to-station representativeness error — together, with no
+// double-counting possible, because it is one empirical quantity.
+//
+// One subtlety: RMSE^2 = bias^2 + variance. Because this template APPLIES the
+// bias correction via `station_bias`, the spread term must use the RESIDUAL sd,
+// sqrt(RMSE^2 - bias^2), not the RMSE. `weather_dispersion_fit` returns both
+// and labels which is which. At EGLC lead 2 that is 1.24 versus 1.43.
+//
+// Measured at EGLC over 120 days:
+//
+//     lead   predictive_sd   bias (obs - fc)   significant?
+//        1        0.909           -0.05             no
+//        2        1.236           +0.72            YES
+//        3        1.271           +0.41            YES
+//        4        1.764           +0.36            YES
+//        7        3.265           +0.43             no
+//
+// The lead-2 to lead-4 warm bias is real and worth 0.4-0.7 C on a 1 C bucket.
+// It is exactly the residual the learnable driver exists to find, and no
+// literature prior would have supplied it.
+//
+// ═══════════════════════════════════════════════════════════════════════════
+// Provenance
+// ═══════════════════════════════════════════════════════════════════════════
+//
+//   Guide:      docs/fermi/BUILDING_FERMI_TEAMS.md
+//   Agents:     docs/agents/WEATHER_ORACLE.md
+//   Research:   docs/WEATHER_MARKETS_RESEARCH.md
+//   Param prep: cargo run --example weather_market_check -- <city> <date> <bucket>
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// SETTLEMENT IDENTITY — bind from weather_settlement_spec, never by hand
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The largest error in these markets is definitional. Polymarket's London
+// temperature markets settle on EGLC (London City Airport), NOT Heathrow; NYC
+// on KLGA (LaGuardia), NOT Central Park; Dallas on Love Field, NOT DFW; Denver
+// on Buckley SFB; Seoul on Incheon; Taipei on Songshan. A perfectly calibrated
+// forecast of the wrong gauge loses money with total consistency.
+
+param station: string             // ICAO of the settlement gauge, e.g. "EGLC"
+param station_name: string        // e.g. "London City Airport"
+param market_date: string         // local calendar date, YYYY-MM-DD
+param timezone: string            // IANA zone that DEFINES the calendar day
+param market_unit: string         // "celsius" | "fahrenheit" — the ladder's unit
+param resolution_source: string   // "weather_underground" | "noaa_wrh_timeseries" | "hk_observatory"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE BUCKET — an integer SET, not a threshold
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Settlement publishes a whole number, so a bucket labelled "32" means the
+// published integer IS 32, i.e. the continuous interval [31.5, 32.5). A
+// forecast of 32.4 belongs in this bucket; a forecast of 32.6 does not.
+//
+// Reading "32C" as ">= 32C" instead is a 6x error: on 2026-08-14 at EGLC the
+// bucket was 13.3% and the at-least reading was ~88%.
+//
+// US ladders step 2F (label "86-87" -> [85.5, 87.5)). Non-US step 1C. Hong Kong
+// is the sole exception at 0.1C precision — no rounding cushion, so set
+// bucket_lo/hi to the stated values.
+
+param bucket_label: string        // exactly as the market words it, e.g. "32"
+param bucket_lo: real             // inclusive lower edge, e.g. 31.5
+param bucket_hi: real             // exclusive upper edge, e.g. 32.5
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENSEMBLE STATE — from weather_ensemble_forecast
+// ─────────────────────────────────────────────────────────────────────────────
+
+param ens_mean: real              // multi-model ensemble mean, in market_unit
+param ens_sd: real                // ensemble spread. REPORTING ONLY — the model
+                                  // deliberately does not use it, because the
+                                  // predictive sd is measured rather than derived
+                                  // from it. Keep it visible so the gap between
+                                  // raw spread and measured error stays legible.
+param ens_mean_se: real           // Monte Carlo error on the mean ONLY:
+                                  // ens_sd/sqrt(n_members). Genuinely small
+                                  // (~0.10 for 143 members). All other centre
+                                  // uncertainty is inside predictive_sd, so
+                                  // anything larger here double-counts.
+param ens_n_members: real         // for the Monte Carlo error caveat
+param lead_days: real             // 1-7 for a fitted sd; beyond that extrapolate
+                                  // with care or fall back to climatology.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CORRECTION PRIORS — replaced by fitted values as the backtest accumulates
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// All of these come from `weather_dispersion_fit`, which verifies 120 days of
+// this station's forecast-versus-outcome history and returns them ready to bind.
+// Run it per station: representativeness error is site-specific and does not
+// transfer (DeepMC reports the same brittleness under transfer learning).
+//
+// The spread (p95 - p5) is how the model carries confidence — there is no
+// separate certainty scalar.
+
+param bias_p5: real               // MEASURED station residual, OBSERVATION MINUS
+param bias_p50: real              // FORECAST, from weather_dispersion_fit. Mind
+param bias_p95: real              // the sign. Set all three to 0 when the fit
+                                  // reports bias_is_significant = false: there is
+                                  // no point correcting for sampling noise, and
+                                  // doing so only adds variance.
+
+param predictive_sd: real         // MEASURED. The sd the predictive distribution
+                                  // should have at this lead, from
+                                  // weather_dispersion_fit. Use the
+                                  // residual_sd_after_bias_correction figure,
+                                  // NOT the raw RMSE — this template applies the
+                                  // bias, so RMSE would count it twice.
+
+param sd_factor_p5: real          // Estimation uncertainty in predictive_sd
+param sd_factor_p50: real         // itself: SE of an sd estimate is ~sd/sqrt(2n),
+param sd_factor_p95: real         // so 120 verifying days gives roughly +/-13%.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE QUESTION
+// ─────────────────────────────────────────────────────────────────────────────
+
+question "Will the highest temperature at {station_name} on {market_date} be {bucket_label}?" {
+    base_rate {
+        reference_class: "ERA5 reanalysis at this gauge, same calendar-day window, 30 years, warming-trend adjusted"
+        // PLACEHOLDER. Rewrite this literal per instance from
+        // weather_climatology's trend_adjusted_base_rate — the parser requires a
+        // literal here and cannot read a param.
+        //
+        // Use the TREND-ADJUSTED figure: a raw 30-year frequency understates a
+        // warm threshold in a warming climate. EGLC's fitted trend is
+        // +0.46C/decade, which moved P(>=31.5C) from 2.1% to 3.0%.
+        //
+        // This value does NOT enter the model. It is the outside view, the
+        // Brier Skill Score denominator, and the sanity check.
+        historical_frequency: 3.0%
+        sample_size: 330
+        source: "ERA5 via Open-Meteo archive, 30-year window, +/-5 days"
+        reasoning: "Climatological frequency for this gauge and calendar window. The reference forecast: a model that cannot beat this has negative skill and is not tradeable. At lead 0-2 it should be almost irrelevant; beyond ~10 days it should dominate."
+        generated_by: human
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DRIVERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+driver ensemble_center continuous {
+    display_name: "Forecast centre"
+    description: "Where the multi-model ensemble puts the day's extreme, with Monte Carlo error on the mean"
+    distribution: normal(ens_mean, ens_mean_se)
+    unit: "degrees in market_unit"
+    rationale: "The multi-model mean is a better centre than any single model, and it is used here purely as the centre. Its sd carries ONLY the Monte Carlo error on the mean; every other source of centre uncertainty — cross-model disagreement, representativeness, model error — is already inside the measured predictive_sd. Widening this driver beyond the MC error double-counts."
+}
+
+driver station_bias continuous {
+    display_name: "Measured station residual"
+    description: "Observation minus forecast at the settlement gauge, fitted from this station's own history"
+    distribution: triangular(bias_p5, bias_p50, bias_p95)
+    learnable: true
+    unit: "degrees in market_unit"
+    rationale: "MEASURED, not assumed: weather_dispersion_fit verifies 120 days of forecast-versus-outcome at this gauge and returns the triple. At EGLC the lead-2 to lead-4 residual is a statistically significant +0.4 to +0.7 C warm bias — worth most of a 1 C bucket, and invisible to any literature prior. Learned as the RESIDUAL, never from raw observations: with a raw target the learner relearns the diurnal cycle and adds no skill (Gkirmpas et al., Atmosphere 16(7):877, 2025 measured ~50% feature importance on time-of-day; Microsoft DeepMC, KDD '21 reached the same conclusion independently). Ignore a residual whose bias_is_significant is false — that is sampling noise, and correcting for it adds variance for nothing."
+    feeds_from: {
+        source: "upstream_resolutions",
+        extractor: "scalar_difference",
+        config: {
+            field_a: "outcome.observed_max",
+            field_b: "outcome.forecast_ensemble_mean"
+        }
+    }
+}
+
+driver predictive_sd_factor continuous {
+    display_name: "Uncertainty in the measured sd"
+    description: "How well the predictive sd itself is pinned down by the verifying sample"
+    distribution: triangular(sd_factor_p5, sd_factor_p50, sd_factor_p95)
+    unit: "factor"
+    rationale: "Centred on 1.0 because predictive_sd is a measurement, not a prior to be corrected. The spread is the standard error of an sd estimate, ~sd/sqrt(2n), which is about +/-13% on 120 verifying days. This is the honest replacement for the old dispersion_inflation driver: that one asked 'by how much is the ensemble wrong', which is unanswerable without data and was answered with a literature prior applied to the wrong spread. This one asks 'how precisely do we know the number we measured', which the sample answers directly."
+}
+
+driver weather_draw continuous {
+    display_name: "Residual forecast error"
+    description: "Standardised draw, scaled to the measured predictive sd"
+    distribution: normal(0.0, 1.0)
+    unit: "z"
+    rationale: "The only driver that scales the spread, and the aggregate of everything the forecast cannot resolve — chaos, model error and gauge representativeness together, at their jointly measured magnitude. Sobol should show this dominating total-order variance. If station_bias or predictive_sd_factor dominates instead, the answer is an artefact of the fit rather than a forecast, and the trade should be declined."
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AGENTS
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `driver_refs` IS the binding, read at runtime from this program. There is no
+// Rust table to register in. An agent with no `driver_refs` has its multiplier
+// silently discarded, so declare them.
+//
+// weather_market_analyst and weather_oracle deliberately own no driver:
+// the analyst prices the finished distribution and the oracle is the
+// interactive front for one-off questions. Neither belongs inside the model.
+// Keeping the calibrator blind to the market price is structural, not advisory
+// — an agent that both forecasts and prices drifts toward the number it wants.
+
+agent weather_ensemble_forecaster {
+    type: "research"
+    query: "Multi-model ensemble distribution for the daily maximum at {station} on {market_date}, aggregated in {timezone} and reported in {market_unit}. Report member count, per-model medians, cross-model median range, and the Monte Carlo standard error on any tail probability."
+    executor: "llm"
+    driver_refs: ["ensemble_center"]
+    schedule: every 6 hours
+}
+
+agent weather_calibrator {
+    type: "research"
+    query: "Given the ensemble state for {station} on {market_date} at lead {lead_days} days, estimate the station residual (obs minus model) and the dispersion inflation 1/SSR for THIS lead time. State for each whether it is MEASURED or a documented prior. Remember the dispersion prior is lead-dependent and may be below 1.0 at short lead. Report the Brier Skill Score against the climatological base rate and halt if it is negative."
+    executor: "llm"
+    driver_refs: ["station_bias", "dispersion_inflation"]
+    schedule: every 6 hours
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MODEL — the bucket indicator
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The composed predictive temperature is
+//
+//     T = ensemble_center                                    (measured centre)
+//       + station_bias                                       (measured residual)
+//       + weather_draw * (predictive_sd * predictive_sd_factor)   (measured sd)
+//
+// and the model is 1 when T lands in the bucket, else 0. The Monte Carlo mean
+// of that indicator IS P(bucket). T is written out twice because FPL has no
+// intermediate bindings; keep the two copies identical.
+//
+// Note what is NOT here: ens_sd. The raw ensemble spread does not enter the
+// model at all. It is kept as a param for reporting so the gap between raw
+// spread and measured error stays visible, but the sd that matters is measured.
+//
+// SHORT-LEAD GUARD, enforced by weather_oracle's Stage 4 rather than in FPL:
+// at lead <= 2 the ensemble is highly informative and the market is priced off
+// real forecasts. A model probability far BELOW the market at short lead is a
+// red flag on the MODEL, not an edge. Halt at |model - market| > 10pp and check
+// live data actually reached the drivers before trading it. The production
+// failure this template replaces returned 0.3% against a market of 13.5% and an
+// ensemble truth of 13.3% — a 44x error, and the divergence panel presented it
+// as a trading signal.
+
+model: if ((ensemble_center + station_bias + weather_draw * (predictive_sd * predictive_sd_factor)) >= bucket_lo) and ((ensemble_center + station_bias + weather_draw * (predictive_sd * predictive_sd_factor)) < bucket_hi) then 1.0 else 0.0
+
+simulate 20000 iterations
