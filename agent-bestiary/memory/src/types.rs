@@ -16,6 +16,26 @@ pub struct Episode {
     pub execution_time_ms: i64,
     pub tokens_used: Option<i32>,
     pub cost_usd: Option<Decimal>,
+    /// Prompt tokens (migration 194). `None` = the provider did not report
+    /// the split, which pricing treats as "assume a split" — never as zero.
+    #[serde(default)]
+    pub input_tokens: Option<i32>,
+    /// Completion tokens (migration 194). Stored separately because output
+    /// costs 3-5x input, so a total alone cannot price a run better than
+    /// about ±2x.
+    #[serde(default)]
+    pub output_tokens: Option<i32>,
+    /// How much to trust `cost_usd`: `measured_split`, `assumed_split`,
+    /// `unknown_model`, or `no_charge` (migration 194). `None` for rows
+    /// written before it. Carried per row so trustworthiness never has to
+    /// be inferred from a deploy date.
+    #[serde(default)]
+    pub cost_basis: Option<String>,
+    /// Rate-card row that priced this run, e.g. `anthropic/claude-sonnet-4`
+    /// or `openrouter:anthropic/claude-haiku-4`. Makes a mispricing
+    /// traceable to the entry that caused it.
+    #[serde(default)]
+    pub cost_rate_key: Option<String>,
     pub embedding: Option<Vec<f32>>,
     pub consolidated: bool,
     #[serde(default)]

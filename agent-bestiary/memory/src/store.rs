@@ -220,10 +220,12 @@ impl MemoryStore {
                 provenance, authority_weight, dyad_id, persona_version_at_write,
                 provider_used, model_used,
                 embedding_model_id, embedding_model_version, embedding_dim,
-                source_text, source_ref, provenance_trusted
+                source_text, source_ref, provenance_trusted,
+                input_tokens, output_tokens, cost_basis, cost_rate_key
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-                    $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+                    $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25,
+                    $26, $27, $28, $29)
             RETURNING episode_id
             "#,
         )
@@ -252,6 +254,11 @@ impl MemoryStore {
         .bind(provenance.map(|p| p.source_text.as_str()))
         .bind(&source_ref)
         .bind(trusted)
+        // Migration 194 — the inputs that make `cost_usd` re-derivable.
+        .bind(episode.input_tokens)
+        .bind(episode.output_tokens)
+        .bind(&episode.cost_basis)
+        .bind(&episode.cost_rate_key)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -285,7 +292,8 @@ impl MemoryStore {
                 execution_status, error_details, execution_time_ms,
                 tokens_used, cost_usd, embedding, consolidated, tags,
                 provenance, authority_weight, dyad_id, persona_version_at_write,
-                provider_used, model_used
+                provider_used, model_used,
+                input_tokens, output_tokens, cost_basis, cost_rate_key
             FROM episodes
             WHERE episode_id = $1
             "#,
@@ -311,6 +319,19 @@ impl MemoryStore {
             execution_time_ms: row.try_get("execution_time_ms")?,
             tokens_used: row.try_get("tokens_used")?,
             cost_usd: row.try_get("cost_usd")?,
+            input_tokens: row.try_get::<Option<i32>, _>("input_tokens").ok().flatten(),
+            output_tokens: row
+                .try_get::<Option<i32>, _>("output_tokens")
+                .ok()
+                .flatten(),
+            cost_basis: row
+                .try_get::<Option<String>, _>("cost_basis")
+                .ok()
+                .flatten(),
+            cost_rate_key: row
+                .try_get::<Option<String>, _>("cost_rate_key")
+                .ok()
+                .flatten(),
             embedding: embedding.map(|v| v.to_vec()),
             consolidated: row.try_get("consolidated")?,
             tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
@@ -345,7 +366,8 @@ impl MemoryStore {
                 execution_status, error_details, execution_time_ms,
                 tokens_used, cost_usd, embedding, consolidated, tags,
                 provenance, authority_weight, dyad_id, persona_version_at_write,
-                provider_used, model_used
+                provider_used, model_used,
+                input_tokens, output_tokens, cost_basis, cost_rate_key
             FROM episodes
             WHERE agent_id = $1 AND NOT consolidated
             ORDER BY timestamp_ref DESC
@@ -373,6 +395,19 @@ impl MemoryStore {
                 execution_time_ms: row.try_get("execution_time_ms")?,
                 tokens_used: row.try_get("tokens_used")?,
                 cost_usd: row.try_get("cost_usd")?,
+                input_tokens: row.try_get::<Option<i32>, _>("input_tokens").ok().flatten(),
+                output_tokens: row
+                    .try_get::<Option<i32>, _>("output_tokens")
+                    .ok()
+                    .flatten(),
+                cost_basis: row
+                    .try_get::<Option<String>, _>("cost_basis")
+                    .ok()
+                    .flatten(),
+                cost_rate_key: row
+                    .try_get::<Option<String>, _>("cost_rate_key")
+                    .ok()
+                    .flatten(),
                 embedding: embedding.map(|v| v.to_vec()),
                 consolidated: row.try_get("consolidated")?,
                 tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
@@ -1148,6 +1183,7 @@ impl MemoryStore {
                 execution_status, error_details, execution_time_ms,
                 tokens_used, cost_usd, embedding, consolidated, tags,
                 provenance, authority_weight, dyad_id, persona_version_at_write,
+                input_tokens, output_tokens, cost_basis, cost_rate_key,
                 embedding <=> $1 AS distance
             FROM episodes
             WHERE agent_id = $2
@@ -1181,6 +1217,19 @@ impl MemoryStore {
                 execution_time_ms: row.try_get("execution_time_ms")?,
                 tokens_used: row.try_get("tokens_used")?,
                 cost_usd: row.try_get("cost_usd")?,
+                input_tokens: row.try_get::<Option<i32>, _>("input_tokens").ok().flatten(),
+                output_tokens: row
+                    .try_get::<Option<i32>, _>("output_tokens")
+                    .ok()
+                    .flatten(),
+                cost_basis: row
+                    .try_get::<Option<String>, _>("cost_basis")
+                    .ok()
+                    .flatten(),
+                cost_rate_key: row
+                    .try_get::<Option<String>, _>("cost_rate_key")
+                    .ok()
+                    .flatten(),
                 embedding: embedding.map(|v| v.to_vec()),
                 consolidated: row.try_get("consolidated")?,
                 tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
@@ -1228,6 +1277,7 @@ impl MemoryStore {
                 execution_status, error_details, execution_time_ms,
                 tokens_used, cost_usd, embedding, consolidated, tags,
                 provenance, authority_weight, dyad_id, persona_version_at_write,
+                input_tokens, output_tokens, cost_basis, cost_rate_key,
                 embedding <=> $1 AS distance
             FROM episodes
             WHERE agent_id = $2
@@ -1265,6 +1315,19 @@ impl MemoryStore {
                 execution_time_ms: row.try_get("execution_time_ms")?,
                 tokens_used: row.try_get("tokens_used")?,
                 cost_usd: row.try_get("cost_usd")?,
+                input_tokens: row.try_get::<Option<i32>, _>("input_tokens").ok().flatten(),
+                output_tokens: row
+                    .try_get::<Option<i32>, _>("output_tokens")
+                    .ok()
+                    .flatten(),
+                cost_basis: row
+                    .try_get::<Option<String>, _>("cost_basis")
+                    .ok()
+                    .flatten(),
+                cost_rate_key: row
+                    .try_get::<Option<String>, _>("cost_rate_key")
+                    .ok()
+                    .flatten(),
                 embedding: embedding.map(|v| v.to_vec()),
                 consolidated: row.try_get("consolidated")?,
                 tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
@@ -1307,7 +1370,8 @@ impl MemoryStore {
                 execution_status, error_details, execution_time_ms,
                 tokens_used, cost_usd, embedding, consolidated, tags,
                 provenance, authority_weight, dyad_id, persona_version_at_write,
-                provider_used, model_used
+                provider_used, model_used,
+                input_tokens, output_tokens, cost_basis, cost_rate_key
             FROM episodes
             WHERE agent_id = $1
               AND execution_status = 'failure'
@@ -1338,6 +1402,19 @@ impl MemoryStore {
                 execution_time_ms: row.try_get("execution_time_ms")?,
                 tokens_used: row.try_get("tokens_used")?,
                 cost_usd: row.try_get("cost_usd")?,
+                input_tokens: row.try_get::<Option<i32>, _>("input_tokens").ok().flatten(),
+                output_tokens: row
+                    .try_get::<Option<i32>, _>("output_tokens")
+                    .ok()
+                    .flatten(),
+                cost_basis: row
+                    .try_get::<Option<String>, _>("cost_basis")
+                    .ok()
+                    .flatten(),
+                cost_rate_key: row
+                    .try_get::<Option<String>, _>("cost_rate_key")
+                    .ok()
+                    .flatten(),
                 embedding: embedding.map(|v| v.to_vec()),
                 consolidated: row.try_get("consolidated")?,
                 tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
@@ -2236,7 +2313,8 @@ impl MemoryStore {
                 execution_status, error_details, execution_time_ms,
                 tokens_used, cost_usd, consolidated, tags,
                 provenance, authority_weight, dyad_id, persona_version_at_write,
-                provider_used, model_used
+                provider_used, model_used,
+                input_tokens, output_tokens, cost_basis, cost_rate_key
             FROM episodes
             WHERE agent_id = $1
             ORDER BY timestamp_ref DESC
@@ -2265,6 +2343,19 @@ impl MemoryStore {
                 execution_time_ms: row.try_get("execution_time_ms")?,
                 tokens_used: row.try_get("tokens_used")?,
                 cost_usd: row.try_get("cost_usd")?,
+                input_tokens: row.try_get::<Option<i32>, _>("input_tokens").ok().flatten(),
+                output_tokens: row
+                    .try_get::<Option<i32>, _>("output_tokens")
+                    .ok()
+                    .flatten(),
+                cost_basis: row
+                    .try_get::<Option<String>, _>("cost_basis")
+                    .ok()
+                    .flatten(),
+                cost_rate_key: row
+                    .try_get::<Option<String>, _>("cost_rate_key")
+                    .ok()
+                    .flatten(),
                 embedding: None, // omit for performance
                 consolidated: row.try_get("consolidated")?,
                 tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
@@ -2304,7 +2395,8 @@ impl MemoryStore {
                 execution_status, error_details, execution_time_ms,
                 tokens_used, cost_usd, embedding, consolidated, tags,
                 provenance, authority_weight, dyad_id, persona_version_at_write,
-                provider_used, model_used
+                provider_used, model_used,
+                input_tokens, output_tokens, cost_basis, cost_rate_key
             FROM episodes
             WHERE agent_id = $1 AND embedding IS NOT NULL
             ORDER BY timestamp_ref ASC
@@ -2331,6 +2423,19 @@ impl MemoryStore {
                 execution_time_ms: row.try_get("execution_time_ms")?,
                 tokens_used: row.try_get("tokens_used")?,
                 cost_usd: row.try_get("cost_usd")?,
+                input_tokens: row.try_get::<Option<i32>, _>("input_tokens").ok().flatten(),
+                output_tokens: row
+                    .try_get::<Option<i32>, _>("output_tokens")
+                    .ok()
+                    .flatten(),
+                cost_basis: row
+                    .try_get::<Option<String>, _>("cost_basis")
+                    .ok()
+                    .flatten(),
+                cost_rate_key: row
+                    .try_get::<Option<String>, _>("cost_rate_key")
+                    .ok()
+                    .flatten(),
                 embedding: embedding.map(|v| v.to_vec()),
                 consolidated: row.try_get("consolidated")?,
                 tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
@@ -4769,6 +4874,10 @@ mod tests {
             execution_time_ms: 1000,
             tokens_used: Some(100),
             cost_usd: Some(Decimal::new(1, 3)), // 0.001
+            input_tokens: None,
+            output_tokens: None,
+            cost_basis: None,
+            cost_rate_key: None,
             embedding: None,
             consolidated: false,
             tags: vec![],
@@ -4828,6 +4937,10 @@ mod tests {
                 execution_time_ms: 1000,
                 tokens_used: Some(100),
                 cost_usd: Some(Decimal::new(1, 3)),
+                input_tokens: None,
+                output_tokens: None,
+                cost_basis: None,
+                cost_rate_key: None,
                 embedding: Some(prov.vector.clone()),
                 consolidated: false,
                 tags: vec![],
@@ -4888,6 +5001,10 @@ mod tests {
                 execution_time_ms: 1000,
                 tokens_used: Some(100),
                 cost_usd: Some(Decimal::new(1, 3)),
+                input_tokens: None,
+                output_tokens: None,
+                cost_basis: None,
+                cost_rate_key: None,
                 embedding: None,
                 consolidated: false,
                 tags: vec![],

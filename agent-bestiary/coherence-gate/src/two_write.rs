@@ -61,7 +61,7 @@ impl TwoWriteMemory {
 
     /// Run both writes.
     ///
-    /// `original_episode` is the episode that triggered the anomaly.  
+    /// `original_episode` is the episode that triggered the anomaly.
     /// When the anomaly has no linked episode (e.g. a drift event not
     /// tied to a single episode), `original_episode` may be `None` and
     /// we synthesise a minimal stub episode instead.
@@ -194,6 +194,15 @@ impl TwoWriteMemory {
             execution_time_ms: 0,
             tokens_used: None,
             cost_usd: None,
+            // A human correction consumed no provider tokens, so there is no
+            // split to record and no rate that priced it. Deliberately NOT
+            // copied from `original`: attributing the original run's cost to
+            // the correction would double-count that spend in any per-agent
+            // or per-forecast total.
+            input_tokens: None,
+            output_tokens: None,
+            cost_basis: None,
+            cost_rate_key: None,
             embedding: None, // will be re-embedded by the consolidation worker
             consolidated: false,
             tags: vec![

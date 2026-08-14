@@ -410,6 +410,10 @@ impl ToolAwareExecutor {
             sources_consulted: vec!["claude-api".to_string()],
             execution_time_ms: elapsed.as_millis() as u64,
             tokens_used: Some(total_input_tokens + total_output_tokens),
+            // Accumulated across every loop iteration above, including the
+            // flush turn. Previously summed here and discarded.
+            input_tokens: Some(total_input_tokens),
+            output_tokens: Some(total_output_tokens),
             metadata: AgentMetadata {
                 model_used: Some(context.agent_card.capabilities.model.clone()),
                 temperature: sp.temperature,
@@ -471,6 +475,12 @@ impl ToolAwareExecutor {
         ];
 
         let mut total_tokens: u32 = 0;
+        // Tracked separately from `total_tokens` because output tokens cost
+        // 3-5x input, so a total alone cannot price the run. Providers that
+        // omit the split leave these at zero, which `AgentOutput::cost`
+        // detects and falls back to an assumed split for.
+        let mut total_prompt_tokens: u32 = 0;
+        let mut total_completion_tokens: u32 = 0;
         let mut tool_invocations: Vec<ToolInvocation> = Vec::new();
         let mut iteration: u32 = 0;
         let mut final_text: Option<String> = None;
@@ -500,6 +510,8 @@ impl ToolAwareExecutor {
 
             if let Some(ref usage) = response.usage {
                 total_tokens += usage.total_tokens;
+                total_prompt_tokens += usage.prompt_tokens.unwrap_or(0);
+                total_completion_tokens += usage.completion_tokens.unwrap_or(0);
             }
 
             let choice = response.choices.first().ok_or_else(|| {
@@ -613,6 +625,8 @@ impl ToolAwareExecutor {
             {
                 if let Some(ref usage) = flush_response.usage {
                     total_tokens += usage.total_tokens;
+                    total_prompt_tokens += usage.prompt_tokens.unwrap_or(0);
+                    total_completion_tokens += usage.completion_tokens.unwrap_or(0);
                 }
                 if let Some(choice) = flush_response.choices.first() {
                     last_finish_reason =
@@ -660,6 +674,17 @@ impl ToolAwareExecutor {
             (AgentStatus::Success, None)
         };
 
+        // OpenAI-compatible providers are inconsistent about reporting the
+        // prompt/completion breakdown. When it is absent both accumulators
+        // stay at zero, which must read as "split unknown" so pricing falls
+        // back to an assumed split — reporting `Some(0)` would price a real
+        // run at $0 and quietly zero out its contribution to the ledger.
+        let (split_in, split_out) = if total_prompt_tokens == 0 && total_completion_tokens == 0 {
+            (None, None)
+        } else {
+            (Some(total_prompt_tokens), Some(total_completion_tokens))
+        };
+
         Ok(AgentOutput {
             agent_name: agent.name.clone(),
             agent_type: agent
@@ -673,6 +698,8 @@ impl ToolAwareExecutor {
             sources_consulted: vec![],
             execution_time_ms: elapsed.as_millis() as u64,
             tokens_used: Some(total_tokens),
+            input_tokens: split_in,
+            output_tokens: split_out,
             metadata: AgentMetadata {
                 model_used: Some(context.agent_card.capabilities.model.clone()),
                 temperature: sp_oai.temperature,

@@ -1397,6 +1397,13 @@ pub async fn import_embeddings_handler(
             execution_time_ms: 0,
             tokens_used: None,
             cost_usd: None,
+            // Imported episodes were not executed here, so this deployment
+            // bore no provider cost for them. Left `None` so an import
+            // cannot inflate a per-agent or per-forecast spend total.
+            input_tokens: None,
+            output_tokens: None,
+            cost_basis: None,
+            cost_rate_key: None,
             embedding: Some(ep.embedding.clone()),
             consolidated: false,
             tags: vec![],

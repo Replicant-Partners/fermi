@@ -293,16 +293,20 @@ impl AgentRegistry {
         if let Some(tokens) = output.tokens_used {
             card.usage.total_tokens_used += tokens as u64;
 
-            // Local providers (ollama) carry no per-token cost — gas only.
-            // calculate_cost returns 0.0 for them so total_cost_usd stays
-            // accurate as "cloud spend" and the catalogue badge can surface
-            // "Runs locally — no per-execution charge" when cost == 0.
-            let cost = calculate_cost(
-                &card.capabilities.provider,
-                &card.capabilities.model,
-                tokens,
-            );
-            card.usage.total_cost_usd += cost;
+            // Priced via `AgentOutput::cost`, which keys the rate card on
+            // the provider and model that ACTUALLY served the run rather
+            // than what the card declares. Those diverge on any ladder
+            // resolution or provider fallback, and reading them from the
+            // card is how a rollup comes to disagree with the episode row
+            // it is supposed to summarise.
+            //
+            // Local providers (ollama) are priced at zero, so
+            // total_cost_usd stays accurate as "cloud spend" and the
+            // catalogue badge can still surface "Runs locally — no
+            // per-execution charge" when cost == 0.
+            if let Some(est) = output.cost() {
+                card.usage.total_cost_usd += est.usd;
+            }
         }
 
         // Update average execution time
@@ -367,33 +371,20 @@ impl std::fmt::Display for RegistryError {
 
 impl std::error::Error for RegistryError {}
 
-/// Calculate cost based on provider, model, and token count.
+/// Calculate cost from a total token count.
 ///
-/// Local providers (ollama) carry no per-token cost — the user
-/// owns the inference hardware. Return 0.0 so total_cost_usd
-/// stays accurate as "cloud spend only."
+/// Thin wrapper over [`crate::agent_backend::rate_card`], kept so existing
+/// callers keep compiling. **Prefer `AgentOutput::cost()`**, which uses the
+/// real input/output split when the provider reported it and carries a
+/// `CostBasis` saying how much to trust the figure.
+///
+/// This function used to hold its own rate table matching on the model
+/// string alone, with `_ => 3.0`. That priced a DeepSeek agent at
+/// Anthropic Sonnet's rate (~6.9x over) and Haiku 4.5 at Haiku 3's rate
+/// (~4x under). Delegating means there is exactly one rate table, so the
+/// two cannot drift again.
 pub fn calculate_cost(provider: &str, model: &str, tokens: u32) -> f64 {
-    // Local providers: no per-token charge
-    if provider == "ollama" {
-        return 0.0;
-    }
-
-    // Model-specific pricing (per 1M tokens, USD)
-    let rate_per_million = match model {
-        // Anthropic
-        "claude-sonnet-4-6"
-        | "claude-sonnet-4-5-20250929"
-        | "claude-3-5-sonnet-20241022"
-        | "claude-3-5-sonnet-20240620" => 3.0,
-        "claude-opus-4-6" | "claude-3-opus-20240229" => 15.0,
-        "claude-haiku-4-5-20251001" | "claude-3-haiku-20240307" => 0.25,
-        // OpenRouter free tier
-        "openrouter/free" => 0.0,
-        // Everything else: use a conservative default
-        _ => 3.0,
-    };
-
-    (tokens as f64 / 1_000_000.0) * rate_per_million
+    crate::agent_backend::rate_card::cost_of_total(provider, model, tokens).usd
 }
 
 #[cfg(test)]

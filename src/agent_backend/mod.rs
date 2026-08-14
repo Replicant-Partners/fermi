@@ -34,6 +34,9 @@ pub mod llm_executor;
 /// server-vs-client history.
 pub mod mcp_client;
 pub mod multi_model_executor;
+/// Provider rate card — `(provider, model)` → input/output USD rates.
+/// The cost basis for economic attribution; see `rate_card.rs`.
+pub mod rate_card;
 pub mod registry;
 pub mod simops_tools;
 pub mod tool_executor;

@@ -1029,6 +1029,15 @@ async fn run_migrations(db: &PgPool) {
         // profiles, rosters, the ecology lens, and a deletion safety
         // guard — read a permanent zero.
         "migrations/192_agent_execution_rollup.sql",
+        "migrations/193_route_provenance_outcomes.sql",
+        // Episode cost basis: persist the input/output split + rate basis
+        // so cost_usd becomes a derived, correctable quantity rather than
+        // a figure baked in at write time.
+        "migrations/194_episode_cost_basis.sql",
+        // Shared correlation id between claims and episodes — the follow-up
+        // migration 193 asked for. Replaces the (agent_id, driver, window)
+        // heuristic with an exact join, and adds forecast_cost_attribution.
+        "migrations/195_claim_episode_correlation.sql",
     ];
 
     for file in &migration_files {
@@ -5756,6 +5765,41 @@ pub(crate) fn stamp_invocation(episode: &mut Episode, invocation: &serde_json::V
         episode.tags.push("recomposed:true".to_string());
     }
 
+    // Why this agent was CHOSEN, alongside how it was ASKED.
+    //
+    // The asking half above cannot, on its own, separate a router coverage
+    // gap from agent incompetence: an agent that underperformed as the
+    // generalist fallback is indistinguishable in outcome data from one
+    // deliberately selected as the resident domain expert and found wanting.
+    // Pooling those two populations teaches a credit model to distrust
+    // whichever agents the router reaches for by default — the same closed
+    // world, re-entered through the credit model instead of a match arm.
+    if let Some(reason) = slug(obj.get("route_reason")) {
+        episode.tags.push(format!("route:{}", reason));
+    }
+    // Only tag the fallback case. `route:default` is already visible above;
+    // this is the cheap filter for "routes that carry a real signal".
+    if obj.get("route_deliberate").and_then(|v| v.as_bool()) == Some(false) {
+        episode.tags.push("route:fallback".to_string());
+    }
+    // Present only on disagreement, so its existence is the signal: it makes
+    // "how often is the strategist overruled, and was overruling it right?"
+    // a single query — feedback the decomposition side cannot otherwise get.
+    if obj
+        .get("route_overrode_suggestion")
+        .and_then(|v| v.as_str())
+        .is_some()
+    {
+        episode.tags.push("route:overrode_fermi".to_string());
+    }
+    // Routing quality is only meaningful per domain: "domain_specialist beats
+    // default" in aggregate says nothing about whether the specialist picked
+    // for *climate* is the right one. This is the grouping key that lets a
+    // measured ranking replace the compile-time specialist table.
+    if let Some(domain) = slug(obj.get("route_domain")) {
+        episode.tags.push(format!("domain:{}", domain));
+    }
+
     if let Some(ctx) = episode.context.as_object_mut() {
         ctx.insert("invocation".to_string(), invocation.clone());
     }
@@ -5906,25 +5950,36 @@ pub(crate) fn agent_output_to_episode(
         error_details: build_error_details(output),
         execution_time_ms: output.execution_time_ms as i64,
         tokens_used: output.tokens_used.map(|t| t as i32),
-        // Cost is priced off the provider/model that actually served the
-        // run, not a flat rate. This used to hardcode $3/Mtok for
-        // everything, which mispriced Opus by 5x low, Haiku by 12x high,
-        // and charged for local Ollama runs that cost nothing — making
-        // any margin analysis built on it fiction. `calculate_cost`
-        // already existed in the registry with a per-model rate card; it
-        // simply was not wired to the persistence path.
+        // Cost is priced by `AgentOutput::cost()` — the single pricing
+        // entry point — against a `(provider, model)` rate card with
+        // separate input and output rates.
         //
-        // Still an estimate: there is no input/output token split, and
-        // real provider pricing differs several-fold between the two.
-        // See docs/plans/PLATFORM_ECONOMICS.md.
-        cost_usd: output.tokens_used.map(|t| {
-            let usd = fermi::agent_backend::registry::calculate_cost(
-                output.metadata.provider.as_deref().unwrap_or(""),
-                output.metadata.model_used.as_deref().unwrap_or(""),
-                t,
-            );
-            rust_decimal::Decimal::from_f64_retain(usd).unwrap_or_default()
-        }),
+        // Two earlier generations of this line were wrong in different
+        // directions. It first hardcoded $3/Mtok for everything. Wiring
+        // the registry's per-model card fixed Anthropic but still keyed on
+        // the model string alone with `_ => 3.0`, which priced a DeepSeek
+        // agent at Anthropic Sonnet's rate (~6.9x over) while the missing
+        // input/output split understated real Anthropic runs (~1.8x under).
+        // Two dominant errors pointing opposite ways made cross-provider
+        // comparison directionally wrong, not merely imprecise — and that
+        // comparison is the whole question the marketplace has to answer.
+        //
+        // `cost_basis` (recorded alongside, below) states whether the
+        // split was measured or assumed, so a consumer never has to infer
+        // trustworthiness from a deploy date.
+        cost_usd: output
+            .cost()
+            .and_then(|est| rust_decimal::Decimal::from_f64_retain(est.usd)),
+        // Migration 194 — persist the pricing INPUTS, not just the result,
+        // so a corrected rate card can re-derive history instead of
+        // leaving known-wrong rows permanently uncorrectable.
+        input_tokens: output.input_tokens.map(|t| t as i32),
+        output_tokens: output.output_tokens.map(|t| t as i32),
+        cost_basis: output.cost().map(|est| est.basis.as_str().to_string()),
+        cost_rate_key: output
+            .cost()
+            .map(|est| est.rate_key)
+            .filter(|k| !k.is_empty()),
         embedding: None,
         consolidated: false,
         tags,
@@ -5943,23 +5998,54 @@ pub(crate) fn agent_output_to_episode(
         // Phase 2: tag execution provenance so the observatory can filter
         // by provider and per-provider calibration can work (Loop 5).
         model_used: output.metadata.model_used.clone(),
-        provider_used: output.metadata.model_used.as_deref().map(|m| {
-            if m.starts_with("claude") {
-                "anthropic".to_string()
-            } else if m.starts_with("gpt") || m.starts_with("o1") || m.starts_with("o3") {
-                "openai".to_string()
-            } else if m.starts_with("mistral") || m.starts_with("open-mistral") {
-                "mistral".to_string()
-            } else if m.starts_with("qwen") {
-                "qwen".to_string()
-            } else if m.starts_with("deepseek") {
-                "deepseek".to_string()
-            } else if m.contains("openrouter") || m.contains("/") {
-                "openrouter".to_string()
-            } else {
-                "ollama".to_string()
-            }
-        }),
+        // The executor already resolved the provider authoritatively and
+        // put it on `metadata.provider`. This used to re-derive it by
+        // pattern-matching the model string, which got the proxied case
+        // exactly backwards: a Claude model served *via* OpenRouter was
+        // labelled `anthropic`, while an OpenRouter-namespaced Claude id
+        // was labelled `openrouter`. Since the rate card is keyed on
+        // (provider, model), a guessed provider silently mis-prices the
+        // run. Fall back to the old inference only for legacy outputs that
+        // carry no provider at all.
+        provider_used: output
+            .metadata
+            .provider
+            .clone()
+            .filter(|p| !p.trim().is_empty())
+            .or_else(|| {
+                output
+                    .metadata
+                    .model_used
+                    .as_deref()
+                    .map(provider_from_model_name)
+            }),
+    }
+}
+
+/// Legacy fallback: infer a provider from a model id.
+///
+/// Only for outputs written before executors stamped
+/// `AgentMetadata.provider`. It is a heuristic and cannot resolve the
+/// proxied case — `claude-*` served through OpenRouter is indistinguishable
+/// from a direct Anthropic call by model name alone. New code must read
+/// `metadata.provider`.
+fn provider_from_model_name(m: &str) -> String {
+    if m.starts_with("claude") {
+        "anthropic".to_string()
+    } else if m.starts_with("gpt") || m.starts_with("o1") || m.starts_with("o3") {
+        "openai".to_string()
+    } else if m.starts_with("mistral") || m.starts_with("open-mistral") {
+        "mistral".to_string()
+    } else if m.starts_with("qwen") {
+        "qwen".to_string()
+    } else if m.starts_with("deepseek") {
+        "deepseek".to_string()
+    } else if m.starts_with("glm") {
+        "glm".to_string()
+    } else if m.contains("openrouter") || m.contains('/') {
+        "openrouter".to_string()
+    } else {
+        "ollama".to_string()
     }
 }
 
@@ -6018,6 +6104,11 @@ mod failure_provenance_tests {
             sources_consulted: vec![],
             execution_time_ms: 41_000,
             tokens_used: Some(120_000),
+            // A realistic tool-loop split: long accumulated tool results in,
+            // comparatively little prose out. Exercises the measured-split
+            // pricing path rather than the assumed one.
+            input_tokens: Some(102_000),
+            output_tokens: Some(18_000),
             metadata: AgentMetadata {
                 model_used: Some("claude-sonnet-4".into()),
                 provider: Some("anthropic".into()),
@@ -6127,6 +6218,79 @@ mod failure_provenance_tests {
                 .unwrap(),
             5
         );
+    }
+
+    #[test]
+    fn route_reason_lands_as_a_queryable_tag() {
+        let out = output(AgentStatus::Success, None, Some("end_turn"));
+        let mut ep = agent_output_to_episode(uuid::Uuid::new_v4(), "q", &out);
+        stamp_invocation(
+            &mut ep,
+            &json!({
+                "query_source": "declared_contract",
+                "route_reason": "domain_specialist",
+                "route_deliberate": true,
+                "driver": "bucket_probability"
+            }),
+        );
+
+        assert!(ep.tags.contains(&"route:domain_specialist".to_string()));
+        // A deliberate route must NOT also be tagged as a fallback, or the
+        // two populations cannot be separated when scoring.
+        assert!(!ep.tags.contains(&"route:fallback".to_string()));
+        assert_eq!(
+            ep.context["invocation"]["route_reason"].as_str(),
+            Some("domain_specialist")
+        );
+    }
+
+    #[test]
+    fn a_generalist_fallback_is_tagged_as_such() {
+        // The distinction that makes routing measurable: an agent that
+        // underperformed as the default is not evidence about the agent.
+        let out = output(AgentStatus::Success, None, Some("end_turn"));
+        let mut ep = agent_output_to_episode(uuid::Uuid::new_v4(), "q", &out);
+        stamp_invocation(
+            &mut ep,
+            &json!({ "route_reason": "default", "route_deliberate": false }),
+        );
+
+        assert!(ep.tags.contains(&"route:default".to_string()));
+        assert!(ep.tags.contains(&"route:fallback".to_string()));
+    }
+
+    #[test]
+    fn overruling_the_strategist_is_tagged_so_the_router_can_be_scored() {
+        let out = output(AgentStatus::Success, None, Some("end_turn"));
+        let mut ep = agent_output_to_episode(uuid::Uuid::new_v4(), "q", &out);
+        stamp_invocation(
+            &mut ep,
+            &json!({
+                "route_reason": "domain_specialist",
+                "route_deliberate": true,
+                "route_overrode_suggestion": "macro_forecaster"
+            }),
+        );
+
+        assert!(ep.tags.contains(&"route:overrode_fermi".to_string()));
+        assert_eq!(
+            ep.context["invocation"]["route_overrode_suggestion"].as_str(),
+            Some("macro_forecaster")
+        );
+    }
+
+    #[test]
+    fn a_hostile_route_reason_cannot_invent_tags() {
+        // Same guard the query_source path has: these become tag suffixes.
+        let out = output(AgentStatus::Success, None, Some("end_turn"));
+        let mut ep = agent_output_to_episode(uuid::Uuid::new_v4(), "q", &out);
+        let before = ep.tags.len();
+        stamp_invocation(
+            &mut ep,
+            &json!({ "route_reason": "nice try status:success" }),
+        );
+        assert_eq!(ep.tags.len(), before, "whitespace must be rejected");
+        assert!(!ep.tags.iter().any(|t| t.starts_with("route:")));
     }
 
     #[test]

@@ -95,12 +95,53 @@ pub struct AgentOutput {
     pub confidence: f64,
     pub sources_consulted: Vec<String>,
     pub execution_time_ms: u64,
+    /// Total tokens (input + output). Retained as the headline figure
+    /// every existing reader expects; prefer `input_tokens` /
+    /// `output_tokens` for anything that prices a run.
     pub tokens_used: Option<u32>,
+    /// Input (prompt) tokens, when the provider reported the split.
+    ///
+    /// Providers charge 3–5× more for output than input, so a total alone
+    /// cannot price a run better than ±2× — named in
+    /// `PLATFORM_ECONOMICS.md` §4.1 as the largest remaining source of
+    /// cost error. The Anthropic paths always tracked the split and threw
+    /// it away when summing; these two fields stop that.
+    pub input_tokens: Option<u32>,
+    /// Output (completion) tokens, when the provider reported the split.
+    pub output_tokens: Option<u32>,
     pub metadata: AgentMetadata,
     /// Tool invocations performed during agentic loop (empty for single-turn)
     pub tool_invocations: Vec<ToolInvocation>,
     /// Number of LLM round-trips (1 for single-turn, >1 for tool-using agents)
     pub loop_iterations: u32,
+}
+
+impl AgentOutput {
+    /// Price this run against the rate card.
+    ///
+    /// The **only** place an execution is converted to money, so the
+    /// persistence path and the in-memory usage rollup cannot drift onto
+    /// different cost bases — which is exactly how a DeepSeek agent came
+    /// to be recorded at Anthropic Sonnet's rate.
+    ///
+    /// Uses the real input/output split when the provider reported it and
+    /// falls back to an assumed split otherwise, marking the result
+    /// accordingly so a consumer can tell the two apart. `None` only when
+    /// no token count was reported at all.
+    pub fn cost(&self) -> Option<crate::agent_backend::rate_card::CostEstimate> {
+        use crate::agent_backend::rate_card;
+        // Prefer the model/provider that actually served the run over
+        // whatever the card declared — they diverge on any ladder
+        // resolution or provider fallback.
+        let provider = self.metadata.provider.as_deref().unwrap_or_default();
+        let model = self.metadata.model_used.as_deref().unwrap_or_default();
+        match (self.input_tokens, self.output_tokens) {
+            (Some(i), Some(o)) => Some(rate_card::cost_of_split(provider, model, i, o)),
+            _ => self
+                .tokens_used
+                .map(|t| rate_card::cost_of_total(provider, model, t)),
+        }
+    }
 }
 
 /// Agent execution status
@@ -255,6 +296,10 @@ impl AgentExecutor for MockExecutor {
             sources_consulted: vec!["mock://test".to_string()],
             execution_time_ms: elapsed.as_millis() as u64,
             tokens_used: Some(100), // Mock token count
+            // Mock runs spend nothing; the split is stated rather than left
+            // absent so the mock exercises the measured-split code path.
+            input_tokens: Some(80),
+            output_tokens: Some(20),
             metadata: AgentMetadata {
                 model_used: Some("mock-model".to_string()),
                 temperature: Some(0.0),

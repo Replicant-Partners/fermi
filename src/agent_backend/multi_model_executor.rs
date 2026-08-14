@@ -168,6 +168,14 @@ impl MultiModelExecutor {
             .unwrap_or_default();
 
         let tokens_used = oai_response.usage.as_ref().map(|u| u.total_tokens);
+        // Only trust the split when the provider actually reported it;
+        // otherwise leave it absent so pricing assumes a split instead of
+        // reading a missing breakdown as a free run.
+        let split_in = oai_response.usage.as_ref().and_then(|u| u.prompt_tokens);
+        let split_out = oai_response
+            .usage
+            .as_ref()
+            .and_then(|u| u.completion_tokens);
         let elapsed = start.elapsed();
 
         // Try to parse JSON evidence
@@ -186,6 +194,8 @@ impl MultiModelExecutor {
             sources_consulted: vec![],
             execution_time_ms: elapsed.as_millis() as u64,
             tokens_used,
+            input_tokens: split_in,
+            output_tokens: split_out,
             metadata: AgentMetadata {
                 model_used: Some(context.agent_card.capabilities.model.clone()),
                 temperature: sp.temperature,
@@ -399,6 +409,15 @@ pub(crate) struct OpenAIChoiceMessage {
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct OpenAIUsage {
     pub total_tokens: u32,
+    /// Input tokens. `Option` because OpenAI-compatible providers are
+    /// inconsistent about returning the breakdown — several return only
+    /// `total_tokens`. Absent reads as "split unknown", which pricing
+    /// handles by assuming a split rather than by charging zero.
+    #[serde(default)]
+    pub prompt_tokens: Option<u32>,
+    /// Output tokens. See `prompt_tokens`.
+    #[serde(default)]
+    pub completion_tokens: Option<u32>,
 }
 
 // ─── Evidence parsing ──────────────────────────────────────────────

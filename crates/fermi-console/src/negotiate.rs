@@ -342,6 +342,38 @@ pub struct InvocationProvenance {
     /// The driver this run was researching, for joining back to the forecast.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub driver: Option<String>,
+
+    // ── Why this agent, not another ───────────────────────────────────────
+    //
+    // The fields above record how the agent was ASKED. These record how it
+    // was CHOSEN. Both halves are needed for the same reason: an agent that
+    // underperformed as the generalist fallback looks identical, in outcome
+    // data, to one deliberately selected as the resident domain expert and
+    // found wanting. Without this, a credit model cannot separate the
+    // router's coverage gaps from the agent's competence, and will learn to
+    // distrust whichever agents the router happens to reach for by default.
+    /// `RouteReason::slug()` — why the router picked this agent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route_reason: Option<String>,
+    /// Whether the reason reflects a positive signal rather than a fallback.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route_deliberate: Option<bool>,
+    /// The agent Fermi suggested, when it differed from the one used.
+    ///
+    /// Present only on disagreement, which makes "how often is the strategist
+    /// overruled, and was overruling it right?" a single query. That is the
+    /// feedback the decomposition side currently has no way to receive.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route_overrode_suggestion: Option<String>,
+    /// The question's detected domain at routing time.
+    ///
+    /// Recorded because routing quality is meaningless in aggregate and only
+    /// meaningful per domain: `domain_specialist` beating `default` overall
+    /// says nothing about whether the specialist chosen for *climate* is the
+    /// right one. This is the grouping key that lets a measured ranking
+    /// replace the compile-time `domain_specialist` table.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route_domain: Option<String>,
 }
 
 impl InvocationProvenance {
@@ -357,7 +389,38 @@ impl InvocationProvenance {
             declared_label_count: contract.map(|c| c.finding_labels.len()).unwrap_or(0),
             recomposed_from: composed.recomposed_from.clone(),
             driver: driver.map(str::to_string),
+            route_reason: None,
+            route_deliberate: None,
+            route_overrode_suggestion: None,
+            route_domain: None,
         }
+    }
+
+    /// Record why the router chose this agent.
+    ///
+    /// `reason_slug` should be `RouteReason::slug()`. `suggested` is Fermi's
+    /// pick; it is retained only when it differs from `agent_used`, so the
+    /// presence of the field is itself the "strategist was overruled" signal.
+    ///
+    /// Kept as a builder rather than a `new` parameter so the routing crate
+    /// and the composition crate stay independently testable — `negotiate`
+    /// does not depend on `routing`'s enum.
+    pub fn with_route(
+        mut self,
+        reason_slug: &str,
+        deliberate: bool,
+        agent_used: &str,
+        suggested: Option<&str>,
+        domain: &str,
+    ) -> Self {
+        self.route_reason = Some(reason_slug.to_string());
+        self.route_deliberate = Some(deliberate);
+        self.route_overrode_suggestion = suggested
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && *s != agent_used)
+            .map(str::to_string);
+        self.route_domain = Some(domain.trim().to_string()).filter(|d| !d.is_empty());
+        self
     }
 
     pub fn to_json(&self) -> JsonValue {
@@ -1066,5 +1129,104 @@ mod tests {
 
         assert_eq!(p.recomposed_from.as_deref(), Some("sentiment_analyzer"));
         assert_eq!(p.to_json()["recomposed_from"], "sentiment_analyzer");
+    }
+
+    // ── Routing provenance ──────────────────────────────────────────────
+    //
+    // These cover the CHOOSING half of the record. The asking half is
+    // covered above; both are needed before a credit model can tell a
+    // router coverage gap apart from agent incompetence.
+
+    fn bare_provenance() -> InvocationProvenance {
+        let card = third_party_card();
+        let contract = AgentContract::from_card(&card);
+        InvocationProvenance::new(
+            &ComposedQuery {
+                text: "q".into(),
+                source: QuerySource::DeclaredContract,
+                recomposed_from: None,
+            },
+            &bind_input(Some(&contract)),
+            Some(&contract),
+            Some("some_driver"),
+        )
+    }
+
+    #[test]
+    fn route_fields_are_absent_until_recorded() {
+        // Omission is deliberate: a run that never went through the router
+        // must not be indistinguishable from one routed for an unknown
+        // reason. `skip_serializing_if` keeps the two populations separable.
+        let p = bare_provenance();
+        assert!(p.route_reason.is_none());
+        let j = p.to_json();
+        assert!(j.get("route_reason").is_none());
+        assert!(j.get("route_deliberate").is_none());
+        assert!(j.get("route_overrode_suggestion").is_none());
+    }
+
+    #[test]
+    fn a_deliberate_route_records_reason_and_no_override() {
+        // Fermi suggested this agent and it was used, so there is no
+        // disagreement to record.
+        let p = bare_provenance().with_route(
+            "domain_specialist",
+            true,
+            "weather_oracle",
+            Some("weather_oracle"),
+            "climate",
+        );
+        assert_eq!(p.route_reason.as_deref(), Some("domain_specialist"));
+        assert_eq!(p.route_deliberate, Some(true));
+        assert!(
+            p.route_overrode_suggestion.is_none(),
+            "agreement must not be recorded as an override"
+        );
+    }
+
+    #[test]
+    fn overruling_the_strategist_is_recorded_by_presence() {
+        // The router displaced Fermi's generalist pick. The field's existence
+        // is the signal, so "how often is the strategist overruled, and was
+        // overruling it right?" becomes a single query joined to outcome.
+        let p = bare_provenance().with_route(
+            "domain_specialist",
+            true,
+            "weather_oracle",
+            Some("macro_forecaster"),
+            "climate",
+        );
+        assert_eq!(
+            p.route_overrode_suggestion.as_deref(),
+            Some("macro_forecaster")
+        );
+        assert_eq!(p.to_json()["route_overrode_suggestion"], "macro_forecaster");
+    }
+
+    #[test]
+    fn a_fallback_route_is_marked_as_not_deliberate() {
+        // The distinction that makes the whole record worth keeping: nothing
+        // matched, so the outcome says more about router coverage than about
+        // this agent.
+        let p = bare_provenance().with_route("default", false, "macro_forecaster", None, "general");
+        assert_eq!(p.route_deliberate, Some(false));
+        assert_eq!(p.route_reason.as_deref(), Some("default"));
+    }
+
+    #[test]
+    fn an_empty_suggestion_is_not_an_override() {
+        for suggested in [Some(""), Some("   "), None] {
+            let p = bare_provenance().with_route(
+                "keyword",
+                true,
+                "nba_analyst",
+                suggested,
+                "sports_nba",
+            );
+            assert!(
+                p.route_overrode_suggestion.is_none(),
+                "blank suggestion {suggested:?} must not read as an override"
+            );
+        }
     }
 }

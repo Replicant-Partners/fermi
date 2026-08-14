@@ -201,7 +201,19 @@ pub async fn execute_agent_handler(
     // 3.5 Post-agent hook: apply multiplier recommendations to workspace params.
     // If the ToolContext has a workspace_id AND the agent produced evidence with
     // [MULTIPLIER] blocks, write them to the workspace's params and trigger a refit.
-    let ws_id_opt = tool_context_for_hook.workspace_id; // Copy (Option<Uuid>)m to the workspace's params and trigger a refit.
+    let ws_id_opt = tool_context_for_hook.workspace_id; // Copy (Option<Uuid>)
+
+    // mig-195: allocate the episode id HERE, before the claim hook is spawned,
+    // and stamp the same value onto the episode at step 5.
+    //
+    // The two writes race: the hook runs on a spawned task while this handler
+    // continues, and the claim usually lands before the episode row exists. So
+    // the id cannot be read back from the episode — it has to be minted up
+    // front and handed to both. That is what turns the (agent_id, driver,
+    // time-window) join of migration 193 into an exact one, which is the
+    // precondition for summing episode cost per forecast.
+    let episode_id = uuid::Uuid::new_v4();
+
     if let Some(ws_id) = ws_id_opt {
         if !output.evidence.is_empty() {
             let pool = state.db.clone();
@@ -215,6 +227,7 @@ pub async fn execute_agent_handler(
                     ws_id,
                     &agent_name,
                     &evidence,
+                    Some(episode_id),
                 )
                 .await
                 {
@@ -240,6 +253,9 @@ pub async fn execute_agent_handler(
 
     // 5. Store as ADM episode (with embedding + Spec 22 provenance)
     let mut episode = agent_output_to_episode(db_agent.agent_id, &body.query, &output);
+    // Use the id minted before the claim hook was spawned, so the claim and
+    // the episode agree regardless of which write lands first (mig-195).
+    episode.episode_id = episode_id;
     // Record how the agent was asked, alongside how it did.
     if let Some(ref inv) = body.invocation {
         crate::stamp_invocation(&mut episode, inv);

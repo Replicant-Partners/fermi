@@ -1287,6 +1287,13 @@ pub async fn execute_simops_write_actuation_plan(
             execution_time_ms: 0,
             tokens_used: None,
             cost_usd: None,
+            // A recorded actuation plan, not an LLM run — no tokens, so no
+            // split and no rate basis. Leaving these `None` keeps it out of
+            // cost aggregates rather than contributing a spurious zero.
+            input_tokens: None,
+            output_tokens: None,
+            cost_basis: None,
+            cost_rate_key: None,
             embedding: None,
             consolidated: false,
             tags: vec![

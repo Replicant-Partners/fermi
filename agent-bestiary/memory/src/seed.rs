@@ -471,6 +471,10 @@ impl SeedData {
                 execution_time_ms: 500 + (i as i64 * 100),
                 tokens_used: Some(1000 + i as i32 * 200),
                 cost_usd: Some(Decimal::new(1 + i as i64, 3)),
+                input_tokens: None,
+                output_tokens: None,
+                cost_basis: None,
+                cost_rate_key: None,
                 embedding,
                 consolidated,
                 tags: vec![

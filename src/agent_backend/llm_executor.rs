@@ -409,6 +409,8 @@ impl AgentExecutor for LLMExecutor {
             tokens_used: Some(
                 claude_response.usage.input_tokens + claude_response.usage.output_tokens,
             ),
+            input_tokens: Some(claude_response.usage.input_tokens),
+            output_tokens: Some(claude_response.usage.output_tokens),
             metadata: AgentMetadata {
                 model_used: Some(claude_response.model),
                 temperature: request.temperature,

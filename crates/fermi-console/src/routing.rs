@@ -353,6 +353,34 @@ impl RouteReason {
             RouteReason::Default => "no signal — generalist default",
         }
     }
+
+    /// Machine-readable form, for provenance and tags.
+    ///
+    /// [`Self::as_str`] is prose for the log line and the UI — it contains
+    /// spaces and an em-dash, so it cannot be a tag suffix. This is the
+    /// stable identifier to persist and group by; changing one of these
+    /// strings breaks historical comparability, so treat them as a wire
+    /// format rather than a label.
+    pub fn slug(self) -> &'static str {
+        match self {
+            RouteReason::Fermi => "fermi",
+            RouteReason::CrossCutting => "cross_cutting",
+            RouteReason::DomainSpecialist => "domain_specialist",
+            RouteReason::Keyword => "keyword",
+            RouteReason::Default => "default",
+        }
+    }
+
+    /// Whether this route reflects a positive signal about the agent.
+    ///
+    /// [`RouteReason::Default`] means nothing matched and the generalist was
+    /// the honest fallback. Outcomes under that reason say almost nothing
+    /// about the agent's competence and a lot about the router's coverage, so
+    /// any credit model should weight them differently rather than pooling
+    /// them with deliberate selections.
+    pub fn is_deliberate(self) -> bool {
+        !matches!(self, RouteReason::Default)
+    }
 }
 
 /// Choose the research agent for one driver.
