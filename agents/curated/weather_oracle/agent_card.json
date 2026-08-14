@@ -317,6 +317,7 @@
     "evolution_commits": 0
   },
   "metadata": {
+    "domains": ["climate", "weather", "temperature", "precipitation", "prediction_market", "polymarket"],
     "taxonomy": {
       "phylum": "Composita",
       "class": "Researchia",

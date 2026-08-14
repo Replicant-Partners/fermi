@@ -93,6 +93,33 @@ pub struct AgentContract {
     /// Not used for composition; carried so callers can report a mismatch
     /// rather than silently sending an input nothing consumes.
     pub accepts: Vec<String>,
+    /// Question domains this agent claims competence in, from
+    /// `metadata.domains`, falling back to `metadata.tags`.
+    ///
+    /// This is how an agent becomes ROUTABLE by declaration rather than by
+    /// being enumerated in a compile-time table. `routing::domain_specialist`
+    /// is a `match` over four domains, so a weather agent — admitted to the
+    /// orchestra, declaring a full contract, and holding purpose-built tools —
+    /// was still unreachable for climate questions, and every driver fell to
+    /// the generalist. Two production forecasts returned their own
+    /// climatological base rate as a result: London 32C at 0.3% against a
+    /// market of 13.5%, and Chicago at 23.2% against 0.5%.
+    ///
+    /// Fewer declared domains is treated as MORE specialised, so a generalist
+    /// claiming everything cannot crowd out a specialist claiming one thing.
+    pub domains: Vec<String>,
+    /// Whether `metadata.domains` was actually present on the card.
+    ///
+    /// The distinction matters because tags are written for SEARCH, not
+    /// routing, so the tag fallback is a heuristic and an explicit declaration
+    /// is not. An explicit declaration outranks a tag match, and an explicitly
+    /// EMPTY `domains: []` means "I serve no question domain directly" — which
+    /// is how a composition's internal members opt out of being routed to.
+    ///
+    /// Without that opt-out, `weather_calibrator` (tagged "weather") won the
+    /// climate route ahead of `weather_oracle`, and would have been handed a
+    /// raw driver it is explicitly built not to research.
+    pub domains_explicit: bool,
 }
 
 impl AgentContract {
@@ -143,6 +170,31 @@ impl AgentContract {
             .filter(|s| !s.is_empty())
             .map(str::to_string);
 
+        // `metadata.domains` is the explicit declaration. `metadata.tags` is
+        // the fallback so existing cards gain some routability without an edit,
+        // at the cost of precision — tags are written for search, not routing.
+        let str_list = |v: Option<&JsonValue>| -> Vec<String> {
+            v.and_then(|x| x.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|s| s.as_str())
+                        .map(|s| s.trim().to_ascii_lowercase())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let meta = card.get("metadata");
+        let declared = meta.and_then(|m| m.get("domains"));
+        let domains_explicit = declared.is_some_and(|v| v.is_array());
+        let mut domains = if domains_explicit {
+            str_list(declared)
+        } else {
+            str_list(meta.and_then(|m| m.get("tags")))
+        };
+        domains.sort();
+        domains.dedup();
+
         let accepts = card
             .get("accepts")
             .and_then(|v| v.as_array())
@@ -159,12 +211,37 @@ impl AgentContract {
             multiplier_range,
             prompt_template,
             accepts,
+            domains,
+            domains_explicit,
         }
     }
 
     /// Whether this contract says anything usable about how to ask.
     pub fn is_declared(&self) -> bool {
         self.prompt_template.is_some() || !self.finding_labels.is_empty()
+    }
+
+    /// Does this agent claim competence in `domain`?
+    ///
+    /// Matched both ways so `"climate"` finds an agent declaring `"climate"`
+    /// and a domain of `"sports_nba"` finds one declaring `"nba"`. Underscores
+    /// and hyphens are equivalent, since cards use both.
+    pub fn claims_domain(&self, domain: &str) -> bool {
+        let d = domain.trim().to_ascii_lowercase().replace('-', "_");
+        if d.is_empty() || d == "general" {
+            return false;
+        }
+        self.domains.iter().any(|t| {
+            let t = t.replace('-', "_");
+            t == d || d.split('_').any(|part| part == t) || t.split('_').any(|part| part == d)
+        })
+    }
+
+    /// How narrow this agent's claim is. Fewer domains = more specialised, and
+    /// wins ties, so a generalist tagging itself with twenty subjects cannot
+    /// displace a specialist that claims one.
+    pub fn specialisation(&self) -> usize {
+        self.domains.len()
     }
 }
 

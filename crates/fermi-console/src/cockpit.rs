@@ -3064,6 +3064,36 @@ impl CockpitState {
             .map(|q| q.text.clone())
             .unwrap_or_default();
         let domain = detect_domain(&question_text);
+
+        // Which agent DECLARES this domain on its own card. Resolved once per
+        // decomposition, ahead of the compile-time `domain_specialist` table,
+        // so a domain the console has never heard of is still served by an
+        // agent that says it can serve it. `domain_specialist` covers four
+        // domains; everything else fell to the generalist, which is how two
+        // weather forecasts came back as their own climatological base rate.
+        let declared_for_domain = {
+            let roster = self.domain_roster();
+            let picked = fermi_console::routing::declared_specialist(&domain, &roster, &|a| {
+                self.agent_is_routable(a)
+            });
+            if let Some(ref a) = picked {
+                log::info!(
+                    "[routing] domain '{}' declared by {} (roster of {} agents)",
+                    domain,
+                    a,
+                    roster.len()
+                );
+            } else {
+                log::info!(
+                    "[routing] domain '{}' claimed by no agent in a roster of {}; \
+                     falling back to the compile-time table",
+                    domain,
+                    roster.len()
+                );
+            }
+            picked
+        };
+
         let driver_names: Vec<String> = self
             .program
             .drivers()
@@ -3126,13 +3156,15 @@ impl CockpitState {
                 // resolved against the server roster, not the local card
                 // directory. See `select_agent_for_driver`.
                 let suggestion = fermi_suggestions.get(driver_name);
-                let (agent_to_use, reason) = select_agent_for_driver(
-                    driver_name,
-                    &rationale,
-                    &domain,
-                    suggestion.map(|(a, _)| a.as_str()),
-                    &|a| self.agent_is_routable(a),
-                );
+                let (agent_to_use, reason) =
+                    fermi_console::routing::select_agent_for_driver_declared(
+                        driver_name,
+                        &rationale,
+                        &domain,
+                        suggestion.map(|(a, _)| a.as_str()),
+                        declared_for_domain.as_deref(),
+                        &|a| self.agent_is_routable(a),
+                    );
 
                 log::info!(
                     "[composer] {} → {} ({}; fermi suggested {:?}, domain {})",
@@ -3455,6 +3487,47 @@ impl CockpitState {
     /// place a third-party agent's contract exists) then the on-disk curated
     /// registry. `None` means the agent declares nothing to compose from —
     /// not that it is unknown.
+    /// Every routable agent paired with the question domains it declares.
+    ///
+    /// Built from the same cards `contract_for` reads, so an agent becomes
+    /// routable for a new domain by editing `metadata.domains` on its card —
+    /// no console release. Server cards take precedence over the on-disk
+    /// registry, since that is where a third-party agent's declaration lives.
+    fn domain_roster(&self) -> Vec<(String, Vec<String>)> {
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut out: Vec<(String, Vec<String>)> = Vec::new();
+
+        for card in &self.server_agent_cards {
+            let Some(id) = ["agent_id", "agent_name"]
+                .iter()
+                .find_map(|k| card.get(*k).and_then(|v| v.as_str()))
+            else {
+                continue;
+            };
+            let domains = negotiate::AgentContract::from_card(card).domains;
+            if !domains.is_empty() && seen.insert(id.to_string()) {
+                out.push((id.to_string(), domains));
+            }
+        }
+
+        if let Ok(cards) = self.registry.list_cards() {
+            for card in cards {
+                let id = card.agent_id.clone();
+                if seen.contains(&id) {
+                    continue;
+                }
+                if let Ok(json) = serde_json::to_value(&card) {
+                    let domains = negotiate::AgentContract::from_card(&json).domains;
+                    if !domains.is_empty() {
+                        seen.insert(id.clone());
+                        out.push((id, domains));
+                    }
+                }
+            }
+        }
+        out
+    }
+
     fn contract_for(&self, agent_id: &str) -> Option<negotiate::AgentContract> {
         if let Some(card) = self.server_agent_cards.iter().find(|c| {
             ["agent_id", "agent_name"]

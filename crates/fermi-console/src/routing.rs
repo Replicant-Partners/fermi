@@ -331,6 +331,13 @@ fn keyword_agent(combined: &str, domain: &str) -> Option<&'static str> {
 /// assignment is debuggable without re-deriving the ladder by hand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteReason {
+    /// An agent DECLARED competence in this domain, on its own card.
+    ///
+    /// Checked before the compile-time table so a new domain needs a card edit
+    /// rather than a console release. This is the rung that was missing when
+    /// two production weather forecasts fell through to the generalist and
+    /// returned their own climatological base rate.
+    DeclaredSpecialist,
     /// Fermi named this agent and it survived the domain guard.
     Fermi,
     /// Driver is outside the domain specialist's remit.
@@ -346,6 +353,7 @@ pub enum RouteReason {
 impl RouteReason {
     pub fn as_str(self) -> &'static str {
         match self {
+            RouteReason::DeclaredSpecialist => "declared domain specialist",
             RouteReason::Fermi => "fermi suggestion",
             RouteReason::CrossCutting => "cross-cutting concern",
             RouteReason::DomainSpecialist => "domain specialist",
@@ -363,6 +371,7 @@ impl RouteReason {
     /// format rather than a label.
     pub fn slug(self) -> &'static str {
         match self {
+            RouteReason::DeclaredSpecialist => "declared_specialist",
             RouteReason::Fermi => "fermi",
             RouteReason::CrossCutting => "cross_cutting",
             RouteReason::DomainSpecialist => "domain_specialist",
@@ -398,8 +407,32 @@ pub fn select_agent_for_driver(
     suggested: Option<&str>,
     is_routable: &dyn Fn(&str) -> bool,
 ) -> (String, RouteReason) {
+    select_agent_for_driver_declared(driver_name, rationale, domain, suggested, None, is_routable)
+}
+
+/// As [`select_agent_for_driver`], plus an agent that DECLARED this domain.
+///
+/// `declared` comes from the roster via [`declared_specialist`]. It is
+/// consulted ahead of [`domain_specialist`] — a compile-time `match` over four
+/// domains — so a new domain is served by editing a card rather than shipping a
+/// console release, and a third-party agent is first-class the moment it
+/// declares itself.
+///
+/// A declared specialist also displaces a generalist suggestion from Fermi, for
+/// the same reason the hardcoded specialist already did: a generalist handed
+/// back on a question with a resident expert is an absent opinion, not a
+/// considered choice.
+pub fn select_agent_for_driver_declared(
+    driver_name: &str,
+    rationale: &str,
+    domain: &str,
+    suggested: Option<&str>,
+    declared: Option<&str>,
+    is_routable: &dyn Fn(&str) -> bool,
+) -> (String, RouteReason) {
     let combined = format!("{} {}", driver_name, rationale).to_lowercase();
 
+    let declared = declared.map(str::trim).filter(|s| !s.is_empty());
     let specialist = domain_specialist(domain);
     let cross = cross_cutting_agent(&combined);
     let keyword = keyword_agent(&combined, domain);
@@ -419,13 +452,22 @@ pub fn select_agent_for_driver(
         // was non-None, which let a `macro_forecaster` suggestion
         // pre-empt the `entity_investigator` that `cross` had actually
         // selected — the FFP driver routed to the generalist anyway.
+        //
+        // A DECLARED specialist counts as a resident expert here too, which is
+        // the fix for weather: Fermi suggested the generalist, no hardcoded
+        // specialist existed for `climate`, and every driver went generic.
+        let expert_exists = specialist.is_some() || declared.is_some();
         let displaces_specialist =
-            specialist.is_some() && GENERALIST_AGENTS.contains(&s) && cross != Some(s);
+            expert_exists && GENERALIST_AGENTS.contains(&s) && cross != Some(s);
         if !displaces_specialist {
             candidates.push((s, RouteReason::Fermi));
         }
     }
 
+    // Declaration beats the compile-time table, and beats keyword guesswork.
+    if let Some(d) = declared {
+        candidates.push((d, RouteReason::DeclaredSpecialist));
+    }
     if let Some(c) = cross {
         candidates.push((c, RouteReason::CrossCutting));
     }
@@ -447,6 +489,85 @@ pub fn select_agent_for_driver(
         .find(|(agent, _)| is_routable(agent))
         .map(|(agent, reason)| (agent.to_string(), reason))
         .unwrap_or_else(|| ("macro_forecaster".to_string(), RouteReason::Default))
+}
+
+/// The routable agent that most specifically DECLARES this domain.
+///
+/// `roster` is `(agent_id, declared_domains)`, read from cards by
+/// `AgentContract::from_card`. Ties break toward the agent claiming the FEWEST
+/// domains, so a generalist tagging itself with twenty subjects cannot crowd
+/// out a specialist claiming one; the agent id breaks remaining ties so routing
+/// is deterministic across runs.
+///
+/// Prefer [`declared_specialist_ranked`], which additionally ranks an explicit
+/// `metadata.domains` declaration above a tag-fallback match.
+pub fn declared_specialist(
+    domain: &str,
+    roster: &[(String, Vec<String>)],
+    is_routable: &dyn Fn(&str) -> bool,
+) -> Option<String> {
+    let d = domain.trim().to_ascii_lowercase().replace('-', "_");
+    if d.is_empty() || d == "general" {
+        return None;
+    }
+    let matches_domain = |t: &String| {
+        let t = t.trim().to_ascii_lowercase().replace('-', "_");
+        t == d || d.split('_').any(|p| p == t) || t.split('_').any(|p| p == d)
+    };
+
+    let mut hits: Vec<(&String, usize)> = roster
+        .iter()
+        .filter(|(id, domains)| {
+            !GENERALIST_AGENTS.contains(&id.as_str())
+                && domains.iter().any(matches_domain)
+                && is_routable(id)
+        })
+        .map(|(id, domains)| (id, domains.len()))
+        .collect();
+    hits.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(b.0)));
+    hits.first().map(|(id, _)| (*id).clone())
+}
+
+/// As [`declared_specialist`], but ranking an EXPLICIT declaration above a tag
+/// match.
+///
+/// `roster` is `(agent_id, domains, domains_are_explicit)`. Ordering:
+///   1. explicit `metadata.domains` before a `metadata.tags` fallback — tags
+///      are written for search, not routing
+///   2. fewer domains before more — narrower claim wins
+///   3. agent id, so the choice is deterministic run to run
+///
+/// An agent with an explicitly EMPTY `domains: []` never appears here at all,
+/// which is how a composition's members stay out of the router's way.
+pub fn declared_specialist_ranked(
+    domain: &str,
+    roster: &[(String, Vec<String>, bool)],
+    is_routable: &dyn Fn(&str) -> bool,
+) -> Option<String> {
+    let d = domain.trim().to_ascii_lowercase().replace('-', "_");
+    if d.is_empty() || d == "general" {
+        return None;
+    }
+    let matches_domain = |t: &String| {
+        let t = t.trim().to_ascii_lowercase().replace('-', "_");
+        t == d || d.split('_').any(|p| p == t) || t.split('_').any(|p| p == d)
+    };
+
+    let mut hits: Vec<(&String, bool, usize)> = roster
+        .iter()
+        .filter(|(id, domains, _)| {
+            !GENERALIST_AGENTS.contains(&id.as_str())
+                && domains.iter().any(matches_domain)
+                && is_routable(id)
+        })
+        .map(|(id, domains, explicit)| (id, *explicit, domains.len()))
+        .collect();
+    hits.sort_by(|a, b| {
+        b.1.cmp(&a.1) // explicit first
+            .then_with(|| a.2.cmp(&b.2)) // narrower claim first
+            .then_with(|| a.0.cmp(b.0)) // deterministic
+    });
+    hits.first().map(|(id, _, _)| (*id).clone())
 }
 
 pub fn detect_domain(question: &str) -> String {
@@ -600,7 +721,22 @@ pub fn detect_domain(question: &str) -> String {
     // temperature in London be 32C on August 14?" classified as
     // `general`. That is not merely cosmetic: `domain` selects the
     // research-query template and gates the specialist lookup.
-    if w("climate")
+    //
+    // Precipitation vocabulary was still missing after that fix: "Will it rain
+    // in Amsterdam on Saturday?" classified as `general` and routed to the
+    // generalist, because only the noun `rainfall` was listed and
+    // `contains_word` deliberately does not do prefix matching.
+    if w("rain")
+        || w("rains")
+        || w("raining")
+        || w("snow")
+        || w("snowing")
+        || w("precipitation")
+        || w("sleet")
+        || w("hail")
+        || w("blizzard")
+        || w("monsoon")
+        || w("climate")
         || w("carbon")
         || w("emission")
         || w("renewable")
@@ -626,6 +762,190 @@ pub fn detect_domain(question: &str) -> String {
 #[cfg(test)]
 mod routing_tests {
     use super::*;
+
+    // ── Declaration-driven domain routing ───────────────────────────────
+    //
+    // The regression these pin: `domain_specialist` is a `match` over four
+    // domains, so a climate question found no specialist and every driver fell
+    // to the generalist. Two production forecasts returned their own
+    // climatological base rate — London 32C at 0.3% against a market of 13.5%,
+    // Chicago 75F at 23.2% against 0.5%.
+
+    /// Load the real on-disk cards, so these tests fail if a card regresses.
+    fn real_roster() -> Vec<(String, Vec<String>, bool)> {
+        use crate::negotiate::AgentContract;
+        let dir = ["agents/curated", "../../agents/curated"]
+            .iter()
+            .map(std::path::Path::new)
+            .find(|p| p.exists())
+            .expect("run from the workspace root or the crate root");
+        let mut out = Vec::new();
+        for e in std::fs::read_dir(dir).expect("read agents/curated") {
+            let path = e.expect("entry").path().join("agent_card.json");
+            if !path.exists() {
+                continue;
+            }
+            let raw = std::fs::read_to_string(&path).expect("read card");
+            let j: serde_json::Value = serde_json::from_str(&raw).expect("parse card");
+            let id = j["agent_id"].as_str().unwrap_or_default().to_string();
+            let c = AgentContract::from_card(&j);
+            if !c.domains.is_empty() {
+                out.push((id, c.domains, c.domains_explicit));
+            }
+        }
+        assert!(out.len() > 20, "roster looks empty: {}", out.len());
+        out
+    }
+
+    #[test]
+    fn a_weather_question_routes_to_the_weather_front_agent() {
+        let roster = real_roster();
+        let routable = |_: &str| true;
+
+        for q in [
+            "Will the highest temperature in Chicago be 75F or below on August 15?",
+            "Will the highest temperature in London be 32C on August 14?",
+            "Will it rain in Amsterdam on Saturday?",
+            "Will snowfall in Denver exceed 6 inches?",
+        ] {
+            let domain = detect_domain(q);
+            assert_eq!(domain, "climate", "domain for {q:?}");
+
+            // The compile-time table still has nothing for climate; the point
+            // is that routing no longer depends on it.
+            assert_eq!(domain_specialist(&domain), None);
+
+            let declared = declared_specialist_ranked(&domain, &roster, &routable);
+            assert_eq!(
+                declared.as_deref(),
+                Some("weather_oracle"),
+                "climate must route to the weather front agent for {q:?}"
+            );
+
+            // And it must survive a generalist suggestion from Fermi, which is
+            // exactly what happened in production.
+            let (agent, reason) = select_agent_for_driver_declared(
+                "synoptic_pattern_august",
+                "requires a specific synoptic setup",
+                &domain,
+                Some("macro_forecaster"),
+                declared.as_deref(),
+                &routable,
+            );
+            assert_eq!(agent, "weather_oracle", "generalist displaced the specialist for {q:?}");
+            assert_eq!(reason, RouteReason::DeclaredSpecialist);
+        }
+    }
+
+    #[test]
+    fn composition_members_declare_out_and_are_never_routed_to() {
+        // A member with an explicit `domains: []` must not win the route. Left
+        // to the tag fallback, `weather_calibrator` (tagged "weather") beat
+        // `weather_oracle` on the narrower-claim tie-break — and would have
+        // been handed a raw driver it is explicitly built not to research.
+        let roster = real_roster();
+        let ids: Vec<&str> = roster.iter().map(|(i, _, _)| i.as_str()).collect();
+        for member in [
+            "weather_calibrator",
+            "weather_ensemble_forecaster",
+            "weather_market_analyst",
+        ] {
+            assert!(
+                !ids.contains(&member),
+                "{member} declares domains and is therefore directly routable;                  composition members must declare `domains: []`"
+            );
+        }
+    }
+
+    #[test]
+    fn an_explicit_declaration_outranks_a_tag_match() {
+        let roster = vec![
+            // Tag fallback: three tags, one of which happens to match.
+            ("tag_matcher".to_string(), vec!["weather".to_string()], false),
+            // Explicit, and deliberately WIDER, so it can only win on being
+            // explicit rather than on the narrower-claim tie-break.
+            (
+                "declarer".to_string(),
+                vec![
+                    "weather".to_string(),
+                    "climate".to_string(),
+                    "temperature".to_string(),
+                ],
+                true,
+            ),
+        ];
+        assert_eq!(
+            declared_specialist_ranked("weather", &roster, &|_| true).as_deref(),
+            Some("declarer"),
+            "tags are written for search, not routing; an explicit declaration must win"
+        );
+    }
+
+    #[test]
+    fn a_narrower_claim_wins_among_equally_explicit_agents() {
+        let roster = vec![
+            (
+                "jack_of_all".to_string(),
+                (0..12).map(|i| format!("d{i}")).chain(["climate".to_string()]).collect(),
+                true,
+            ),
+            ("specialist".to_string(), vec!["climate".to_string()], true),
+        ];
+        assert_eq!(
+            declared_specialist_ranked("climate", &roster, &|_| true).as_deref(),
+            Some("specialist"),
+            "an agent claiming everything must not crowd out one claiming this"
+        );
+    }
+
+    #[test]
+    fn general_and_unroutable_never_produce_a_declared_specialist() {
+        let roster = real_roster();
+        assert_eq!(declared_specialist_ranked("general", &roster, &|_| true), None);
+        assert_eq!(declared_specialist_ranked("", &roster, &|_| true), None);
+        // Nothing routable => no declared specialist, even with matches.
+        assert_eq!(
+            declared_specialist_ranked("climate", &roster, &|_| false),
+            None
+        );
+    }
+
+    #[test]
+    fn precipitation_vocabulary_is_recognised() {
+        // `contains_word` does no prefix matching, so listing only "rainfall"
+        // left "Will it rain..." classified as `general`.
+        for q in [
+            "will it rain tomorrow",
+            "how much snow will fall",
+            "total precipitation in July",
+            "will there be hail",
+            "monsoon onset date",
+        ] {
+            assert_eq!(detect_domain(q), "climate", "{q:?} should be climate");
+        }
+        // And the old false-positive guard still holds.
+        assert_ne!(detect_domain("will the training programme finish"), "climate");
+    }
+
+    #[test]
+    fn declared_specialist_does_not_change_non_weather_routing() {
+        // Regression guard: adding a rung must not steal routes that already
+        // worked through the hardcoded table.
+        let roster = real_roster();
+        let routable = |_: &str| true;
+        let nba = detect_domain("Will the Lakers win the NBA championship?");
+        assert_eq!(nba, "sports_nba");
+        let (agent, _) = select_agent_for_driver_declared(
+            "elo_rating",
+            "team strength",
+            &nba,
+            None,
+            declared_specialist_ranked(&nba, &roster, &routable).as_deref(),
+            &routable,
+        );
+        assert_eq!(agent, "nba_analyst");
+    }
+
 
     /// Stands in for a console whose local card directory resolved.
     fn all_available(_: &str) -> bool {
