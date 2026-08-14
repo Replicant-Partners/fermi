@@ -113,11 +113,89 @@ CI's blocking "hygiene" step; its live tier self-skips when the variable is
 unset and is `continue-on-error` when it is set. Exporting the variable makes
 it look like a regression when it is the documented advisory tier.
 
-### Still to do
+### Then the schema itself: 26 → 6, and the trust contract is satisfied
 
-The 26 remaining failures are untouched — this restored the signal, it did
-not fix the schema. The four clusters below are the real work, and each one
-lowers `BASELINE`.
+Follow-up work in `81dac4f2` fixed the rebuild rather than just the signal.
+
+| | before | after |
+|---|---|---|
+| from-empty failures (pass 1) | **26** | **6** |
+| from-empty failures (pass 2) | 15 | 7 |
+| `BASELINE` in `ci.yml` | 26 | **6** |
+| schema-trust live contract | **13 issues** — 6 missing tables, 4 missing columns, 3 missing functions | **satisfied** |
+
+`live_contract_is_satisfied_by_a_migrated_database` now passes. Per
+`ci.yml`'s own note, that is *"the point at which `SCHEMA_STRICT=1` becomes
+safe to enable in production"* — so that decision, and flipping the live
+tier from `continue-on-error` to blocking, are now open rather than blocked.
+The note ties the flip to the baseline reaching 0; the contract being
+satisfied at 6 suggests those are separate thresholds.
+
+(If you see `DRIFT DETECTED — 1 issue(s)` in that step's log, it is the
+`public.nope` negative control from `b51d5909` proving the detector can fail,
+not real drift.)
+
+**Every cause was one shape**: `IF NOT EXISTS` silently skipping a schema
+change, with `run_migrations` swallowing whatever failed next. Four
+instances, and the third is worth eight migrations on its own:
+
+1. **004 edited in place after being applied** — nothing creates `users.id`,
+   `name`, `password_hash` or `password_salt`, yet fermi-auth JOINs on `id`
+   and 005 declares an FK to it.
+2. **`users_auth_provider_check` omits `'legacy'`** — 004b tries to widen it
+   by re-declaring the column with `ADD COLUMN IF NOT EXISTS`, a no-op once
+   the column exists. A CHECK cannot be widened by adding a column that is
+   already there.
+3. **048 creates `fermi_forecasts` with 13 columns; 094 does
+   `CREATE TABLE IF NOT EXISTS` declaring 28**, so the statement is skipped
+   and its 15 extra columns never appear. 094 aborts on an index over the
+   `status` column it believes it created, never reaches its own
+   `fermi_forecast_updates`, and takes 140/149/150/156/174/176 with it — plus
+   175, because 140 is what creates `forecast_spacetime`. **Eight migrations
+   from one skipped statement.**
+4. **`migrations_log`** is written by 089 and 090 and created by nobody, so
+   090 aborts on its final bookkeeping line having already built its schema
+   correctly — the most misleading failure in the set.
+
+`195_declare_the_ghost_schema.sql` and `196_reconcile_fermi_forecasts.sql`
+declare those objects. Additive, guarded, no-ops against production, and
+**positioned rather than sorted**: 195 immediately after 004 because
+004b/005/161/165/171 depend on it, 196 between 048 and 094. Numbered high so
+the directory reads honestly about when they were written.
+
+Five files were edited **in place**, which is normally forbidden here —
+justified because each contained SQL that has never executed anywhere, so
+there is no applied state to diverge from:
+
+| file | defect |
+|---|---|
+| 113 | `\|\|` inside `COMMENT ON ... IS`, which takes a literal. Three of them, one on `composition_versions` itself — which is why 120 failed too |
+| 097 | `NOW()` in a partial index predicate. Illegal, and wrong even if allowed: the predicate freezes at build time, so rows silently leave the index as cooldowns elapse |
+| 142 | `CREATE INDEX CONCURRENTLY` inside `DO` blocks, four times. CONCURRENTLY cannot run in a function body |
+| 166 | a plpgsql local named `is_nullable` colliding with the same-named `information_schema` column, selected unqualified |
+| 091 | `ON CONFLICT ON CONSTRAINT` naming a partial unique *index*. That form takes a constraint, and a partial unique constraint cannot exist — so its backfill had never run |
+
+### The remaining 6
+
+None is a one-liner, and one should not be "fixed" at all:
+
+- **006, 007** — ordering. They `ALTER` `agents`/`episodes`, which the runner
+  creates later in the list. Fixing means reordering, which deserves its own
+  change.
+- **089, 095** — PostGIS is absent from the `pgvector` service image. Either
+  add the extension or guard the two files. Possibly an environment artefact
+  rather than a defect.
+- **163** — needs `ar_beacons.location_name`, which 089 adds.
+- **096** — indexes `activity_events(creature_id)`. That column exists in no
+  migration and nothing writes it; the table has `actor_creature_id` and
+  `target_creature_id`. Declaring `creature_id` would manufacture exactly the
+  write-orphaned column that the rollup tripwire exists to catch, so this
+  wants an owner's decision about which column was meant, not a guess.
+
+Pass 2's seven are a different problem: pre-existing non-idempotency (bare
+`CREATE INDEX` / `CREATE TRIGGER` / `ADD CONSTRAINT` in 004, 008, 091, 143)
+which `run_migrations` hits on every boot and swallows. CI measures a single
+pass, so they are invisible there. `PASSES=2` on the probe surfaces them.
 
 ## Symptom
 
