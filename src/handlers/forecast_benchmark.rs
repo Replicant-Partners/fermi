@@ -907,12 +907,35 @@ pub async fn forecast_timeline_handler(
     //   * `market_events` — sparse dots on the merged event timeline
     //     (bottom rug + hover chips) so the operator can eye-trace when
     //     the crowd price ticked relative to their applied revisions.
-    let market_rows: Vec<(
-        chrono::DateTime<chrono::Utc>,
-        Option<f32>,
-        Option<f32>,
-        Option<String>,
-    )> = sqlx::query(
+    //
+    // The projection is deliberately wide. A market tick is not just a
+    // price — it carries *why the price is trustworthy* (spread,
+    // liquidity, 24h volume), *how it got here* (price_change_1h/1d)
+    // and *how it was taken* (observation_type, confidence_signal).
+    // Without those the client can only render "a tick happened",
+    // which is exactly the opaque row the trajectory pane used to show.
+    struct MarketRow {
+        ts: chrono::DateTime<chrono::Utc>,
+        price: Option<f32>,
+        bid: Option<f32>,
+        ask: Option<f32>,
+        spread: Option<f32>,
+        volume_total: Option<f32>,
+        volume_24h: Option<f32>,
+        liquidity: Option<f32>,
+        change_1h: Option<f32>,
+        change_1d: Option<f32>,
+        divergence_pp: Option<f32>,
+        fermi_probability: Option<f32>,
+        confidence_signal: Option<String>,
+        observation_type: Option<String>,
+        pm_question: Option<String>,
+        pm_event_id: Option<String>,
+        pm_resolved: Option<bool>,
+        pm_outcome: Option<String>,
+    }
+
+    let market_rows: Vec<MarketRow> = sqlx::query(
         // NOTE: the observations table columns this timestamp as
         // `created_at` (see migration 099). An earlier version of this
         // query referenced a non-existent `observation_time` column,
@@ -920,7 +943,12 @@ pub async fn forecast_timeline_handler(
         // swallowed — so writes landed fine but the trajectory always
         // read zero market observations. Kept the local variable name
         // `ts` for clarity; the response still exposes it as `ts`.
-        "SELECT market_price, volume_total, created_at, pm_event_id
+        "SELECT market_price, bid_price, ask_price, spread,
+                volume_total, volume_24h, liquidity,
+                price_change_1h, price_change_1d,
+                divergence_pp, fermi_probability, confidence_signal,
+                observation_type, pm_question, pm_event_id,
+                pm_resolved, pm_outcome, created_at
          FROM fermi_market_observations
          WHERE forecast_id = $1
          ORDER BY created_at ASC",
@@ -934,40 +962,89 @@ pub async fn forecast_timeline_handler(
         let ts = row
             .try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
             .ok()?;
-        let price = row.try_get::<f32, _>("market_price").ok();
-        let volume = row.try_get::<Option<f32>, _>("volume_total").ok().flatten();
-        let event_id = row
-            .try_get::<Option<String>, _>("pm_event_id")
-            .ok()
-            .flatten();
-        Some((ts, price, volume, event_id))
+        let f32opt = |name: &str| row.try_get::<Option<f32>, _>(name).ok().flatten();
+        let stropt = |name: &str| row.try_get::<Option<String>, _>(name).ok().flatten();
+        Some(MarketRow {
+            ts,
+            price: row.try_get::<f32, _>("market_price").ok(),
+            bid: f32opt("bid_price"),
+            ask: f32opt("ask_price"),
+            spread: f32opt("spread"),
+            volume_total: f32opt("volume_total"),
+            volume_24h: f32opt("volume_24h"),
+            liquidity: f32opt("liquidity"),
+            change_1h: f32opt("price_change_1h"),
+            change_1d: f32opt("price_change_1d"),
+            divergence_pp: f32opt("divergence_pp"),
+            fermi_probability: f32opt("fermi_probability"),
+            confidence_signal: stropt("confidence_signal"),
+            observation_type: stropt("observation_type"),
+            pm_question: stropt("pm_question"),
+            pm_event_id: stropt("pm_event_id"),
+            pm_resolved: row.try_get::<Option<bool>, _>("pm_resolved").ok().flatten(),
+            pm_outcome: stropt("pm_outcome"),
+        })
     })
     .collect();
 
     let market_series: Vec<Value> = market_rows
         .iter()
-        .map(|(ts, price, volume, event_id)| {
+        .map(|r| {
             json!({
-                "ts": ts.to_rfc3339(),
-                "market_price": price,
-                "volume_total": volume,
-                "pm_event_id": event_id,
+                "ts": r.ts.to_rfc3339(),
+                "market_price": r.price,
+                "volume_total": r.volume_total,
+                "pm_event_id": r.pm_event_id,
             })
         })
         .collect();
 
+    // Per-tick delta against the *previous* tick. A lone price is not a
+    // movement; the operator reads the trajectory to see movement, so
+    // the tick-to-tick delta is computed here once rather than being
+    // re-derived (or, as before, silently omitted) by every client.
     let market_events: Vec<Value> = market_rows
         .iter()
-        .map(|(ts, price, volume, _event_id)| {
+        .enumerate()
+        .map(|(i, r)| {
+            let prev_price = if i == 0 {
+                None
+            } else {
+                market_rows[i - 1].price
+            };
+            let tick_delta_pp = match (prev_price, r.price) {
+                (Some(a), Some(b)) => Some(((b - a) as f64) * 100.0),
+                _ => None,
+            };
             json!({
                 "kind": "market_observation",
-                "ts": ts.to_rfc3339(),
+                "ts": r.ts.to_rfc3339(),
                 // Chart drops market dots at the crowd price line (in
                 // pct), so the y-coord matches the crowd worm exactly.
                 // rate_pct sits under `predicted_probability` to reuse
                 // the client's existing event-y-lookup path.
-                "predicted_probability": price.map(|p| p as f64),
-                "volume_total": volume,
+                "predicted_probability": r.price.map(|p| p as f64),
+                // `market_price` is the semantically-correct name and is
+                // what the phase summariser reads to report crowd drift.
+                // It was missing before, so drift never rendered.
+                "market_price": r.price,
+                "previous_market_price": prev_price,
+                "tick_delta_pp": tick_delta_pp,
+                "bid_price": r.bid,
+                "ask_price": r.ask,
+                "spread": r.spread,
+                "volume_total": r.volume_total,
+                "volume_24h": r.volume_24h,
+                "liquidity": r.liquidity,
+                "price_change_1h": r.change_1h,
+                "price_change_1d": r.change_1d,
+                "recorded_divergence_pp": r.divergence_pp,
+                "fermi_probability_at_observation": r.fermi_probability,
+                "confidence_signal": r.confidence_signal,
+                "observation_type": r.observation_type,
+                "pm_question": r.pm_question,
+                "pm_resolved": r.pm_resolved,
+                "pm_outcome": r.pm_outcome,
             })
         })
         .collect();
@@ -988,6 +1065,156 @@ pub async fn forecast_timeline_handler(
         let tb = b.get("ts").and_then(|v| v.as_str()).unwrap_or("");
         ta.cmp(tb)
     });
+
+    // ── 6. Correlation pass ────────────────────────────────────────
+    //
+    // Everything above answers "what happened". None of it answers the
+    // only question the trajectory pane exists to answer: *did this
+    // event have anything to do with the rate moving?*
+    //
+    // A bare list of timestamped nouns ("market_observation",
+    // "agent_run") forces the operator to hold two series in their head
+    // and correlate by eye. So we do it here, once, on the server where
+    // the full series are already in scope, and attach the answer to
+    // every event:
+    //
+    //   * `model_rate_at` / `crowd_price_at` — the state of the world
+    //     when the event fired (step-function lookup, not interpolation:
+    //     a rate is a held position, not a ramp).
+    //   * `divergence_at_pp` — model minus crowd at that instant. The
+    //     quantity the whole console is built around.
+    //   * `next_revision_*` — the *lead* relationship. Did a revision
+    //     follow, how long after, and how big. This is the correlation
+    //     proper; it lets a card say "12m before the +4.6pp revision"
+    //     instead of just naming itself.
+    //   * `since_prev_revision_secs` — how deep into the current phase
+    //     the event sits.
+    //
+    // Causation is explicitly NOT claimed: temporal adjacency is
+    // reported as adjacency. The client renders it as "before", never
+    // "caused".
+    // Value held by a step series at an instant: the last point at or
+    // before `at`. Step, not interpolated — a rate is a position held
+    // until revised, not a ramp between revisions, and drawing a
+    // midpoint would invent a number nobody ever forecast.
+    //
+    // Returns None when the event precedes the whole series. That is the
+    // honest answer: before the first market tick there was no crowd
+    // price, and back-filling the earliest known one would date a quote
+    // to before it existed.
+    //
+    // Timestamps compare lexicographically because every one is produced
+    // by `to_rfc3339()` with a `+00:00` offset — the same assumption the
+    // sort above already relies on.
+    let step_lookup = |series: &[Value], key: &str, at: &str| -> Option<f64> {
+        let mut last: Option<f64> = None;
+        for p in series {
+            let ts = p.get("ts").and_then(|v| v.as_str()).unwrap_or("");
+            if ts.is_empty() {
+                continue;
+            }
+            if ts > at {
+                break;
+            }
+            if let Some(v) = p.get(key).and_then(|v| v.as_f64()) {
+                last = Some(v);
+            }
+        }
+        last
+    };
+
+    let parse = |s: &str| chrono::DateTime::parse_from_rfc3339(s).ok();
+    let lag_secs = |from: &str, to: &str| -> Option<f64> {
+        let a = parse(from)?;
+        let b = parse(to)?;
+        Some((b - a).num_milliseconds() as f64 / 1000.0)
+    };
+
+    // Pre-collect the revisions so the per-event scan is a cheap slice
+    // walk rather than a nested search over the whole event list.
+    struct RevisionMark {
+        ts: String,
+        delta_pp: Option<f64>,
+        trigger: Option<String>,
+        to_pct: Option<f64>,
+    }
+
+    let revision_marks: Vec<RevisionMark> = events
+        .iter()
+        .filter(|e| e.get("kind").and_then(|v| v.as_str()) == Some("rate_revision"))
+        .map(|e| {
+            let to = e.get("predicted_probability").and_then(|v| v.as_f64());
+            let from = e.get("previous_probability").and_then(|v| v.as_f64());
+            RevisionMark {
+                ts: e
+                    .get("ts")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                delta_pp: match (from, to) {
+                    (Some(f), Some(t)) => Some((t - f) * 100.0),
+                    _ => None,
+                },
+                trigger: e
+                    .get("revision_trigger")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                to_pct: to.map(|t| t * 100.0),
+            }
+        })
+        .collect();
+
+    for i in 0..events.len() {
+        let at = match events[i].get("ts").and_then(|v| v.as_str()) {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => continue,
+        };
+        let kind = events[i]
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let model_pct = step_lookup(&rate_series, "rate", &at).map(|r| r * 100.0);
+        let crowd_pct = step_lookup(&market_series, "market_price", &at).map(|p| p * 100.0);
+        let divergence_pp = match (model_pct, crowd_pct) {
+            (Some(m), Some(c)) => Some(m - c),
+            _ => None,
+        };
+
+        // Nearest revision strictly after this event, and the one at or
+        // before it. A revision annotates itself against its neighbours
+        // rather than against itself.
+        let next = revision_marks.iter().find(|r| r.ts.as_str() > at.as_str());
+        let prev = revision_marks.iter().rev().find(|r| {
+            if kind == "rate_revision" {
+                r.ts.as_str() < at.as_str()
+            } else {
+                r.ts.as_str() <= at.as_str()
+            }
+        });
+
+        let obj = match events[i].as_object_mut() {
+            Some(o) => o,
+            None => continue,
+        };
+        obj.insert("model_rate_at_pct".into(), json!(model_pct));
+        obj.insert("crowd_price_at_pct".into(), json!(crowd_pct));
+        obj.insert("divergence_at_pp".into(), json!(divergence_pp));
+        if let Some(r) = next {
+            obj.insert("next_revision_lag_secs".into(), json!(lag_secs(&at, &r.ts)));
+            obj.insert("next_revision_delta_pp".into(), json!(r.delta_pp));
+            obj.insert("next_revision_to_pct".into(), json!(r.to_pct));
+            obj.insert("next_revision_trigger".into(), json!(r.trigger));
+        }
+        if let Some(r) = prev {
+            obj.insert(
+                "since_prev_revision_secs".into(),
+                json!(lag_secs(&r.ts, &at)),
+            );
+            obj.insert("prev_revision_delta_pp".into(), json!(r.delta_pp));
+        }
+    }
 
     let span = json!({
         "forecast_created_at": forecast.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")

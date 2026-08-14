@@ -48,6 +48,8 @@ use crate::api::client::{
 };
 use crate::text_input::TextInput;
 use crate::theme;
+// Trajectory-pane prose. Lives in the lib target so it can be unit
+// tested; see the module docs for why the binary's tests cannot run.
 use crate::ui;
 use fermi_console::agent_naming::{
     base_agent_id, base_agent_id_for_driver, bound_agent_name, evidence_belongs_to_agent,
@@ -58,6 +60,7 @@ use fermi_console::negotiate;
 use fermi_console::routing::{
     detect_domain, domain_specialist, select_agent_for_driver, FERMI_ORCHESTRA,
 };
+use fermi_console::trajectory_narrative as narrative;
 use fermi_console::wire::{clamp_wire_interval_bound, clamp_wire_probability};
 
 // ════════════════════════════════════════════════════════════════════
@@ -3171,6 +3174,13 @@ impl CockpitState {
                             &binding,
                             contract.as_ref(),
                             Some(driver_name),
+                        )
+                        .with_route(
+                            reason.slug(),
+                            reason.is_deliberate(),
+                            &agent_to_use,
+                            suggestion.map(|(a, _)| a.as_str()),
+                            &domain,
                         );
                         (suggested_query.clone(), Some(p))
                     }
@@ -3192,6 +3202,13 @@ impl CockpitState {
                             &binding,
                             contract.as_ref(),
                             Some(driver_name),
+                        )
+                        .with_route(
+                            reason.slug(),
+                            reason.is_deliberate(),
+                            &agent_to_use,
+                            suggestion.map(|(a, _)| a.as_str()),
+                            &domain,
                         );
                         (composed.text, Some(p))
                     }
@@ -23652,6 +23669,13 @@ fn render_trajectory_phase(
                 .unwrap_or("")
                 .to_string();
 
+            // Context clause. "3.4% → 8.0%" states a number change with
+            // no frame of reference; what the operator actually decides
+            // on is whether the move went toward or away from the crowd,
+            // where the gap now stands, and how long the phase that
+            // produced it ran. Prose lives in `trajectory_narrative`.
+            let ctx_line = narrative::build_revision_context(ev);
+
             let ts_line = if ts_abs.is_empty() {
                 ts_rel.clone()
             } else {
@@ -23694,6 +23718,14 @@ fn render_trajectory_phase(
                                 .child(ts_line),
                         ),
                 );
+            if !ctx_line.is_empty() {
+                header_div = header_div.child(
+                    div()
+                        .text_size(ui::TEXT_SM)
+                        .text_color(rgb(theme::GOLD))
+                        .child(ctx_line),
+                );
+            }
             if !reason.is_empty() {
                 header_div = header_div.child(
                     div()
@@ -23763,129 +23795,12 @@ fn render_trajectory_phase(
         .when(!events.is_empty(), |el| el.child(cards))
 }
 
-/// Build a one-line human summary of a phase's non-revision events.
-/// Rule-based: counts events by kind and stitches them into an English
-/// sentence. Empty string when there are no events (e.g. two rate
-/// revisions back-to-back with nothing between them).
+/// Phase summary text. The prose lives in
+/// [`fermi_console::trajectory_narrative`] so it can be unit-tested —
+/// the binary target's tests are unrunnable under GPUI.
 fn build_phase_summary(events: &[(usize, &JsonValue)]) -> String {
-    if events.is_empty() {
-        return String::new();
-    }
-    let mut agent_runs: usize = 0;
-    let mut bayesops_fits: usize = 0;
-    let mut market_obs: usize = 0;
-    let mut upstream_resolves: usize = 0;
-    let mut other: usize = 0;
-
-    // Track the agent names that ran, up to 3, so the summary can
-    // read "...5 agent runs (fermi, macro_forecaster, market_research)..."
-    // instead of an anonymous count.
-    let mut agent_names: Vec<String> = Vec::new();
-
-    // Track cumulative price movement observed in market ticks so we
-    // can say "crowd drifted +2.4pp".
-    let mut market_start: Option<f64> = None;
-    let mut market_end: Option<f64> = None;
-
-    for (_idx, ev) in events {
-        let kind = ev.get("kind").and_then(|v| v.as_str()).unwrap_or("");
-        match kind {
-            "agent_run" => {
-                agent_runs += 1;
-                if agent_names.len() < 3 {
-                    let name = ev
-                        .get("sender_name")
-                        .and_then(|v| v.as_str())
-                        .or_else(|| ev.get("sender_id").and_then(|v| v.as_str()))
-                        .unwrap_or("agent")
-                        .to_string();
-                    if !agent_names.iter().any(|n| n == &name) {
-                        agent_names.push(name);
-                    }
-                }
-            }
-            "bayesops_fit"
-            | "bayesops_fit_accepted"
-            | "bayesops_fit_pending"
-            | "bayesops_fit_failed"
-            | "bayesops_fit_decision" => {
-                bayesops_fits += 1;
-            }
-            "market_observation" => {
-                market_obs += 1;
-                if let Some(p) = ev.get("market_price").and_then(|v| v.as_f64()) {
-                    if market_start.is_none() {
-                        market_start = Some(p);
-                    }
-                    market_end = Some(p);
-                }
-            }
-            "upstream_resolved" => {
-                upstream_resolves += 1;
-            }
-            _ => {
-                other += 1;
-            }
-        }
-    }
-
-    let mut fragments: Vec<String> = Vec::new();
-    if agent_runs > 0 {
-        let word = if agent_runs == 1 {
-            "agent run"
-        } else {
-            "agent runs"
-        };
-        if agent_names.is_empty() {
-            fragments.push(format!("{} {}", agent_runs, word));
-        } else {
-            fragments.push(format!(
-                "{} {} ({})",
-                agent_runs,
-                word,
-                agent_names.join(", ")
-            ));
-        }
-    }
-    if bayesops_fits > 0 {
-        let word = if bayesops_fits == 1 {
-            "BayesOps fit"
-        } else {
-            "BayesOps fits"
-        };
-        fragments.push(format!("{} {}", bayesops_fits, word));
-    }
-    if market_obs > 0 {
-        let word = if market_obs == 1 {
-            "market tick"
-        } else {
-            "market ticks"
-        };
-        let drift = match (market_start, market_end) {
-            (Some(a), Some(b)) if (b - a).abs() >= 0.005 => {
-                format!(" (crowd {:+.1}pp)", (b - a) * 100.0)
-            }
-            _ => String::new(),
-        };
-        fragments.push(format!("{} {}{}", market_obs, word, drift));
-    }
-    if upstream_resolves > 0 {
-        let word = if upstream_resolves == 1 {
-            "upstream resolve"
-        } else {
-            "upstream resolves"
-        };
-        fragments.push(format!("{} {}", upstream_resolves, word));
-    }
-    if other > 0 {
-        fragments.push(format!("{} other", other));
-    }
-
-    if fragments.is_empty() {
-        String::new()
-    } else {
-        format!("During this phase: {}.", fragments.join(", "))
-    }
+    let evs: Vec<&JsonValue> = events.iter().map(|(_, ev)| *ev).collect();
+    narrative::build_phase_summary(&evs)
 }
 
 fn render_trajectory_event(ev: &JsonValue) -> AnyElement {
@@ -23986,13 +23901,41 @@ fn render_trajectory_event(ev: &JsonValue) -> AnyElement {
                 .collect::<String>();
             (theme::PURPLE, "✎", headline, detail)
         }
+        // A market tick is the most frequent event on the timeline and
+        // was the least informative: it had no arm at all, so it fell
+        // through to the catch-all and rendered as the kind name twice.
+        // Prose lives in `trajectory_narrative` (tested); the direction
+        // colour and glyph come from the same delta the prose reports.
+        "market_observation" => {
+            let (headline, detail) = narrative::market_tick_text(ev);
+            let (color, glyph) = match narrative::market_tick_delta_pp(ev) {
+                Some(d) if d >= 0.05 => (theme::GREEN, "▲"),
+                Some(d) if d <= -0.05 => (theme::RED, "▼"),
+                _ => (theme::BLUE, "●"),
+            };
+            (color, glyph, headline, detail)
+        }
         "upstream_resolved" => {
             let outcome = ev
                 .get("metadata")
                 .and_then(|m| m.get("outcome"))
-                .map(|v| v.to_string())
+                .and_then(|v| {
+                    v.as_str()
+                        .map(|s| s.to_string())
+                        .or_else(|| Some(v.to_string()))
+                })
                 .unwrap_or_default();
-            let headline = "Upstream workspace resolved".to_string();
+            let upstream = ev
+                .get("metadata")
+                .and_then(|m| m.get("upstream_question").or_else(|| m.get("question")))
+                .and_then(|v| v.as_str());
+            let headline = match upstream {
+                Some(q) => format!(
+                    "Upstream resolved · {}",
+                    q.chars().take(90).collect::<String>()
+                ),
+                None => "Upstream workspace resolved".to_string(),
+            };
             (theme::GOLD, "⇪", headline, outcome)
         }
         "bayesops_fit_accepted"
@@ -24013,28 +23956,33 @@ fn render_trajectory_event(ev: &JsonValue) -> AnyElement {
             (theme::CYAN, "📊", headline, detail)
         }
         _ => {
-            let headline = ev
+            // The old fallback was `format!("{kind} · {content}")` with
+            // `content` defaulting to `kind` — so any event without a
+            // content field printed its own name twice and told the
+            // operator nothing. Humanise the kind, and only append
+            // content when it adds information.
+            let content = ev
                 .get("content")
                 .and_then(|v| v.as_str())
-                .unwrap_or(kind)
-                .chars()
-                .take(120)
-                .collect::<String>();
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let detail = if content.is_empty() || content == kind {
+                String::new()
+            } else {
+                content.chars().take(180).collect::<String>()
+            };
             (
-                theme::FG_DIM,
+                theme::FG_MUTED,
                 "·",
-                format!("{} · {}", kind, headline),
-                String::new(),
+                narrative::humanize_event_kind(kind),
+                detail,
             )
         }
     };
 
-    let ts_short = ts
-        .split('T')
-        .collect::<Vec<_>>()
-        .get(0..2)
-        .map(|p| p.join(" "))
-        .unwrap_or_else(|| ts.to_string());
+    let ts_short = narrative::format_event_timestamp(ts, &crate::format_relative_time(ts));
+    let correlation = narrative::build_correlation_line(ev);
 
     let mut card = div()
         .flex()
@@ -24073,6 +24021,17 @@ fn render_trajectory_event(ev: &JsonValue) -> AnyElement {
                 .text_size(ui::TEXT_SM)
                 .text_color(rgb(theme::FG_DIM))
                 .child(detail),
+        );
+    }
+
+    // The correlation footer goes last and dimmest: it is context for
+    // the headline above it, not a competing claim.
+    if !correlation.is_empty() {
+        card = card.child(
+            div()
+                .text_size(ui::TEXT_XS)
+                .text_color(rgb(theme::FG_MUTED))
+                .child(correlation),
         );
     }
 

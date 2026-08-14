@@ -104,6 +104,7 @@ pub mod negotiate;
 pub mod plot;
 pub mod roster;
 pub mod routing;
+pub mod trajectory_narrative;
 pub mod uiscale;
 pub mod updater;
 pub mod wire;
