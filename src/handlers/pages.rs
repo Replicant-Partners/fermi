@@ -1,11 +1,14 @@
 //! HTML page-serving handlers.
 
 use axum::{
-    extract::Query,
+    extract::{Extension, Path, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{Html, IntoResponse, Redirect, Response},
 };
+use fermi_auth::{rbac, AuthPrincipal, ObjectType};
 use serde::Deserialize;
+
+use crate::AppState;
 
 // ─── Fallback (404) ────────────────────────────────────────────────
 
@@ -369,48 +372,129 @@ mod download_tests {
     }
 }
 
-pub async fn agent_detail() -> Html<String> {
-    let html = match std::fs::read_to_string("templates/agent_detail.html") {
-        Ok(content) => content,
+// ─── Agent page family (`/agent/:agent_id/*`) ──────────────────────
+
+/// Read a page template, falling back to a minimal error body.
+fn render_template(path: &str, title: &str) -> Html<String> {
+    match std::fs::read_to_string(path) {
+        Ok(content) => Html(content),
         Err(e) => {
-            eprintln!("Error loading templates/agent_detail.html: {}", e);
-            format!(
-                "<h1>Agent Bestiary</h1><p>Error loading template: {}</p>",
-                e
-            )
+            eprintln!("Error loading {}: {}", path, e);
+            Html(format!(
+                "<h1>{}</h1><p>Error loading template: {}</p>",
+                title, e
+            ))
         }
-    };
-    Html(html)
+    }
 }
 
-pub async fn ontology_view() -> Html<String> {
-    let html = match std::fs::read_to_string("templates/ontology.html") {
-        Ok(content) => content,
-        Err(e) => {
-            eprintln!("Error loading templates/ontology.html: {}", e);
-            format!(
-                "<h1>Knowledge Graph</h1><p>Error loading template: {}</p>",
-                e
+/// Existence + visibility guard for the `/agent/:agent_id/*` page family.
+///
+/// These pages are shells: they render, then fetch their data from
+/// `/api/agents/:agent_id`. That API deliberately answers 404 — not 403 —
+/// for anything the caller cannot view, so it does not leak the existence
+/// of private agents (see `get_agent_handler`).
+///
+/// The page handlers used to take no path parameter at all. They served a
+/// full, crawlable, indexable shell for *any* slug — drafts, private
+/// agents, and agents that never existed. The shell then failed its own
+/// data fetch and sat there looking like a published-but-broken agent,
+/// which is exactly the confusion this guard removes.
+///
+/// Note the owner case matters as much as the anonymous one: the detail
+/// page carries the publish button, the Manage tab and the delete modal,
+/// so a draft's owner MUST still be able to load it. That is why this
+/// walks the same RBAC ladder as the API rather than simply requiring
+/// public+published.
+async fn require_visible_agent(
+    state: &AppState,
+    caller: Option<&AuthPrincipal>,
+    agent_id: &str,
+) -> Result<(), Response> {
+    let agent = crate::resolve_agent(state, agent_id)
+        .await
+        .map_err(|_| agent_not_found())?;
+
+    let vis = crate::handlers::agents::agent_effective_visibility(&agent);
+    let owner_id = agent.owner_id.clone().unwrap_or_default();
+
+    match caller {
+        Some(principal) => {
+            rbac::require_view(
+                &state.db,
+                principal,
+                ObjectType::Agent,
+                &agent.agent_id.to_string(),
+                &owner_id,
+                vis,
             )
+            .await
+            .map_err(|_| agent_not_found())?;
         }
-    };
-    Html(html)
+        None => {
+            if !rbac::visible_sync_anon(vis) {
+                return Err(agent_not_found());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// 404 body for a denied or missing agent page. Deliberately identical
+/// for "does not exist" and "exists but you may not see it" — same
+/// reasoning as the API.
+fn agent_not_found() -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        render_template("templates/404.html", "404 — Not Found"),
+    )
+        .into_response()
+}
+
+pub async fn agent_detail(
+    State(state): State<AppState>,
+    caller: Option<Extension<AuthPrincipal>>,
+    Path(agent_id): Path<String>,
+) -> Response {
+    let principal = caller.as_ref().map(|Extension(p)| p);
+    if let Err(denied) = require_visible_agent(&state, principal, &agent_id).await {
+        return denied;
+    }
+    render_template("templates/agent_detail.html", "Agent Bestiary").into_response()
+}
+
+pub async fn ontology_view(
+    State(state): State<AppState>,
+    caller: Option<Extension<AuthPrincipal>>,
+    Path(agent_id): Path<String>,
+) -> Response {
+    let principal = caller.as_ref().map(|Extension(p)| p);
+    if let Err(denied) = require_visible_agent(&state, principal, &agent_id).await {
+        return denied;
+    }
+    render_template("templates/ontology.html", "Knowledge Graph").into_response()
 }
 
 // ─── API routes ────────────────────────────────────────────────────
 
-pub async fn projector_view() -> Html<String> {
-    let html = match std::fs::read_to_string("templates/projector.html") {
-        Ok(content) => content,
-        Err(e) => {
-            eprintln!("Error loading templates/projector.html: {}", e);
-            format!(
-                "<h1>Embedding Projector</h1><p>Error loading template: {}</p>",
-                e
-            )
+/// Serves both `/projector` (no agent scope) and
+/// `/agent/:agent_id/projector`. `Option<Path<..>>` distinguishes them:
+/// the bare route has no path param, so extraction fails and yields
+/// `None`, while the agent-scoped route gets the same guard as the rest
+/// of the `/agent/:agent_id/*` family.
+pub async fn projector_view(
+    State(state): State<AppState>,
+    caller: Option<Extension<AuthPrincipal>>,
+    agent_id: Option<Path<String>>,
+) -> Response {
+    if let Some(Path(ref agent_id)) = agent_id {
+        let principal = caller.as_ref().map(|Extension(p)| p);
+        if let Err(denied) = require_visible_agent(&state, principal, agent_id).await {
+            return denied;
         }
-    };
-    Html(html)
+    }
+    render_template("templates/projector.html", "Embedding Projector").into_response()
 }
 
 pub async fn dashboard_view() -> Html<String> {

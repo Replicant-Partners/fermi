@@ -306,6 +306,33 @@ flags).
 These are live defects surfaced by the audit. None require the harness; several involve
 money or silent data corruption.
 
+> **Status re-checked 2026-08-15.** All three of the 🔴 items are now closed. Two had
+> already been fixed between this audit and now, and fixed properly rather than papered
+> over; the third is fixed in this pass.
+>
+> * **Stripe double-credit** — resolved. `handlers/billing.rs` now *claims* the session
+>   with `INSERT … ON CONFLICT DO NOTHING RETURNING` against
+>   `stripe_sessions_processed` (migration 182), so the database arbitrates and
+>   concurrent webhook deliveries cannot both proceed. It **fails closed** on a probe
+>   error — declining to credit, because Stripe retries and guessing spends real money —
+>   and releases the claim on both downstream failure paths so a retry can still succeed.
+> * **Credit destruction in `gas.rs`** — resolved. The royalty deposit and the
+>   auto-collect pair are no longer `let _ =`. Auto-collect is now a compensating
+>   transaction: debit, credit, refund the debit if the credit fails, and log
+>   `CREDITS DESTROYED` only in the genuinely unrecoverable case where the refund also
+>   fails. `check_low_balance` (🟠) now fails *toward* warning rather than toward "fine".
+> * **Protected routes unrated** — fixed 2026-08-15. `llm_rate_limit_middleware` was
+>   `#[allow(dead_code)]`: the limiter was built from `RATE_LIMIT_LLM` on every boot and
+>   never consulted, so the money-spending endpoints were the only ones with no rate
+>   limit while the public read-only routes had one. It is now layered on
+>   `protected_routes`, innermost so it keys on the resolved `AuthPrincipal`, and made
+>   path-aware against a declared `LLM_SPEND_ROUTES` list — scoped to the twelve LLM
+>   *dispatch* entry points rather than to everything that touches credits, because
+>   `charge_gas` debits first and a wallet already bounds what a user can spend. Applying
+>   a 10/min limit to all authenticated traffic would have got the limit raised until it
+>   was harmless. Four tests, including one asserting no pattern is broad enough to
+>   throttle ordinary reads.
+
 | Severity | Bug |
 |---|---|
 | 🔴 | **Stripe double-credit** — `src/handlers/billing.rs:255-266` + `:282-289`. |

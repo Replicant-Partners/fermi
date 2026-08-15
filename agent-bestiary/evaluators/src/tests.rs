@@ -14,6 +14,7 @@ use agent_bestiary_memory::{Episode, ExecutionStatus};
 
 fn bundle_for(agent_id: Uuid) -> EpisodeBundle {
     let ep = Episode {
+        response_text: None,
         episode_id: Uuid::new_v4(),
         agent_id,
         timestamp_ref: Utc::now(),
@@ -28,6 +29,7 @@ fn bundle_for(agent_id: Uuid) -> EpisodeBundle {
         output_tokens: None,
         cost_basis: None,
         cost_rate_key: None,
+        parent_episode_id: None,
         embedding: None,
         consolidated: false,
         tags: vec![],

@@ -1,0 +1,71 @@
+-- Migration 199: keep what the agent actually said.
+--
+-- ## What was missing
+--
+-- `episodes` records how a run turned out — status, tokens, cost, cost basis,
+-- provider, route provenance, and eventually a Brier score. It records the
+-- question (`query`). It has never recorded **the answer**.
+--
+-- What survives instead is a digest. `parse_evidence_text`
+-- (`src/agent_backend/tool_executor.rs`) turns the model's final text into
+-- `evidence` / `confidence` / `reasoning`, and `agent_output_to_episode`
+-- (`src/episodes.rs`) writes those into `context`. The document itself is
+-- dropped on the floor between the two.
+--
+-- The digest is lossy in a way that matters: `parse_evidence_text` is
+-- **per-agent** — `tool_executor.rs:1216` special-cases `genome_profiler` to
+-- reach into a nested `conservation` object. So what is retained is not the
+-- agent's output but one hand-written reading of it, and the reading changes
+-- when the parser changes, retroactively, with no record of what it was
+-- applied to.
+--
+-- ## Why this blocks the port-typing campaign
+--
+-- `docs/ABW_VERIFICATION_RECONCILIATION.md` §7.4 proposes remediating the
+-- corpus by **inducing** each agent's output type from what it has actually
+-- produced, rather than from what its card claims — because typing from
+-- intent is precisely how seven `output_contract`s came to name schemas that
+-- do not exist.
+--
+-- §7.7 then measured whether that evidence exists. It does not:
+--
+--     episodes                             3233 rows, no response column
+--     episodes.source_text                  496   (embedding provenance,
+--                                                  not the response)
+--     workspace_messages, sender=agent       66
+--     creature_conditions.genome_profile     13
+--
+-- One agent out of a hundred has a retained output corpus, and only because
+-- a product feature happens to cache it. So the fix for "we cannot verify
+-- what our agents produce" begins with "start keeping what our agents
+-- produce."
+--
+-- This is also why the column lands before the remediation batch rather than
+-- alongside it: evidence accrues only from the moment it exists, and every
+-- run executed before this migration is permanently un-inducible.
+--
+-- ## Shape
+--
+-- `TEXT`, nullable, no default. Nullable because every one of the 3233
+-- existing rows genuinely has no retained response and must stay
+-- distinguishable from a future run that returned an empty string — the same
+-- reason `cost_basis` (migration 194) is nullable rather than backfilled to a
+-- guess.
+--
+-- Its own column rather than another key in `context`, for two reasons.
+-- Reading `context` is on the hot path for consolidation and memory recall,
+-- which would then pay for a multi-kilobyte blob they never look at. And
+-- free-form metadata JSONB is the substrate of the SimOps event-kind bug
+-- (`crates/simops/src/event_kinds.rs` — a `kind` that survives only inside
+-- `metadata` because the column it was supposed to live in does not exist).
+-- A load-bearing value gets a column.
+--
+-- Not indexed: this is written once and read in bulk by the induction pass,
+-- never filtered on. TOAST handles the size.
+--
+-- No BEGIN/COMMIT and one statement — PgBouncer transaction mode.
+
+ALTER TABLE episodes ADD COLUMN IF NOT EXISTS response_text TEXT;
+
+COMMENT ON COLUMN episodes.response_text IS
+  'Raw final text the agent returned, before parse_evidence_text digests it. NULL for rows written before migration 199, which are permanently un-inducible. Source corpus for output-type induction — see docs/ABW_VERIFICATION_RECONCILIATION.md §7.7.';

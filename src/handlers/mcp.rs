@@ -287,6 +287,11 @@ pub async fn mcp_agent_rpc(
             };
 
             let tool_ctx = Arc::new(ToolContext {
+                // This path persists no episode of its own (mig-198), so there
+                // is nothing for a child to point at: anything delegated from
+                // here is recorded as a root. Its cost is still captured, just
+                // not linked into a delegation tree.
+                parent_episode_id: None,
                 memory_store: state.memory_store.clone(),
                 embedder: state.embedder.clone(),
                 registry: state.registry.clone(),
@@ -398,6 +403,9 @@ async fn run_llm_execute(
     };
 
     let tool_ctx = Arc::new(ToolContext {
+        // As above: no episode is written on this path, so delegated children
+        // are recorded as roots rather than linked to a (nonexistent) parent.
+        parent_episode_id: None,
         credentials,
         memory_store: state.memory_store.clone(),
         embedder: state.embedder.clone(),

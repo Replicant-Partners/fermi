@@ -346,6 +346,11 @@ pub(crate) async fn trigger_swarm_host_welcome(
     };
 
     let tool_context = Arc::new(ToolContext {
+        // This path persists no episode of its own (mig-198), so there is
+        // nothing for a child to point at: anything delegated from here is
+        // recorded as a root. Its cost is still captured, just not linked
+        // into a delegation tree.
+        parent_episode_id: None,
         credentials,
         memory_store: state.memory_store.clone(),
         embedder: state.embedder.clone(),

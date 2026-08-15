@@ -832,7 +832,10 @@ mod routing_tests {
                 declared.as_deref(),
                 &routable,
             );
-            assert_eq!(agent, "weather_oracle", "generalist displaced the specialist for {q:?}");
+            assert_eq!(
+                agent, "weather_oracle",
+                "generalist displaced the specialist for {q:?}"
+            );
             assert_eq!(reason, RouteReason::DeclaredSpecialist);
         }
     }
@@ -861,7 +864,11 @@ mod routing_tests {
     fn an_explicit_declaration_outranks_a_tag_match() {
         let roster = vec![
             // Tag fallback: three tags, one of which happens to match.
-            ("tag_matcher".to_string(), vec!["weather".to_string()], false),
+            (
+                "tag_matcher".to_string(),
+                vec!["weather".to_string()],
+                false,
+            ),
             // Explicit, and deliberately WIDER, so it can only win on being
             // explicit rather than on the narrower-claim tie-break.
             (
@@ -886,7 +893,10 @@ mod routing_tests {
         let roster = vec![
             (
                 "jack_of_all".to_string(),
-                (0..12).map(|i| format!("d{i}")).chain(["climate".to_string()]).collect(),
+                (0..12)
+                    .map(|i| format!("d{i}"))
+                    .chain(["climate".to_string()])
+                    .collect(),
                 true,
             ),
             ("specialist".to_string(), vec!["climate".to_string()], true),
@@ -901,7 +911,10 @@ mod routing_tests {
     #[test]
     fn general_and_unroutable_never_produce_a_declared_specialist() {
         let roster = real_roster();
-        assert_eq!(declared_specialist_ranked("general", &roster, &|_| true), None);
+        assert_eq!(
+            declared_specialist_ranked("general", &roster, &|_| true),
+            None
+        );
         assert_eq!(declared_specialist_ranked("", &roster, &|_| true), None);
         // Nothing routable => no declared specialist, even with matches.
         assert_eq!(
@@ -924,7 +937,10 @@ mod routing_tests {
             assert_eq!(detect_domain(q), "climate", "{q:?} should be climate");
         }
         // And the old false-positive guard still holds.
-        assert_ne!(detect_domain("will the training programme finish"), "climate");
+        assert_ne!(
+            detect_domain("will the training programme finish"),
+            "climate"
+        );
     }
 
     #[test]
@@ -945,7 +961,6 @@ mod routing_tests {
         );
         assert_eq!(agent, "nba_analyst");
     }
-
 
     /// Stands in for a console whose local card directory resolved.
     fn all_available(_: &str) -> bool {

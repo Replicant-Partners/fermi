@@ -398,6 +398,7 @@ impl AgentExecutor for LLMExecutor {
         };
 
         Ok(AgentOutput {
+            raw_response: Some(full_response_text.clone()),
             agent_name: agent.name.clone(),
             agent_type: agent.agent_type.clone().unwrap_or_default(),
             timestamp: Utc::now(),

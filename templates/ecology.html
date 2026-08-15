@@ -382,11 +382,29 @@ function renderSheet(s) {
   const wf = s.workflow_template || null;
 
   // ── I/O contract ────────────────────────────────────────────────
-  // The material interface. `accepts`/`produces` are labels, and only a
-  // handful of cards declare a typed `output_contract` on top of them, so
-  // the panel states which of the two you are looking at. Presenting a
-  // label match as a contract match is how you end up believing two agents
-  // compose when nothing has verified that they do.
+  // The material interface. `accepts`/`produces` are labels, and the panel
+  // must say which of the two you are looking at: presenting a label match
+  // as a contract match is how you end up believing two agents compose
+  // when nothing has verified that they do.
+  //
+  // Measured by `scripts/port_census.py` (2026-08-15, label-set fingerprint
+  // d9fc503bdf753a79) across the 100 curated cards: 99 declare `accepts`
+  // and 99 declare `produces`, for 513 distinct labels — of which only 14
+  // appear on both an accepts and a produces, so 499 cannot form a seam
+  // with anything. Seven cards declare an `output_contract`, and **none of
+  // the seven contains a schema**. They carry `produces_schema`, a string
+  // *naming* one (`weather_oracle/raw_predictive_distribution`).
+  //
+  // This panel used to render that name under the heading "Schema" and
+  // suppress the caveat for it, which certified seven cards as typed when
+  // none were — the exact error the caveat exists to prevent, inside the
+  // caveat's own box. A name is a contract only once something resolves
+  // it, so the caveat now keys on a *resolvable schema* rather than on the
+  // presence of the block.
+  const ocSchema = oc && oc.schema && typeof oc.schema === "object" ? oc.schema : null;
+  const ocName   = oc && oc.produces_schema ? oc.produces_schema : null;
+  const ocHttp   = oc && oc.schema_endpoint ? oc.schema_endpoint : null;
+
   const ioHtml = `
     <div class="ports">
       <div class="port-col"><div class="port-label">Accepts</div>
@@ -396,16 +414,22 @@ function renderSheet(s) {
     </div>
     ${oc ? `
       <div class="contract-box">
-        <div class="port-label">Typed output contract</div>
+        <div class="port-label">${ocSchema ? "Typed output contract" : "Output contract — untyped"}</div>
         ${oc.domain ? `<div class="kv"><span class="k">Domain</span><span class="v">${esc(oc.domain)}</span></div>` : ""}
-        ${oc.produces_schema ? `<div class="kv"><span class="k">Schema</span><span class="v mono">${esc(oc.produces_schema)}</span></div>` : ""}
+        ${ocSchema ? `<div class="kv"><span class="k">Schema</span><span class="v mono">inline, ${Object.keys(ocSchema).length} keys</span></div>` : ""}
+        ${ocName ? `<div class="kv"><span class="k">Schema name</span><span class="v mono">${esc(ocName)}</span>${
+            ocSchema ? "" : `<span class="v" style="color:var(--fg4)"> — a name, not a schema</span>`}</div>` : ""}
+        ${ocHttp ? `<div class="kv"><span class="k">Served at</span><span class="v mono">${esc(ocHttp)}</span></div>` : ""}
         ${oc.calibration ? `
           <div class="kv"><span class="k">Calibrated by</span><span class="v">${esc(oc.calibration.signal || "—")}</span></div>
           ${oc.calibration.comparison ? `<div class="kv"><span class="k">Compared as</span><span class="v">${esc(oc.calibration.comparison)}</span></div>` : ""}
           ${oc.calibration.resolution_delay ? `<div class="kv"><span class="k">Resolves in</span><span class="v">${esc(oc.calibration.resolution_delay)}</span></div>` : ""}` : ""}
-      </div>`
-      : `<div class="caveat">No typed schema declared — the ports above are
-         labels, so composability with them is asserted, not verified.</div>`}
+      </div>` : ""}
+    ${ocSchema ? "" : `<div class="caveat">${ocName
+        ? `Names a schema (<span class="mono">${esc(ocName)}</span>) but does not declare
+           one, and nothing resolves that name to a type.`
+        : `No typed schema declared.`} The ports above are labels, so composability
+         with them is asserted, not verified.</div>`}
     ${fc ? `
       <div class="contract-box">
         <div class="port-label">Fermi contract</div>

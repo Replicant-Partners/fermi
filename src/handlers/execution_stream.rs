@@ -152,10 +152,18 @@ pub async fn execute_agent_stream_handler(
             .map(|p| p.contains("ONLY") || p.contains("raw JSON"))
             .unwrap_or(false);
 
+    // Minted before the executor because the episode is only written later,
+    // inside the SSE stream, while delegated children need the id from inside
+    // the tool loop (mig-198). The bypass branch builds no tool context and so
+    // can delegate to nothing; the id is then simply this episode's own id.
+    let minted_episode_id = uuid::Uuid::new_v4();
+
     let executor: Arc<dyn AgentExecutor> = if prompt_demands_format {
         state.registry.executor_arc()
     } else {
         let tool_context = Arc::new(ToolContext {
+            // Root of this execution's delegation tree (mig-198).
+            parent_episode_id: Some(minted_episode_id),
             memory_store: state.memory_store.clone(),
             embedder: state.embedder.clone(),
             registry: state.registry.clone(),
@@ -193,6 +201,9 @@ pub async fn execute_agent_stream_handler(
     // v0.10.1 credit-flow: capture the owner + tier at handler entry
     // so the async stream closure can route the royalty on completion.
     let agent_owner_id = db_agent.owner_id.clone();
+    // The declared input ports, captured before the spawn so the streaming
+    // path can verify the interface match the same way execution.rs does.
+    let declared_accepts = card.accepts.clone();
     let agent_tier = db_agent.tier.clone();
 
     let stream = async_stream::stream! {
@@ -237,9 +248,30 @@ pub async fn execute_agent_stream_handler(
                     &query,
                     &output,
                 );
+                // Use the id advertised to the tool context, so children that
+                // already stamped it as their parent resolve to this row.
+                episode.episode_id = minted_episode_id;
                 // Record how the agent was asked, alongside how it did.
                 if let Some(ref inv) = invocation {
                     crate::stamp_invocation(&mut episode, inv);
+                }
+                // Verify the asking against the card — see execution.rs. Both
+                // execute endpoints must check, or the unchecked one becomes
+                // the one callers use.
+                {
+                    let verified = fermi::port_trust::bind_input(&declared_accepts);
+                    let claimed = invocation
+                        .as_ref()
+                        .and_then(|i| i.get("input_binding"))
+                        .and_then(|v| v.as_str());
+                    if verified.is_mismatch() {
+                        tracing::warn!(
+                            agent = %agent_name,
+                            declared = ?declared_accepts,
+                            "free-text query sent to an agent that declares no text input"
+                        );
+                    }
+                    crate::stamp_input_binding(&mut episode, &verified, claimed);
                 }
                 // Stamp the (agent, human) dyad — see execution.rs.
                 let dyad_id = agent_bestiary_memory::dyad_id(agent_db_id, &caller_clone);

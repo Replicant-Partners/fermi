@@ -34,7 +34,12 @@ use crate::{
 /// `visibility='public'` is still author-only. This function bakes
 /// that rule in one place so every handler (list, detail, execute,
 /// wallet, funding) gets the same answer.
-fn agent_effective_visibility(agent: &Agent) -> Visibility {
+///
+/// `pub(crate)` so the HTML page handlers in `handlers::pages` can gate
+/// the `/agent/:agent_id/*` shells on exactly the same rule the JSON API
+/// uses. A fourth hand-rolled copy of this two-line rule is how the page
+/// and the API end up disagreeing about what is public.
+pub(crate) fn agent_effective_visibility(agent: &Agent) -> Visibility {
     if agent.status == "published" && agent.visibility == "public" {
         Visibility::Public
     } else if agent.visibility == "unlisted" {
@@ -1384,6 +1389,7 @@ pub async fn import_embeddings_handler(
     let mut imported = 0;
     for ep in &req.episodes {
         let episode = Episode {
+            response_text: None,
             episode_id: uuid::Uuid::new_v4(),
             agent_id,
             timestamp_ref: chrono::Utc::now(),
@@ -1404,6 +1410,7 @@ pub async fn import_embeddings_handler(
             output_tokens: None,
             cost_basis: None,
             cost_rate_key: None,
+            parent_episode_id: None,
             embedding: Some(ep.embedding.clone()),
             consolidated: false,
             tags: vec![],
@@ -2161,7 +2168,7 @@ pub async fn update_agent_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Path(agent_id): Path<String>,
-    Json(updates): Json<AgentUpdate>,
+    Json(mut updates): Json<AgentUpdate>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db_agent = resolve_agent(&state, &agent_id).await?;
 
@@ -2181,6 +2188,14 @@ pub async fn update_agent_handler(
         agent_effective_visibility(&db_agent),
     )
     .await?;
+
+    // Authorize first, then validate: a caller with no edit rights should
+    // learn that, not which fields happen to be editable.
+    reject_lifecycle_fields(&updates, &agent_id).map_err(|m| (StatusCode::BAD_REQUEST, m))?;
+    // Defensive: keep the values out of the SET clause even if the guard
+    // above is ever relaxed to a warning.
+    updates.status = None;
+    updates.visibility = None;
 
     // Reject phantom tool declarations before they reach the DB.
     //
@@ -2301,6 +2316,40 @@ pub async fn update_agent_handler(
         "version_number": new_version.as_ref().map(|v| v.version_number),
         "version_id": new_version.as_ref().map(|v| v.version_id),
     })))
+}
+
+/// Lifecycle fields are not editable through `PUT /api/agents/:agent_id`.
+///
+/// `AgentUpdate` carries `status` and `visibility` because internal callers
+/// legitimately write them — `restore_agent_version_handler` restores a
+/// prior visibility, and `workflows::publish_pipeline` sets both. But
+/// accepting them over the generic update route made the entire publish
+/// gate optional: a single
+///
+/// ```text
+/// PUT /api/agents/:id  {"status":"published","visibility":"public"}
+/// ```
+///
+/// put an agent into the public catalogue with no publish checks, no
+/// lifecycle transition validation and no publish fee — bypassing
+/// `publish_pipeline::publish_agent`, its admin-only `force` gate and its
+/// `admin_bypass_events` audit trail entirely.
+///
+/// Rejects rather than silently dropping: a client that believed it was
+/// publishing needs to learn that it wasn't.
+fn reject_lifecycle_fields(updates: &AgentUpdate, agent_id: &str) -> Result<(), String> {
+    let attempted = match (updates.status.is_some(), updates.visibility.is_some()) {
+        (false, false) => return Ok(()),
+        (true, true) => "status and visibility",
+        (true, false) => "status",
+        (false, true) => "visibility",
+    };
+    Err(format!(
+        "cannot change {attempted} via PUT /api/agents/:agent_id — lifecycle \
+         transitions run through the publish pipeline so publish checks, fees \
+         and audit logging are applied. Use POST /api/agents/{agent_id}/publish, \
+         /archive or /restore."
+    ))
 }
 
 /// Doc 12 § Capability 3 — collect the names of fields the caller is changing
@@ -4143,6 +4192,159 @@ pub async fn get_agent_published_tools_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ─── Lifecycle-field guard on PUT ────────────────────────────
+    //
+    // These are the regression tests for the publish-gate bypass: before
+    // this guard, `PUT /api/agents/:id` wrote `status` and `visibility`
+    // straight into the SET clause, so the publish pipeline (checks, fee,
+    // transition validation, admin-only force, bypass audit) could be
+    // skipped entirely by anyone with edit rights on the agent.
+
+    #[test]
+    fn put_rejects_status_change() {
+        let updates = AgentUpdate {
+            status: Some("published".into()),
+            ..Default::default()
+        };
+        let err = reject_lifecycle_fields(&updates, "my_agent").unwrap_err();
+        assert!(err.contains("cannot change status"), "got: {err}");
+        assert!(err.contains("/api/agents/my_agent/publish"), "got: {err}");
+    }
+
+    #[test]
+    fn put_rejects_visibility_change() {
+        let updates = AgentUpdate {
+            visibility: Some("public".into()),
+            ..Default::default()
+        };
+        let err = reject_lifecycle_fields(&updates, "my_agent").unwrap_err();
+        assert!(err.contains("cannot change visibility"), "got: {err}");
+    }
+
+    /// The exact bypass that made the publish gate optional.
+    #[test]
+    fn put_rejects_combined_publish_bypass() {
+        let updates = AgentUpdate {
+            status: Some("published".into()),
+            visibility: Some("public".into()),
+            ..Default::default()
+        };
+        let err = reject_lifecycle_fields(&updates, "zk_authored_probe").unwrap_err();
+        assert!(
+            err.contains("cannot change status and visibility"),
+            "got: {err}"
+        );
+    }
+
+    /// Ordinary card edits must still pass. The guard is about lifecycle,
+    /// not about freezing the card.
+    #[test]
+    fn put_allows_non_lifecycle_edits() {
+        let updates = AgentUpdate {
+            description: Some("a better description".into()),
+            system_prompt: Some("a better prompt".into()),
+            tags: Some(vec!["research".into()]),
+            temperature: Some(0.4),
+            ..Default::default()
+        };
+        assert!(reject_lifecycle_fields(&updates, "my_agent").is_ok());
+    }
+
+    /// A no-op PUT is not an error.
+    #[test]
+    fn put_allows_empty_update() {
+        assert!(reject_lifecycle_fields(&AgentUpdate::default(), "my_agent").is_ok());
+    }
+
+    // ─── Effective visibility ──────────────────────────────────
+
+    fn agent_with(status: &str, visibility: &str) -> Agent {
+        Agent {
+            agent_id: uuid::Uuid::nil(),
+            agent_name: "probe".into(),
+            agent_type: default_agent_type(),
+            version: "1.0.0".into(),
+            tier: "community".into(),
+            executor_type: default_executor(),
+            model: default_model(),
+            temperature: default_temperature(),
+            mcp_servers: None,
+            mcp_tools: None,
+            description: None,
+            author: "tester".into(),
+            system_prompt: None,
+            visibility: visibility.into(),
+            owner_id: Some("tester".into()),
+            tags: vec![],
+            current_ontology_commit: None,
+            current_ontology_snapshot_id: None,
+            last_consolidated_at: None,
+            total_executions: 0,
+            successful_executions: 0,
+            failed_executions: 0,
+            total_cost_usd: None,
+            avg_execution_time_ms: 0,
+            dreaming_budget_credits: 0,
+            dreaming_credits_used: 0,
+            dreaming_budget_reset_at: None,
+            education_budget_credits: 0,
+            education_credits_used: 0,
+            auto_collect_pct: 0,
+            display_alias: None,
+            llm_provider: default_llm_provider(),
+            embedding_provider: default_embedding_provider(),
+            embedding_model: default_embedding_model(),
+            embedding_dimension: default_embedding_dimension(),
+            sample_queries: vec![],
+            status: status.into(),
+            fork_pricing: None,
+            forked_from: None,
+            fork_count: 0,
+            accepts: vec![],
+            produces: vec![],
+            workflow_template: None,
+            prompt_template: None,
+            requires_secrets: None,
+            model_ladder: json!([]),
+            min_tier: "free".into(),
+            capability_gates: json!({}),
+            persona_version: 1,
+            fermi_contract: None,
+            model_params: json!({}),
+            valence: None,
+            output_contract: None,
+            taxonomy: None,
+        }
+    }
+
+    /// The rule the `/agent/:agent_id/*` page guard now shares with the
+    /// JSON API: public requires BOTH published and public. A draft with
+    /// `visibility='public'` is still author-only — which is precisely
+    /// the state that used to render a crawlable public page.
+    #[test]
+    fn public_requires_both_published_and_public() {
+        assert_eq!(
+            agent_effective_visibility(&agent_with("published", "public")),
+            Visibility::Public
+        );
+        assert_eq!(
+            agent_effective_visibility(&agent_with("draft", "public")),
+            Visibility::Private
+        );
+        assert_eq!(
+            agent_effective_visibility(&agent_with("published", "private")),
+            Visibility::Private
+        );
+        assert_eq!(
+            agent_effective_visibility(&agent_with("archived", "public")),
+            Visibility::Private
+        );
+        assert_eq!(
+            agent_effective_visibility(&agent_with("draft", "unlisted")),
+            Visibility::Shared
+        );
+    }
 
     /// Doc 12 § Capability 3 — `collect_changed_fields` must surface every
     /// field the PUT body sets, so the activity-feed event can render

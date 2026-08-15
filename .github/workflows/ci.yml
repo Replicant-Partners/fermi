@@ -227,6 +227,50 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
         run: cargo test --test rollup_contract -- --ignored --nocapture --test-threads=1
 
+      # Grounding contract. The third in the family, after presence
+      # (schema_trust) and truth (rollup_trust): could this value have come
+      # from anywhere at all? `genome_profiler` was asked for genome size,
+      # karyotype, divergence date and IUCN status with two GBIF tools that
+      # return taxonomy, and filled every one of them for 56 episodes.
+      #
+      # Offline and blocking — pure functions over JSON, no database, no LLM.
+      - name: Grounding contract — ungrounded output fields
+        run: cargo test --lib -p fermi grounding_trust
+
+      # Port binding parity. `scripts/port_census.py` reports the port-typing
+      # burn-down; `src/port_trust.rs` enforces at both execute boundaries.
+      # If the two rules drift, the scoreboard stops describing the gate —
+      # a number that still looks healthy while the thing it measures does
+      # something else, which is the defect class this whole line of work
+      # exists to catch.
+      #
+      # Fixture: agents/port_binding_expected.json, regenerated with
+      #   scripts/port_census.py --emit-expected agents/port_binding_expected.json
+      - name: Port binding — census and gate agree
+        run: cargo test --test port_binding_parity
+
+      # The census must also be self-consistent. Its headline counts were
+      # derived by hand twice and were wrong both times (508 and 511 distinct
+      # labels; the answer is 510), each wrong figure internally consistent,
+      # which is how they survived. `--self-check` recomputes them two ways.
+      - name: Port census — self-check
+        run: ./scripts/port_census.py
+
+      # Burn-down ratchet. Not a target — it does not demand progress, only
+      # that nothing regresses while nobody is looking. Same mechanism as the
+      # migration baseline that went 26 -> 6.
+      #
+      # `registered` leads deliberately: `unresolved` falling is not evidence
+      # of progress, because deleting a fake port shrinks it exactly as well
+      # as typing a real one. Retiring genome_profiler's two invented ports
+      # moved the corpus from 513 labels to 510 without typing anything.
+      #
+      # Loosening is allowed and must be deliberate: regenerate
+      # agents/port_burndown_baseline.json in the same commit, so it shows up
+      # in review instead of in six months.
+      - name: Port burn-down — no regressions
+        run: ./scripts/port_census.py --gate
+
       # TODO: fermi-memory integration tests need rework — they insert episodes
       # without creating agents first, violating FK constraints added in migration 010.
       # Re-enable after updating tests to create agents before episodes.

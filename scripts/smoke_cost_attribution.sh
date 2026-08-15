@@ -55,16 +55,35 @@ run_sql "$HERE/scripts/sql/cost_attribution_fixture.sql" fixture
 
 for m in 193_route_provenance_outcomes \
          194_episode_cost_basis \
-         195_claim_episode_correlation; do
+         197_claim_episode_correlation \
+         198_episode_delegation_tree; do
     echo "→ migration $m"
     run_sql "$HERE/migrations/$m.sql" "$m"
 done
 
 # Idempotency: the platform re-runs migrations on every boot, so a second
 # application must be a no-op rather than an error.
-echo "→ re-applying 194 + 195 (idempotency)"
-run_sql "$HERE/migrations/194_episode_cost_basis.sql" 194-again
-run_sql "$HERE/migrations/195_claim_episode_correlation.sql" 195-again
+# Idempotency, tested the way production actually does it. `run_migrations()`
+# keeps NO applied-state table: it re-runs every file, in list order, on every
+# boot. So the test is not "is each file idempotent in isolation" but "does the
+# whole sequence survive being replayed". Replaying in order is what catches a
+# later migration widening a view that an earlier one then tries to shrink --
+# which fails with "cannot drop columns from view" and takes the boot down.
+echo "→ second boot: replaying the whole sequence in registration order"
+for m in 193_route_provenance_outcomes \
+         194_episode_cost_basis \
+         197_claim_episode_correlation \
+         198_episode_delegation_tree; do
+    run_sql "$HERE/migrations/$m.sql" "$m-again"
+done
+
+echo "→ third boot: once more, to catch state that only diverges after two"
+for m in 193_route_provenance_outcomes \
+         194_episode_cost_basis \
+         197_claim_episode_correlation \
+         198_episode_delegation_tree; do
+    run_sql "$HERE/migrations/$m.sql" "$m-again2"
+done
 
 echo "→ assertions"
 docker cp "$HERE/scripts/sql/cost_attribution_assertions.sql" \

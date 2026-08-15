@@ -79,6 +79,17 @@ pub struct ToolContext {
     /// matching the pre-existing `user_secrets` propagation above;
     /// funding a child by *its own* owner is a SPEC_28 P5.2 follow-up.
     pub credentials: std::sync::Arc<crate::agent_backend::credentials::ResolvedCredentials>,
+    /// Episode id of the execution currently running (mig-198).
+    ///
+    /// Set by whoever mints the episode id, BEFORE execution starts, so the
+    /// delegation tools can stamp it as `parent_episode_id` on the child
+    /// episodes they write. That is what makes a compound execution's true
+    /// cost recoverable: the caller records only its own tokens, and the tree
+    /// is reassembled from these links.
+    ///
+    /// `None` for paths that don't persist an episode; their delegated
+    /// children are still recorded, just as roots.
+    pub parent_episode_id: Option<Uuid>,
     /// Optional eval-trigger bridge. The library can't reach AppState
     /// (it lives in the bin), so handlers that have AppState build an
     /// EvalTriggerImpl and stash it here. The MCP tool
@@ -4452,6 +4463,60 @@ async fn execute_query_ontology(
     serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {}", e))
 }
 
+/// Persist an episode for a delegated child execution (mig-198).
+///
+/// Before this existed, both delegation tools ran a child agent, read its
+/// `reasoning` and `evidence`, and dropped the rest of the `AgentOutput` on the
+/// floor. The child's tokens, cost, provider and model were never recorded, so
+/// a compound agent under-reported its true cost by its entire fan-out and a
+/// delegate-only agent had no economic record at all.
+///
+/// Writes the child's OWN episode rather than folding its tokens into the
+/// caller's, so each agent stays separately costable and creditable — the
+/// premise the marketplace rests on. Priced through the same
+/// `agent_output_to_episode` / `AgentOutput::cost()` path as every other
+/// episode, so a delegated run cannot drift onto a different cost basis.
+///
+/// Best-effort by design: a bookkeeping failure must never fail the delegation
+/// the caller is waiting on. Logged at `warn` because a silent gap here
+/// under-reports real spend, and returns the new episode id so nested
+/// delegation can carry the chain further.
+/// `episode_id` is minted by the caller BEFORE the child runs, so it can be
+/// placed on the child's own `ToolContext.parent_episode_id` and a grandchild
+/// can link to it. Same reason the request handler mints ahead of execution
+/// (mig-197): a row that is written later cannot be pointed at by a task that
+/// starts earlier.
+async fn record_delegated_episode(
+    ctx: &ToolContext,
+    target_agent_id: Uuid,
+    episode_id: Uuid,
+    task: &str,
+    output: &crate::agent_backend::executor::AgentOutput,
+) -> Option<Uuid> {
+    let mut episode = crate::episodes::agent_output_to_episode(target_agent_id, task, output);
+    episode.episode_id = episode_id;
+    episode.parent_episode_id = ctx.parent_episode_id;
+    // Findable as delegated work without having to join on the parent.
+    episode.tags.push("delegated".to_string());
+    if let Some(caller) = ctx.current_agent_id {
+        episode.tags.push(format!("delegated_by:{caller}"));
+    }
+
+    match ctx.memory_store.store_episode(episode).await {
+        Ok(id) => Some(id),
+        Err(e) => {
+            tracing::warn!(
+                target_agent = %target_agent_id,
+                parent_episode = ?ctx.parent_episode_id,
+                error = %e,
+                "[delegation] failed to record child episode — this run's cost \
+                 will be missing from per-forecast and per-agent totals",
+            );
+            None
+        }
+    }
+}
+
 async fn execute_execute_agent(
     input: &serde_json::Value,
     ctx: &ToolContext,
@@ -4466,6 +4531,12 @@ async fn execute_execute_agent(
         .get("query")
         .and_then(|v| v.as_str())
         .ok_or("Missing required parameter: query")?;
+
+    // mig-198: minted before the child runs, so it can be placed on the
+    // child's own ToolContext and used as the id of the episode recorded for
+    // this delegated execution. An id generated after the fact could not be
+    // handed to a task that has already started.
+    let child_episode_id = Uuid::new_v4();
 
     // Optional cross-workspace delegation: when workspace_id is provided,
     // the target agent runs inside that workspace's full context (tools,
@@ -4545,6 +4616,9 @@ async fn execute_execute_agent(
                     .flatten();
 
             let target_tool_context = std::sync::Arc::new(ToolContext {
+                // The child's own episode, so anything IT delegates to links
+                // to the child rather than skipping a level (mig-198).
+                parent_episode_id: Some(child_episode_id),
                 credentials: ctx.credentials.clone(),
                 memory_store: ctx.memory_store.clone(),
                 embedder: ctx.embedder.clone(),
@@ -4587,6 +4661,35 @@ async fn execute_execute_agent(
             .await
             .map_err(|e| format!("Agent execution failed: {}", e))?
     };
+
+    // mig-198: record the child's own cost. Needs the target's DB uuid, which
+    // this tool never resolved because it only ever needed the card by name.
+    // When there is no DB handle we cannot write an episode at all, so the
+    // spend stays unrecorded — logged rather than passed over in silence,
+    // because that is a hole in the cost ledger and should be visible as one.
+    if let Some(ref db) = ctx.db {
+        match sqlx::query_scalar::<_, Uuid>(
+            "SELECT agent_id FROM agents WHERE agent_name = $1 LIMIT 1",
+        )
+        .bind(agent_name)
+        .fetch_optional(db)
+        .await
+        {
+            Ok(Some(target_db_id)) => {
+                record_delegated_episode(ctx, target_db_id, child_episode_id, query, &output).await;
+            }
+            _ => tracing::warn!(
+                agent = %agent_name,
+                "[delegation] target agent not found in DB; child episode not \
+                 recorded and its cost will be missing from totals",
+            ),
+        }
+    } else {
+        tracing::debug!(
+            agent = %agent_name,
+            "[delegation] no DB handle; child episode not recorded",
+        );
+    }
 
     // Format the output — include metadata.reasoning so callers can
     // parse domain-specific JSON (e.g. forage_scout's structured response)
@@ -4707,8 +4810,15 @@ async fn execute_delegate_to_agent(
         credentials: ctx.credentials.clone(),
     };
 
+    // mig-198: minted before the child runs so it can be handed to the child's
+    // own ToolContext below, letting a grandchild link to it.
+    let child_episode_id = Uuid::new_v4();
+
     // Build a ToolAwareExecutor with workspace tools but NO delegation
     let tool_context = Arc::new(ToolContext {
+        // The child's own episode, so nested delegation links to the child
+        // rather than skipping a level (mig-198).
+        parent_episode_id: Some(child_episode_id),
         credentials: ctx.credentials.clone(),
         memory_store: ctx.memory_store.clone(),
         embedder: ctx.embedder.clone(),
@@ -4737,6 +4847,11 @@ async fn execute_delegate_to_agent(
         .await
         .map_err(|e| format!("Delegation failed: {}", e))?;
 
+    // mig-198: record the child's own cost before its output is reduced to
+    // prose. Everything below this line throws the token accounting away.
+    record_delegated_episode(ctx, target_agent_id, child_episode_id, task, &output).await;
+
+    let raw_response = output.metadata.reasoning.clone().unwrap_or_default();
     // Post the result as a workspace message from the delegated agent.
     //
     // Pass the raw LLM response through verbatim (see issue #2 / docs/specs/

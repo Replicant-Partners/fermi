@@ -169,6 +169,7 @@ impl TwoWriteMemory {
 
         // Build the synthetic episode by copying the original where possible.
         Ok(Episode {
+            response_text: None,
             episode_id: Uuid::new_v4(),
             agent_id: intervention.agent_id,
             timestamp_ref: Utc::now(),
@@ -203,6 +204,8 @@ impl TwoWriteMemory {
             output_tokens: None,
             cost_basis: None,
             cost_rate_key: None,
+            // A correction is authored by a human, not delegated by an agent.
+            parent_episode_id: None,
             embedding: None, // will be re-embedded by the consolidation worker
             consolidated: false,
             tags: vec![

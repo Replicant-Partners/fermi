@@ -295,9 +295,39 @@ correlation id, not a cost model.
 > `scripts/smoke_cost_attribution.sh` pins it: mutation-tested by removing the
 > DISTINCT, which reports $0.27 against a true $0.09 and is caught by DEDUP-001.
 >
-> **Gap 3 (delegation rollup) is still open** — sub-agent tokens never reach the
-> parent's `tokens_used` (`tool_executor.rs:412`), so compound agents
-> under-report. That is the next piece.
+> **Status: gap 3 implemented.** It was worse than "tokens aren't folded in":
+> the delegation tools ran the child, read its `reasoning` and `evidence`, and
+> **discarded the whole `AgentOutput`**. No episode was written, so a delegated
+> run's cost did not exist — it was absent, not mis-attributed.
+>
+> Migration 198 adds `episodes.parent_episode_id`, and each delegated run now
+> writes its **own** episode via the shared `agent_output_to_episode`
+> constructor (moved to `src/episodes.rs` so lib and bin share one). Chosen over
+> folding tokens into the caller because folding makes the parent's total right
+> and destroys the attribution — you could not say which member cost what, nor
+> credit or pay it. Since per-agent attribution *is* the marketplace premise,
+> each agent keeps its own row.
+>
+> Consequence to internalise: **a compound execution's cost is the sum over the
+> tree, never the root row.** `forecast_cost_attribution` walks it with a
+> `WITH RECURSIVE` descent, because a delegated child has no claim of its own
+> and can only reach a forecast through its nearest claiming ancestor.
+>
+> Two bugs caught by testing rather than review, both of which would have
+> shipped:
+> 1. A naive forecast→claim→episode join multiplies cost by driver count
+>    (claims fan out one row per driver). Mutation-tested: removing the
+>    `DISTINCT` reports $0.27 against a true $0.09.
+> 2. Appending a column to `route_outcomes` **breaks the second boot.**
+>    `run_migrations()` keeps no applied-state table — every file re-runs every
+>    boot — so migration 193 recreates that view without the new column and
+>    Postgres refuses: *"cannot drop columns from view"*. 197 therefore keeps
+>    193's column list byte-identical and changes only the JOIN. The smoke test
+>    now replays the whole sequence three times.
+>
+> **Still unpriced.** Delegated spend is now *measurable*; no charge is raised
+> for it. Whether it should be is the open pricing question — measuring first is
+> deliberate.
 
 ### 4.2.1 Why this matters more for C than for A
 

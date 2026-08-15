@@ -401,6 +401,7 @@ impl ToolAwareExecutor {
         };
 
         Ok(AgentOutput {
+            raw_response: Some(text.clone()),
             agent_name: agent.name.clone(),
             agent_type: agent.agent_type.clone().unwrap_or_default(),
             timestamp: Utc::now(),
@@ -686,6 +687,7 @@ impl ToolAwareExecutor {
         };
 
         Ok(AgentOutput {
+            raw_response: Some(text.clone()),
             agent_name: agent.name.clone(),
             agent_type: agent
                 .agent_type
@@ -1213,22 +1215,60 @@ mod tests {
         );
     }
 
-    /// genome_profiler response: must extract `summary` from the nested `conservation` object.
+    /// genome_profiler response: `summary` is lifted from the top-level field.
+    ///
+    /// The fixture is a POST-ENFORCEMENT document (mig-199/200,
+    /// `grounding_trust`): genome, divergence and conservation are null with
+    /// `_provenance` stating why, and the summary claims only what GBIF
+    /// returned.
+    ///
+    /// It did not used to be. The previous fixture asserted against
+    /// `"estimated_size_mb": "480"` and a summary reading "...with a ~480 Mb
+    /// genome typical for Lepidoptera" — values no tool this agent has could
+    /// supply. The test corpus had normalised the fabrication, so any
+    /// validator written later would have been written to keep this test
+    /// green. A fixture is a specification; this one specified the bug.
     #[test]
     fn parse_evidence_text_genome_profiler_response() {
         let json = r#"{
             "taxonomy": {"kingdom": "Animalia", "order": "Lepidoptera", "species": "Danaus plexippus"},
-            "genome": {"estimated_size_mb": "480", "ploidy": "diploid"},
-            "phylogeny": {"superorder": "Holometabola", "sister_taxa": ["Papilionidae"], "divergence_mya": "90"},
-            "conservation": {"iucn_status": "Not Evaluated"},
-            "summary": "Danaus plexippus occupies Holometabola with a ~480 Mb genome typical for Lepidoptera."
+            "taxonomy_provenance": "gbif_verified",
+            "genome": {"estimated_size_mb": null, "chromosome_count": null, "notable_genes": null, "ploidy": null},
+            "genome_provenance": "unavailable_no_tool_source",
+            "phylogeny": {"sister_taxa": ["Danaus gilippus"], "superorder": null, "divergence_mya": null, "defining_traits": null},
+            "phylogeny_provenance": "gbif_verified",
+            "conservation": {"iucn_status": null, "population_trend": null, "genetic_diversity_notes": null},
+            "conservation_provenance": "unavailable_no_tool_source",
+            "summary": "GBIF places Danaus plexippus in Nymphalidae, alongside Danaus gilippus."
         }"#;
         let (evidence, _conf, _reasoning) = super::parse_evidence_text(json, "genome_profiler");
         assert_eq!(evidence.len(), 1);
         assert_eq!(
             evidence[0].summary.as_deref(),
-            Some("Danaus plexippus occupies Holometabola with a ~480 Mb genome typical for Lepidoptera."),
+            Some("GBIF places Danaus plexippus in Nymphalidae, alongside Danaus gilippus."),
             "genome_profiler summary must be extracted from top-level `summary` field"
+        );
+    }
+
+    /// The fixture above must itself satisfy the grounding contract.
+    ///
+    /// Otherwise this file can drift back to specifying fabricated values —
+    /// which is exactly what happened, undetected, across 56 episodes.
+    #[test]
+    fn the_genome_profiler_fixture_is_itself_grounded() {
+        let json = r#"{
+            "taxonomy": {"kingdom": "Animalia", "order": "Lepidoptera", "species": "Danaus plexippus"},
+            "genome": {"estimated_size_mb": null, "chromosome_count": null, "notable_genes": null, "ploidy": null},
+            "phylogeny": {"sister_taxa": ["Danaus gilippus"], "superorder": null, "divergence_mya": null, "defining_traits": null},
+            "conservation": {"iucn_status": null, "population_trend": null, "genetic_diversity_notes": null},
+            "summary": "GBIF places Danaus plexippus in Nymphalidae, alongside Danaus gilippus."
+        }"#;
+        let mut doc: serde_json::Value = serde_json::from_str(json).unwrap();
+        let report = crate::grounding_trust::enforce("genome_profiler", &mut doc);
+        assert!(
+            report.is_clean(),
+            "the fixture asserts fields this agent cannot source: {:?}",
+            report.violations
         );
     }
 

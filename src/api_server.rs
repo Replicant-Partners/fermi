@@ -32,7 +32,6 @@ use fermi_auth::{
     OAuthConfig,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, PgPool, Row};
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -44,8 +43,7 @@ use fermi::gas::GasFees;
 use tokio::sync::broadcast;
 
 use agent_bestiary_memory::{
-    Agent, EmbeddingGenerator, Episode, ExecutionStatus, MemoryStore, MockEmbeddings,
-    OpenAIEmbeddings,
+    Agent, EmbeddingGenerator, Episode, MemoryStore, MockEmbeddings, OpenAIEmbeddings,
 };
 use agent_bestiary_ontology::{GitConfig, WorkspaceGitManager};
 use agent_bestiary_projector::{ProjectionCache, ProjectionEngine};
@@ -75,6 +73,20 @@ pub(crate) use fermi::schema_trust;
 // how "successful runs only" creeps into one of them and the platform
 // starts under-reporting spend.
 pub(crate) use fermi::agent_economics;
+
+// Grounding trust contract — which output fields a given agent could
+// possibly have sourced, and enforcement that nulls the ones it could not.
+// Re-exported for the same reason as its two siblings: one compiled copy,
+// reachable from `cargo test`. Handlers use `crate::grounding_trust::*`.
+pub(crate) use fermi::grounding_trust;
+
+// Episode construction moved to `fermi::episodes` (lib) so the in-library
+// delegation tools in `agent_backend::tools_legacy` can build episodes
+// through the same constructor the HTTP handlers use, instead of keeping a
+// second hand-maintained copy that drifts on cost basis, provider
+// attribution and failure provenance. The `pub(crate) use` keeps the ~10
+// existing `crate::agent_output_to_episode` call sites resolving unchanged.
+pub(crate) use fermi::episodes::agent_output_to_episode;
 
 #[derive(Clone)]
 struct RateLimiter {
@@ -189,13 +201,80 @@ async fn rate_limit_middleware(
     }
 }
 
-/// Rate limit middleware for LLM endpoints (stricter, per-user)
-#[allow(dead_code)]
+/// Routes that dispatch an LLM, and therefore spend real money per call.
+///
+/// `*` matches exactly one path segment, so `/api/agents/*/execute` matches
+/// `/api/agents/abc/execute` and not `/api/agents/abc/execute/stream` — which
+/// is listed separately rather than caught by accident.
+///
+/// ## Why a list and not "all protected routes"
+///
+/// The strict limiter is 10/min. Applying that to every authenticated route
+/// would throttle ordinary dashboard use, the limit would be raised to
+/// something harmless, and the protection would be gone — the same way a
+/// lint that fires on correct code gets deleted. So it is scoped to the
+/// endpoints where one request costs a model call.
+///
+/// ## Why these and not every credit-spending handler
+///
+/// 57 call sites across 23 handler files call `charge_gas` and friends, but
+/// most are bounded by the wallet: `charge_gas` debits first and fails on an
+/// empty balance, so a user cannot spend what they do not have. The
+/// unbounded exposure is the LLM bill we incur per dispatch, which is why
+/// this list is the *dispatch* entry points rather than everything that
+/// touches credits.
+const LLM_SPEND_ROUTES: &[&str] = &[
+    "/api/agents/*/execute",
+    "/api/agents/*/execute/stream",
+    "/api/agents/*/eval/run",
+    "/api/agents/*/consolidate",
+    "/api/agents/*/dreaming",
+    "/api/me/eval/runs/batch",
+    "/api/creatures/*/enemy-sensor",
+    "/api/creatures/*/genome-profiler",
+    "/api/creatures/*/prey-locator",
+    "/api/creatures/*/dream",
+    "/api/workspaces/*/composition/dream",
+    "/api/notebooks/*/execute",
+];
+
+/// Does this request path name an LLM-dispatching endpoint?
+fn is_llm_spend_route(path: &str) -> bool {
+    let segs: Vec<&str> = path.trim_end_matches('/').split('/').collect();
+    LLM_SPEND_ROUTES.iter().any(|pattern| {
+        let pat: Vec<&str> = pattern.split('/').collect();
+        pat.len() == segs.len()
+            && pat
+                .iter()
+                .zip(&segs)
+                .all(|(p, s)| *p == "*" || p.eq_ignore_ascii_case(s))
+    })
+}
+
+/// Rate limit middleware for LLM endpoints (stricter, per-user).
+///
+/// Was `#[allow(dead_code)]` and referenced nowhere: the limiter was
+/// constructed from `RATE_LIMIT_LLM` on every boot and never consulted, so
+/// the endpoints that spend money were the only ones with no rate limit at
+/// all while the public read-only routes had one. Dead code that looks like
+/// a control is worse than absent code, because the control appears in the
+/// config and in review.
+///
+/// Passes non-LLM paths straight through, so it can be layered over the
+/// whole protected router without carving hundreds of routes into a
+/// sub-router.
 async fn llm_rate_limit_middleware(
     State(state): State<AppState>,
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Result<Response, (StatusCode, String)> {
+    // Everything that is not an LLM dispatch is none of this layer's
+    // business. Checked before the key is built so the common path costs a
+    // string comparison.
+    if !is_llm_spend_route(req.uri().path()) {
+        return Ok(next.run(req).await);
+    }
+
     // Try to extract user_id from auth principal (Extension)
     let key = req
         .extensions()
@@ -1037,7 +1116,24 @@ async fn run_migrations(db: &PgPool) {
         // Shared correlation id between claims and episodes — the follow-up
         // migration 193 asked for. Replaces the (agent_id, driver, window)
         // heuristic with an exact join, and adds forecast_cost_attribution.
-        "migrations/195_claim_episode_correlation.sql",
+        "migrations/197_claim_episode_correlation.sql",
+        // Delegation tree: delegated runs now write their own episode, linked
+        // to the caller. Compound cost becomes the sum over the tree, and
+        // forecast_cost_attribution descends it.
+        "migrations/198_episode_delegation_tree.sql",
+        // Retain the agent's own output. `episodes` recorded the question and
+        // every property of the run except the answer, which was digested by
+        // a per-agent parser and discarded. Without it there is no evidence
+        // base for inducing output types, so the port-typing campaign cannot
+        // start. See docs/ABW_VERIFICATION_RECONCILIATION.md §7.7.
+        "migrations/199_episode_response_retention.sql",
+        // `anomaly_events.kind` gains 'grounding', so a field the agent could
+        // not have sourced becomes a reportable event rather than a stderr
+        // line. Also tags the 13 cached genome profiles written before the
+        // contract existed — tagged, not overwritten, because the read path
+        // already strips them and the guesses are a calibration signal once
+        // real tools land.
+        "migrations/200_grounding_anomalies_and_backfill.sql",
     ];
 
     for file in &migration_files {
@@ -4527,6 +4623,21 @@ async fn main() {
             "/api/observe/sessions/:session_id/experience",
             get(handlers::observations::observation_experience_handler),
         )
+        // Layers run outermost-last, so the order below is:
+        //   auth_middleware -> impersonation_guard -> llm_rate_limit -> handler
+        //
+        // The LLM limiter is innermost because it keys on the resolved
+        // AuthPrincipal, which `auth_middleware` puts in the extensions. It
+        // passes every non-LLM path straight through; see LLM_SPEND_ROUTES.
+        //
+        // Until now this router had NO rate limiting of any kind, while the
+        // public read-only router had one. The endpoints that spend money
+        // were the only unprotected ones, because the middleware written for
+        // them was `#[allow(dead_code)]` and never layered.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            llm_rate_limit_middleware,
+        ))
         // Inside `auth_middleware` (see the public-router note above):
         // enforces the read-only contract and writes the audit trail
         // for any request carrying an impersonated principal.
@@ -5662,50 +5773,6 @@ pub(crate) fn spawn_dyad_observation(
     });
 }
 
-/// Compose a diagnostic `error_details` string for a non-successful run.
-///
-/// Returns `None` for a clean success. For anything else it leads with the
-/// executor's own `failure_reason` when present (it is the most specific
-/// thing anyone knows about the run) and appends the execution shape that
-/// makes it actionable: how the LLM stopped, how many round-trips it took,
-/// how many tool calls it made, and how many tokens it burned.
-///
-/// The token count matters because a failed run is still billed. A caller
-/// looking at a $0.61 charge on a FAILURE row needs to see that the money
-/// went on 5 iterations and 15 tool calls that never produced final text —
-/// not just the word "failed".
-fn build_error_details(output: &AgentOutput) -> Option<String> {
-    let base = match (&output.status, output.metadata.failure_reason.as_deref()) {
-        (AgentStatus::Success, _) => return None,
-        (_, Some(reason)) => reason.to_string(),
-        (AgentStatus::Failed, None) => "execution failed (executor gave no reason)".to_string(),
-        (AgentStatus::Timeout, None) => "execution timed out".to_string(),
-        (AgentStatus::BelowConfidenceThreshold, None) => format!(
-            "below confidence threshold (confidence={:.2})",
-            output.confidence
-        ),
-    };
-
-    let mut facts = vec![format!(
-        "stop_reason={}",
-        output.metadata.stop_reason.as_deref().unwrap_or("unknown")
-    )];
-    facts.push(format!("iterations={}", output.loop_iterations));
-    facts.push(format!("tool_calls={}", output.tool_invocations.len()));
-    if let Some(t) = output.tokens_used {
-        facts.push(format!("tokens={}", t));
-    }
-    facts.push(format!("confidence={:.2}", output.confidence));
-    if let Some(ref m) = output.metadata.model_used {
-        facts.push(format!("model={}", m));
-    }
-    if let Some(ref p) = output.metadata.provider {
-        facts.push(format!("provider={}", p));
-    }
-
-    Some(format!("{} [{}]", base, facts.join(", ")))
-}
-
 /// Stamp a caller-supplied invocation record onto an episode.
 ///
 /// The episode already records the *outcome* of a run — status, failure
@@ -5726,6 +5793,43 @@ fn build_error_details(output: &AgentOutput) -> Option<String> {
 /// Written as tags as well as context because tags are queryable and already
 /// render in the observatory and episode list, so the signal is visible
 /// without a bespoke view.
+/// Write the SERVER's verdict on whether the caller's prompt matches the
+/// interface this agent advertises.
+///
+/// Split from [`stamp_invocation`] because the two have different
+/// provenance: everything there is the caller describing its own intent,
+/// which only the caller knows; this is the platform checking a claim
+/// against the card, which only the platform can do. Keeping them in one
+/// function is what let a caller-asserted value masquerade as a verified
+/// one for two releases.
+///
+/// `claimed` is whatever the caller said, if anything. A disagreement is
+/// tagged rather than silently overwritten: a client working from a stale
+/// copy of a card is worth knowing about, and it is the only signal that
+/// the console and the server have drifted apart.
+pub(crate) fn stamp_input_binding(
+    episode: &mut Episode,
+    verified: &fermi::port_trust::InputBinding,
+    claimed: Option<&str>,
+) {
+    // `declared:query` would read as a `declared` category with a `query`
+    // value; keep the whole thing under one namespace. Vocabulary unchanged
+    // from v0.16.0 so the tag time series does not split at this deploy.
+    let tag = verified.as_tag();
+    episode
+        .tags
+        .push(format!("ibind:{}", tag.replace(':', "-")));
+
+    if verified.is_mismatch() {
+        episode.tags.push("ibind:mismatch".to_string());
+    }
+    if let Some(c) = claimed {
+        if c != tag {
+            episode.tags.push("ibind:claim-disagreed".to_string());
+        }
+    }
+}
+
 pub(crate) fn stamp_invocation(episode: &mut Episode, invocation: &serde_json::Value) {
     let Some(obj) = invocation.as_object() else {
         return;
@@ -5750,13 +5854,20 @@ pub(crate) fn stamp_invocation(episode: &mut Episode, invocation: &serde_json::V
     if let Some(src) = slug(obj.get("query_source")) {
         episode.tags.push(format!("qsrc:{}", src));
     }
-    if let Some(bind) = slug(obj.get("input_binding")) {
-        // `declared:query` would read as a `declared` category with a
-        // `query` value; keep the whole thing under one namespace.
-        episode
-            .tags
-            .push(format!("ibind:{}", bind.replace(':', "-")));
-    }
+    // NOTE: `input_binding` is deliberately NOT read from here any more.
+    //
+    // It used to be, and that was the bug. Whether the caller's prompt
+    // matches the interface the agent advertises is a property of the card,
+    // which the server holds and the caller may not even have seen. Taking
+    // it from the request body meant the episode recorded the caller's
+    // *claim* about the match and tagged it as a finding — a client could
+    // assert `declared:query` against an agent accepting only `gbif_key`
+    // and the platform would file it as fact.
+    //
+    // It is now computed from the resolved card at the execute boundary by
+    // `fermi::port_trust::bind_input` and written by
+    // [`stamp_input_binding`]. A caller-supplied value is compared against
+    // the verified one rather than trusted; see that function.
     if obj
         .get("recomposed_from")
         .and_then(|v| v.as_str())
@@ -5805,250 +5916,6 @@ pub(crate) fn stamp_invocation(episode: &mut Episode, invocation: &serde_json::V
     }
 }
 
-pub(crate) fn agent_output_to_episode(
-    agent_db_id: uuid::Uuid,
-    query: &str,
-    output: &AgentOutput,
-) -> Episode {
-    // Generate tags from execution metadata
-    let mut tags = Vec::new();
-
-    // Status tag
-    match output.status {
-        AgentStatus::Success => tags.push("status:success".to_string()),
-        AgentStatus::Failed => tags.push("status:error".to_string()),
-        AgentStatus::Timeout => tags.push("status:timeout".to_string()),
-        AgentStatus::BelowConfidenceThreshold => tags.push("status:low-confidence".to_string()),
-    }
-
-    // Tool usage tags
-    let mut tool_names: Vec<String> = output
-        .tool_invocations
-        .iter()
-        .map(|t| t.tool_name.clone())
-        .collect();
-    tool_names.sort();
-    tool_names.dedup();
-    for name in &tool_names {
-        tags.push(format!("tool:{}", name));
-    }
-
-    // Iteration count tag
-    match output.loop_iterations {
-        0 | 1 => tags.push("iterations:1".to_string()),
-        2..=4 => tags.push("iterations:2+".to_string()),
-        _ => tags.push("iterations:5+".to_string()),
-    }
-
-    // Cost tier tag (based on token count)
-    match output.tokens_used {
-        None | Some(0) => tags.push("cost:free".to_string()),
-        Some(t) if t < 500 => tags.push("cost:low".to_string()),
-        Some(t) if t < 5000 => tags.push("cost:medium".to_string()),
-        _ => tags.push("cost:high".to_string()),
-    }
-
-    // Model tag
-    if let Some(ref model) = output.metadata.model_used {
-        let short = if model.contains("sonnet") {
-            "claude-sonnet"
-        } else if model.contains("haiku") {
-            "claude-haiku"
-        } else if model.contains("opus") {
-            "claude-opus"
-        } else if model.contains("mistral") {
-            "mistral"
-        } else if model.contains("qwen") {
-            "qwen"
-        } else {
-            model.as_str()
-        };
-        tags.push(format!("model:{}", short));
-    }
-
-    // Confidence tag
-    let conf = output.confidence;
-    if conf >= 0.7 {
-        tags.push("confidence:high".to_string());
-    } else if conf >= 0.4 {
-        tags.push("confidence:medium".to_string());
-    } else if conf > 0.0 {
-        tags.push("confidence:low".to_string());
-    }
-
-    // Why the LLM stopped. The executors already know this (issue #3 /
-    // docs/specs/10_RESEARCH_AGENTS_EMPTY_LLM_OUTPUT.md) and it is the
-    // single most diagnostic field for a failure — `max_tokens` and
-    // `tool_use` mean completely different remediations. Tagging it makes
-    // the distinction visible in the episode list without an expand.
-    if let Some(ref sr) = output.metadata.stop_reason {
-        if !sr.is_empty() {
-            tags.push(format!("stop:{}", sr));
-        }
-    }
-
-    // A run that succeeded but not cleanly (e.g. tool loop capped out and
-    // the answer came from the flush turn) still carries a
-    // `failure_reason`. That is a degradation, not an error, and it was
-    // previously invisible in every surface.
-    if matches!(output.status, AgentStatus::Success) && output.metadata.failure_reason.is_some() {
-        tags.push("degraded:true".to_string());
-    }
-
-    Episode {
-        episode_id: uuid::Uuid::new_v4(),
-        agent_id: agent_db_id,
-        timestamp_ref: output.timestamp,
-        query: query.to_string(),
-        context: json!({
-            "evidence": output.evidence.iter().map(|e| json!({
-                "id": e.id,
-                "source": e.source,
-                "summary": e.summary,
-                "key_findings": e.key_findings,
-                "relevance": e.relevance,
-            })).collect::<Vec<_>>(),
-            "sources_consulted": output.sources_consulted,
-            "model_used": output.metadata.model_used,
-            // SPEC_28 — funding audit trail. Which principal's key paid for
-            // this run, and how it was resolved. Persisted per episode so
-            // "who paid for this?" is answerable from data rather than
-            // reconstructed from deploy-time env.
-            "provider": output.metadata.provider,
-            "funding_principal": output.metadata.funding_principal,
-            "credential_source": output.metadata.credential_source,
-            "reasoning": output.metadata.reasoning,
-            // Failure provenance. Persisted in context (not only folded into
-            // `error_details`) so the raw executor verdict survives
-            // independently of the human-readable summary, and so the
-            // degraded-but-successful case has somewhere to live.
-            "stop_reason": output.metadata.stop_reason,
-            "failure_reason": output.metadata.failure_reason,
-            "loop_iterations": output.loop_iterations,
-            "tool_invocations": output.tool_invocations.iter().map(|t| json!({
-                "tool_name": t.tool_name,
-                "input": t.input,
-                "output": t.output,
-                "duration_ms": t.duration_ms,
-                "iteration": t.iteration,
-            })).collect::<Vec<_>>(),
-        }),
-        execution_status: match output.status {
-            AgentStatus::Success => ExecutionStatus::Success,
-            AgentStatus::Failed | AgentStatus::Timeout => ExecutionStatus::Failure,
-            AgentStatus::BelowConfidenceThreshold => ExecutionStatus::Partial,
-        },
-        // The executors compute a precise reason — "tool loop produced empty
-        // content (stop_reason=tool_use, iterations=5, hit_iteration_cap)",
-        // "llm hit max_tokens; response is truncated" — and this function
-        // used to throw it away and substitute the constant "Execution
-        // failed". That constant is why every failure in the UI reads
-        // identically, why the failure notification's "check the execution
-        // history for details" pointed at no details, and why the
-        // consolidation pass (which clusters on `error_details`) saw one
-        // pattern where there were several. Compose the real thing.
-        error_details: build_error_details(output),
-        execution_time_ms: output.execution_time_ms as i64,
-        tokens_used: output.tokens_used.map(|t| t as i32),
-        // Cost is priced by `AgentOutput::cost()` — the single pricing
-        // entry point — against a `(provider, model)` rate card with
-        // separate input and output rates.
-        //
-        // Two earlier generations of this line were wrong in different
-        // directions. It first hardcoded $3/Mtok for everything. Wiring
-        // the registry's per-model card fixed Anthropic but still keyed on
-        // the model string alone with `_ => 3.0`, which priced a DeepSeek
-        // agent at Anthropic Sonnet's rate (~6.9x over) while the missing
-        // input/output split understated real Anthropic runs (~1.8x under).
-        // Two dominant errors pointing opposite ways made cross-provider
-        // comparison directionally wrong, not merely imprecise — and that
-        // comparison is the whole question the marketplace has to answer.
-        //
-        // `cost_basis` (recorded alongside, below) states whether the
-        // split was measured or assumed, so a consumer never has to infer
-        // trustworthiness from a deploy date.
-        cost_usd: output
-            .cost()
-            .and_then(|est| rust_decimal::Decimal::from_f64_retain(est.usd)),
-        // Migration 194 — persist the pricing INPUTS, not just the result,
-        // so a corrected rate card can re-derive history instead of
-        // leaving known-wrong rows permanently uncorrectable.
-        input_tokens: output.input_tokens.map(|t| t as i32),
-        output_tokens: output.output_tokens.map(|t| t as i32),
-        cost_basis: output.cost().map(|est| est.basis.as_str().to_string()),
-        cost_rate_key: output
-            .cost()
-            .map(|est| est.rate_key)
-            .filter(|k| !k.is_empty()),
-        embedding: None,
-        consolidated: false,
-        tags,
-        provenance: agent_bestiary_memory::Provenance::AutoPass,
-        authority_weight: 0.5,
-        // Left unset here because this constructor has no notion of *who*
-        // the agent was talking to. Call sites that represent a real
-        // human↔agent exchange must stamp this with
-        // `agent_bestiary_memory::dyad_id(agent_id, user_id)` immediately
-        // after construction, otherwise the episode is invisible to the
-        // companion loop (social tracker, dyad_state, relationships tab).
-        // System-spawned platform agents (observations, swarm telemetry)
-        // legitimately leave it `None` — there is no human counterpart.
-        dyad_id: None,
-        persona_version_at_write: None,
-        // Phase 2: tag execution provenance so the observatory can filter
-        // by provider and per-provider calibration can work (Loop 5).
-        model_used: output.metadata.model_used.clone(),
-        // The executor already resolved the provider authoritatively and
-        // put it on `metadata.provider`. This used to re-derive it by
-        // pattern-matching the model string, which got the proxied case
-        // exactly backwards: a Claude model served *via* OpenRouter was
-        // labelled `anthropic`, while an OpenRouter-namespaced Claude id
-        // was labelled `openrouter`. Since the rate card is keyed on
-        // (provider, model), a guessed provider silently mis-prices the
-        // run. Fall back to the old inference only for legacy outputs that
-        // carry no provider at all.
-        provider_used: output
-            .metadata
-            .provider
-            .clone()
-            .filter(|p| !p.trim().is_empty())
-            .or_else(|| {
-                output
-                    .metadata
-                    .model_used
-                    .as_deref()
-                    .map(provider_from_model_name)
-            }),
-    }
-}
-
-/// Legacy fallback: infer a provider from a model id.
-///
-/// Only for outputs written before executors stamped
-/// `AgentMetadata.provider`. It is a heuristic and cannot resolve the
-/// proxied case — `claude-*` served through OpenRouter is indistinguishable
-/// from a direct Anthropic call by model name alone. New code must read
-/// `metadata.provider`.
-fn provider_from_model_name(m: &str) -> String {
-    if m.starts_with("claude") {
-        "anthropic".to_string()
-    } else if m.starts_with("gpt") || m.starts_with("o1") || m.starts_with("o3") {
-        "openai".to_string()
-    } else if m.starts_with("mistral") || m.starts_with("open-mistral") {
-        "mistral".to_string()
-    } else if m.starts_with("qwen") {
-        "qwen".to_string()
-    } else if m.starts_with("deepseek") {
-        "deepseek".to_string()
-    } else if m.starts_with("glm") {
-        "glm".to_string()
-    } else if m.contains("openrouter") || m.contains('/') {
-        "openrouter".to_string()
-    } else {
-        "ollama".to_string()
-    }
-}
-
 // ─── Ontology API (database-backed) ────────────────────────────────
 
 pub(crate) async fn create_notification(
@@ -6088,6 +5955,7 @@ pub(crate) async fn create_notification_for_surface(
 mod failure_provenance_tests {
     use super::*;
     use fermi::agent_backend::executor::{AgentMetadata, ToolInvocation};
+    use serde_json::json;
 
     fn output(
         status: AgentStatus,
@@ -6095,6 +5963,7 @@ mod failure_provenance_tests {
         stop: Option<&str>,
     ) -> AgentOutput {
         AgentOutput {
+            raw_response: Some("{\"ok\": true}".into()),
             agent_name: "efra_critical_factor".into(),
             agent_type: "research".into(),
             timestamp: chrono::Utc::now(),
@@ -6130,71 +5999,6 @@ mod failure_provenance_tests {
     }
 
     #[test]
-    fn clean_success_records_no_error_details() {
-        let out = output(AgentStatus::Success, None, Some("end_turn"));
-        assert!(build_error_details(&out).is_none());
-    }
-
-    #[test]
-    fn failure_carries_the_executor_reason_not_a_constant() {
-        let out = output(
-            AgentStatus::Failed,
-            Some("tool loop produced empty content (stop_reason=tool_use, iterations=5, hit_iteration_cap)"),
-            Some("tool_use"),
-        );
-        let details = build_error_details(&out).expect("a failure must record why");
-        assert!(
-            details.contains("hit_iteration_cap"),
-            "executor reason must survive: {details}"
-        );
-        assert_ne!(details, "Execution failed");
-        // The execution shape a caller needs to act on it.
-        assert!(details.contains("stop_reason=tool_use"), "{details}");
-        assert!(details.contains("iterations=5"), "{details}");
-        assert!(details.contains("tool_calls=15"), "{details}");
-        assert!(details.contains("tokens=120000"), "{details}");
-    }
-
-    #[test]
-    fn failure_without_an_executor_reason_still_says_what_is_known() {
-        let out = output(AgentStatus::Failed, None, None);
-        let details = build_error_details(&out).unwrap();
-        assert!(details.contains("executor gave no reason"), "{details}");
-        assert!(details.contains("stop_reason=unknown"), "{details}");
-    }
-
-    #[test]
-    fn timeout_and_low_confidence_are_distinguishable() {
-        let t = build_error_details(&output(AgentStatus::Timeout, None, None)).unwrap();
-        let c = build_error_details(&output(AgentStatus::BelowConfidenceThreshold, None, None))
-            .unwrap();
-        assert!(t.contains("timed out"), "{t}");
-        assert!(c.contains("below confidence threshold"), "{c}");
-        assert_ne!(t, c);
-    }
-
-    #[test]
-    fn episode_persists_stop_and_failure_reason_in_context() {
-        let out = output(
-            AgentStatus::Failed,
-            Some("llm hit max_tokens; response is truncated"),
-            Some("max_tokens"),
-        );
-        let ep = agent_output_to_episode(uuid::Uuid::new_v4(), "Will GOOG hit 450?", &out);
-
-        assert_eq!(
-            ep.context.get("stop_reason").and_then(|v| v.as_str()),
-            Some("max_tokens")
-        );
-        assert_eq!(
-            ep.context.get("failure_reason").and_then(|v| v.as_str()),
-            Some("llm hit max_tokens; response is truncated")
-        );
-        assert!(ep.tags.contains(&"stop:max_tokens".to_string()));
-        assert!(ep.error_details.is_some());
-    }
-
-    #[test]
     fn invocation_provenance_lands_as_queryable_tags_and_context() {
         let out = output(AgentStatus::Success, None, Some("end_turn"));
         let mut ep = agent_output_to_episode(uuid::Uuid::new_v4(), "q", &out);
@@ -6209,15 +6013,152 @@ mod failure_provenance_tests {
         );
 
         assert!(ep.tags.contains(&"qsrc:declared_contract".to_string()));
-        // `declared:query` must not split into a `declared` category.
-        assert!(ep.tags.contains(&"ibind:declared-query".to_string()));
-        assert!(!ep.tags.iter().any(|t| t.starts_with("declared:")));
         assert_eq!(
             ep.context["invocation"]["declared_label_count"]
                 .as_u64()
                 .unwrap(),
             5
         );
+        // The caller's `input_binding` must NOT become a tag. Whether the
+        // prompt matches the interface is a property of the card, which the
+        // server holds and the caller may never have read; taking the
+        // caller's word for it filed an assertion as a finding. It is now
+        // computed at the boundary by `stamp_input_binding`.
+        assert!(
+            !ep.tags.iter().any(|t| t.starts_with("ibind:")),
+            "stamp_invocation must not emit a binding verdict from caller \
+             input: {:?}",
+            ep.tags
+        );
+    }
+
+    // ── LLM rate limiting ──────────────────────────────────────────
+
+    #[test]
+    fn the_expensive_endpoints_are_rate_limited() {
+        for path in [
+            "/api/agents/1f3c-abc/execute",
+            "/api/agents/1f3c-abc/execute/stream",
+            "/api/agents/1f3c-abc/eval/run",
+            "/api/agents/1f3c-abc/consolidate",
+            "/api/agents/1f3c-abc/dreaming",
+            "/api/me/eval/runs/batch",
+            "/api/creatures/9a/genome-profiler",
+            "/api/creatures/9a/enemy-sensor",
+            "/api/creatures/9a/prey-locator",
+            "/api/creatures/9a/dream",
+            "/api/workspaces/w1/composition/dream",
+            "/api/notebooks/n1/execute",
+        ] {
+            assert!(
+                is_llm_spend_route(path),
+                "{path} dispatches a model and must be rate limited"
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_reads_are_not_throttled() {
+        // The strict limiter is 10/min. If it caught routine dashboard
+        // traffic the limit would be raised until it was harmless, and the
+        // protection would be gone — so over-matching is the failure mode
+        // that actually matters here.
+        for path in [
+            "/api/auth/me",
+            "/api/agents",
+            "/api/agents/1f3c-abc",
+            "/api/agents/1f3c-abc/episodes",
+            "/api/agents/1f3c-abc/eval/runs",
+            "/api/forecasts",
+            "/api/creatures/9a",
+            "/api/workspaces/w1/messages",
+            "/api/notebooks/n1",
+        ] {
+            assert!(
+                !is_llm_spend_route(path),
+                "{path} is a read and must not be throttled at LLM rates"
+            );
+        }
+    }
+
+    #[test]
+    fn a_wildcard_matches_exactly_one_segment() {
+        // `/api/agents/*/execute` must not swallow `/execute/stream` by
+        // prefix, and must not match a path with the segment missing.
+        assert!(!is_llm_spend_route("/api/agents/execute"));
+        assert!(!is_llm_spend_route("/api/agents/a/b/execute"));
+        // Trailing slash is the same route.
+        assert!(is_llm_spend_route("/api/agents/abc/execute/"));
+        // And nothing matches the root, which an empty or "/" pattern would.
+        assert!(!is_llm_spend_route("/"));
+        assert!(!is_llm_spend_route(""));
+    }
+
+    #[test]
+    fn no_declared_pattern_is_dangerously_broad() {
+        for pattern in LLM_SPEND_ROUTES {
+            assert!(
+                pattern.starts_with("/api/"),
+                "{pattern} does not look like an API route"
+            );
+            let segs: Vec<&str> = pattern.split('/').collect();
+            assert!(
+                segs.len() >= 4,
+                "{pattern} is too short to be specific — a two-segment \
+                 pattern would throttle an entire namespace"
+            );
+            assert!(
+                !pattern.ends_with('*'),
+                "{pattern} ends in a wildcard, which matches every child \
+                 route including cheap reads"
+            );
+        }
+    }
+
+    #[test]
+    fn the_binding_verdict_comes_from_the_card_not_the_caller() {
+        use fermi::port_trust::bind_input;
+
+        let out = output(AgentStatus::Success, None, Some("end_turn"));
+        let mut ep = agent_output_to_episode(uuid::Uuid::new_v4(), "q", &out);
+
+        // An agent that takes only structured input, invoked with prose,
+        // while the caller cheerfully claims the interface matched.
+        let accepts = vec![
+            "species_data".to_string(),
+            "taxonomy".to_string(),
+            "gbif_key".to_string(),
+        ];
+        let verified = bind_input(&accepts);
+        stamp_input_binding(&mut ep, &verified, Some("declared:query"));
+
+        assert!(
+            ep.tags.contains(&"ibind:no_text_input".to_string()),
+            "the card says there is no text port; that is the verdict"
+        );
+        assert!(ep.tags.contains(&"ibind:mismatch".to_string()));
+        assert!(
+            ep.tags.contains(&"ibind:claim-disagreed".to_string()),
+            "a caller whose claim contradicts the card is the only signal \
+             that client and server have drifted apart"
+        );
+    }
+
+    #[test]
+    fn a_matching_binding_is_recorded_without_a_dispute() {
+        use fermi::port_trust::bind_input;
+
+        let out = output(AgentStatus::Success, None, Some("end_turn"));
+        let mut ep = agent_output_to_episode(uuid::Uuid::new_v4(), "q", &out);
+        let verified = bind_input(&["query".to_string()]);
+        stamp_input_binding(&mut ep, &verified, Some("declared:query"));
+
+        // Vocabulary unchanged from v0.16.0 so the tag series does not split
+        // at this deploy.
+        assert!(ep.tags.contains(&"ibind:declared-query".to_string()));
+        assert!(!ep.tags.iter().any(|t| t.starts_with("declared:")));
+        assert!(!ep.tags.iter().any(|t| t == "ibind:mismatch"));
+        assert!(!ep.tags.iter().any(|t| t == "ibind:claim-disagreed"));
     }
 
     #[test]
@@ -6337,26 +6278,5 @@ mod failure_provenance_tests {
         stamp_invocation(&mut ep, &json!("not an object"));
         assert_eq!(ep.tags, before);
         assert!(ep.context.get("invocation").is_none());
-    }
-
-    #[test]
-    fn success_with_a_failure_reason_is_tagged_degraded_but_not_errored() {
-        // The tool loop capped out and the answer came from the flush turn:
-        // a real answer, but not a clean one. Previously invisible.
-        let out = output(
-            AgentStatus::Success,
-            Some("tool loop hit iteration cap (5); answer produced from flush turn"),
-            Some("end_turn"),
-        );
-        let ep = agent_output_to_episode(uuid::Uuid::new_v4(), "q", &out);
-        assert!(ep.tags.contains(&"degraded:true".to_string()));
-        assert!(
-            ep.error_details.is_none(),
-            "a degraded success is not a failure"
-        );
-        assert_eq!(
-            ep.context.get("failure_reason").and_then(|v| v.as_str()),
-            Some("tool loop hit iteration cap (5); answer produced from flush turn")
-        );
     }
 }

@@ -227,7 +227,7 @@
   },
   "genome_profiler": {
     "class": "Researchia",
-    "order": "Imaginales",
+    "order": "Evidentiales",
     "phylum": "Instrumenta",
     "species": "genome_profiler"
   },
@@ -353,6 +353,7 @@
   },
   "prey_locator": {
     "class": "Researchia",
+    "order": "Consiliales",
     "phylum": "Instrumenta",
     "species": "prey_locator"
   },
@@ -546,6 +547,29 @@
     "order": "Imaginales",
     "phylum": "Instrumenta",
     "species": "watermark"
+  },
+  "weather_calibrator": {
+    "class": "Researchia",
+    "order": "Prognosticales",
+    "phylum": "Instrumenta",
+    "species": "weather_calibrator"
+  },
+  "weather_ensemble_forecaster": {
+    "class": "Researchia",
+    "order": "Prognosticales",
+    "phylum": "Instrumenta",
+    "species": "weather_ensemble_forecaster"
+  },
+  "weather_market_analyst": {
+    "class": "Researchia",
+    "order": "Consiliales",
+    "phylum": "Instrumenta",
+    "species": "weather_market_analyst"
+  },
+  "weather_oracle": {
+    "order": "Prognosticales",
+    "phylum": "Composita",
+    "species": "weather_oracle"
   },
   "wild_companion": {
     "class": "Strategia",

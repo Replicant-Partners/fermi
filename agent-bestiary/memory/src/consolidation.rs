@@ -1089,6 +1089,7 @@ mod tests {
                 dim: 1024,
             };
             let episode = Episode {
+                response_text: None,
                 episode_id: Uuid::new_v4(),
                 agent_id: agent.agent_id,
                 timestamp_ref: Utc::now(),
@@ -1111,6 +1112,7 @@ mod tests {
                 output_tokens: None,
                 cost_basis: None,
                 cost_rate_key: None,
+                parent_episode_id: None,
                 embedding: Some(prov.vector.clone()),
                 consolidated: false,
                 tags: vec![],

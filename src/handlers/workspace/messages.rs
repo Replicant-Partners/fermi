@@ -466,8 +466,15 @@ pub async fn post_workspace_message_handler(
                             }
                         }
 
+                        // Minted ahead of the tool context: the episode is
+                        // stored further down, but delegated children need the
+                        // id from inside the tool loop (mig-198).
+                        let episode_id = uuid::Uuid::new_v4();
+
                         // Use ToolAwareExecutor with workspace tools
                         let tool_context = Arc::new(ToolContext {
+                            // Root of this execution's delegation tree (mig-198).
+                            parent_episode_id: Some(episode_id),
                             memory_store: state2.memory_store.clone(),
                             embedder: state2.embedder.clone(),
                             registry: state2.registry.clone(),
@@ -508,6 +515,9 @@ pub async fn post_workspace_message_handler(
                         // Store episode with Spec 22 provenance
                         let mut episode =
                             agent_output_to_episode(db_agent.agent_id, &query2, &output);
+                        // Use the id advertised to the tool context, so children
+                        // that stamped it as their parent resolve to this row.
+                        episode.episode_id = episode_id;
                         // Stamp the (agent, human) dyad from the message sender so
                         // workspace conversations feed the companion loop.
                         let dyad_id =

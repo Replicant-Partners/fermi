@@ -114,6 +114,24 @@ pub struct AgentOutput {
     pub tool_invocations: Vec<ToolInvocation>,
     /// Number of LLM round-trips (1 for single-turn, >1 for tool-using agents)
     pub loop_iterations: u32,
+    /// The model's final text, verbatim, before `parse_evidence_text`
+    /// digests it into `evidence` / `confidence` / `metadata.reasoning`.
+    ///
+    /// That digest is **per-agent** — `tool_executor.rs` special-cases
+    /// `genome_profiler` to reach into a nested `conservation` object — so
+    /// what used to survive a run was one hand-written reading of the
+    /// output rather than the output. Changing the parser silently changed
+    /// the historical record.
+    ///
+    /// Persisted to `episodes.response_text` (migration 199). It is the
+    /// evidence base for inducing an agent's output type from what it has
+    /// actually produced, instead of from what its card claims — the
+    /// distinction that separates a real contract from the seven
+    /// `output_contract`s that name schemas which do not exist.
+    ///
+    /// `None` where the executor never had a single text document to point
+    /// at (multi-model fan-out) rather than as a shorthand for empty.
+    pub raw_response: Option<String>,
 }
 
 impl AgentOutput {
@@ -287,6 +305,7 @@ impl AgentExecutor for MockExecutor {
         let elapsed = start.elapsed();
 
         Ok(AgentOutput {
+            raw_response: None,
             agent_name: agent.name.clone(),
             agent_type: agent.agent_type.clone().unwrap_or_default(),
             timestamp: Utc::now(),

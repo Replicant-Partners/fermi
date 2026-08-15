@@ -287,8 +287,15 @@ pub async fn dispatch_rabble_action(
         credentials: credentials.clone(),
     };
 
+    // Minted ahead of the tool context because the episode for this
+    // execution is written later, from the background task below — while
+    // delegated children need the id from inside the tool loop (mig-198).
+    let episode_id = Uuid::new_v4();
+
     // Build ToolContext
     let tool_context = Arc::new(ToolContext {
+        // Root of this execution's delegation tree (mig-198).
+        parent_episode_id: Some(episode_id),
         credentials,
         memory_store: state.memory_store.clone(),
         embedder: state.embedder.clone(),
@@ -380,6 +387,9 @@ pub async fn dispatch_rabble_action(
         tokio::spawn(async move {
             // 1. Episode with embedding + Spec 22 provenance
             let mut episode = agent_output_to_episode(agent_id_bg, &query_bg, &output_bg);
+            // Use the id advertised to the tool context, so children that
+            // already stamped it as their parent resolve to this row.
+            episode.episode_id = episode_id;
             // Stamp the (agent, human) dyad — see execution.rs.
             let dyad_id = agent_bestiary_memory::dyad_id(agent_id_bg, &user_id_bg);
             episode.dyad_id = Some(dyad_id.clone());

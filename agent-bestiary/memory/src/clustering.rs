@@ -204,6 +204,7 @@ mod tests {
         for query in amd_queries {
             let embedding = embedder.generate(query).await.unwrap();
             episodes.push(Episode {
+                response_text: None,
                 episode_id: Uuid::new_v4(),
                 agent_id,
                 timestamp_ref: Utc::now(),
@@ -218,6 +219,7 @@ mod tests {
                 output_tokens: None,
                 cost_basis: None,
                 cost_rate_key: None,
+                parent_episode_id: None,
                 embedding: Some(embedding),
                 consolidated: false,
                 tags: vec![],
@@ -240,6 +242,7 @@ mod tests {
         for query in intel_queries {
             let embedding = embedder.generate(query).await.unwrap();
             episodes.push(Episode {
+                response_text: None,
                 episode_id: Uuid::new_v4(),
                 agent_id,
                 timestamp_ref: Utc::now(),
@@ -260,6 +263,7 @@ mod tests {
                 output_tokens: None,
                 cost_basis: None,
                 cost_rate_key: None,
+                parent_episode_id: None,
                 embedding: Some(embedding),
                 consolidated: false,
                 tags: vec![],

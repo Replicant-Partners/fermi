@@ -536,7 +536,12 @@ pub async fn run_eval_cases(
             cognition_tier: None,
             credentials: credentials.clone(),
         };
+        // Per-case id: each test case is its own execution, so each gets its
+        // own root episode for delegated children to hang off (mig-198).
+        let case_episode_id = uuid::Uuid::new_v4();
         let tool_context = Arc::new(ToolContext {
+            // Root of this case's delegation tree (mig-198).
+            parent_episode_id: Some(case_episode_id),
             credentials,
             memory_store: state.memory_store.clone(),
             embedder: state.embedder.clone(),
@@ -566,6 +571,8 @@ pub async fn run_eval_cases(
         {
             Ok(output) => {
                 let mut ep = agent_output_to_episode(db_agent.agent_id, &tc.query, output);
+                // Use the id advertised to this case's tool context.
+                ep.episode_id = case_episode_id;
                 // Stamp persona_version_at_write so drift monitoring (Phase 3)
                 // can compare embeddings across persona versions.
                 ep.persona_version_at_write = Some(db_agent.persona_version);

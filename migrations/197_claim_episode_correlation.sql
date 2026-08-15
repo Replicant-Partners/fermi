@@ -49,7 +49,7 @@ COMMENT ON COLUMN public.forecast_agent_claims.episode_id IS
     'Execution that produced this claim. Allocated by the handler before the '
     'claim hook is spawned, so it is exact rather than inferred. No FK: the '
     'claim often lands before the episode row exists (see migration header). '
-    'NULL for claims written before migration 195 — those still resolve via '
+    'NULL for claims written before migration 197 — those still resolve via '
     'the heuristic fallback in route_outcomes.';
 
 CREATE INDEX IF NOT EXISTS idx_agent_claims_episode
@@ -58,16 +58,29 @@ CREATE INDEX IF NOT EXISTS idx_agent_claims_episode
 
 -- ─── Redefine route_outcomes to prefer the exact join ────────────────────────
 --
--- Same column list plus one appended column (`join_method`), which is what
--- CREATE OR REPLACE VIEW permits — so the four dependent views
+-- The join becomes exact when the claim carries an episode_id, falling back to
+-- migration 193's time window for historical rows. The four dependent views
 -- (route_reason_performance, domain_agent_ranking, router_override_scorecard,
 -- declaration_quality_outcomes) keep working untouched and inherit the fix.
 --
--- The join is exact when the claim carries an episode_id, and falls back to
--- migration 193's window for historical rows. `join_method` is surfaced so a
--- reader can tell which rows are trustworthy instead of having to know the
--- migration date — the same reasoning as `episodes.cost_basis` in mig-194.
--- Filter on `join_method = 'exact'` for anything that settles money.
+-- ## The column list is deliberately IDENTICAL to migration 193's
+--
+-- It is tempting to append a `join_method` column here saying whether a row was
+-- matched exactly or by window. Doing so breaks the second boot.
+--
+-- `run_migrations()` keeps no applied-state table — it re-runs every file, in
+-- list order, on every boot. So on boot two, migration 193 runs first and
+-- recreates this view WITHOUT the appended column, which Postgres rejects:
+-- "cannot drop columns from view". And unlike `forecast_cost_attribution`
+-- below, this view cannot simply be dropped and rebuilt — four other views
+-- depend on it, so a DROP needs CASCADE and would have to recreate all five,
+-- duplicating 193's definitions and splitting ownership of them across two
+-- files.
+--
+-- Changing only the JOIN keeps the shape stable, so replaying 193 -> 197 in
+-- either order is a no-op either way. Callers that need to know whether a row
+-- was matched exactly should test `forecast_agent_claims.episode_id IS NOT
+-- NULL` directly, which is what `forecast_cost_attribution` does.
 CREATE OR REPLACE VIEW public.route_outcomes AS
 SELECT
     e.episode_id,
@@ -106,19 +119,13 @@ SELECT
         WHEN cr.shapley_value IS NULL THEN NULL
         WHEN cr.shapley_value > 0     THEN TRUE
         ELSE FALSE
-    END                                            AS helped,
-
-    -- Appended by migration 195.
-    CASE
-        WHEN c.episode_id IS NOT NULL THEN 'exact'
-        ELSE 'heuristic_window'
-    END                                            AS join_method
+    END                                            AS helped
 
 FROM public.episodes e
 JOIN public.agents a
     ON a.agent_id = e.agent_id
 
--- Exact when the claim was stamped (mig-195), else migration 193's window.
+-- Exact when the claim was stamped (mig-197), else migration 193's window.
 -- Written as one predicate rather than a UNION so the dependent views need no
 -- change and a claim can never match twice.
 JOIN public.forecast_agent_claims c
@@ -150,7 +157,7 @@ WHERE e.context -> 'invocation' ->> 'route_reason' IS NOT NULL;
 --
 --   * `cost_basis` (mig-194)  — was the run priced against a known rate with
 --                               a measured token split?
---   * `join_method` (mig-195) — do we know this execution belongs to THIS
+--   * `join_method` (mig-197) — do we know this execution belongs to THIS
 --                               forecast, or did a time window guess it?
 --
 -- `attributed_cost_usd` counts only spend where both are sound.
@@ -169,7 +176,21 @@ WHERE e.context -> 'invocation' ->> 'route_reason' IS NOT NULL;
 -- The CTE collapses to DISTINCT (forecast_id, episode_id) first, so each
 -- execution contributes its cost exactly once no matter how many drivers it
 -- claimed. Any future consumer joining these tables directly must do the same.
-CREATE OR REPLACE VIEW public.forecast_cost_attribution AS
+-- DROP + CREATE rather than CREATE OR REPLACE.
+--
+-- `run_migrations()` has no applied-state tracking: it re-runs every file on
+-- every boot, so each migration must be safe to apply repeatedly IN ANY
+-- COMBINATION with the ones after it. Migration 198 appends a column to this
+-- view; on the next boot this file would then be asking Postgres to REMOVE
+-- that column, which fails with "cannot drop columns from view" and takes the
+-- boot down with it.
+--
+-- Dropping first sidesteps the whole class. Safe here specifically because
+-- nothing depends on this view. Note `route_outcomes` above is the opposite
+-- case — it has four dependent views, so it must stay CREATE OR REPLACE and
+-- append-only.
+DROP VIEW IF EXISTS public.forecast_cost_attribution;
+CREATE VIEW public.forecast_cost_attribution AS
 WITH forecast_episodes AS (
     -- One row per (forecast, execution). DISTINCT is load-bearing, not tidiness.
     SELECT DISTINCT
@@ -180,7 +201,7 @@ WITH forecast_episodes AS (
         ON c.workspace_id = f.workspace_id
     WHERE c.episode_id IS NOT NULL
 ),
--- Claims from before mig-195 (or written by a path that passed no id). Their
+-- Claims from before mig-197 (or written by a path that passed no id). Their
 -- spend is REAL but unlocatable: there is no episode to price. Counted so the
 -- view can say how much of the picture is missing rather than implying none.
 unlinked AS (
@@ -242,7 +263,7 @@ GROUP BY f.id, f.question_text, f.status, f.brier_score, f.resolved_at;
 COMMENT ON VIEW public.forecast_cost_attribution IS
     'Cost per forecast, split into spend we can stand behind and spend we '
     'cannot. attributed_cost_usd requires a measured cost basis (mig-194) and '
-    'an exact episode-claim join (mig-195). De-duplicates the one-claim-per-'
+    'an exact episode-claim join (mig-197). De-duplicates the one-claim-per-'
     'driver fan-out, so an execution is counted once regardless of how many '
     'drivers it claimed. Check unattributed_cost_usd and unlinked_claims '
     'against it before trusting usd_per_brier_point.';

@@ -1,0 +1,706 @@
+{
+  "adaptogen_curator": {
+    "binding": "declared",
+    "labels": [
+      "species_query"
+    ]
+  },
+  "adc_pk_oracle": {
+    "binding": "declared",
+    "labels": [
+      "adc_pk_query_json"
+    ]
+  },
+  "anomaly_triager": {
+    "binding": "no_text_input",
+    "labels": [
+      "agent-id",
+      "anomaly-window",
+      "anomaly-event-id"
+    ]
+  },
+  "ar_avatar_renderer": {
+    "binding": "no_text_input",
+    "labels": [
+      "reference-image",
+      "style-spec"
+    ]
+  },
+  "ar_beacon": {
+    "binding": "no_text_input",
+    "labels": [
+      "description",
+      "location",
+      "gps-coordinates",
+      "h3-cell",
+      "ttl",
+      "orientation"
+    ]
+  },
+  "ar_card_producer": {
+    "binding": "no_text_input",
+    "labels": [
+      "logo",
+      "reference-image",
+      "brand-guidelines"
+    ]
+  },
+  "ar_cartographer": {
+    "binding": "no_text_input",
+    "labels": [
+      "gps-coordinates",
+      "address",
+      "radius",
+      "resolution",
+      "quadrant-names",
+      "zone-definitions"
+    ]
+  },
+  "ar_choreographer": {
+    "binding": "no_text_input",
+    "labels": [
+      "beacon-id",
+      "quadrant-names",
+      "action",
+      "motion-description",
+      "keyframes",
+      "trigger"
+    ]
+  },
+  "bioreactor_modeler": {
+    "binding": "declared",
+    "labels": [
+      "operational_query"
+    ]
+  },
+  "biotech_analyst": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "bluesky_publisher": {
+    "binding": "declared",
+    "labels": [
+      "content"
+    ]
+  },
+  "cohere_and_coordinate": {
+    "binding": "no_text_input",
+    "labels": [
+      "workspace-state",
+      "coherence-scores",
+      "intention-signal",
+      "consolidated-memory"
+    ]
+  },
+  "coherence_consultant": {
+    "binding": "no_text_input",
+    "labels": [
+      "workspace-state",
+      "coherence-scores"
+    ]
+  },
+  "coherence_evaluator": {
+    "binding": "declared",
+    "labels": [
+      "content"
+    ]
+  },
+  "companion_builder_coach": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "comparator": {
+    "binding": "declared_by_convention",
+    "labels": [
+      "compare_experiment_task"
+    ]
+  },
+  "condition_forecaster": {
+    "binding": "no_text_input",
+    "labels": [
+      "location_context",
+      "weather_data",
+      "target_species"
+    ]
+  },
+  "daily_puzzle": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "deal_finder": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "debate_strategist": {
+    "binding": "declared",
+    "labels": [
+      "query-text"
+    ]
+  },
+  "delivery": {
+    "binding": "no_text_input",
+    "labels": [
+      "image",
+      "delivery-spec"
+    ]
+  },
+  "dream_coordinator": {
+    "binding": "no_text_input",
+    "labels": [
+      "unconsolidated-episodes",
+      "dreaming-request"
+    ]
+  },
+  "dream_narrator": {
+    "binding": "no_text_input",
+    "labels": [
+      "consolidation-summary",
+      "ontology-state"
+    ]
+  },
+  "dyad_observer": {
+    "binding": "no_text_input",
+    "labels": [
+      "agent-id",
+      "dyad-id",
+      "time-window",
+      "persona-version"
+    ]
+  },
+  "embedding_broker": {
+    "binding": "no_text_input",
+    "labels": [
+      "shopping-profile",
+      "pricing-strategy"
+    ]
+  },
+  "embedding_projector_guide": {
+    "binding": "no_text_input",
+    "labels": [
+      "projection-data",
+      "cluster-info"
+    ]
+  },
+  "enemy_sensor": {
+    "binding": "no_text_input",
+    "labels": [
+      "creature_id",
+      "species_data",
+      "location_context"
+    ]
+  },
+  "energy_advisor": {
+    "binding": "no_text_input",
+    "labels": [
+      "stage_description_json",
+      "resource_description_json",
+      "process_yaml_json"
+    ]
+  },
+  "entity_investigator": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "equity_analyst": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "eval_runner": {
+    "binding": "no_text_input",
+    "labels": [
+      "agent-id",
+      "evaluator-set",
+      "test-cases"
+    ]
+  },
+  "fermi": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "fixture_context_agent": {
+    "binding": "declared",
+    "labels": [
+      "factor-x6-query"
+    ]
+  },
+  "flavor_profiler": {
+    "binding": "no_text_input",
+    "labels": [
+      "species_identification",
+      "harvest_context",
+      "terroir_data",
+      "processing_method"
+    ]
+  },
+  "flight_coordinator": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "football_analyst": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "football_institution_agent": {
+    "binding": "declared",
+    "labels": [
+      "confederation-query"
+    ]
+  },
+  "forage_scout": {
+    "binding": "no_text_input",
+    "labels": [
+      "location_context",
+      "weather_data",
+      "foraging_goal"
+    ]
+  },
+  "genome_profiler": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "harvest_advisor": {
+    "binding": "no_text_input",
+    "labels": [
+      "species_identification",
+      "harvest_context",
+      "quantity_found"
+    ]
+  },
+  "instagram_publisher": {
+    "binding": "no_text_input",
+    "labels": [
+      "image",
+      "caption",
+      "hashtags"
+    ]
+  },
+  "intention_coordinator": {
+    "binding": "no_text_input",
+    "labels": [
+      "workspace-state",
+      "agent-intentions"
+    ]
+  },
+  "keeper": {
+    "binding": "no_text_input",
+    "labels": [
+      "creature_name",
+      "state_transition",
+      "activity_context"
+    ]
+  },
+  "macro_data_agent": {
+    "binding": "declared",
+    "labels": [
+      "factor-x1-query"
+    ]
+  },
+  "macro_forecaster": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "market_research": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "marketing_composer": {
+    "binding": "declared_by_convention",
+    "labels": [
+      "compose_marketing_task"
+    ]
+  },
+  "micro_patron_template": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "moe_router_strategist": {
+    "binding": "declared",
+    "labels": [
+      "query-text"
+    ]
+  },
+  "monte_carlo_sim": {
+    "binding": "declared",
+    "labels": [
+      "forecasting_question"
+    ]
+  },
+  "naturalist": {
+    "binding": "no_text_input",
+    "labels": [
+      "creature_name",
+      "scientific_name",
+      "species_group",
+      "specimen_context"
+    ]
+  },
+  "navigator": {
+    "binding": "no_text_input",
+    "labels": [
+      "creature_name",
+      "coordinates",
+      "flight_context"
+    ]
+  },
+  "nba_analyst": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "observability_coordinator": {
+    "binding": "declared",
+    "labels": [
+      "observability-query"
+    ]
+  },
+  "observation_analyst": {
+    "binding": "declared",
+    "labels": [
+      "temporal_query"
+    ]
+  },
+  "ontologist": {
+    "binding": "no_text_input",
+    "labels": [
+      "consolidation-episodes",
+      "episode-cluster"
+    ]
+  },
+  "performance_coach": {
+    "binding": "no_text_input",
+    "labels": [
+      "agent-metrics",
+      "execution-history"
+    ]
+  },
+  "pipeline_strategist": {
+    "binding": "no_text_input",
+    "labels": [
+      "workspace-state",
+      "workflow-template",
+      "pipeline-request"
+    ]
+  },
+  "preference_modeler": {
+    "binding": "no_text_input",
+    "labels": [
+      "shopping-history",
+      "interaction-signals"
+    ]
+  },
+  "prey_locator": {
+    "binding": "no_text_input",
+    "labels": [
+      "creature_id",
+      "species_data",
+      "location_context",
+      "target_selection"
+    ]
+  },
+  "product_scout": {
+    "binding": "declared_by_convention",
+    "labels": [
+      "scout_products_task"
+    ]
+  },
+  "publish_coach": {
+    "binding": "no_text_input",
+    "labels": [
+      "agent-card",
+      "readiness-check"
+    ]
+  },
+  "rabble_anchor_manager": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "rabble_curator": {
+    "binding": "declared",
+    "labels": [
+      "collection-query"
+    ]
+  },
+  "rabble_lifecycle_coordinator": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "regulatory_scanner": {
+    "binding": "declared_by_convention",
+    "labels": [
+      "scan_regulations_task"
+    ]
+  },
+  "reynolds_flock": {
+    "binding": "no_text_input",
+    "labels": [
+      "creature_positions",
+      "flocking_params",
+      "swarm_state"
+    ]
+  },
+  "sensor_advisor": {
+    "binding": "declared_by_convention",
+    "labels": [
+      "free_text_stage_description"
+    ]
+  },
+  "sentiment_analyzer": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "shopping_assistant": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "sidestream_miner": {
+    "binding": "declared_by_convention",
+    "labels": [
+      "find_sidestreams_task"
+    ]
+  },
+  "simops_advisor": {
+    "binding": "declared_by_convention",
+    "labels": [
+      "free_text_process_description"
+    ]
+  },
+  "simops_cascade": {
+    "binding": "no_text_input",
+    "labels": [
+      "process_config",
+      "process_name",
+      "session_id",
+      "input_quantity",
+      "target_output"
+    ]
+  },
+  "simops_companion": {
+    "binding": "declared",
+    "labels": [
+      "kask_simops/process_question"
+    ]
+  },
+  "simops_dynamics_runner": {
+    "binding": "no_text_input",
+    "labels": [
+      "dynamics_projection_request",
+      "model_uri",
+      "initial_state",
+      "process_context"
+    ]
+  },
+  "simops_narrator": {
+    "binding": "no_text_input",
+    "labels": [
+      "pipeline_config",
+      "pipeline_json",
+      "simops_config"
+    ]
+  },
+  "simops_narrator_local": {
+    "binding": "no_text_input",
+    "labels": [
+      "pipeline_config",
+      "pipeline_json",
+      "simops_config"
+    ]
+  },
+  "simops_optimizer": {
+    "binding": "no_text_input",
+    "labels": [
+      "trained_predictor_model",
+      "target_output",
+      "reference_operating_point",
+      "free_variable",
+      "process_config"
+    ]
+  },
+  "simops_predictor": {
+    "binding": "no_text_input",
+    "labels": [
+      "session_id",
+      "platform_id",
+      "planned_operational_parameters",
+      "process_config"
+    ]
+  },
+  "social_media_studio": {
+    "binding": "no_text_input",
+    "labels": [
+      "creative-brief",
+      "image",
+      "brand-guidelines",
+      "style-reference"
+    ]
+  },
+  "species_resolver": {
+    "binding": "no_text_input",
+    "labels": [
+      "species-name",
+      "common-name",
+      "taxonomic-group",
+      "gbif-key"
+    ]
+  },
+  "specimen_minter": {
+    "binding": "no_text_input",
+    "labels": [
+      "species-card",
+      "species-name",
+      "variation-preferences",
+      "name"
+    ]
+  },
+  "stripe_billing": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "stripe_connect_advisor": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "style_transfer": {
+    "binding": "no_text_input",
+    "labels": [
+      "image",
+      "style-reference"
+    ]
+  },
+  "supply_chain_oracle": {
+    "binding": "declared",
+    "labels": [
+      "free_text_ingredient_query"
+    ]
+  },
+  "swarm_coordinator": {
+    "binding": "declared",
+    "labels": [
+      "formation_query"
+    ]
+  },
+  "swarm_host": {
+    "binding": "no_text_input",
+    "labels": [
+      "creature_name",
+      "scientific_name",
+      "species_group",
+      "event_context"
+    ]
+  },
+  "valuechain_mapper": {
+    "binding": "declared_by_convention",
+    "labels": [
+      "map_valuechain_task"
+    ]
+  },
+  "video_analyst": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "vote_strategist": {
+    "binding": "declared",
+    "labels": [
+      "query-text"
+    ]
+  },
+  "watermark": {
+    "binding": "no_text_input",
+    "labels": [
+      "image",
+      "brand-guidelines"
+    ]
+  },
+  "weather_calibrator": {
+    "binding": "no_text_input",
+    "labels": [
+      "raw_predictive_distribution",
+      "ensemble-diagnostics",
+      "climatology-base-rate"
+    ]
+  },
+  "weather_ensemble_forecaster": {
+    "binding": "declared",
+    "labels": [
+      "forecast-question"
+    ]
+  },
+  "weather_market_analyst": {
+    "binding": "declared",
+    "labels": [
+      "market-question"
+    ]
+  },
+  "weather_oracle": {
+    "binding": "declared",
+    "labels": [
+      "forecast-question"
+    ]
+  },
+  "wild_companion": {
+    "binding": "declared",
+    "labels": [
+      "foraging_query"
+    ]
+  },
+  "wild_narrator": {
+    "binding": "no_text_input",
+    "labels": [
+      "foraging_observations",
+      "consolidation_result",
+      "dream_context"
+    ]
+  },
+  "wing_segmenter": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
+  "xaman_ek": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  }
+}

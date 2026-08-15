@@ -154,7 +154,19 @@ pub async fn execute_agent_handler(
     };
 
     // 3. Execute via ToolAwareExecutor
+    // Minted here, ahead of BOTH the tool context and the execution, because
+    // two later writers need to point at this episode before it exists:
+    //   * the claim hook, spawned after execution (mig-197)
+    //   * any delegated child episode, written from inside the tool loop
+    //     (mig-198) — which is why it goes on the ToolContext below
+    // An id generated at store time could serve neither.
+    let episode_id = uuid::Uuid::new_v4();
+
     let tool_context = Arc::new(ToolContext {
+        // Root of this execution's delegation tree (mig-198). Children stamp
+        // it as their parent_episode_id so a compound run's true cost is
+        // recoverable as the sum over the tree.
+        parent_episode_id: Some(episode_id),
         memory_store: state.memory_store.clone(),
         embedder: state.embedder.clone(),
         registry: state.registry.clone(),
@@ -203,17 +215,10 @@ pub async fn execute_agent_handler(
     // [MULTIPLIER] blocks, write them to the workspace's params and trigger a refit.
     let ws_id_opt = tool_context_for_hook.workspace_id; // Copy (Option<Uuid>)
 
-    // mig-195: allocate the episode id HERE, before the claim hook is spawned,
-    // and stamp the same value onto the episode at step 5.
-    //
-    // The two writes race: the hook runs on a spawned task while this handler
-    // continues, and the claim usually lands before the episode row exists. So
-    // the id cannot be read back from the episode — it has to be minted up
-    // front and handed to both. That is what turns the (agent_id, driver,
-    // time-window) join of migration 193 into an exact one, which is the
-    // precondition for summing episode cost per forecast.
-    let episode_id = uuid::Uuid::new_v4();
-
+    // The claim carries `episode_id` (minted above) so attribution is exact
+    // rather than a (agent_id, driver, time-window) guess — mig-197. This hook
+    // and the episode write race, and the claim usually lands first, which is
+    // why the id could not simply be read back from the stored episode.
     if let Some(ws_id) = ws_id_opt {
         if !output.evidence.is_empty() {
             let pool = state.db.clone();
@@ -254,11 +259,32 @@ pub async fn execute_agent_handler(
     // 5. Store as ADM episode (with embedding + Spec 22 provenance)
     let mut episode = agent_output_to_episode(db_agent.agent_id, &body.query, &output);
     // Use the id minted before the claim hook was spawned, so the claim and
-    // the episode agree regardless of which write lands first (mig-195).
+    // the episode agree regardless of which write lands first (mig-197).
     episode.episode_id = episode_id;
     // Record how the agent was asked, alongside how it did.
     if let Some(ref inv) = body.invocation {
         crate::stamp_invocation(&mut episode, inv);
+    }
+    // And check the asking against what the agent advertises — server-side,
+    // from the resolved card, rather than believing the caller's account of
+    // it. `bind_input` shipped in v0.16.0 and was wired only into the
+    // desktop console, so this path never ran it; the episode carried the
+    // client's assertion instead.
+    {
+        let verified = fermi::port_trust::bind_input(&card.accepts);
+        let claimed = body
+            .invocation
+            .as_ref()
+            .and_then(|i| i.get("input_binding"))
+            .and_then(|v| v.as_str());
+        if verified.is_mismatch() {
+            tracing::warn!(
+                agent = %card.agent_id,
+                declared = ?card.accepts,
+                "free-text query sent to an agent that declares no text input"
+            );
+        }
+        crate::stamp_input_binding(&mut episode, &verified, claimed);
     }
     // Stamp the (agent, human) dyad so the social tracker can accumulate
     // rapport/trust/reciprocity for this pair. Without this the episode is

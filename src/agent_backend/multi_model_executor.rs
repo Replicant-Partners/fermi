@@ -182,6 +182,7 @@ impl MultiModelExecutor {
         let (evidence, confidence, reasoning) = parse_evidence_json(&text, &agent.name);
 
         Ok(AgentOutput {
+            raw_response: Some(text.clone()),
             agent_name: agent.name.clone(),
             agent_type: agent
                 .agent_type

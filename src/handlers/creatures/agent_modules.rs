@@ -260,10 +260,27 @@ pub async fn enemy_sensor_handler(
                 )
             })?;
 
-            let parsed: serde_json::Value = parse_agent_json(
+            let mut parsed: serde_json::Value = parse_agent_json(
                 &assessment,
                 json!({ "threat_level": "unknown", "summary": assessment, "threats": [] }),
             );
+
+            // Grounding contract. Unlike genome_profiler this agent is
+            // well-formed — `scan_nearby_creatures` returns the creatures it
+            // reports on, and the risk rating is a judgement it is asked to
+            // make. Enforcement here stamps `model_inference` on the
+            // judgement blocks rather than stripping them, and catches the
+            // one thing that would be a fabrication: a threat naming a
+            // creature the scan never returned.
+            let grounding = crate::grounding_trust::enforce("enemy_sensor", &mut parsed);
+            if !grounding.is_clean() {
+                tracing::warn!(
+                    creature_id = %creature_id,
+                    violations = grounding.violations.len(),
+                    paths = ?grounding.violations.iter().map(|v| v.path.as_str()).collect::<Vec<_>>(),
+                    "enemy_sensor produced ungrounded fields; stripped before use"
+                );
+            }
 
             // Record in creature log (background)
             let threat_level = parsed
@@ -535,11 +552,35 @@ pub async fn genome_profiler_handler(
                 .unwrap_or(false);
 
             if cache_is_valid {
+                // Enforce grounding on READ as well as on write.
+                //
+                // 13 cached profiles predate this contract and carry
+                // fabricated genome sizes, karyotypes, divergence dates and
+                // IUCN statuses. `cache_is_valid` cannot see them: it asks
+                // only whether `taxonomy` is non-empty, and taxonomy is the
+                // one block that HAS a tool — so a profile with real
+                // taxonomy and invented genome data stays "valid" forever.
+                // That predicate was written for a previous fix, against a
+                // symptom (empty profiles) rather than this cause.
+                //
+                // Enforcing on read means the 13 stop being served
+                // immediately, without re-running the agent at 2 credits a
+                // call. Migration 200 quarantines the stored copies.
+                let mut profile = cached.unwrap();
+                let report = crate::grounding_trust::enforce("genome_profiler", &mut profile);
+                if !report.is_clean() {
+                    tracing::warn!(
+                        creature_id = %creature_id,
+                        violations = report.violations.len(),
+                        paths = ?report.violations.iter().map(|v| v.path.as_str()).collect::<Vec<_>>(),
+                        "cached genome profile carried ungrounded fields; stripped on read"
+                    );
+                }
                 return Ok(Json(json!({
                     "creature_id": creature_id,
                     "cost": 0,
                     "cached": true,
-                    "profile": cached.unwrap(),
+                    "profile": profile,
                 })));
             }
 
@@ -610,10 +651,51 @@ pub async fn genome_profiler_handler(
                 )
             })?;
 
-            let parsed: serde_json::Value = parse_agent_json(
+            let mut parsed: serde_json::Value = parse_agent_json(
                 &profile,
-                json!({ "summary": profile, "taxonomy": {}, "genome": {}, "phylogeny": {} }),
+                json!({
+                    "summary": profile,
+                    "taxonomy": {},
+                    "genome": {},
+                    "phylogeny": {},
+                    // `conservation` was absent from this fallback, so a
+                    // parse failure produced a document missing a block the
+                    // schema requires — and nothing downstream noticed,
+                    // because nothing validated the shape.
+                    "conservation": {},
+                }),
             );
+
+            // Enforce the grounding contract before anything caches, records
+            // or renders this. The agent has two GBIF tools and is asked for
+            // four blocks; three of them have no possible source, so any
+            // value in them came from the model's weights rather than from a
+            // lookup. `enforce` nulls those, stamps `<block>_provenance`, and
+            // hands back what it removed.
+            //
+            // Placed here rather than inside `parse_agent_json` because that
+            // function is shared by every creature module (enemy_sensor,
+            // prey_locator, dream) and is a parser with a fallback, not a
+            // validator. Mixing the two would make the grounding rules
+            // invisible to anyone reading either call site.
+            let grounding = crate::grounding_trust::enforce("genome_profiler", &mut parsed);
+            if !grounding.is_clean() {
+                // WARN not ERROR: the run itself succeeded and the taxonomy
+                // is real. What failed is the prompt's ability to stop the
+                // model answering questions it has no source for, which is a
+                // card defect, not a request failure.
+                tracing::warn!(
+                    creature_id = %creature_id,
+                    scientific_name = %scientific_name,
+                    violations = grounding.violations.len(),
+                    paths = ?grounding
+                        .violations
+                        .iter()
+                        .map(|v| v.path.as_str())
+                        .collect::<Vec<_>>(),
+                    "genome_profiler produced ungrounded fields; stripped before caching"
+                );
+            }
 
             // Cache + record in background
             let profile_cost = gas.genome_profiler_check;
@@ -833,10 +915,26 @@ pub async fn prey_locator_handler(
                 )
             })?;
 
-            let parsed: serde_json::Value = parse_agent_json(
+            let mut parsed: serde_json::Value = parse_agent_json(
                 &result,
                 json!({ "prey_targets": [], "hunting_summary": result }),
             );
+
+            // `distance_cells` is the guess here: the scan returns `h3_cell`
+            // per neighbour and no distance of any kind. Exactly computable
+            // with `h3o`, which is already a dependency — see the contract
+            // entry, which names this the cheapest Unsourced field in the
+            // corpus to retire.
+            let grounding = crate::grounding_trust::enforce("prey_locator", &mut parsed);
+            if !grounding.is_clean() {
+                tracing::warn!(
+                    creature_id = %creature_id,
+                    mode = "scan",
+                    violations = grounding.violations.len(),
+                    paths = ?grounding.violations.iter().map(|v| v.path.as_str()).collect::<Vec<_>>(),
+                    "prey_locator produced ungrounded fields; stripped before use"
+                );
+            }
 
             // Record in background
             let scan_cost = gas.prey_locator_scan;
@@ -964,10 +1062,27 @@ pub async fn prey_locator_handler(
                 )
             })?;
 
-            let parsed: serde_json::Value = parse_agent_json(
+            let mut parsed: serde_json::Value = parse_agent_json(
                 &plan,
                 json!({ "flight_plan": { "approach": plan }, "tactical_notes": "" }),
             );
+
+            // The stalk mode is the sharpest case in the corpus. Nearby
+            // creatures reach this agent as an `h3_cell` and nothing else —
+            // no latitude, no longitude, no distance — so every waypoint
+            // coordinate in the flight plan is a number it was never given,
+            // in a document meant to be flown rather than read. The strategy
+            // and the difficulty rating survive; the geometry does not.
+            let grounding = crate::grounding_trust::enforce("prey_locator", &mut parsed);
+            if !grounding.is_clean() {
+                tracing::warn!(
+                    creature_id = %creature_id,
+                    mode = "stalk",
+                    violations = grounding.violations.len(),
+                    paths = ?grounding.violations.iter().map(|v| v.path.as_str()).collect::<Vec<_>>(),
+                    "prey_locator produced ungrounded flight geometry; stripped before use"
+                );
+            }
 
             // Record in background
             let stalk_cost = gas.prey_locator_stalk;

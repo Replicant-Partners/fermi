@@ -90,6 +90,7 @@
     "taxonomy": {
       "phylum": "Instrumenta",
       "class": "Researchia",
+      "order": "Consiliales",
       "species": "prey_locator"
     },
     "tags": [
@@ -123,5 +124,17 @@
     "balance": 0.0,
     "currency": "USD",
     "budget": 200.0
-  }
+  },
+  "accepts": [
+    "creature_id",
+    "species_data",
+    "location_context",
+    "target_selection"
+  ],
+  "produces": [
+    "prey_targets",
+    "hunting_summary",
+    "flight_plan",
+    "tactical_notes"
+  ]
 }

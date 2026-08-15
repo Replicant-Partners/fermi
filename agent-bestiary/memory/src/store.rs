@@ -221,11 +221,12 @@ impl MemoryStore {
                 provider_used, model_used,
                 embedding_model_id, embedding_model_version, embedding_dim,
                 source_text, source_ref, provenance_trusted,
-                input_tokens, output_tokens, cost_basis, cost_rate_key
+                input_tokens, output_tokens, cost_basis, cost_rate_key,
+                parent_episode_id, response_text
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
                     $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25,
-                    $26, $27, $28, $29)
+                    $26, $27, $28, $29, $30, $31)
             RETURNING episode_id
             "#,
         )
@@ -259,6 +260,10 @@ impl MemoryStore {
         .bind(episode.output_tokens)
         .bind(&episode.cost_basis)
         .bind(&episode.cost_rate_key)
+        // mig-198: links a delegated run to the agent that called it.
+        .bind(episode.parent_episode_id)
+        // mig-199: the answer itself, not the digest of it.
+        .bind(&episode.response_text)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -293,7 +298,8 @@ impl MemoryStore {
                 tokens_used, cost_usd, embedding, consolidated, tags,
                 provenance, authority_weight, dyad_id, persona_version_at_write,
                 provider_used, model_used,
-                input_tokens, output_tokens, cost_basis, cost_rate_key
+                input_tokens, output_tokens, cost_basis, cost_rate_key,
+                parent_episode_id, response_text
             FROM episodes
             WHERE episode_id = $1
             "#,
@@ -306,6 +312,10 @@ impl MemoryStore {
         let embedding: Option<pgvector::Vector> = row.try_get("embedding")?;
 
         Ok(Episode {
+            response_text: row
+                .try_get::<Option<String>, _>("response_text")
+                .ok()
+                .flatten(),
             episode_id: row.try_get("episode_id")?,
             agent_id: row.try_get("agent_id")?,
             timestamp_ref: row.try_get("timestamp_ref")?,
@@ -330,6 +340,10 @@ impl MemoryStore {
                 .flatten(),
             cost_rate_key: row
                 .try_get::<Option<String>, _>("cost_rate_key")
+                .ok()
+                .flatten(),
+            parent_episode_id: row
+                .try_get::<Option<Uuid>, _>("parent_episode_id")
                 .ok()
                 .flatten(),
             embedding: embedding.map(|v| v.to_vec()),
@@ -367,7 +381,8 @@ impl MemoryStore {
                 tokens_used, cost_usd, embedding, consolidated, tags,
                 provenance, authority_weight, dyad_id, persona_version_at_write,
                 provider_used, model_used,
-                input_tokens, output_tokens, cost_basis, cost_rate_key
+                input_tokens, output_tokens, cost_basis, cost_rate_key,
+                parent_episode_id, response_text
             FROM episodes
             WHERE agent_id = $1 AND NOT consolidated
             ORDER BY timestamp_ref DESC
@@ -382,6 +397,10 @@ impl MemoryStore {
             let embedding: Option<pgvector::Vector> = row.try_get("embedding")?;
 
             episodes.push(Episode {
+                response_text: row
+                    .try_get::<Option<String>, _>("response_text")
+                    .ok()
+                    .flatten(),
                 episode_id: row.try_get("episode_id")?,
                 agent_id: row.try_get("agent_id")?,
                 timestamp_ref: row.try_get("timestamp_ref")?,
@@ -406,6 +425,10 @@ impl MemoryStore {
                     .flatten(),
                 cost_rate_key: row
                     .try_get::<Option<String>, _>("cost_rate_key")
+                    .ok()
+                    .flatten(),
+                parent_episode_id: row
+                    .try_get::<Option<Uuid>, _>("parent_episode_id")
                     .ok()
                     .flatten(),
                 embedding: embedding.map(|v| v.to_vec()),
@@ -1184,6 +1207,7 @@ impl MemoryStore {
                 tokens_used, cost_usd, embedding, consolidated, tags,
                 provenance, authority_weight, dyad_id, persona_version_at_write,
                 input_tokens, output_tokens, cost_basis, cost_rate_key,
+                parent_episode_id,
                 embedding <=> $1 AS distance
             FROM episodes
             WHERE agent_id = $2
@@ -1204,6 +1228,10 @@ impl MemoryStore {
             let distance: f64 = row.try_get("distance")?;
 
             let episode = Episode {
+                response_text: row
+                    .try_get::<Option<String>, _>("response_text")
+                    .ok()
+                    .flatten(),
                 episode_id: row.try_get("episode_id")?,
                 agent_id: row.try_get("agent_id")?,
                 timestamp_ref: row.try_get("timestamp_ref")?,
@@ -1228,6 +1256,10 @@ impl MemoryStore {
                     .flatten(),
                 cost_rate_key: row
                     .try_get::<Option<String>, _>("cost_rate_key")
+                    .ok()
+                    .flatten(),
+                parent_episode_id: row
+                    .try_get::<Option<Uuid>, _>("parent_episode_id")
                     .ok()
                     .flatten(),
                 embedding: embedding.map(|v| v.to_vec()),
@@ -1278,6 +1310,7 @@ impl MemoryStore {
                 tokens_used, cost_usd, embedding, consolidated, tags,
                 provenance, authority_weight, dyad_id, persona_version_at_write,
                 input_tokens, output_tokens, cost_basis, cost_rate_key,
+                parent_episode_id,
                 embedding <=> $1 AS distance
             FROM episodes
             WHERE agent_id = $2
@@ -1302,6 +1335,10 @@ impl MemoryStore {
             let distance: f64 = row.try_get("distance")?;
 
             let episode = Episode {
+                response_text: row
+                    .try_get::<Option<String>, _>("response_text")
+                    .ok()
+                    .flatten(),
                 episode_id: row.try_get("episode_id")?,
                 agent_id: row.try_get("agent_id")?,
                 timestamp_ref: row.try_get("timestamp_ref")?,
@@ -1326,6 +1363,10 @@ impl MemoryStore {
                     .flatten(),
                 cost_rate_key: row
                     .try_get::<Option<String>, _>("cost_rate_key")
+                    .ok()
+                    .flatten(),
+                parent_episode_id: row
+                    .try_get::<Option<Uuid>, _>("parent_episode_id")
                     .ok()
                     .flatten(),
                 embedding: embedding.map(|v| v.to_vec()),
@@ -1371,7 +1412,8 @@ impl MemoryStore {
                 tokens_used, cost_usd, embedding, consolidated, tags,
                 provenance, authority_weight, dyad_id, persona_version_at_write,
                 provider_used, model_used,
-                input_tokens, output_tokens, cost_basis, cost_rate_key
+                input_tokens, output_tokens, cost_basis, cost_rate_key,
+                parent_episode_id, response_text
             FROM episodes
             WHERE agent_id = $1
               AND execution_status = 'failure'
@@ -1389,6 +1431,10 @@ impl MemoryStore {
             let embedding: Option<pgvector::Vector> = row.try_get("embedding")?;
 
             episodes.push(Episode {
+                response_text: row
+                    .try_get::<Option<String>, _>("response_text")
+                    .ok()
+                    .flatten(),
                 episode_id: row.try_get("episode_id")?,
                 agent_id: row.try_get("agent_id")?,
                 timestamp_ref: row.try_get("timestamp_ref")?,
@@ -1413,6 +1459,10 @@ impl MemoryStore {
                     .flatten(),
                 cost_rate_key: row
                     .try_get::<Option<String>, _>("cost_rate_key")
+                    .ok()
+                    .flatten(),
+                parent_episode_id: row
+                    .try_get::<Option<Uuid>, _>("parent_episode_id")
                     .ok()
                     .flatten(),
                 embedding: embedding.map(|v| v.to_vec()),
@@ -2314,7 +2364,8 @@ impl MemoryStore {
                 tokens_used, cost_usd, consolidated, tags,
                 provenance, authority_weight, dyad_id, persona_version_at_write,
                 provider_used, model_used,
-                input_tokens, output_tokens, cost_basis, cost_rate_key
+                input_tokens, output_tokens, cost_basis, cost_rate_key,
+                parent_episode_id, response_text
             FROM episodes
             WHERE agent_id = $1
             ORDER BY timestamp_ref DESC
@@ -2330,6 +2381,10 @@ impl MemoryStore {
         let mut episodes = Vec::new();
         for row in rows {
             episodes.push(Episode {
+                response_text: row
+                    .try_get::<Option<String>, _>("response_text")
+                    .ok()
+                    .flatten(),
                 episode_id: row.try_get("episode_id")?,
                 agent_id: row.try_get("agent_id")?,
                 timestamp_ref: row.try_get("timestamp_ref")?,
@@ -2354,6 +2409,10 @@ impl MemoryStore {
                     .flatten(),
                 cost_rate_key: row
                     .try_get::<Option<String>, _>("cost_rate_key")
+                    .ok()
+                    .flatten(),
+                parent_episode_id: row
+                    .try_get::<Option<Uuid>, _>("parent_episode_id")
                     .ok()
                     .flatten(),
                 embedding: None, // omit for performance
@@ -2396,7 +2455,8 @@ impl MemoryStore {
                 tokens_used, cost_usd, embedding, consolidated, tags,
                 provenance, authority_weight, dyad_id, persona_version_at_write,
                 provider_used, model_used,
-                input_tokens, output_tokens, cost_basis, cost_rate_key
+                input_tokens, output_tokens, cost_basis, cost_rate_key,
+                parent_episode_id, response_text
             FROM episodes
             WHERE agent_id = $1 AND embedding IS NOT NULL
             ORDER BY timestamp_ref ASC
@@ -2410,6 +2470,10 @@ impl MemoryStore {
         for row in rows {
             let embedding: Option<pgvector::Vector> = row.try_get("embedding")?;
             episodes.push(Episode {
+                response_text: row
+                    .try_get::<Option<String>, _>("response_text")
+                    .ok()
+                    .flatten(),
                 episode_id: row.try_get("episode_id")?,
                 agent_id: row.try_get("agent_id")?,
                 timestamp_ref: row.try_get("timestamp_ref")?,
@@ -2434,6 +2498,10 @@ impl MemoryStore {
                     .flatten(),
                 cost_rate_key: row
                     .try_get::<Option<String>, _>("cost_rate_key")
+                    .ok()
+                    .flatten(),
+                parent_episode_id: row
+                    .try_get::<Option<Uuid>, _>("parent_episode_id")
                     .ok()
                     .flatten(),
                 embedding: embedding.map(|v| v.to_vec()),
@@ -4864,6 +4932,7 @@ mod tests {
 
         // Now create an episode for that agent
         let episode = Episode {
+            response_text: None,
             episode_id: Uuid::new_v4(),
             agent_id,
             timestamp_ref: Utc::now(),
@@ -4878,6 +4947,7 @@ mod tests {
             output_tokens: None,
             cost_basis: None,
             cost_rate_key: None,
+            parent_episode_id: None,
             embedding: None,
             consolidated: false,
             tags: vec![],
@@ -4927,6 +4997,7 @@ mod tests {
             // docs/plans/CI_MIGRATION_RATCHET.md.
             let prov = embedder.generate_provenanced(query).await.unwrap();
             let episode = Episode {
+                response_text: None,
                 episode_id: Uuid::new_v4(),
                 agent_id,
                 timestamp_ref: Utc::now(),
@@ -4941,6 +5012,7 @@ mod tests {
                 output_tokens: None,
                 cost_basis: None,
                 cost_rate_key: None,
+                parent_episode_id: None,
                 embedding: Some(prov.vector.clone()),
                 consolidated: false,
                 tags: vec![],
@@ -4991,6 +5063,7 @@ mod tests {
         let mut episode_ids = Vec::new();
         for i in 0..3 {
             let episode = Episode {
+                response_text: None,
                 episode_id: Uuid::new_v4(),
                 agent_id: agent.agent_id,
                 timestamp_ref: Utc::now(),
@@ -5005,6 +5078,7 @@ mod tests {
                 output_tokens: None,
                 cost_basis: None,
                 cost_rate_key: None,
+                parent_episode_id: None,
                 embedding: None,
                 consolidated: false,
                 tags: vec![],

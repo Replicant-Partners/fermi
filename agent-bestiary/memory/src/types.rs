@@ -36,6 +36,26 @@ pub struct Episode {
     /// traceable to the entry that caused it.
     #[serde(default)]
     pub cost_rate_key: Option<String>,
+    /// Episode of the agent that delegated this run (migration 198). `None` =
+    /// a root execution.
+    ///
+    /// A delegated run writes its OWN episode rather than folding its tokens
+    /// into the caller's, so each agent stays individually costable and
+    /// creditable. The corollary: the true cost of a compound execution is the
+    /// **sum over the tree**, never the root row alone.
+    #[serde(default)]
+    pub parent_episode_id: Option<Uuid>,
+    /// The agent's final text, verbatim (migration 199). `None` for every
+    /// row written before it, and for executors that produce no single
+    /// document.
+    ///
+    /// `context` keeps a digest of the answer — `evidence`, `reasoning`,
+    /// `sources_consulted` — produced by a per-agent parser. This keeps the
+    /// answer. Only the latter can be used to induce what an agent actually
+    /// produces, because the former is a reading rather than a record, and
+    /// the reading changes retroactively whenever the parser does.
+    #[serde(default)]
+    pub response_text: Option<String>,
     pub embedding: Option<Vec<f32>>,
     pub consolidated: bool,
     #[serde(default)]

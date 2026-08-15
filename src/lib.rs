@@ -61,6 +61,26 @@ pub mod schema_trust;
 // nothing ever wrote it. Content drift needs its own contract.
 pub mod rollup_trust;
 
+// Grounding trust contract — the third sibling. `schema_trust` asks whether
+// a column exists; `rollup_trust` asks whether it is true; this asks
+// whether a value could have come from anywhere at all.
+//
+// `genome_profiler` was asked for genome size, karyotype, divergence date
+// and IUCN status with two GBIF tools that return taxonomy only, and filled
+// all of it confidently for 56 episodes. Presence and content checks both
+// pass on that: the field is there and internally consistent. Only a
+// contract that maps output fields to the tools that could supply them
+// catches it.
+pub mod grounding_trust;
+
+// Port trust contract — whether the caller is sending what the agent said it
+// takes. `negotiate::bind_input` in the console answered this correctly and
+// was wired only into the desktop client, so every HTTP execute path went
+// unchecked; worse, `stamp_invocation` recorded the CALLER's claim about the
+// binding as if it were a finding. Canonical implementation lives here so
+// the server can verify rather than transcribe.
+pub mod port_trust;
+
 // Agent economics — one definition of "how much has this agent run, and
 // what did it cost", measured from `episodes` rather than from the
 // denormalised counters on `agents` that no code path maintains.
@@ -75,6 +95,14 @@ pub mod taxonomy;
 // seams before executing it, so a pipeline that would break at stage 4 never
 // spends stages 1–3.
 pub mod pipeline;
+
+// Episode construction — one constructor, reachable from both sides. The
+// HTTP handlers in the api-server binary and the in-library delegation
+// tools (agent_backend::tools_legacy) must build episodes through the same
+// function; while it lived in the binary the lib had to keep a duplicate,
+// and duplicates silently diverge on cost basis, provider attribution and
+// failure provenance.
+pub mod episodes;
 
 // Re-export main types
 pub use ast::*;

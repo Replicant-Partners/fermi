@@ -153,6 +153,7 @@ mod tests {
 
     fn dummy_bundle() -> EpisodeBundle {
         let ep = Episode {
+            response_text: None,
             episode_id: Uuid::new_v4(),
             agent_id: Uuid::new_v4(),
             timestamp_ref: Utc::now(),
@@ -167,6 +168,7 @@ mod tests {
             output_tokens: None,
             cost_basis: None,
             cost_rate_key: None,
+            parent_episode_id: None,
             embedding: None,
             consolidated: false,
             tags: vec![],

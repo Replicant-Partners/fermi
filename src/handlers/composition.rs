@@ -134,6 +134,7 @@ pub async fn reject_composition_version_handler(
 
                 if let Some(sid) = strategist_id {
                     let episode = agent_bestiary_memory::Episode {
+                        response_text: None,
                         episode_id: Uuid::new_v4(),
                         agent_id: sid,
                         timestamp_ref: Utc::now(),
@@ -158,6 +159,7 @@ pub async fn reject_composition_version_handler(
                         output_tokens: None,
                         cost_basis: None,
                         cost_rate_key: None,
+                        parent_episode_id: None,
                         embedding: None,
                         consolidated: false,
                         tags: vec![

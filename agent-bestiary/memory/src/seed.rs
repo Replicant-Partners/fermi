@@ -457,6 +457,7 @@ impl SeedData {
             }
 
             episodes.push(Episode {
+                response_text: None,
                 episode_id,
                 agent_id,
                 timestamp_ref: timestamp,
@@ -475,6 +476,7 @@ impl SeedData {
                 output_tokens: None,
                 cost_basis: None,
                 cost_rate_key: None,
+                parent_episode_id: None,
                 embedding,
                 consolidated,
                 tags: vec![

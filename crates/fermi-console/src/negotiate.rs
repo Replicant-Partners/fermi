@@ -329,10 +329,29 @@ impl QuerySource {
 /// `forecast-question`, `macro_data_agent` says `factor-x1-query` — so match
 /// on the shape of the word, not an enumeration of known labels.
 fn is_text_input(label: &str) -> bool {
-    let l = label.to_ascii_lowercase();
+    // MIRROR of `src/port_trust.rs::is_text_input` in the `fermi` crate,
+    // which is canonical: it runs at both execute boundaries and stamps the
+    // verdict onto the episode. This copy is a pre-flight hint only — the
+    // console warns before sending, the server decides.
+    //
+    // Duplicated rather than shared because the console is a GPUI desktop
+    // binary and depending on the API-server crate would drag sqlx, axum and
+    // pgvector into it. `agents/port_binding_expected.json` +
+    // `tests/port_binding_parity.rs` pin the Python census to the Rust gate;
+    // this copy is the one leg of the triangle that is NOT machine-checked,
+    // which is recorded as a known gap rather than pretended away.
+    //
+    // The `free_text*` / `*_task` clauses were added after
+    // `scripts/port_census.py` ran the narrower rule across all 100 curated
+    // cards and found eight agents it flagged wrongly — among them
+    // `sensor_advisor` (`free_text_stage_description`) and `comparator`
+    // (`compare_experiment_task`), both plainly free-text ports.
+    let l = label.to_ascii_lowercase().replace('-', "_");
     l.contains("query")
         || l.contains("question")
         || l.contains("prompt")
+        || l.contains("free_text")
+        || l.ends_with("_task")
         || matches!(l.as_str(), "content" | "topic" | "narrative" | "text")
 }
 

@@ -776,36 +776,51 @@ mod tests {
         println!("Validated {} agent cards", cards.len());
     }
 
+    /// Every curated card must satisfy the shared ABW agent contract —
+    /// the same requirement set the publish gate applies to
+    /// API-authored agents (`workflows::agent_contract`).
+    ///
+    /// Sharing the definition is the point. This test and
+    /// `run_publish_checks` used to encode "well-formed" separately, so
+    /// the on-disk path enforced sample_queries and valence while the API
+    /// path did not — which is how community agents reached the public
+    /// catalogue with neither.
     #[test]
-    fn test_all_cards_have_required_fields() {
+    fn test_all_cards_satisfy_agent_contract() {
+        use crate::workflows::agent_contract::{contract_violations, ContractView};
+
+        let cards = load_all_cards();
+        let mut failures: Vec<String> = Vec::new();
+
+        for (dir_name, card) in &cards {
+            for v in contract_violations(&ContractView::from(card)) {
+                failures.push(format!("{dir_name}: {} — {}", v.check, v.message));
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "{} curated card(s) violate the agent contract:\n  {}",
+            failures.len(),
+            failures.join("\n  ")
+        );
+    }
+
+    /// Card-only requirements — fields that exist on `AgentCard` but have
+    /// no counterpart on the `agents` row, so they cannot live in the
+    /// shared contract.
+    #[test]
+    fn test_all_cards_have_card_specific_fields() {
         let cards = load_all_cards();
         for (dir_name, card) in &cards {
-            // metadata.description must be meaningful
+            // A card whose description is the generated placeholder is
+            // worse than one with no description: it looks filled in.
             assert!(
-                !card.metadata.description.is_empty()
-                    && !card.metadata.description.starts_with("Agent: "),
-                "{}: metadata.description is missing or default",
+                !card.metadata.description.starts_with("Agent: "),
+                "{}: metadata.description is still the default placeholder",
                 dir_name
             );
-            // metadata.tags must be non-empty
-            assert!(
-                !card.metadata.tags.is_empty(),
-                "{}: metadata.tags is empty",
-                dir_name
-            );
-            // metadata.sample_queries must be non-empty
-            assert!(
-                !card.metadata.sample_queries.is_empty(),
-                "{}: metadata.sample_queries is empty",
-                dir_name
-            );
-            // metadata.valence must be present
-            assert!(
-                card.metadata.valence.is_some(),
-                "{}: metadata.valence is missing",
-                dir_name
-            );
-            // wallet must be present
+            // Wallet is a card concept; DB agents fund via agent_wallets.
             assert!(card.wallet.is_some(), "{}: wallet is missing", dir_name);
         }
     }

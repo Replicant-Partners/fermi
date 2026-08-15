@@ -1,4 +1,4 @@
--- Assertions for migrations 194 + 195. Run AFTER both are applied to a
+-- Assertions for migrations 194 + 197. Run AFTER both are applied to a
 -- throwaway database seeded by cost_attribution_fixture.sql.
 --
 -- Every check RAISEs on failure, so a non-zero psql exit means a real
@@ -63,6 +63,36 @@ INSERT INTO public.forecast_agent_claims
     ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222',
      'macro_data_agent', 'legacy', 1.0, NULL);
 
+-- TWO DELEGATED CHILDREN of the claimed execution (mig-198). Neither carries a
+-- claim of its own -- sub-agents do research, they rarely emit a multiplier --
+-- so they can reach the forecast ONLY by descent from their parent. Before
+-- mig-198 these rows did not exist at all: the delegation tools discarded the
+-- child's AgentOutput, so a compound agent under-reported by its whole fan-out.
+INSERT INTO public.episodes
+    (episode_id, agent_id, tokens_used, cost_usd, cost_basis,
+     provider_used, model_used, parent_episode_id)
+VALUES
+    ('e0000003-0000-0000-0000-000000000003',
+     '22222222-2222-2222-2222-222222222222',
+     10000, 0.010000, 'measured_split', 'deepseek', 'deepseek-chat',
+     'e0000001-0000-0000-0000-000000000001'),
+    ('e0000004-0000-0000-0000-000000000004',
+     '22222222-2222-2222-2222-222222222222',
+     20000, 0.020000, 'measured_split', 'deepseek', 'deepseek-chat',
+     'e0000001-0000-0000-0000-000000000001');
+
+-- A GRANDCHILD, two levels down. Proves the descent is recursive rather than
+-- a single-level join -- delegation depth is capped at 2 in code today, but a
+-- view that silently stops at one level would be wrong the moment that changes.
+INSERT INTO public.episodes
+    (episode_id, agent_id, tokens_used, cost_usd, cost_basis,
+     provider_used, model_used, parent_episode_id)
+VALUES
+    ('e0000005-0000-0000-0000-000000000005',
+     '22222222-2222-2222-2222-222222222222',
+     5000, 0.005000, 'measured_split', 'deepseek', 'deepseek-chat',
+     'e0000003-0000-0000-0000-000000000003');
+
 -- ─── DEDUP-001: an execution is costed ONCE, not once per driver ─────────────
 
 DO $$
@@ -75,22 +105,66 @@ BEGIN
       FROM public.forecast_cost_attribution
      WHERE forecast_id = 'fc_resolved';
 
-    -- $0.09 counted once. A naive join would give $0.27 (3 drivers).
-    IF v_attributed IS DISTINCT FROM 0.090000 THEN
+    -- Trustworthy spend over the whole tree, each row counted ONCE:
+    --   parent      0.090  (reached by 3 claims -- must not triple)
+    --   child  x2   0.010 + 0.020
+    --   grandchild  0.005
+    --               = 0.125
+    -- The parent alone tripling would give 0.185+; tripling the subtree too
+    -- (the naive-join failure) gives 0.375.
+    IF v_attributed IS DISTINCT FROM 0.125000 THEN
         RAISE EXCEPTION
-            'DEDUP-001 FAILED: attributed_cost_usd = %, expected 0.090000. '
-            'A value of 0.270000 means the one-claim-per-driver fan-out is '
-            'multiplying execution cost by driver count.', v_attributed;
+            'DEDUP-001 FAILED: attributed_cost_usd = %, expected 0.125000. '
+            '0.375000 means the one-claim-per-driver fan-out is multiplying '
+            'the whole delegation subtree by driver count; 0.185000 means only '
+            'the parent is being tripled.', v_attributed;
     END IF;
 
-    -- 2 distinct executions (one trustworthy, one unknown_model), not 4 claims.
-    IF v_executions IS DISTINCT FROM 2 THEN
+    -- 5 distinct executions: parent, unknown-model run, 2 children, grandchild.
+    -- NOT the 4 claim rows, and not one row per (claim x descendant) pair.
+    IF v_executions IS DISTINCT FROM 5 THEN
         RAISE EXCEPTION
-            'DEDUP-001 FAILED: executions = %, expected 2 distinct episodes '
-            '(4 claim rows exist; the view must not count claims).', v_executions;
+            'DEDUP-001 FAILED: executions = %, expected 5 distinct episodes. '
+            'The view must count episodes, never claims or join pairs.', v_executions;
     END IF;
 
-    RAISE NOTICE 'DEDUP-001 ok: one execution costed once across 3 drivers';
+    RAISE NOTICE 'DEDUP-001 ok: every execution costed once across 3 drivers and 2 tree levels';
+END $$;
+
+-- ─── TREE-001: delegated cost is included, recursively ─────────────────────
+
+DO $$
+DECLARE
+    v_delegated BIGINT;
+    v_attr      NUMERIC;
+BEGIN
+    SELECT delegated_executions, attributed_cost_usd
+      INTO v_delegated, v_attr
+      FROM public.forecast_cost_attribution
+     WHERE forecast_id = 'fc_resolved';
+
+    -- 2 children + 1 grandchild. A value of 2 means the descent stopped at one
+    -- level; 0 means delegated work is invisible, the pre-mig-198 behaviour.
+    IF v_delegated IS DISTINCT FROM 3 THEN
+        RAISE EXCEPTION
+            'TREE-001 FAILED: delegated_executions = %, expected 3 '
+            '(2 children + 1 grandchild). 2 = descent is not recursive; '
+            '0 = delegated executions are not reaching the forecast at all.',
+            v_delegated;
+    END IF;
+
+    -- The parent''s own cost is 0.090; the tree adds 0.035 on top. If a reader
+    -- ever sees attributed cost equal to the root''s own figure, compound spend
+    -- is being dropped.
+    IF v_attr <= 0.090000 THEN
+        RAISE EXCEPTION
+            'TREE-001 FAILED: attributed_cost_usd = % is not greater than the '
+            'root execution''s own 0.090000, so delegated spend is being lost.',
+            v_attr;
+    END IF;
+
+    RAISE NOTICE 'TREE-001 ok: % delegated executions included; tree total % vs root 0.090000',
+        v_delegated, v_attr;
 END $$;
 
 -- ─── BASIS-001: untrustworthy cost is reported, never silently included ──────
@@ -136,12 +210,14 @@ BEGIN
     SELECT usd_per_brier_point INTO v_metric
       FROM public.forecast_cost_attribution WHERE forecast_id = 'fc_resolved';
 
-    -- 0.09 / 0.04 = 2.25. Must NOT be (0.09+0.25)/0.04 = 8.5.
-    IF round(v_metric, 4) IS DISTINCT FROM 2.2500 THEN
+    -- 0.125 / 0.04 = 3.125. Must NOT be (0.125+0.25)/0.04 = 9.375, which would
+    -- mean untrustworthy spend leaked into the cost-effectiveness metric.
+    IF round(v_metric, 4) IS DISTINCT FROM 3.1250 THEN
         RAISE EXCEPTION
-            'BRIER-001 FAILED: usd_per_brier_point = %, expected 2.2500 '
-            '(attributed 0.09 / brier 0.04). 8.5 means untrustworthy spend '
-            'leaked into the cost-effectiveness metric.', v_metric;
+            'BRIER-001 FAILED: usd_per_brier_point = %, expected 3.1250 '
+            '(attributed 0.125 over the tree / brier 0.04). 9.3750 means the '
+            'unknown_model run leaked in; 2.2500 means delegated cost is '
+            'missing.', v_metric;
     END IF;
 
     -- Unresolved forecasts have no Brier, so no metric. Must be NULL, not 0.
@@ -157,24 +233,68 @@ END $$;
 
 -- ─── JOIN-001: route_outcomes reports how each row was joined ────────────────
 
+-- The failure mode migration 193 documented about its own heuristic: it
+-- "can MISS when an agent is invoked twice for the same driver inside the
+-- window (the two claims are indistinguishable)". Reproduce exactly that, and
+-- prove the episode_id join separates what the window cannot.
 DO $$
 DECLARE
-    v_exact BIGINT;
+    v_run_a BIGINT;
+    v_run_b BIGINT;
+    v_cross BIGINT;
 BEGIN
-    SELECT COUNT(*) INTO v_exact
-      FROM public.route_outcomes
-     WHERE episode_id = 'e0000001-0000-0000-0000-000000000001'
-       AND join_method = 'exact';
+    -- Two runs of the SAME agent on the SAME driver, 30 seconds apart: well
+    -- inside migration 193's -2min/+10min window, so the heuristic would match
+    -- each episode against BOTH claims.
+    INSERT INTO public.episodes
+        (episode_id, agent_id, tokens_used, cost_usd, cost_basis,
+         provider_used, model_used, created_at, context)
+    VALUES
+        ('eaaa0001-0000-0000-0000-00000000000a',
+         '11111111-1111-1111-1111-111111111111', 1000, 0.001, 'measured_split',
+         'deepseek', 'deepseek-chat', NOW(),
+         '{"invocation":{"route_reason":"domain_specialist","driver":"tactical"}}'::jsonb),
+        ('eaaa0002-0000-0000-0000-00000000000b',
+         '11111111-1111-1111-1111-111111111111', 1000, 0.001, 'measured_split',
+         'deepseek', 'deepseek-chat', NOW() + INTERVAL '30 seconds',
+         '{"invocation":{"route_reason":"domain_specialist","driver":"tactical"}}'::jsonb);
 
-    -- 3 claims share this episode, so 3 exact rows — correct at claim grain.
-    IF v_exact IS DISTINCT FROM 3 THEN
+    INSERT INTO public.forecast_agent_claims
+        (workspace_id, agent_id, agent_name, driver, p50, episode_id, claimed_at)
+    VALUES
+        ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111',
+         'efra_critical_factor', 'tactical', 1.4,
+         'eaaa0001-0000-0000-0000-00000000000a', NOW()),
+        ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111',
+         'efra_critical_factor', 'tactical', 1.9,
+         'eaaa0002-0000-0000-0000-00000000000b', NOW() + INTERVAL '30 seconds');
+
+    SELECT COUNT(*) INTO v_run_a FROM public.route_outcomes
+     WHERE episode_id = 'eaaa0001-0000-0000-0000-00000000000a';
+    SELECT COUNT(*) INTO v_run_b FROM public.route_outcomes
+     WHERE episode_id = 'eaaa0002-0000-0000-0000-00000000000b';
+
+    -- Exactly one claim each. Under the old window join both would be 2.
+    IF v_run_a IS DISTINCT FROM 1 OR v_run_b IS DISTINCT FROM 1 THEN
         RAISE EXCEPTION
-            'JOIN-001 FAILED: % exact-joined rows, expected 3 (one per driver). '
-            'route_outcomes is at CLAIM grain by design; only '
-            'forecast_cost_attribution de-duplicates to execution grain.', v_exact;
+            'JOIN-001 FAILED: run A matched % claims, run B matched % — expected '
+            '1 each. 2 each means the time-window heuristic is still being used '
+            'and two runs of the same agent on the same driver are being '
+            'conflated, which is what migration 197 exists to fix.',
+            v_run_a, v_run_b;
     END IF;
 
-    RAISE NOTICE 'JOIN-001 ok: exact join reported via join_method';
+    -- And each run is matched to ITS OWN claim, not the other one (p50 1.4 vs 1.9).
+    SELECT COUNT(*) INTO v_cross FROM public.route_outcomes
+     WHERE episode_id = 'eaaa0001-0000-0000-0000-00000000000a'
+       AND claimed_multiplier <> 1.4::real;
+    IF v_cross <> 0 THEN
+        RAISE EXCEPTION
+            'JOIN-001 FAILED: run A is attributed a claim value that is not its '
+            'own, so claims are crossed between runs.';
+    END IF;
+
+    RAISE NOTICE 'JOIN-001 ok: two same-agent same-driver runs 30s apart stay distinct';
 END $$;
 
 -- ─── CHECK-001: the cost_basis vocabulary is enforced ───────────────────────

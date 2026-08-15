@@ -265,6 +265,15 @@ pub const SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("agent_execution_rollup", "tokens_used"),
     ("agent_execution_rollup", "avg_execution_time_ms"),
     ("agent_execution_rollup", "episodes_missing_cost"),
+    // ── episodes (mig-199) ─────────────────────────────────────────
+    // The agent's own output, retained verbatim. Declared here for the
+    // same reason `agent_execution_rollup`'s columns are: a new source of
+    // truth with no existence guarantee just relocates the problem it was
+    // built to solve. If this column goes missing, output-type induction
+    // silently reads `None` for every row — a corpus that looks empty
+    // rather than absent, which is the failure this contract exists to
+    // make loud.
+    ("episodes", "response_text"),
     // ── fermi_forecasts ────────────────────────────────────────────
     ("fermi_forecasts", "id"),
     ("fermi_forecasts", "owner_id"), // realigned TEXT via mig-165

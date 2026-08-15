@@ -222,7 +222,7 @@ pub fn extract_multiplier(summary: &str) -> Option<(f64, f64, f64)> {
 /// Called after a successful agent execution. Returns true if params were
 /// actually updated.
 /// `episode_id` correlates the claim to the execution that produced it
-/// (migration 195). Allocated by the caller *before* this hook is spawned,
+/// (migration 197). Allocated by the caller *before* this hook is spawned,
 /// because the hook and the episode write race and the claim usually lands
 /// first — so the id cannot be read back from the episode row. `None` only
 /// for callers with no episode to point at.
@@ -307,7 +307,7 @@ pub async fn apply_agent_multipliers(
         .bind(p50 as f32)
         .bind(p95 as f32)
         .bind(raw_evidence)
-        // mig-195: the exact correlation id. Replaces the (agent_id, driver,
+        // mig-197: the exact correlation id. Replaces the (agent_id, driver,
         // time-window) heuristic that could not distinguish two runs of the
         // same agent on the same driver — the case that matters most, since
         // a re-run after a correction is exactly when attribution is asked for.
