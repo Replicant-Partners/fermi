@@ -116,6 +116,15 @@ pub enum Provenance {
     /// The second write of the intervention flow — synthetic corrected
     /// episode at HumanAuthority weight (1.0).
     SyntheticCorrection,
+    /// Loop 3 cascade: an observation written into this agent's episodic
+    /// memory by the workspace coordination strategist, so the agent learns
+    /// from it on its next dreaming cycle.
+    ///
+    /// Not a run. No model was invoked on this agent's behalf and no tokens
+    /// were spent by it, which is why `agent_execution_rollup` excludes this
+    /// provenance (mig-200) — counting it would inflate execution counts and
+    /// deflate every cost-per-run figure.
+    CoordinatorObservation,
 }
 
 impl Default for Provenance {
@@ -133,6 +142,7 @@ impl std::fmt::Display for Provenance {
             Provenance::HumanRelabeled => write!(f, "human_relabeled"),
             Provenance::HumanCorrected => write!(f, "human_corrected"),
             Provenance::SyntheticCorrection => write!(f, "synthetic_correction"),
+            Provenance::CoordinatorObservation => write!(f, "coordinator_observation"),
         }
     }
 }
@@ -148,6 +158,7 @@ impl std::str::FromStr for Provenance {
             "human_relabeled" => Ok(Provenance::HumanRelabeled),
             "human_corrected" => Ok(Provenance::HumanCorrected),
             "synthetic_correction" => Ok(Provenance::SyntheticCorrection),
+            "coordinator_observation" => Ok(Provenance::CoordinatorObservation),
             _ => Err(format!("Invalid provenance: {}", s)),
         }
     }

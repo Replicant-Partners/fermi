@@ -26,7 +26,25 @@ use sqlx::PgPool;
 /// Everything below the contract block is advisory — `Warning` severity,
 /// reported but never blocking.
 pub fn run_publish_checks(agent: &Agent) -> Vec<PublishCheck> {
-    let mut checks = contract_checks(&ContractView::from(agent));
+    let view = ContractView::from(agent);
+    let mut checks = contract_checks(&view);
+
+    // Typed tier: a schema, ports that reference it, and a field-to-tool
+    // map for every output field. Blocking, and NOT retroactive — see
+    // `agent_contract::TYPED_TIER_EXEMPT` for why the existing corpus is
+    // grandfathered and why that list may only shrink.
+    //
+    // Error severity deliberately: an agent whose output fields nobody has
+    // classified is the shape that produced 56 episodes of confidently
+    // fabricated genome data. Warning it would have changed nothing.
+    for finding in super::agent_contract::typed_tier_violations(&view) {
+        checks.push(PublishCheck {
+            name: finding.check.into(),
+            passed: false,
+            severity: CheckSeverity::Error,
+            message: finding.message,
+        });
+    }
 
     // Warnings — don't block but worth fixing
     let default_temp = (agent.temperature - 0.3).abs() < f64::EPSILON;
@@ -209,7 +227,51 @@ mod tests {
         a.description = Some("Does a thing, carefully.".into());
         a.system_prompt = Some("You are a probe.".into());
         a.valence = Some(json!({ "primary_affect": "analytical" }));
+        // Typed tier: this fixture is a NEW agent, so it gets no
+        // grandfathering and must declare a schema, a namespaced type its
+        // `produces` references, and a disposition for every output field.
+        // That the fixture had to grow to keep passing is the gate working.
+        a.produces = vec!["probe/evidence_report".into()];
+        a.output_contract = Some(json!({
+            "produces_schema": "probe/evidence_report",
+            "schema": { "type": "object", "properties": { "finding": {}, "notes": {} } },
+            "grounding": {
+                "finding": {
+                    "status": "inferred",
+                    "from": "the evidence gathered during the run",
+                    "why": "A judgement the agent is commissioned to make; no tool returns it ready-made."
+                },
+                "notes": {
+                    "status": "narrative",
+                    "why": "Prose accompanying the finding, constrained to what the evidence supports."
+                }
+            }
+        }));
         a
+    }
+
+    /// An agent identical to `agent()` but declaring nothing about its
+    /// output. Before the typed tier this was publishable.
+    fn untyped_agent() -> Agent {
+        let mut a = agent();
+        a.output_contract = None;
+        a
+    }
+
+    #[test]
+    fn a_new_agent_without_a_typed_contract_cannot_publish() {
+        // The point of the tier. `untyped_agent` satisfies every presence
+        // check — name, description, prompt, tags, samples, ports, valence —
+        // which is exactly the state genome_profiler was in while it served
+        // 56 episodes of fabricated genome data.
+        let checks = run_publish_checks(&untyped_agent());
+        assert!(!can_publish(&checks));
+        assert!(
+            checks
+                .iter()
+                .any(|c| c.name == "output_contract_present" && !c.passed),
+            "the block must name the missing contract, not just refuse"
+        );
     }
 
     #[test]
@@ -279,7 +341,10 @@ mod tests {
                 "has_sample_queries",
                 "declares_accepts",
                 "declares_produces",
-                "has_valence"
+                "has_valence",
+                // Typed tier: empty `produces` also fails resolution, since
+                // there is no declared type for a port to reference.
+                "produces_resolves",
             ]
         );
     }

@@ -27,8 +27,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agent_bestiary_memory::{
-    CorrectionScope, Episode, EpisodeCorrection, ExecutionStatus, MemoryStore, Provenance,
-    ReviewerAction,
+    CorrectionScope, EmbeddingGenerator, Episode, EpisodeCorrection, ExecutionStatus, MemoryStore,
+    Provenance, ReviewerAction,
 };
 
 use crate::encoder::EncodedIntervention;
@@ -52,11 +52,25 @@ pub struct TwoWriteReceipt {
 /// Executes the two-write memory pattern (step 4).
 pub struct TwoWriteMemory {
     store: Arc<MemoryStore>,
+    embedder: Option<Arc<dyn EmbeddingGenerator>>,
 }
 
 impl TwoWriteMemory {
     pub fn new(store: Arc<MemoryStore>) -> Self {
-        Self { store }
+        Self {
+            store,
+            embedder: None,
+        }
+    }
+
+    /// Supply the embedder used to make the synthetic correction retrievable.
+    ///
+    /// Optional so the type stays constructible in tests without one, but
+    /// **callers on the live HITL path must provide it** — see
+    /// `build_synthetic_episode` for what is lost otherwise.
+    pub fn with_embedder(mut self, embedder: Arc<dyn EmbeddingGenerator>) -> Self {
+        self.embedder = Some(embedder);
+        self
     }
 
     /// Run both writes.
@@ -76,17 +90,61 @@ impl TwoWriteMemory {
         let synthetic_episode =
             self.build_synthetic_episode(intervention, original_episode.as_ref())?;
         let synthetic_episode_id = synthetic_episode.episode_id;
-        // Synthetic correction episode — embedding intentionally deferred. The
-        // consolidation worker may opportunistically embed `episode.query`
-        // later (Spec 22 Phase 1.7a notes this gap). Stamp source_ref so the
-        // deferred-embedding case is identifiable.
+
+        // Embed the correction so it can actually propagate.
+        //
+        // This used to pass `None`, on the note that "the consolidation worker
+        // may opportunistically embed `episode.query` later". It does not — the
+        // worker embeds the rules and entities it *extracts*, never the
+        // episodes it reads. And every episode query the clustering path uses
+        // filters `embedding IS NOT NULL`, so an unembedded episode is invisible
+        // to DBSCAN.
+        //
+        // The consequence was that Loop 2's output could not enter Loop 1: a
+        // human correction, stamped `authority_weight = 1.0` and gated for
+        // coherence by two independent reviewers, was written to episodic
+        // memory and then never clustered, never distilled into a rule, and
+        // never injected into the agent's context. The single highest-authority
+        // signal in the system was the one that could not reach the agent.
+        //
+        // Embedded on `query`, matching how live executions embed episodes
+        // (`handlers/execution.rs` reuses the KG query embedding for exactly
+        // this).
+        let provenance = match &self.embedder {
+            Some(embedder) => match embedder
+                .generate_provenanced(&synthetic_episode.query)
+                .await
+            {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    // Never lose the correction over an embedding outage. The
+                    // audit trail is load-bearing; retrievability can be
+                    // backfilled, a dropped human decision cannot.
+                    tracing::warn!(
+                        error = %e,
+                        episode_id = %synthetic_episode_id,
+                        "could not embed synthetic correction; stored unretrievable"
+                    );
+                    None
+                }
+            },
+            None => {
+                tracing::warn!(
+                    episode_id = %synthetic_episode_id,
+                    "TwoWriteMemory has no embedder; correction stored unretrievable"
+                );
+                None
+            }
+        };
+
         let source_ref = serde_json::json!({
             "kind": "synthetic_correction",
             "reviewer_id": intervention.reviewer_id,
             "original_episode_id": intervention.episode_id,
+            "embedded": provenance.is_some(),
         });
         self.store
-            .store_episode_with_provenance(synthetic_episode, None, Some(source_ref))
+            .store_episode_with_provenance(synthetic_episode, provenance.as_ref(), Some(source_ref))
             .await?;
 
         // ── Write 1 — annotation on the original episode ────────────────
@@ -206,7 +264,11 @@ impl TwoWriteMemory {
             cost_rate_key: None,
             // A correction is authored by a human, not delegated by an agent.
             parent_episode_id: None,
-            embedding: None, // will be re-embedded by the consolidation worker
+            // Set by `execute` from the embedder before the row is written.
+            // Do not restore the old "the consolidation worker will re-embed
+            // this" note here: it never did, and the claim kept the gap
+            // invisible for as long as it was written down.
+            embedding: None,
             consolidated: false,
             tags: vec![
                 "synthetic_correction".to_string(),

@@ -688,11 +688,8 @@ pub async fn fleet_evolution(
         let gi = |k: &str| -> i64 { r.try_get::<i64, _>(k).unwrap_or(0) };
         let brier_mean = r.try_get::<Option<f64>, _>("brier_mean").ok().flatten();
         let n_forecasts = gi("n_forecasts");
-        let (base_rate, baseline, skill) = crate::handlers::agents::brier_skill(
-            brier_mean,
-            gi("n_yes") as usize,
-            n_forecasts as usize,
-        );
+        let (base_rate, baseline, skill) =
+            fermi::calibration::brier_skill(brier_mean, gi("n_yes") as usize, n_forecasts as usize);
         out.insert(
             id,
             FleetEvolution {
@@ -832,11 +829,7 @@ pub async fn agent_evolution_handler(
     let brier_mean: Option<f64> = row.try_get::<Option<f64>, _>("brier_mean").ok().flatten();
     let n_forecasts = gi("n_forecasts");
     let (outcome_base_rate, brier_baseline, brier_skill_score) =
-        crate::handlers::agents::brier_skill(
-            brier_mean,
-            gi("n_yes") as usize,
-            n_forecasts as usize,
-        );
+        fermi::calibration::brier_skill(brier_mean, gi("n_yes") as usize, n_forecasts as usize);
 
     let inputs = EvolutionInputs {
         ontology_size: gi("ontology_size"),

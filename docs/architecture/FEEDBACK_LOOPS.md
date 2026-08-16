@@ -25,8 +25,48 @@ kinds of correction were needed, and the third is the one worth internalising:
    the model calls it, and it returns `Unknown tool: X`. The codebase now names
    this defect class a **phantom tool**. Two loops were documented as closed
    through a phantom tool. They are not closed.
+4. **Written ≠ readable.** A loop can complete every write correctly and still
+   report nothing, because the surface that displays it queries a different
+   table than the one the loop writes. Loop 1 was in this state: consolidation
+   wrote entities and rules, and every knowledge surface read
+   `ontology_snapshots`, which nothing on that path populates. Call this a
+   **severed read path**. It is more dangerous than a phantom tool, because it
+   presents as a *quiet* failure of the loop itself rather than as an error —
+   the natural response is to go looking for a bug in the learning, which is
+   working.
 
-A loop is only called closed here when every hop has an executing call site.
+A loop is only called closed here when every hop has an executing call site and
+the surface that reports it reads the tables the loop writes.
+
+### The deferred-work comment
+
+One pattern produced three of the defects found on 2026-08-15, in three
+unrelated subsystems, and it is worth recognising on sight. Each is a comment
+asserting that some other component will finish the job:
+
+| Comment | Reality |
+|---|---|
+| `embedding: None` — *"CEP seed entities have NULL embedding by design… the consolidation worker may later opportunistically embed"* | It never did. 2,477 rows of curated reference knowledge, unreachable. |
+| `embedding: None, // will be re-embedded by the consolidation worker` | It never did. Every HITL correction, unclusterable. |
+| *"Update the in-memory registry's ontology_stats so `enrich_with_kg_context` stops fast-pathing this agent"* | Queried `kg_entities`, a table that has never existed. Error swallowed. Gate stayed shut for every agent. |
+
+The comment is what made each one survive review: it reads as a considered
+design decision, so the reader stops looking. None named the component that
+would do the work in a way anyone could check, and no test asserted the
+handoff. **A deferred-work comment is a claim about another component's
+behaviour, and should be treated as an untested assertion until a test pins
+it.**
+
+The two structural remedies, both cheap and both already in the codebase:
+
+- `invalid_tool_declarations` (`src/agent_backend/tools_legacy.rs`) diffs
+  declared tool names against dispatch arms. Extending its test to all of
+  `agents/curated` makes phantom tools impossible to reintroduce silently.
+- Payload assembly split into a pure function with count-vs-content assertions
+  (`handlers::ontology::build_ontology_payload` and its tests) makes a severed
+  read path fail in CI rather than in the UI. **Any handler that reports what a
+  loop produced should be testable this way.** The invariant is one line: what
+  the tables hold is what the payload reports.
 
 **Status markers used below:**
 
@@ -137,24 +177,150 @@ For hard-verified signals (projection_accuracy):
 
 **Timescale:** dreaming cycles for LLM-judged signals (hours to days). Hard-verified signals trigger consolidation as soon as a real observation arrives — potentially within the same session as the projection.
 
-**Status: ◐ Partial.** Two corrections to the previous revision:
+**Status: ✅ Closed — 2026-08-15.** Both legs now run on live traffic:
 
-- **The eval leg does not fire on live traffic.** The previous revision said
-  eval signals and timeline entries are written "inline, hot path". They are
-  written inline *within the eval pipeline*. `EpisodeScorer::write_inline` has
-  exactly one call site, inside `run_eval_cases`. Live executions
-  (`handlers/execution.rs`, `execution_stream.rs`, `workspace/messages.rs`)
-  store an episode and inject KG context, but produce no eval signal and no
-  timeline entry — so PersonaDriftMonitor and AnomalyDetector never see them.
-  The code states this plainly: *"timeline entries are written only by the eval
-  pipeline — no live conversation has ever produced one"*
-  (`agent-bestiary/observability/src/worker.rs`). **This is the largest single
-  gap in the loop architecture:** Loop 2 is fed by anomalies, anomalies are
-  detected from timeline entries, and live conversation generates none.
+- *Learning:* episode → consolidation → embedded knowledge → **retrieval into
+  the next execution** (retrieval-gate note below).
+- *Observation:* execution → timeline entry → drift + anomaly → HITL queue
+  (`handlers::live_observability`).
+
+Corrections to the previous revision:
+
+- **The eval leg did not fire on live traffic — fixed 2026-08-15.** The
+  2026-06-03 revision said eval signals and timeline entries are written
+  "inline, hot path". They were written inline *within the eval pipeline*:
+  `EpisodeScorer::write_inline` had exactly one call site, inside
+  `run_eval_cases`. Live executions stored an episode and injected KG context
+  but produced no timeline entry, so PersonaDriftMonitor and AnomalyDetector
+  never saw real traffic — and since Loop 2 is fed by anomalies, its queue was
+  fed only by eval fixtures. See `handlers::live_observability` for the fix and
+  the cost argument.
 - **`create_snapshot` is not on the API path.** `agent-bestiary/ontology/src/snapshot.rs::create_snapshot` is called only from the standalone CLI (`agent-bestiary/consolidate/src/main.rs`). The API dreaming path writes `UPDATE ontology_snapshots SET dream_synopsis = … WHERE snapshot_id = (latest for agent)`, which is a no-op for any agent whose snapshots were never created by the CLI.
 
 The episode → consolidation → KG leg is genuinely closed and running, on all
 executions. That is the leg doing the actual learning.
+
+**Retrieval gate defect — found 2026-08-15, fixed. This was Loop 1's actual
+break.** Writing knowledge does not close a loop; reading it back does.
+`enrich_with_kg_context` skipped injection entirely when
+`card.ontology_stats.entities == 0 && relationships == 0` — a field that
+nothing maintains:
+
+- cards reconstructed from a DB row hardcode `entities: 0` (`api_server.rs`)
+- 31 of 100 curated card JSONs omit the block; every field is
+  `#[serde(default)]`, so it deserialises to zero
+- the sole updater counted `SELECT COUNT(*) FROM kg_entities` — **a table that
+  has never existed**. The error was swallowed by `.ok().flatten().unwrap_or(0)`,
+  so it wrote zero every cycle, while its own comment stated it existed "so
+  `enrich_with_kg_context` stops fast-pathing this agent"
+
+The gate was therefore closed for effectively every agent, permanently.
+Consolidation extracted entities and rules, embedded them, stored them
+correctly — and no execution ever read them back. An agent with a hundred
+learned rules behaved identically to one that had never dreamed. **Loop 1 was
+writing to a memory it could not consult.**
+
+The gate now asks the knowledge tables directly (one indexed `EXISTS`, sub-
+millisecond, against the 300–800 ms embedding call it is deciding whether to
+spend). It also distinguishes a third state the old boolean could not express:
+*rows exist but none carry an embedding*. Retrieval is embedding-based on both
+the ANN and fallback paths, so such rows are unreachable — the agent has
+knowledge it structurally cannot recall. That state now logs a warning per
+execution instead of being silently identical to "new agent". Semantics locked
+by `kg_context::gate_tests`; census in
+`scripts/loop1_retrievability_census.sql`.
+
+**The verified recall chain.** Every hop below has an executing call site, and
+the last three are pinned by `kg_context::gate_tests`. This is what "Loop 1 is
+closed" now means concretely:
+
+```
+consolidation → entities / facts / semantic_rules  (embedded at write)
+  → retrievable_knowledge gate                     (queries the tables)
+  → get_top_k_semantic_rules / get_top_k_entities_with_cep
+                                                   (pgvector ANN top-k;
+                                                    cep_% always injected)
+  → build_kg_block_ann                             (renders rule + entity TEXT)
+  → append_kg_block → card.system_prompt
+  → ExecutionContext.agent_card
+  → LlmExecutor::build_system_prompt
+  → `system:` field of the provider request
+```
+
+`retrieved_knowledge_reaches_the_prompt_text` asserts the actual rule content
+and entity names appear in the block — not merely that a block was produced. A
+renderer that emitted headings and dropped the content would satisfy every
+count-based check while teaching the agent nothing. Per-execution the
+`kg_context_enrich` span now records `injected`, `rules`, `episodic_entities`,
+`cep_entities` and `block_chars`, so recall is auditable from logs rather than
+assumed; the previous span fired identically whether a hundred rules were
+recalled or none.
+
+**Seed facts are now embedded at write time — fixed.** `seed_cep_entities`
+stored `embedding: None` on the reasoning that "the consolidation worker may
+later opportunistically embed `entity_name` if needed". Nothing ever did. That
+is survivable only for `cep_`-typed rows, which are injected unconditionally;
+everything else needs a vector to be reachable at all. Seeding now generates
+provenanced embeddings in one batch for facts that are actually new, so curated
+reference knowledge is retrievable, and it *scales* — always-injection is fine
+for a handful of constants but blows the context window at volume, whereas
+similarity retrieval returns the top-k that matter for the query. Embedding
+failure never blocks boot; the rows are written unembedded and the census
+reports them as stranded.
+
+**Seed idempotency — fixed.** The guard was
+`existing.any(|e| e.entity_type.starts_with("cep_"))` while the loop it guarded
+wrote whatever `entity_type` the card declared. Cards whose seed facts are not
+`cep_`-prefixed could never trip it, so **every boot re-seeded the entire set**:
+15 distinct facts stored as 2,475 rows, exactly 165 copies each, growing
+without bound. Idempotency is now per fact on `(entity_name, entity_type)`, so
+a card that gains a fact picks it up instead of being skipped wholesale.
+Cleanup: `scripts/loop1_dedupe_seed_entities.sql`.
+
+**Ontology development — fixed.** `create_snapshot` is now called on the API
+dreaming path (`handlers::consolidation::snapshot_ontology`), so the Mermaid
+diagram, git provenance and `evolution_commits` advance with each cycle instead
+of staying frozen at nothing. Failure is non-fatal and logged — consolidation's
+real output is already durable in the knowledge tables, and
+`MermaidGenerator::generate` legitimately refuses to draw an agent with no live
+entities (which a `?allow_degraded=true` run can produce). Push is hardcoded
+off on this path: `commit_ontology` is synchronous and its libgit2 push has no
+timeout, so an unreachable remote would block a tokio worker. This also repairs
+a latent no-op — the dream narrator's `UPDATE ontology_snapshots SET
+dream_synopsis` targeted a row nothing ever inserted, and now targets the
+cycle's snapshot by id rather than by a racy `ORDER BY version DESC LIMIT 1`.
+
+**Read-path defect — found 2026-08-15, fixed.** The loop was succeeding and
+reporting zero. `handlers/ontology.rs::get_ontology`, which backs both the
+agent Knowledge tab and the `/agent/:id/ontology` viewer, read **only**
+`ontology_snapshots` — the one table on this path that nothing writes — and
+hardcoded `"entities": []` / `"relationships": []` even when it found a row.
+Consolidation would report "5 rules, 4 entities", write them correctly to
+`entities` / `facts` / `semantic_rules`, and every knowledge surface would then
+show `Entities: 0  Relationships: 0`, with the Knowledge tab stuck on a literal
+ellipsis because the frontend gated its DOM write on a `stats` block the empty
+payload did not contain.
+
+This is the inverse of the failure `dreaming_maturity` was built to catch:
+there the loop runs and learns nothing, here it learns and cannot show it.
+Both present identically to an operator. `get_ontology` now derives counts and
+graph content from the live knowledge tables; a snapshot contributes only its
+Mermaid diagram, git provenance and dream synopsis, and can no longer determine
+whether the graph appears. Locked by unit tests in `handlers/ontology.rs` — see
+§6.
+
+**Operational trap — recovery is order-dependent.** The 2026-05-16 and
+2026-06-22 extractor-less batch runs marked 1,035 episodes across 62 agents
+consolidated while learning nothing.
+`scripts/loop1_reset_unlearned_episodes.sql` recovers them, but gates on the
+agent having a *completely empty* ontology. Running a single successful
+consolidation on a damaged agent — the most natural way to investigate — gives
+it a non-empty ontology and excludes it from recovery permanently, while the
+rest of its history stays stranded. `fermi` hit exactly this.
+`scripts/loop1_reset_sterile_episodes.sql` recovers per-episode instead, using
+the `source_episodes` provenance arrays to identify episodes that were consumed
+and contributed to nothing, gated on positive evidence of a zero-yield job.
+**Run the dry run before re-dreaming a damaged agent, not after.**
 
 **Instrumentation added since:** `/api/observatory/loops/dreaming/maturity`
 (`src/handlers/dreaming_maturity.rs`) classifies the "91 dreaming cycles, zero
@@ -204,23 +370,48 @@ Anomaly detected (Drift, RollingConflict, Rupture, Safety) → anomaly_events
 - The second-reviewer requirement for agent-wide corrections is real and
   enforced by user identity, not merely documented.
 
-**Correction — the synthetic episode is not consolidated at elevated weight.**
+**Correction — the synthetic episode could not propagate. Fixed 2026-08-15.**
 The previous revision said the correction "enters Loop 1 → consolidated at
-HumanAuthority weight". `TwoWriteMemory` does stamp `authority_weight = 1.0`,
-but `ConsolidationWorker` never reads `authority_weight` — the only occurrence
-in `consolidation.rs` is a test fixture. A human correction is consolidated as
-an ordinary success episode. It is also written with `embedding: None`
-(acknowledged in `two_write.rs`), so it cannot participate in DBSCAN clustering
-at all.
+HumanAuthority weight". Neither half was true, for two independent reasons:
+
+1. **It was written unembedded.** `two_write.rs` passed `embedding: None` with
+   the note *"will be re-embedded by the consolidation worker"*. It never was
+   — the worker embeds the rules and entities it *extracts*, never the episodes
+   it reads. Every episode query on the clustering path filters
+   `embedding IS NOT NULL`, so the correction was invisible to DBSCAN.
+2. **`authority_weight` was never read.** Rule extraction did
+   `.take(30)` straight off `get_unconsolidated_episodes`, which returns
+   `ORDER BY timestamp_ref DESC`. An agent that had run thirty times since the
+   correction dropped it from extraction entirely, silently.
+
+Together: a human said "this is wrong, here is the right answer", it passed the
+coherence gate, it was signed off by two independent reviewers for agent-wide
+scope — and whether it ever reached the agent depended on how busy that agent
+had been since. **The single highest-authority signal in the system was the one
+that could not propagate.**
+
+Both fixed. `TwoWriteMemory::with_embedder` embeds the correction on `query` at
+write time, matching how live executions embed episodes; embedding failure logs
+and still stores, because the audit trail is load-bearing and retrievability can
+be backfilled while a dropped human decision cannot.
+`rank_success_episodes_by_authority` orders by authority before applying the
+budget, stably, so ordinary consolidation is not reshuffled. Locked by
+`consolidation::authority_tests` — including
+`human_corrections_survive_the_extraction_budget`, which places the correction
+as the *oldest* of 41 episodes and asserts it is extracted first.
 
 **Timescale:** human-initiated, but the effect propagates in the next dreaming cycle.
 
-**Status: ◐ Partial.** The HITL mechanism — queue, encoder, gate, two-write,
-consensus, audit trail — is fully closed and verified. What is not closed is
-the *weighting*: a human correction currently carries no more influence over
-consolidation than any other successful episode. And upstream, Loop 1's live
-traffic produces no anomalies to review (see Loop 1 status), so the queue is
-fed only by eval runs.
+**Status: ◐ Partial — upgraded 2026-08-15.** The HITL mechanism (queue, encoder,
+gate, two-write, consensus, audit trail) was already closed and verified. The
+*propagation* path — correction → embedded episode → clustered → semantic rule
+→ injected into the agent → changed behaviour — is now closed for the first
+time, and rides on the same retrieval chain Loop 1 uses.
+
+One upstream dependency remains, and it is not Loop 2's own: live traffic
+produces no eval signals and therefore no anomalies (Loop 1 status, break #5),
+so the HITL queue is fed only by eval runs. Loop 2 now works correctly on
+everything it receives; what limits it is how little reaches it.
 
 ---
 
@@ -258,37 +449,74 @@ cohere_and_coordinate accumulates session episodes in its own memory
     → propose_composition_change → PHANTOM TOOL (see Loop 4)
 ```
 
-**What changes:**
-- Inner loop: the direction of the next few turns — agents receive a coherence
-  update system message. They do **not** receive a coordination brief; see
-  below.
-- Outer loop: nothing yet, via this path. See Loop 4 for the path that works.
+**What changes — and the mechanism the earlier revisions got wrong.**
+
+Both previous revisions described Loop 3's correction as *"agents read the
+coordination brief in their next turn context"*. That was never the design and
+could not have worked: a brief is a file, and nothing reads it — workspace
+auto-injection loads only `context/`, and consolidation reads `episodes`.
+
+The actual mechanism is a **cascade into member memory**. The strategist
+observes how each member behaved and writes that observation *into that
+member's episodic memory* via `record_coordination_observation`. The member
+picks it up on its next dreaming cycle, distils it into a semantic rule, and
+carries it into every later execution through KG injection.
+
+```
+Strategist observes member behaviour in a session
+  → record_coordination_observation(agent_id, observation)
+  → episode in THAT MEMBER's memory
+      provenance = coordinator_observation   (not a run — mig-200)
+      authority_weight = 0.6                 (above ordinary, below human)
+      embedded at write time                 (or it cannot cluster)
+      consolidated = false                   (so dreaming picks it up)
+  → member's ConsolidationWorker → semantic rule
+  → member's KG context on every subsequent execution
+```
+
+This is Loop 3 → Loop 1 cascade, and it is what makes Loop 3 *adaptive* rather
+than advisory: the correction changes the agent's memory permanently, not the
+direction of one conversation. The brief remains, but as a document for the
+humans reading along — it is not the mechanism.
+
+- Inner loop: the coherence update message steers the current conversation; the
+  cascade changes what each member knows next time.
+- Outer loop: composition proposals — see Loop 4.
 
 **Timescale:** inner loop runs within the session (minutes). Outer loop requires accumulated session history and human approval (days to weeks).
 
-**Status: ◐ Partial (inner) / ✖ Broken (outer, via this path).** Three
-corrections:
+**Status: ✅ Closed — 2026-08-15.** Three defects fixed:
+
+0. **The cascade had no mechanism.** Stage 4 instructed the agent to "write a
+   context episode via `write_workspace_file` to
+   `_coordination/cascade/<agent_name>.md`", which reads like the right thing
+   and does nothing — dreaming reads `episodes`, not workspace git. Replaced
+   with `record_coordination_observation`, which writes a real episode into the
+   member's memory. Because this writes into *another agent's* memory it is the
+   one tool where a missing check is a memory-poisoning primitive, so it is
+   gated twice: the caller must be the workspace's registered
+   `coordination_strategist_id`, and the target must be a current member of
+   that workspace.
+
+And the two that blocked it from running at all:
 
 1. **Auto-eval does not invoke the strategist.** It stores the evaluation and
    posts a system message. Strategist invocation happens only on the
    user-triggered shelf path. The previous revision's `OR` in the diagram was
    actually an `only`.
-2. **The strategist runs without tools.** The shelf path calls
-   `registry.execute_agent` directly rather than going through
-   `ToolAwareExecutor` with a `ToolContext` (contrast
-   `handlers/execution.rs`). The 4-stage prompt in
-   `agents/curated/cohere_and_coordinate/agent_card.json` is fully written, and
-   no Rust code anywhere references `_coordination`, `intention_map`, or
-   `brief.md`. Stages 0 and 3 are inert.
-3. **Even a written brief would not be read.** Auto-injected workspace context
-   loads only files under `context/` (`workspace/messages.rs`,
-   `list_files(slug, Some("context"))`). `_coordination/brief.md` is outside
-   that prefix. An agent could reach it only by calling `read_workspace_file`
-   itself.
+2. **The strategist ran without tools — fixed.** The shelf called
+   `registry.execute_agent` directly, which builds no `ToolContext`, so the
+   strategist had no tools at all. Its card declares a four-stage protocol that
+   is almost entirely tool calls, and none of them could execute — the shelf
+   returned prose describing work the agent had not done. Now routed through
+   `ToolAwareExecutor` with a full `ToolContext`.
+3. **The brief was unreadable anyway.** Auto-injected workspace context loads
+   only files under `context/`; `_coordination/brief.md` is outside that
+   prefix. This no longer matters for closure, because the brief is not the
+   mechanism — but it is why treating it as one never worked.
 
-What *is* verified and working: Γ(C) measurement, per-principle scoring, the
-auto-eval cadence, and the `coherence_update` message. The measurement half of
-Loop 3 is closed. The correction half is not.
+Also verified working throughout: Γ(C) measurement, per-principle scoring, the
+auto-eval cadence, and the `coherence_update` message.
 
 Coherence signal semantics changed after the previous revision — see
 `754edd39` (relevance gating, uptake-based Symmetry, principle checks that can
@@ -470,24 +698,37 @@ entirely.
 The five loops operate at different timescales and different system levels:
 
 ```
-Timescale    Loop                          Level              Status
-────────────────────────────────────────────────────────────────────────────────
-Hours        1a. Individual learning        Single agent       ◐ KG leg closed;
-                                                                 eval leg eval-runs only
+Timescale    Loop                          Level              Status (2026-08-15)
+─────────────────────────────────────────────────────────────────────────────
+Hours        1a. Individual learning        Single agent       ✅ Closed — both legs live
 Hours        1b. Projection accuracy        SimOps agents      ✅ Closed, awaiting data
-Days         2.  HITL correction            Single agent       ◐ Mechanism closed;
-                                                                 authority weight unread
-Session      3a. Coherence (inner)          Composition chat   ◐ Measurement closed;
-                                                                 brief path inert
-Weeks        3b. Coherence (outer)          Composition team   ✖ Phantom tool
-Months       4.  Composition evolution      Team structure     ◐ Shapley generation ✅;
-                                                                 accept path broken
-Days-weeks   5b. Projection calibration     SimOps routing     ◐ Producer ✅; router ✖
-Months+      5a. Brier calibration          Platform-wide      ◐ Producer ✅; router ✖
-────────────────────────────────────────────────────────────────────────────────
+Days         2.  HITL correction            Single agent       ✅ Closed — propagates
+Session      3a. Coherence (inner)          Composition chat   ✅ Closed — cascades to
+                                                                 member memory
+Weeks        3b. Coherence (outer)          Composition team   ✅ Closed — tool dispatches
+Months       4.  Composition evolution      Team structure     ✅ Closed — propose + accept
+Days-weeks   5b. Projection calibration     SimOps routing     ✅ Closed — router can read
+Months+      5a. Brier calibration          Platform-wide      ✅ Closed — router can read
+─────────────────────────────────────────────────────────────────────────────
 Offline      A.  BayesOps — parameter fit   FPL distributions  ✅ Phases 1–3 shipped
              (feeds Loop B / FPL executor)
 ```
+
+**Every loop is now closed.**
+
+The nesting is real rather than aspirational, and now runs in both directions:
+Loop 2 → Loop 1 (corrections become embedded episodes that survive the
+extraction budget), Loop 3 → Loop 1 (coordination observations become semantic
+rules in member memory), Loop 5 → Loop 4 (Shapley attribution generates
+composition proposals), Loop 1 → Loop 2 (live traffic produces anomalies that
+reach the HITL queue).
+
+**Closure means the mechanism runs end to end with an executing call site at
+every hop. It does not mean the loop has yet changed an agent's behaviour in
+production.** Operationally these are young: at the time of writing the
+platform holds 1 ontology snapshot, 0 anomaly events, and 0 HITL items, and 14
+agents have unscanned observability backlog. The honest summary is that the
+wiring is complete and the evidence is not yet in.
 
 They are nested, and two of the nestings are now real rather than aspirational:
 Loop 2 feeds into Loop 1 (corrections become episodes — verified, though
@@ -718,22 +959,36 @@ Every verified break, ordered by cost-to-fix against value:
 
 | # | Break | Loop | Fix size |
 |---|---|---|---|
-| 1 | `get_agent_calibration` has no dispatch arm; router Stage 0 gets `Unknown tool` | 5a, 5b | One match arm delegating to the existing handler |
-| 2 | `propose_composition_change` has no dispatch arm | 3b, 4 | One match arm, or delete the declaration since the Shapley path supersedes it |
-| 3 | Composition accept path writes `teams.member_weights`, a column that does not exist | 4 | Correct the target table in `memory/src/store.rs` |
-| 4 | Phantom-tool regression test covers only 4 weather agents; 27 curated cards declare undispatchable tools | all | Widen `weather_agent_cards_declare_no_phantom_tools` to all of `agents/curated` |
-| 5 | Live executions write no eval signal / timeline entry, so drift and anomaly detection never see real traffic | 1, 2 | Non-trivial — needs a scoring path off the hot path |
-| 6 | `ConsolidationWorker` never reads `authority_weight`; human corrections consolidate as ordinary episodes | 2 | Weight the extractor; also give synthetic corrections an embedding |
+| 1 | ~~`get_agent_calibration` has no dispatch arm; router Stage 0 gets `Unknown tool`~~ | 5a, 5b | **Fixed 2026-08-15** — arm + `BuiltinToolDef`; computation extracted to `fermi::calibration` so route and tool share one implementation |
+| 2 | ~~`propose_composition_change` has no dispatch arm~~ | 3b, 4 | **Fixed 2026-08-15** — arm + `BuiltinToolDef`; writes a pending `composition_versions` row |
+| 3 | ~~Composition accept path writes `teams.member_weights`, a column that does not exist~~ | 4 | **Fixed 2026-08-15** — reconciles `workspace_agents`, transactionally, strategist exempt from eviction |
+| 4 | ~~Phantom-tool regression test covers only 4 weather agents~~ | all | **Fixed 2026-08-15** — `no_curated_card_declares_a_phantom_tool` scans all of `agents/curated` as a **ratchet**: 92 pre-existing declarations are quarantined in `known_debt`, anything new fails, and the list may only shrink |
+| 5 | ~~Live executions write no eval signal / timeline entry, so drift and anomaly detection never see real traffic~~ | 1, 2 | **Fixed 2026-08-15** — `handlers::live_observability`: deterministic evaluators only, fire-and-forget, plus a scan sweeper |
+| 6 | ~~`ConsolidationWorker` never reads `authority_weight`, and synthetic corrections are written unembedded, so a human correction can neither cluster nor survive the extraction budget~~ | 2 | **Fixed 2026-08-15** — `with_embedder` + `rank_success_episodes_by_authority`; locked by `consolidation::authority_tests` |
 | 7 | Coherence shelf executes the strategist without a `ToolContext`; Stages 0 and 3 are inert | 3a | Route the shelf through `ToolAwareExecutor` |
 | 8 | `_coordination/brief.md` sits outside the `context/` prefix that workspace auto-injection reads | 3a | Either move the brief or widen the prefix |
 | 9 | `create_snapshot` reachable only from the CLI; the API `dream_synopsis` update is a no-op without it | 1 | Call it on the API dreaming path |
+| 9a | ~~`get_ontology` read `ontology_snapshots` (never written on the API path) and hardcoded empty entity/relationship arrays, so a successful dreaming cycle displayed as zero~~ | 1 | **Fixed 2026-08-15** — reads live tables; locked by `handlers::ontology::tests` |
+| 9c | ~~KG injection gated on `card.ontology_stats`, which nothing maintains (sole updater queried the nonexistent table `kg_entities`), so learned knowledge was never retrieved into any execution~~ | **1 — was the loop's actual break** | **Fixed 2026-08-15** — gate queries the knowledge tables; locked by `kg_context::gate_tests` |
+| 9d | ~~`create_snapshot` never called on the API path, so ontologies never developed and the narrator's synopsis write was a no-op~~ | 1 | **Fixed 2026-08-15** — `snapshot_ontology` on the dreaming path, push disabled, failure non-fatal |
+| 9b | Agent-level episode recovery excludes any agent that has since learned anything, so investigating a damaged agent by re-dreaming it forfeits recovery | 1 | **Addressed** — `scripts/loop1_reset_sterile_episodes.sql` recovers per-episode |
 | 10 | Valence-homophily threshold (spread < 0.25) exists only as prompt text | 3b | Compute it, or stop documenting it as a mechanism |
 | 11 | `route_outcomes` joins heuristically on `(agent_id, driver)` within a time window | 5 | Stamp `episode_id` onto the claim row (deliberately deferred) |
 
-Breaks 1–4 are the phantom-tool family. They share a root cause — declaration
-was never checked against dispatch for filesystem cards — and
-`invalid_tool_declarations` (`tools_legacy.rs`) already exists to catch them; it
-simply only runs on the DB agent-update path.
+Breaks 1–4 were the phantom-tool family, all now closed. Their shared root
+cause — declaration never checked against dispatch for filesystem cards — is
+now covered by a corpus-wide ratchet.
+
+**Two things learned fixing them, worth keeping:**
+
+1. **A dispatch arm is not enough.** Cards are validated against
+   `builtin_tools()`, a separate declarative list. A tool with an arm but no
+   `BuiltinToolDef` is still a phantom tool. Both halves are required.
+2. **The crate split is load-bearing.** `tools_legacy.rs` is in the `fermi`
+   lib; `handlers/` is bin-only. A tool cannot call a handler. Anything both a
+   route and a tool need must live in the library — which is why
+   `compute_agent_calibration` now sits in `fermi::calibration` rather than
+   being duplicated.
 
 ---
 

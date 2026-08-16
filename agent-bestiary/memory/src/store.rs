@@ -3014,23 +3014,69 @@ impl MemoryStore {
             .execute(&self.pool)
             .await?;
 
-            // Apply member_agent_ids to teams if present
+            // Apply the accepted roster to `workspace_agents`.
+            //
+            // This used to run `UPDATE teams SET member_weights = $1` twice —
+            // once bound to the roster array, once to the weights. `teams` has
+            // neither a `member_weights` nor a `member_agent_ids` column; only
+            // `composition_versions` does (mig-113), and the authoritative
+            // column list in `src/schema_trust.rs` confirms it. So accepting
+            // any version that carried members errored, and the documented
+            // behaviour ("accept → teams.member_agent_ids updated") was never
+            // once true. Loop 4 could generate a proposal and never apply one.
+            //
+            // Membership actually lives in `workspace_agents` (mig-015),
+            // keyed `(workspace_id, agent_id)`. Reconcile it to the accepted
+            // roster: add the newcomers, remove anyone dropped.
             if let Some(ids) = member_agent_ids {
-                sqlx::query("UPDATE teams SET member_weights = $1 WHERE id = $2")
-                    .bind(serde_json::to_value(&ids).unwrap_or_default())
+                let mut tx = self.pool.begin().await?;
+
+                // Additive first, so a failure mid-way cannot leave the
+                // workspace with fewer members than either roster specifies.
+                for agent_id in &ids {
+                    sqlx::query(
+                        "INSERT INTO workspace_agents \
+                           (workspace_id, agent_id, added_by, relationship) \
+                         VALUES ($1, $2, $3, 'hired') \
+                         ON CONFLICT DO NOTHING",
+                    )
                     .bind(workspace_id)
-                    .execute(&self.pool)
+                    .bind(agent_id)
+                    .bind(resolved_by)
+                    .execute(&mut *tx)
                     .await?;
+                }
+
+                // Then drop anyone the accepted composition leaves out.
+                //
+                // The coordination strategist is deliberately exempt: it is
+                // recorded on `teams.coordination_strategist_id` rather than in
+                // the roster, and evicting the agent that authors composition
+                // proposals as a side effect of accepting one of its own
+                // proposals would be a genuinely surprising way to lose it.
+                sqlx::query(
+                    "DELETE FROM workspace_agents wa \
+                      WHERE wa.workspace_id = $1 \
+                        AND wa.agent_id <> ALL($2) \
+                        AND wa.agent_id IS DISTINCT FROM ( \
+                              SELECT t.coordination_strategist_id \
+                                FROM teams t WHERE t.id = $1 \
+                            )",
+                )
+                .bind(workspace_id)
+                .bind(&ids)
+                .execute(&mut *tx)
+                .await?;
+
+                tx.commit().await?;
             }
 
-            // Apply member_weights to composition_versions row (also persisted on teams)
-            if let Some(weights) = member_weights {
-                sqlx::query("UPDATE teams SET member_weights = $1 WHERE id = $2")
-                    .bind(weights)
-                    .bind(workspace_id)
-                    .execute(&self.pool)
-                    .await?;
-            }
+            // `member_weights` stays on the `composition_versions` row it was
+            // proposed with. There is nowhere on `teams` or `workspace_agents`
+            // to put it, and inventing a column here would be a schema change
+            // smuggled in under a bug fix. Readers that want the weights for
+            // an accepted composition should read the accepted version row.
+            let _ = member_weights;
         } else {
             sqlx::query(
                 "UPDATE composition_versions \

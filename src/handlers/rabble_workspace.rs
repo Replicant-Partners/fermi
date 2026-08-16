@@ -379,6 +379,8 @@ pub async fn dispatch_rabble_action(
         let output_bg = output.clone();
         let query_bg = query.to_string();
         let agent_id_bg = db_agent.agent_id;
+        // Captured for the live observability pass.
+        let db_agent_bg = db_agent.clone();
         let response_bg = response_text.clone();
         let action_bg = action_type.to_string();
         let agent_name_bg = agent_name.to_string();
@@ -393,6 +395,9 @@ pub async fn dispatch_rabble_action(
             // Stamp the (agent, human) dyad — see execution.rs.
             let dyad_id = agent_bestiary_memory::dyad_id(agent_id_bg, &user_id_bg);
             episode.dyad_id = Some(dyad_id.clone());
+            // Persona version — see execution.rs. Without it the observability
+            // worker skips the entry entirely.
+            episode.persona_version_at_write = Some(db_agent_bg.persona_version);
             crate::spawn_dyad_observation(&state_bg, agent_id_bg, dyad_id, &query_bg, &output_bg);
             let embed_text = format!("{} {}", query_bg, &response_bg);
             let t_embed = tokio::time::Instant::now();
@@ -416,8 +421,24 @@ pub async fn dispatch_rabble_action(
             });
             let _ = state_bg
                 .memory_store
-                .store_episode_with_provenance(episode, provenance.as_ref(), Some(source_ref))
+                .store_episode_with_provenance(
+                    episode.clone(),
+                    provenance.as_ref(),
+                    Some(source_ref),
+                )
                 .await;
+
+            // Make this turn visible to drift + anomaly detection.
+            crate::handlers::live_observability::spawn_live_observation(
+                &state_bg,
+                crate::handlers::live_observability::LiveObservation {
+                    episode,
+                    agent: db_agent_bg.clone(),
+                    response: response_bg.clone(),
+                    session_id: Some("live:rabble".to_string()),
+                    rupture_detected: false,
+                },
+            );
 
             // 2. Workspace message
             let msg = WorkspaceMessage {

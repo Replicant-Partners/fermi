@@ -484,8 +484,16 @@
           populateShelf(ontology);
           loadShelfSessions();
 
-          // DB snapshots have mermaid_content — render with mermaid.js
-          if (ontology.mermaid_content) {
+          // Live entities win over a snapshot's Mermaid diagram.
+          //
+          // This branch used to be entered whenever `mermaid_content` was
+          // present and then `return`ed, so the D3 path below was unreachable
+          // for any agent that had ever had a snapshot rendered. A snapshot is
+          // a point-in-time picture; `entities`/`relationships` are what the
+          // agent believes now. When both exist, draw the current graph.
+          const hasLiveGraph = (ontology.entities?.length || 0) > 0;
+
+          if (!hasLiveGraph && ontology.mermaid_content) {
             document.getElementById("entity-count").textContent =
               ontology.stats?.entity_count || 0;
             document.getElementById("relationship-count").textContent =
@@ -532,11 +540,15 @@
             return;
           }
 
-          // Fallback: sample JSON with entities/relationships — render D3
+          // Live graph (or a sample JSON fixture) — render D3.
+          //
+          // Counts come from `stats` when the server supplies it, because it
+          // counts active rows in the knowledge tables. The array lengths are
+          // the fallback for sample fixtures, which carry no stats block.
           document.getElementById("entity-count").textContent =
-            ontology.entities?.length || 0;
+            ontology.stats?.entity_count ?? ontology.entities?.length ?? 0;
           document.getElementById("relationship-count").textContent =
-            ontology.relationships?.length || 0;
+            ontology.stats?.fact_count ?? ontology.relationships?.length ?? 0;
 
           // Populate entity list
           const entityList = document.getElementById("entity-list");

@@ -3764,6 +3764,294 @@ TEMPERATURE (F)\n\
         );
     }
 
+    /// No curated card anywhere may declare a tool the runtime cannot dispatch.
+    ///
+    /// The sibling test above covers four weather agents by name, which is how
+    /// the class survived everywhere else: `moe_router_strategist`,
+    /// `debate_strategist` and `vote_strategist` all declared
+    /// `get_agent_calibration`, and `cohere_and_coordinate` declared
+    /// `propose_composition_change`, with no dispatch arm behind either. Both
+    /// broke a feedback loop — Loop 5's router could not read calibration, and
+    /// Loop 4 could not receive a proposal — and both failed as a runtime
+    /// string, `Unknown tool: X`, which reads to an operator as the model
+    /// misbehaving rather than the platform lying about its capabilities.
+    ///
+    /// `invalid_tool_declarations` has existed for a while and catches exactly
+    /// this, but only runs on the DB agent-update path, so filesystem cards
+    /// were never checked. This closes that.
+    ///
+    /// If this fails: either add the dispatch arm, or remove the declaration.
+    /// Do not add the name to an allowlist — a declared tool that cannot run is
+    /// worse than an absent one, because the model will confidently call it.
+    #[test]
+    fn no_curated_card_declares_a_phantom_tool() {
+        use std::path::Path;
+
+        let dir = [
+            Path::new("agents/curated"),
+            Path::new("../../agents/curated"),
+        ]
+        .into_iter()
+        .find(|p| p.exists())
+        .expect("run from the workspace root");
+
+        // Two different questions, and conflating them misreports working
+        // tools as broken:
+        //
+        //   * `dispatchable` — is there a match arm in `ToolRegistry::execute`?
+        //     If not, the model is advertised the tool (card tools carrying a
+        //     schema are passed through verbatim), calls it, and receives
+        //     `Unknown tool: X`. That is real breakage.
+        //   * `declarable` — is it in `builtin_tools()`? `invalid_tool_declarations`
+        //     gates card writes on this, so a tool with an arm but no
+        //     `BuiltinToolDef` works perfectly at run time yet cannot be saved
+        //     through the API.
+        //
+        // `equity_analyst`'s nine `fmp_*` tools are exactly the second case:
+        // fully implemented at `tools_legacy.rs` `execute_fmp_api`, never
+        // registered as defs. An earlier version of this test called them
+        // phantom, which is the same imprecision it exists to prevent.
+        let declarable = crate::agent_backend::tools::platform_tool_names();
+        let dispatchable = crate::agent_backend::tools::dispatchable_tool_names();
+        let mut offenders: Vec<String> = Vec::new();
+        let mut undeclarable: Vec<String> = Vec::new();
+        let mut cards_checked = 0usize;
+
+        for entry in std::fs::read_dir(dir).expect("cannot read agents/curated") {
+            let entry = entry.expect("bad dir entry");
+            let card_path = entry.path().join("agent_card.json");
+            if !card_path.exists() {
+                continue;
+            }
+            let raw = std::fs::read_to_string(&card_path)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", card_path.display()));
+            let card: Value = serde_json::from_str(&raw)
+                .unwrap_or_else(|e| panic!("{} is not valid JSON: {e}", card_path.display()));
+            cards_checked += 1;
+
+            let agent = card["agent_id"].as_str().unwrap_or("<unnamed>").to_string();
+
+            // A card may legitimately reach tools on a remote MCP server it
+            // declares; those are resolved at run time and cannot be checked
+            // from disk. Only cards with no `mcp_servers` must resolve every
+            // declared tool against the platform set.
+            let has_remote = card["capabilities"]["mcp_servers"]
+                .as_array()
+                .map(|a| !a.is_empty())
+                .unwrap_or(false);
+            if has_remote {
+                continue;
+            }
+
+            let Some(tools) = card["capabilities"]["mcp_tools"].as_array() else {
+                continue;
+            };
+            for t in tools {
+                let Some(name) = t["name"].as_str() else {
+                    continue;
+                };
+                if !dispatchable.contains(&name) {
+                    // Will fail at call time.
+                    offenders.push(format!("{agent} → {name}"));
+                } else if !declarable.contains(&name) {
+                    // Runs, but the card cannot be re-saved.
+                    undeclarable.push(format!("{agent} → {name}"));
+                }
+            }
+        }
+
+        assert!(
+            cards_checked > 50,
+            "only scanned {cards_checked} cards — the glob is probably wrong"
+        );
+
+        // Ratchet, not a clean sheet.
+        //
+        // 92 declarations across the curated corpus were already phantom when
+        // this test was written. Fixing them all is a separate piece of work
+        // (most are third-party integrations — Bluesky, adaptogen, AR — that
+        // need real dispatch arms or removal, decided case by case). Asserting
+        // `offenders.is_empty()` today would mean deleting the test tomorrow,
+        // which is how the class survived in the first place.
+        //
+        // So: anything NOT on this list is a hard failure, and the list may
+        // only shrink. Fix a card, remove its line. Never add one.
+        let known_debt: &[&str] = &[
+            "adaptogen_curator → adaptogen_compare_species",
+            "adaptogen_curator → adaptogen_compound_search",
+            "adaptogen_curator → adaptogen_drug_interaction_check",
+            "adaptogen_curator → adaptogen_evidence_query",
+            "adaptogen_curator → adaptogen_genomic_markers",
+            "adaptogen_curator → adaptogen_indication_search",
+            "adaptogen_curator → adaptogen_medicine_system_browse",
+            "adaptogen_curator → adaptogen_population_variants",
+            "adaptogen_curator → adaptogen_safety_check",
+            "adaptogen_curator → adaptogen_species_detail",
+            "adaptogen_curator → adaptogen_species_search",
+            "adaptogen_curator → adaptogen_traditional_use_query",
+            "ar_avatar_renderer → avatar_profile_loader",
+            "ar_avatar_renderer → interaction_designer",
+            "ar_avatar_renderer → scene_planner",
+            "bioreactor_modeler → get_latest_observation",
+            "bioreactor_modeler → list_active_sessions",
+            "bioreactor_modeler → send_actuation",
+            "biotech_analyst → get_ontology_analytics",
+            "biotech_analyst → search_ontology_properties",
+            "biotech_analyst → search_ontology_terms",
+            "bluesky_publisher → create_post",
+            "bluesky_publisher → create_thread",
+            "bluesky_publisher → fetch_og_metadata",
+            "bluesky_publisher → get_post",
+            "bluesky_publisher → resolve_handle",
+            "bluesky_publisher → upload_blob",
+            "coherence_consultant → ontology_reader",
+            "companion_builder_coach → agent_template_loader",
+            "companion_builder_coach → design_checklist",
+            "daily_puzzle → puzzle_generator",
+            "daily_puzzle → streak_tracker",
+            "dream_coordinator → consolidation_reader",
+            "dream_narrator → agent_profile_loader",
+            "dream_narrator → consolidation_reader",
+            "dyad_observer → query_episodes",
+            "dyad_observer → query_persona_history",
+            "embedding_projector_guide → cluster_interpreter",
+            "embedding_projector_guide → projection_api",
+            "embedding_projector_guide → temporal_analysis",
+            "instagram_publisher → check_container_status",
+            "instagram_publisher → create_media_container",
+            "instagram_publisher → get_account_info",
+            "instagram_publisher → get_media_insights",
+            "instagram_publisher → list_recent_media",
+            "instagram_publisher → publish_media",
+            "intention_coordinator → check_conflicts",
+            "intention_coordinator → clear_intention",
+            "intention_coordinator → declare_intention",
+            "intention_coordinator → emit_coherence_signal",
+            "intention_coordinator → get_intention_map",
+            "intention_coordinator → suggest_differentiation",
+            "micro_patron_template → agent_card_generator",
+            "micro_patron_template → pricing_calculator",
+            "performance_coach → agent_stats_api",
+            "performance_coach → benchmark_comparator",
+            "performance_coach → ontology_analyzer",
+            "pipeline_strategist → get_workflow_template",
+            "simops_companion → annotate",
+            "simops_companion → annotate_schema",
+            "simops_companion → compare",
+            "simops_companion → fork_state",
+            "simops_companion → invoke_member",
+            "simops_companion → mutate_document",
+            "social_media_studio → create_bsky_post",
+            "social_media_studio → create_media_container",
+            "social_media_studio → get_media_insights",
+            "social_media_studio → publish_media",
+            "social_media_studio → upload_bsky_blob",
+            "stripe_billing → charge_usage",
+            "stripe_billing → check_connect_status",
+            "stripe_billing → create_checkout_session",
+            "stripe_billing → create_connect_account",
+            "stripe_billing → generate_client_api_key",
+            "stripe_billing → get_payout_balance",
+            "stripe_billing → get_usage_summary",
+            "stripe_billing → record_usage",
+            "stripe_billing → set_pricing",
+            "wild_companion → log_observation",
+        ];
+
+        let new_offenders: Vec<&String> = offenders
+            .iter()
+            .filter(|o| !known_debt.contains(&o.as_str()))
+            .collect();
+        assert!(
+            new_offenders.is_empty(),
+            "{} card(s) declare a tool with no dispatch arm. Add the arm and a \
+             BuiltinToolDef, or remove the declaration — do not add to known_debt:\n  {}",
+            new_offenders.len(),
+            new_offenders
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join("\n  ")
+        );
+
+        // Separate assertion, separate failure message: a tool that runs but
+        // cannot be declared is a real defect, and a different one.
+        assert!(
+            undeclarable.is_empty(),
+            "{} declaration(s) have a dispatch arm but no BuiltinToolDef. They work \
+             at run time, but `invalid_tool_declarations` will reject the card on \
+             any write \u{2014} register them in `builtin_tools_core()`:\n  {}",
+            undeclarable.len(),
+            undeclarable.join("\n  ")
+        );
+
+        // The list may only shrink: a fixed card must be removed from it, or
+        // the ratchet silently stops protecting that card.
+        let stale: Vec<&&str> = known_debt
+            .iter()
+            .filter(|d| !offenders.iter().any(|o| o == *d))
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "{} known_debt entr(ies) are now dispatchable — delete them from the \
+             list so it keeps ratcheting down:\n  {:?}",
+            stale.len(),
+            stale
+        );
+    }
+
+    /// Loop 3's cascade tool must be declared by the strategist and must be
+    /// dispatchable, or coordination findings never reach member memory.
+    ///
+    /// The failure this guards is subtle: the card's Stage 4 previously told
+    /// the agent to "write a context episode via `write_workspace_file` to
+    /// `_coordination/cascade/<agent>.md`", which reads like the right thing
+    /// and does nothing. Consolidation reads `episodes`; nothing reads that
+    /// path. The loop appeared to run and taught no one anything.
+    #[test]
+    fn strategist_can_write_into_member_memory() {
+        use std::path::Path;
+
+        let dir = [
+            Path::new("agents/curated"),
+            Path::new("../../agents/curated"),
+        ]
+        .into_iter()
+        .find(|p| p.exists())
+        .expect("run from the workspace root");
+
+        let raw =
+            std::fs::read_to_string(dir.join("cohere_and_coordinate/agent_card.json")).unwrap();
+        let card: Value = serde_json::from_str(&raw).unwrap();
+
+        let tools = card["capabilities"]["mcp_tools"].as_array().unwrap();
+        let declared: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
+        assert!(
+            declared.contains(&"record_coordination_observation"),
+            "cohere_and_coordinate must declare record_coordination_observation — \
+             without it Loop 3 has no path into member memory"
+        );
+
+        let platform = crate::agent_backend::tools::platform_tool_names();
+        assert!(
+            platform.contains(&"record_coordination_observation"),
+            "record_coordination_observation must be a dispatchable platform tool"
+        );
+
+        // Stage 4 must instruct the memory write, not the file write. A card
+        // that still says `_coordination/cascade/` is describing a mechanism
+        // that cannot reach dreaming.
+        let prompt = card["system_prompt"].as_str().unwrap();
+        assert!(
+            prompt.contains("record_coordination_observation"),
+            "the Stage 4 cascade must call record_coordination_observation"
+        );
+        assert!(
+            !prompt.contains("_coordination/cascade/"),
+            "Stage 4 still describes the file-based cascade, which dreaming cannot read"
+        );
+    }
+
     /// The `weather_oracle` card is the orchestra contract. Its shape is load
     /// bearing: `validate_fermi_contract` in handlers/orchestras.rs requires a
     /// non-empty `finding_labels` and a well-ordered `multiplier_range`.

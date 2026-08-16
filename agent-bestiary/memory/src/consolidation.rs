@@ -111,6 +111,31 @@ impl ConsolidationWorker {
         result
     }
 
+    /// Successful episodes ordered by authority, capped at `budget`.
+    ///
+    /// Extraction can only afford to send a bounded number of episodes to the
+    /// LLM. Which ones get dropped is a correctness question, not an
+    /// arbitrary one: a HITL correction carries `authority_weight = 1.0` and
+    /// represents a human decision that passed the coherence gate, while an
+    /// ordinary successful run carries 0.5. Truncating by recency alone threw
+    /// away the former whenever the agent had been busy since.
+    ///
+    /// Stable sort, so within an authority band the caller's order (newest
+    /// first, from `get_unconsolidated_episodes`) is preserved.
+    fn rank_success_episodes_by_authority(episodes: &[Episode], budget: usize) -> Vec<&Episode> {
+        let mut ranked: Vec<&Episode> = episodes
+            .iter()
+            .filter(|e| matches!(e.execution_status, ExecutionStatus::Success))
+            .collect();
+        ranked.sort_by(|a, b| {
+            b.authority_weight
+                .partial_cmp(&a.authority_weight)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        ranked.truncate(budget);
+        ranked
+    }
+
     async fn consolidate_agent_internal(
         &self,
         agent_id: Uuid,
@@ -216,11 +241,24 @@ impl ConsolidationWorker {
 
         // Step 5b: Extract knowledge rules from successful episodes (LLM only)
         if let Some(llm) = &self.llm {
-            let success_episodes: Vec<&Episode> = episodes
-                .iter()
-                .filter(|e| matches!(e.execution_status, ExecutionStatus::Success))
-                .take(30)
-                .collect();
+            // Highest authority first, then take the budget.
+            //
+            // This used to `.take(30)` straight off `get_unconsolidated_episodes`,
+            // which returns `ORDER BY timestamp_ref DESC`. Nothing anywhere read
+            // `authority_weight`, so a HITL correction — stamped 1.0, coherence
+            // -gated, and for agent-wide scope signed off by two independent
+            // reviewers — sat in that queue as an ordinary row. An agent that had
+            // run thirty times since the correction dropped it from extraction
+            // entirely, silently.
+            //
+            // That is the whole of Loop 2's value: a human said "this is wrong,
+            // here is the right answer", and whether it survived to become a
+            // semantic rule depended on how busy the agent had been since. Sorting
+            // first costs nothing and makes the authority stamp mean something.
+            //
+            // `sort_by` is stable, so within an authority band the existing
+            // newest-first order is preserved.
+            let success_episodes = Self::rank_success_episodes_by_authority(&episodes, 30);
 
             if !success_episodes.is_empty() {
                 match self
@@ -1179,5 +1217,90 @@ mod tests {
             .bind(agent.agent_id)
             .execute(store.pool())
             .await;
+    }
+}
+
+#[cfg(test)]
+mod authority_tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn ep(weight: f64, query: &str, status: ExecutionStatus) -> Episode {
+        Episode {
+            episode_id: Uuid::new_v4(),
+            agent_id: Uuid::nil(),
+            timestamp_ref: Utc::now(),
+            query: query.to_string(),
+            context: serde_json::json!({}),
+            execution_status: status,
+            error_details: None,
+            execution_time_ms: 0,
+            tokens_used: None,
+            cost_usd: None,
+            input_tokens: None,
+            output_tokens: None,
+            cost_basis: None,
+            cost_rate_key: None,
+            parent_episode_id: None,
+            response_text: None,
+            embedding: None,
+            consolidated: false,
+            tags: vec![],
+            provenance: crate::Provenance::AutoPass,
+            authority_weight: weight,
+            dyad_id: None,
+            persona_version_at_write: None,
+            provider_used: None,
+            model_used: None,
+        }
+    }
+
+    /// Loop 2's output must survive Loop 1's extraction budget.
+    ///
+    /// A human correction is written with `authority_weight = 1.0` after
+    /// passing the coherence gate. Before this ordering existed, extraction
+    /// took the first 30 successful episodes in recency order, so an agent
+    /// that had run 30 times since the correction dropped it entirely and the
+    /// human decision never became a rule.
+    #[test]
+    fn human_corrections_survive_the_extraction_budget() {
+        let mut episodes: Vec<Episode> = (0..40)
+            .map(|i| ep(0.5, &format!("ordinary {i}"), ExecutionStatus::Success))
+            .collect();
+        // The correction is the OLDEST, i.e. last in recency order and well
+        // outside a naive take(30).
+        episodes.push(ep(1.0, "human correction", ExecutionStatus::Success));
+
+        let ranked = ConsolidationWorker::rank_success_episodes_by_authority(&episodes, 30);
+
+        assert_eq!(ranked.len(), 30);
+        assert_eq!(
+            ranked[0].query, "human correction",
+            "the highest-authority episode must be extracted first, not truncated away"
+        );
+    }
+
+    /// Ordering must not smuggle failures into the success-only extractor.
+    #[test]
+    fn failures_are_excluded_regardless_of_authority() {
+        let episodes = vec![
+            ep(1.0, "failed correction", ExecutionStatus::Failure),
+            ep(0.5, "ok", ExecutionStatus::Success),
+        ];
+        let ranked = ConsolidationWorker::rank_success_episodes_by_authority(&episodes, 30);
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].query, "ok");
+    }
+
+    /// Within one authority band the caller's newest-first order is kept, so
+    /// this change cannot silently reshuffle ordinary consolidation.
+    #[test]
+    fn equal_authority_preserves_input_order() {
+        let episodes: Vec<Episode> = (0..5)
+            .map(|i| ep(0.5, &format!("e{i}"), ExecutionStatus::Success))
+            .collect();
+        let ranked = ConsolidationWorker::rank_success_episodes_by_authority(&episodes, 5);
+        let order: Vec<&str> = ranked.iter().map(|e| e.query.as_str()).collect();
+        assert_eq!(order, vec!["e0", "e1", "e2", "e3", "e4"]);
     }
 }

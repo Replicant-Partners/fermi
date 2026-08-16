@@ -81,6 +81,15 @@ pub mod grounding_trust;
 // the server can verify rather than transcribe.
 pub mod port_trust;
 
+// Card-declared contracts — the typing and field-to-tool rules an agent
+// must state about itself before it may be published.
+//
+// `grounding_trust` holds a Rust const table, which works for curated
+// agents someone hand-wrote an entry for and cannot work for anyone else:
+// a third party publishing over the API has no way to add a line to a
+// compiled const. So the map lives in the card and Rust keeps the checker.
+pub mod card_contract;
+
 // Agent economics — one definition of "how much has this agent run, and
 // what did it cost", measured from `episodes` rather than from the
 // denormalised counters on `agents` that no code path maintains.
@@ -102,6 +111,7 @@ pub mod pipeline;
 // function; while it lived in the binary the lib had to keep a duplicate,
 // and duplicates silently diverge on cost basis, provider attribution and
 // failure provenance.
+pub mod calibration;
 pub mod episodes;
 
 // Re-export main types

@@ -16,14 +16,95 @@ use std::sync::Arc;
 
 use agent_bestiary_memory::{
     ConsolidationLock, ConsolidationWorker, LLMProvider, LLMProviderConfig, LLMProviderFactory,
-    ProviderType,
+    MemoryStore, ProviderType,
 };
+use agent_bestiary_ontology::{GitConfig, GitManager, MermaidGenerator, SnapshotManager};
 use fermi::agent_backend::executor::AgentExecutor;
 use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
 use std::str::FromStr;
 
 use crate::{resolve_agent, resolve_credential, AppState};
+
+/// Snapshot an agent's ontology after a consolidation cycle.
+///
+/// Returns the new `snapshot_id`, or `None` if a snapshot could not be made.
+/// **Never fails the cycle.** Consolidation's real output is already durable in
+/// `entities` / `facts` / `semantic_rules`; a snapshot is provenance and a
+/// rendered view of it. The CLI takes the same stance ("Don't fail
+/// consolidation if snapshot fails").
+///
+/// The most common expected failure is `NoEntities`: `MermaidGenerator::generate`
+/// refuses to draw a diagram for an agent with no live entities, which a
+/// degraded (`?allow_degraded=true`, no extraction model) run can legitimately
+/// produce. That is a skip, not an error.
+async fn snapshot_ontology(
+    state: &AppState,
+    agent_id: uuid::Uuid,
+    job_id: uuid::Uuid,
+) -> Option<uuid::Uuid> {
+    // Deliberately separate from `GIT_REPOS_PATH`, which `WorkspaceGitManager`
+    // uses. That manager lays out `{base}/workspaces/{slug}` while this one
+    // uses `{base}/{agent_name}`, so sharing a root means an agent named
+    // `workspaces` collides with the workspace tree.
+    let base_path = std::env::var("AGENT_ONTOLOGY_REPOS_PATH")
+        .unwrap_or_else(|_| "./repos/ontologies".to_string());
+
+    let git_config = GitConfig {
+        base_path,
+        author_name: "Fermi ADM".to_string(),
+        author_email: "adm@fermi.ai".to_string(),
+        branch: "main".to_string(),
+        // Push is hardcoded off rather than read from `GIT_AUTO_PUSH`.
+        // `GitManager::commit_ontology` is a synchronous fn, and its libgit2
+        // push has no timeout — a push to an unreachable host would block a
+        // tokio worker thread for the OS TCP timeout. Nothing on the dreaming
+        // path is worth that risk, and local commits already produce the real
+        // SHA that satisfies `ontology_snapshots.git_commit_sha NOT NULL`.
+        github_org: None,
+        github_token: None,
+        auto_push: false,
+        remote_name: "origin".to_string(),
+    };
+
+    let git_manager = match GitManager::new(git_config) {
+        Ok(g) => g,
+        Err(e) => {
+            tracing::warn!(
+                agent_id = %agent_id, error = %e,
+                "[consolidation] git manager unavailable — no ontology snapshot"
+            );
+            return None;
+        }
+    };
+
+    // `MemoryStore` is not `Clone`, and `MermaidGenerator` owns one too, so
+    // build two from the existing pool. `from_pool` shares the pool rather
+    // than opening a second one.
+    let mermaid = MermaidGenerator::new(MemoryStore::from_pool(state.db.clone()));
+    let manager = SnapshotManager::new(
+        MemoryStore::from_pool(state.db.clone()),
+        mermaid,
+        git_manager,
+    );
+
+    match manager.create_snapshot(agent_id, Some(job_id)).await {
+        Ok(snapshot_id) => {
+            tracing::info!(
+                agent_id = %agent_id, %snapshot_id, %job_id,
+                "[consolidation] ontology snapshot created"
+            );
+            Some(snapshot_id)
+        }
+        Err(e) => {
+            tracing::warn!(
+                agent_id = %agent_id, error = %e,
+                "[consolidation] ontology snapshot skipped"
+            );
+            None
+        }
+    }
+}
 
 /// Resolve a member of the `dream_coordinator` compound by what it produces.
 /// The coordinator card names its members declaratively (its `dependencies`);
@@ -453,6 +534,17 @@ pub async fn consolidate_agent_handler(
                 // update here. Re-completing it would only risk clobbering the
                 // worker's numbers with a second write.
 
+                // Snapshot the ontology so it visibly develops over time.
+                //
+                // Until now `create_snapshot` had exactly one call site, in the
+                // standalone `consolidate` CLI, so no agent dreamt through the
+                // API ever produced a snapshot row. That left the Mermaid
+                // diagram, the git provenance and `evolution_commits` frozen at
+                // nothing regardless of how much the agent learned — and it
+                // made the narrator's `UPDATE ontology_snapshots` below a
+                // permanent no-op, because it targeted a row nothing inserted.
+                let snapshot_id = snapshot_ontology(&spawn_state, spawn_agent_id, job_id).await;
+
                 // Spawn dream narrator
                 let ep = result.episodes_processed;
                 let cl = result.clusters_identified;
@@ -518,17 +610,27 @@ pub async fn consolidate_agent_handler(
                         .await
                     {
                         let narrative = output.metadata.reasoning.unwrap_or_default();
-                        if !narrative.is_empty() {
-                            let _ = sqlx::query(
+                        // Target the snapshot this cycle produced, by id.
+                        // `ORDER BY version DESC LIMIT 1` was both a no-op
+                        // (nothing inserted rows) and a race: `version` is a
+                        // read-modify-write with no unique constraint, so two
+                        // concurrent cycles can share a version and the
+                        // synopsis could land on the wrong row.
+                        if let (false, Some(sid)) = (narrative.is_empty(), snapshot_id) {
+                            if let Err(e) = sqlx::query(
                                 "UPDATE ontology_snapshots SET dream_synopsis = $1 \
-                                 WHERE agent_id = $2 AND snapshot_id = (\
-                                   SELECT snapshot_id FROM ontology_snapshots \
-                                   WHERE agent_id = $2 ORDER BY version DESC LIMIT 1)",
+                                 WHERE snapshot_id = $2",
                             )
                             .bind(&narrative)
-                            .bind(spawn_agent_id)
+                            .bind(sid)
                             .execute(&narrator_state.db)
-                            .await;
+                            .await
+                            {
+                                tracing::warn!(
+                                    snapshot_id = %sid, error = %e,
+                                    "[consolidation] failed to store dream synopsis"
+                                );
+                            }
                         }
                     }
                 });

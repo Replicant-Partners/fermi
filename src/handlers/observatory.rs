@@ -5,7 +5,9 @@
 //! ```text
 //!   GET  /api/observatory/agents/:id/timeline?window=N
 //!   GET  /api/observatory/agents/:id/dyads
+//!   GET  /api/observatory/agents/:id/relationships
 //!   GET  /api/observatory/agents/:id/anomalies?limit=N
+//!   GET  /api/observatory/agents/:id/loops
 //!   POST /api/observatory/agents/:id/scan
 //!   GET  /api/observatory/hitl                           [admin or owner-of-any]
 //!   POST /api/observatory/hitl/:event_id/action          [approve | relabel | intervene]
@@ -463,7 +465,8 @@ pub async fn record_hitl_action_handler(
         None
     };
 
-    let two_write = TwoWriteMemory::new(Arc::clone(&state.memory_store));
+    let two_write = TwoWriteMemory::new(Arc::clone(&state.memory_store))
+        .with_embedder(Arc::clone(&state.embedder));
     let receipt = two_write
         .execute(&encoded, &gate_outcome, original_episode)
         .await
@@ -615,7 +618,8 @@ pub async fn confirm_two_reviewer_handler(
         None
     };
 
-    let two_write = TwoWriteMemory::new(Arc::clone(&state.memory_store));
+    let two_write = TwoWriteMemory::new(Arc::clone(&state.memory_store))
+        .with_embedder(Arc::clone(&state.embedder));
     let receipt = two_write
         .execute(&encoded, &gate_outcome, original_episode)
         .await
@@ -1194,6 +1198,68 @@ pub async fn agent_relationships_handler(
         }
     }
 
+    // ── Resolve the human half of each dyad to a readable identity ───────────
+    //
+    // The third segment of a dyad_id is a `users.user_id`, which for every
+    // production auth provider is an opaque Zitadel id or an Ethereum address.
+    // This handler used to return it as `display_name` whenever the operator
+    // had not named the dyad, so the social graph rendered as a wall of
+    // `2e644008-f5c7-47c5-854c-3801df9879cc` — technically the truth and
+    // practically unreadable, because two cards for the same person look
+    // identical until you diff 36 characters by eye.
+    //
+    // Resolved here rather than in the template because the fallback ladder
+    // (display_name > @github > email local-part) already exists on the users
+    // handler and must not fork. An id with no matching row is reported as
+    // unresolved rather than being dressed up as a name — a deleted or
+    // cross-tenant user is a real state and the operator should see it.
+    let human_ids: Vec<String> = dyad_ids
+        .iter()
+        .filter_map(|d| agent_bestiary_memory::human_id_from_dyad(d))
+        .map(|s| s.to_string())
+        .collect();
+    let humans: std::collections::HashMap<String, Value> = if human_ids.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        sqlx::query(
+            "SELECT user_id, display_name, github_username, email, avatar_url
+               FROM users WHERE user_id = ANY($1)",
+        )
+        .bind(&human_ids)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+        .iter()
+        .map(|r| {
+            let uid: String = r.get("user_id");
+            let display: Option<String> = r.try_get("display_name").ok().flatten();
+            let github: Option<String> = r.try_get("github_username").ok().flatten();
+            let email: Option<String> = r.try_get("email").ok().flatten();
+            // Same ladder as `handlers::users::search_users_handler`.
+            let label = display
+                .clone()
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| github.clone().map(|g| format!("@{}", g)))
+                .or_else(|| {
+                    email
+                        .as_deref()
+                        .and_then(|e| e.split('@').next())
+                        .map(|s| s.to_string())
+                })
+                .filter(|s| !s.trim().is_empty());
+            (
+                uid.clone(),
+                json!({
+                    "user_id": uid,
+                    "label": label,
+                    "github_username": github,
+                    "avatar_url": r.try_get::<Option<String>, _>("avatar_url").ok().flatten(),
+                }),
+            )
+        })
+        .collect()
+    };
+
     // dyad_profiles may not exist yet (migration 133 pending) — fall back gracefully
     let profiles: std::collections::HashMap<String, serde_json::Value> = if !dyad_ids.is_empty() {
         sqlx::query("SELECT dyad_id,display_name,notes,tags,total_interactions,first_interaction_at,last_interaction_at FROM dyad_profiles WHERE dyad_id=ANY($1)")
@@ -1224,10 +1290,26 @@ pub async fn agent_relationships_handler(
             let human_id = agent_bestiary_memory::human_id_from_dyad(did)
                 .unwrap_or(did.as_str())
                 .to_string();
+            let human = humans.get(&human_id);
+            let human_label = human
+                .and_then(|h| h["label"].as_str())
+                .map(|s| s.to_string());
+
+            // Precedence: what the operator named it > who the platform says
+            // it is > an explicit admission that we do not know. The last case
+            // keeps a short id fragment so two unknowns stay distinguishable
+            // without pretending the id is a name.
             let display_name = profile["display_name"]
                 .as_str()
+                .filter(|s| !s.trim().is_empty())
                 .map(|s| s.to_string())
-                .unwrap_or_else(|| human_id.clone());
+                .or_else(|| human_label.clone())
+                .unwrap_or_else(|| {
+                    format!(
+                        "unknown user · {}",
+                        human_id.chars().take(8).collect::<String>()
+                    )
+                });
 
             // Prefer the episode count — it is ground truth. `dyad_state`
             // only counts episodes the social pass has folded in.
@@ -1278,6 +1360,15 @@ pub async fn agent_relationships_handler(
                 "dyad_id": did,
                 "display_name": display_name,
                 "human_id": human_id,
+                // The resolved identity, kept separate from `display_name` so a
+                // UI can show "Operator's label (real person)" without having to
+                // guess which of the two it is looking at.
+                "human": human.cloned(),
+                "human_label": human_label,
+                "human_resolved": human.is_some(),
+                // True when the only thing we can show is the raw id. Surfaced
+                // so the UI can style it as a gap rather than as data.
+                "human_unresolved": human.is_none(),
                 // `eval` dyads are synthetic history from the regression
                 // pipeline; `dyad` dyads are real conversations.
                 "origin": if agent_bestiary_memory::is_eval_dyad(did) { "eval" } else { "dyad" },
@@ -1314,6 +1405,10 @@ pub async fn agent_relationships_handler(
         .filter(|r| r["health"].is_number())
         .count();
     let pending_count = relationships.len() - scored_count;
+    let unresolved_humans = relationships
+        .iter()
+        .filter(|r| r["human_unresolved"] == Value::Bool(true))
+        .count();
 
     Ok(Json(serde_json::json!({
         "agent_id": db_agent.agent_name,
@@ -1322,6 +1417,10 @@ pub async fn agent_relationships_handler(
         // Surfaced so the UI can say "N awaiting scan" instead of implying
         // the relationships do not exist.
         "pending_scan_count": pending_count,
+        // Dyads whose human half matched no `users` row. Non-zero is worth
+        // knowing: it means either a deleted account or a dyad written under an
+        // id that never was a user.
+        "unresolved_human_count": unresolved_humans,
         "relationships": relationships,
     })))
 }
@@ -1333,19 +1432,77 @@ pub async fn patch_dyad_profile_handler(
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
-    let owns:bool=sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM dyad_profiles dp JOIN agents a ON a.agent_id=dp.agent_id WHERE dp.dyad_id=$1 AND a.user_id=$2)"
-    ).bind(&dyad_id).bind(&user_id).fetch_one(&state.db).await.unwrap_or(false);
-    if !owns {
-        return Err((StatusCode::FORBIDDEN, "Not the owner of this dyad".into()));
+
+    // Identity comes from the dyad_id itself, not from a `dyad_profiles` row.
+    //
+    // This used to authorise against `EXISTS(dyad_profiles JOIN agents ON
+    // a.user_id = caller)`, which made the endpoint unusable in exactly the
+    // case the UI offers it. `dyad_profiles` rows are only created by
+    // `auto_form_dyads_handler`, which filters on `a.user_id = $1` — so a
+    // curated agent (owner_id NULL) never gets profile rows at all, and every
+    // "Save name" button on a curated agent's relationship card returned
+    // "Not the owner of this dyad" no matter who clicked it. Naming a dyad was
+    // the one write the social graph offered and it was unreachable for the
+    // agents most likely to have a social graph.
+    let Some(agent_uuid) = agent_bestiary_memory::agent_id_from_dyad(&dyad_id) else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Malformed dyad_id: expected <origin>:<agent_uuid>:<human_id>".into(),
+        ));
+    };
+    let human_id = agent_bestiary_memory::human_id_from_dyad(&dyad_id).unwrap_or_default();
+
+    // Three ways to have standing: you own the agent, you ARE the human in the
+    // relationship, or you are a platform admin.
+    let owns_agent: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM agents WHERE agent_id=$1 AND user_id=$2)")
+            .bind(agent_uuid)
+            .bind(&user_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(false);
+    let is_the_human = !human_id.is_empty() && human_id == user_id;
+    if !(owns_agent || is_the_human || principal.can_admin()) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Naming a dyad requires owning the agent, being the person in the relationship, \
+             or platform admin."
+                .into(),
+        ));
     }
-    sqlx::query("UPDATE dyad_profiles SET display_name=COALESCE($2,display_name),notes=COALESCE($3,notes),updated_at=NOW() WHERE dyad_id=$1")
+
+    // Upsert: a dyad with conversation history but no profile row is the normal
+    // state, so naming one has to be able to create it. `COALESCE` on update so
+    // a PATCH of only `notes` does not wipe the name.
+    //
+    // An explicit `null` display_name is the UI's "clear the name" and is left
+    // to COALESCE (a no-op) deliberately — clearing is not offered, and
+    // silently blanking on every notes-only PATCH would be worse.
+    sqlx::query(
+        r#"INSERT INTO dyad_profiles(dyad_id, agent_id, human_id, display_name, notes,
+                                     auto_formed, formed_at)
+           VALUES($1, $2, $3, $4, $5, false, NOW())
+           ON CONFLICT(dyad_id) DO UPDATE SET
+             display_name = COALESCE($4, dyad_profiles.display_name),
+             notes        = COALESCE($5, dyad_profiles.notes),
+             updated_at   = NOW()"#,
+    )
     .bind(&dyad_id)
-    .bind(body.get("display_name").and_then(|v|v.as_str()))
-    .bind(body.get("notes").and_then(|v|v.as_str()))
-    .execute(&state.db).await
-    .map_err(|e|(StatusCode::SERVICE_UNAVAILABLE, format!("dyad_profiles unavailable (migration pending?): {}", e)))?;
-    Ok(Json(serde_json::json!({"updated":true})))
+    .bind(agent_uuid)
+    .bind(human_id)
+    .bind(body.get("display_name").and_then(|v| v.as_str()))
+    .bind(body.get("notes").and_then(|v| v.as_str()))
+    .execute(&state.db)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!("dyad_profiles unavailable (migration pending?): {}", e),
+        )
+    })?;
+    Ok(Json(
+        serde_json::json!({"updated": true, "dyad_id": dyad_id}),
+    ))
 }
 
 // ─── Loop 5a mechanism probe (GET /api/observatory/loops/brier/mechanism) ────
@@ -1564,24 +1721,49 @@ const LOOP5_INFO_CHECKS: &[(&str, &str, &str)] = &[
     ),
 ];
 
-/// GET /api/observatory/loops/brier/mechanism
+/// Outcome of the MECHANISM probe: whether the Loop 5a chain moves a signal
+/// correctly, independent of whether the resulting numbers are impressive.
 ///
-/// Structured verdict on whether the Loop 5a chain moves a signal correctly,
-/// independent of whether the resulting numbers are impressive.
-///
-/// Admin-only: the checks aggregate across every tenant's forecasts, so the
-/// counts are not owner-scoped and must not leak to a normal caller.
-pub async fn loop5_mechanism_handler(
-    State(state): State<AppState>,
-    principal: AuthPrincipal,
-) -> Result<Json<Value>, (StatusCode, String)> {
-    if !principal.can_admin() {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Loop 5 mechanism probe is admin-only (counts span all tenants)".into(),
-        ));
+/// Extracted from the handler so the per-agent loops endpoint can reach the same
+/// verdict from the same SQL. A second implementation would let the fleet probe
+/// and the per-agent row disagree about whether the wiring works, and then
+/// neither could be trusted — the failure this module's header warns about.
+pub struct Loop5Mechanism {
+    /// `sound` | `broken` | `inconclusive`
+    pub verdict: &'static str,
+    pub violations: usize,
+    pub ok: usize,
+    pub errored: usize,
+    pub checks: Vec<Value>,
+}
+
+impl Loop5Mechanism {
+    /// Only the MECHANISM checks that actually failed, for callers that want to
+    /// name the fault without carrying all thirteen rows.
+    pub fn failing(&self) -> Vec<Value> {
+        self.checks
+            .iter()
+            .filter(|c| c["class"] == "MECHANISM" && c["status"] != "OK")
+            .cloned()
+            .collect()
     }
 
+    pub fn verdict_detail(&self) -> &'static str {
+        match self.verdict {
+            "sound" => {
+                "The chain moves signals correctly. Any weakness in the numbers is thin data \
+                 or skew, not wiring."
+            }
+            "broken" => {
+                "Do not trust any Loop 5 number until the MECHANISM violations are resolved."
+            }
+            _ => "A probe query errored — fix it before drawing conclusions either way.",
+        }
+    }
+}
+
+/// Run every MECHANISM + INFO check and return the structured verdict.
+pub async fn probe_loop5_mechanism(db: &sqlx::PgPool) -> Loop5Mechanism {
     let mut checks: Vec<Value> = Vec::new();
     let mut violations = 0usize;
     let mut ok = 0usize;
@@ -1591,7 +1773,7 @@ pub async fn loop5_mechanism_handler(
         // A failing probe query must never 500 the probe: an errored check is
         // itself a finding, and reporting it as INCONCLUSIVE is more honest
         // than either hiding it or pretending the loop is sound.
-        match sqlx::query_scalar::<_, i64>(sql).fetch_one(&state.db).await {
+        match sqlx::query_scalar::<_, i64>(sql).fetch_one(db).await {
             Ok(n) => {
                 let status = if n == 0 { "OK" } else { "VIOLATION" };
                 if n == 0 {
@@ -1616,7 +1798,7 @@ pub async fn loop5_mechanism_handler(
     }
 
     for (id, description, sql) in LOOP5_INFO_CHECKS {
-        match sqlx::query_scalar::<_, i64>(sql).fetch_one(&state.db).await {
+        match sqlx::query_scalar::<_, i64>(sql).fetch_one(db).await {
             Ok(n) => checks.push(json!({
                 "id": id, "class": "INFO", "severity": "INFO",
                 "status": "OK", "count": n, "description": description,
@@ -1640,19 +1822,1127 @@ pub async fn loop5_mechanism_handler(
         "broken"
     };
 
+    Loop5Mechanism {
+        verdict,
+        violations,
+        ok,
+        errored,
+        checks,
+    }
+}
+
+/// GET /api/observatory/loops/brier/mechanism
+///
+/// Structured verdict on whether the Loop 5a chain moves a signal correctly,
+/// independent of whether the resulting numbers are impressive.
+///
+/// Admin-only: the checks aggregate across every tenant's forecasts, so the
+/// counts are not owner-scoped and must not leak to a normal caller.
+pub async fn loop5_mechanism_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    if !principal.can_admin() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Loop 5 mechanism probe is admin-only (counts span all tenants)".into(),
+        ));
+    }
+
+    let m = probe_loop5_mechanism(&state.db).await;
+
     Ok(Json(json!({
         "loop": "5a",
         "label": "Brier calibration",
-        "verdict": verdict,
-        "verdict_detail": match verdict {
-            "sound" => "The chain moves signals correctly. Any weakness in the numbers is thin data or skew, not wiring.",
-            "broken" => "Do not trust any Loop 5 number until the MECHANISM violations are resolved.",
-            _ => "A probe query errored — fix it before drawing conclusions either way.",
-        },
-        "mechanism_violations": violations,
-        "mechanism_ok": ok,
-        "errored": errored,
-        "checks": checks,
+        "verdict": m.verdict,
+        "verdict_detail": m.verdict_detail(),
+        "mechanism_violations": m.violations,
+        "mechanism_ok": m.ok,
+        "errored": m.errored,
+        "checks": m.checks,
         "note": "MECHANISM checks are sample-size independent and must be clean at n=1. INFO checks measure how much the signal currently means and are never failures. Full rationale per check: scripts/loop5_brier_mechanical_check.sql",
     })))
+}
+
+// ─── The two axes of Loop 5 health ───────────────────────────────────
+//
+// MECHANISM and EVIDENCE fail independently and have opposite remedies, so they
+// must never be collapsed into one status:
+//
+//   thin   — the chain is correct, there is just not much data through it yet.
+//            Remedy: wait. Nothing is wrong. More volume fixes it by itself.
+//   broken — the chain drops, duplicates, mis-attributes or mis-transforms
+//            signals. Remedy: repair the wiring. More volume makes it WORSE,
+//            because every new forecast is scored through the same fault.
+//
+// Reporting both as `partial` — which is what a single status forces — tells an
+// operator to be patient when they should be debugging.
+
+/// Evidence sufficiency, i.e. how much the number currently means.
+fn evidence_band(n_resolved: i64, evidence_class: &str) -> &'static str {
+    // Prefer the calibration endpoint's own classification; fall back to n so
+    // this never reports `usable` for an empty set.
+    match evidence_class {
+        "usable" if n_resolved > 0 => "usable",
+        "thin" | "provisional" | "none" => evidence_class_static(evidence_class),
+        _ if n_resolved == 0 => "none",
+        _ if n_resolved < 5 => "provisional",
+        _ if n_resolved < 20 => "thin",
+        _ => "usable",
+    }
+}
+
+fn evidence_class_static(s: &str) -> &'static str {
+    match s {
+        "usable" => "usable",
+        "thin" => "thin",
+        "provisional" => "provisional",
+        _ => "none",
+    }
+}
+
+/// The sentence an operator needs: is this thin, or is it broken?
+///
+/// `mechanism` is one of `sound` | `broken` | `inconclusive` | `unverified`
+/// (`unverified` = the caller is not a platform admin, so the probe could not
+/// be run for them at all).
+fn loop5_interpretation(mechanism: &str, evidence: &str) -> &'static str {
+    match (mechanism, evidence) {
+        ("broken", _) => {
+            "BROKEN, not thin. The chain that produces this number drops, duplicates or \
+             mis-transforms signals, so the score is not a measurement of calibration at all. \
+             More forecasts will not help — each new one is scored through the same fault. \
+             Repair the wiring first."
+        }
+        ("inconclusive", _) => {
+            "UNKNOWN. A mechanism probe query errored, so soundness could not be established \
+             either way. Fix the probe before reading anything into the number."
+        }
+        ("unverified", _) => {
+            "UNVERIFIED. Mechanism soundness spans every tenant's forecasts and is therefore \
+             admin-only, so this surface cannot tell you whether a weak number here is thin \
+             data or broken wiring. Ask a platform admin for the mechanism probe."
+        }
+        ("sound", "none") => {
+            "SOUND but empty. The wiring is verified correct and no forecast has resolved \
+             through it yet. Nothing to fix; nothing to read."
+        }
+        ("sound", "provisional") | ("sound", "thin") => {
+            "THIN, not broken. The wiring is verified correct — signals are emitted once, \
+             attributed to the right agent and transformed correctly — there is simply not \
+             enough resolved history for the number to mean much yet. This improves with \
+             volume alone. Nothing needs fixing."
+        }
+        ("sound", _) => {
+            "SOUND and sufficient. The wiring is verified correct and enough forecasts have \
+             resolved for the number to be treated as a real measurement."
+        }
+        _ => "Mechanism state unrecognised.",
+    }
+}
+
+// ─── GET /api/observatory/agents/:agent_id/loops ──────────────────────────
+//
+// Per-agent RSI feedback-loop health.
+//
+// WHY THIS IS A SERVER ENDPOINT AND NOT TEMPLATE JAVASCRIPT
+//
+// The observatory's Loops tab used to assemble these six verdicts client-side
+// from whatever payloads the page happened to have already fetched, and two of
+// them were not derived from anything at all:
+//
+//   3a Coherence (inner)     status: "partial"  — hardcoded, every agent
+//   4  Composition evolution status: "open"     — hardcoded, every agent
+//
+// Those two rendered identically for an agent in six actively-evaluated
+// workspaces and for an agent that has never been in one. A constant presented
+// in a column headed by a live status glyph is worse than an empty column,
+// because it is indistinguishable from a measurement.
+//
+// Loop 1a was worse in a subtler way: it reported `closed` on
+// `eval_runs > 0`. Eval runs are the *signal* half of Loop 1. The correction
+// half is consolidation — the loop is only closed when something was learned
+// and written back to the ontology. So an agent with 140 eval runs and zero
+// dreaming cycles reported a closed learning loop while having never learned
+// anything, which is the exact failure the dreaming-maturity work was built to
+// expose.
+//
+// THE FOURTH STATUS
+//
+// `open` is a measurement: the loop is not turning. It is not the right word
+// for "this surface cannot tell". Conflating them is how a missing table
+// becomes a confident negative verdict, so a query that fails returns
+// `unmeasured` naming the failure, and every loop carries the `source` it was
+// derived from so the operator can go check it directly.
+
+/// Inputs to the Loop 1 verdict, split along the line that matters: what the
+/// agent was *told* about itself versus what it *did* with that.
+///
+/// A struct with a pure classifier rather than inline logic, for the same reason
+/// `dreaming_maturity::classify_maturity` is one: the interesting cases are
+/// combinations that are awkward to reach through a live database, and the
+/// regression this fixes (many eval runs, no consolidation, reported `closed`)
+/// is exactly such a case.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Loop1aInputs {
+    /// Signal half — the agent was scored.
+    pub eval_runs: i64,
+    pub eval_signals: i64,
+    pub dimensions: i64,
+    /// Correction half — the scores were consolidated into durable knowledge.
+    pub completed_cycles: i64,
+    pub failed_cycles: i64,
+    pub entities: i64,
+    pub facts: i64,
+    pub rules: i64,
+    /// Context, so "nothing happened" can be told from "nothing could happen".
+    pub episodes: i64,
+    pub backlog: i64,
+}
+
+impl Loop1aInputs {
+    pub fn ontology_rows(&self) -> i64 {
+        self.entities + self.facts + self.rules
+    }
+    /// The agent has been measured.
+    pub fn has_signal(&self) -> bool {
+        self.eval_runs > 0 || self.eval_signals > 0
+    }
+    /// Something was written back. Requires *yield*, not just a cycle: a
+    /// consolidation run that extracted nothing corrected nothing, and 91 such
+    /// cycles on this deployment reported success while leaving 62 agents with
+    /// an empty ontology.
+    pub fn has_correction(&self) -> bool {
+        self.completed_cycles > 0 && self.ontology_rows() > 0
+    }
+}
+
+/// Classify Loop 1, and say which half is missing.
+///
+/// The rule the old client-side version got wrong: eval runs are the SIGNAL
+/// half. A loop with a signal and no correction is half a loop, and calling it
+/// `closed` is how an agent with 140 eval runs and no ontology reported a
+/// closed learning loop.
+pub fn classify_loop1a(i: Loop1aInputs) -> (&'static str, String) {
+    let (runs, dims, cycles) = (i.eval_runs, i.dimensions, i.completed_cycles);
+    let onto = i.ontology_rows();
+
+    match (i.has_signal(), i.has_correction()) {
+        (true, true) => (
+            "closed",
+            format!(
+                "{runs} eval run(s) · {dims} dimension(s) scored, and {cycles} dreaming \
+                 cycle(s) wrote back {onto} ontology row(s). Both halves turning."
+            ),
+        ),
+        (true, false) if cycles == 0 => (
+            "partial",
+            format!(
+                "Signal half only: {runs} eval run(s) over {dims} dimension(s), but the agent \
+                 has never dreamt{}. Nothing has been written back, so no correction has \
+                 occurred — run a consolidation cycle to close it.",
+                if i.backlog > 0 {
+                    format!(" ({} episode(s) waiting)", i.backlog)
+                } else {
+                    String::new()
+                }
+            ),
+        ),
+        (true, false) => (
+            "partial",
+            format!(
+                "Signal half only: {runs} eval run(s), and {cycles} dreaming cycle(s) completed \
+                 but extracted nothing — 0 entities, facts or rules. The loop is running on \
+                 real material and learning nothing."
+            ),
+        ),
+        (false, true) => (
+            "partial",
+            format!(
+                "Correction half only: {cycles} dreaming cycle(s) produced {onto} ontology \
+                 row(s), but no eval run has ever scored this agent — it is consolidating \
+                 without any measure of whether it improved."
+            ),
+        ),
+        (false, false) if i.episodes == 0 => (
+            "open",
+            "Neither half. The agent has produced no episodes, so there is nothing to score \
+             and nothing to consolidate — execute it first."
+                .to_string(),
+        ),
+        (false, false) => (
+            "open",
+            format!(
+                "Neither half. {} episode(s) exist, no eval runs and no completed dreaming \
+                 cycles{}.",
+                i.episodes,
+                if i.failed_cycles > 0 {
+                    format!(" ({} cycle(s) failed)", i.failed_cycles)
+                } else {
+                    String::new()
+                }
+            ),
+        ),
+    }
+}
+
+/// Assemble one loop verdict. `source` names the tables or endpoint the verdict
+/// was derived from — the point is that no row on this tab is unattributable.
+fn loop_verdict(
+    id: &str,
+    name: &str,
+    scope: &str,
+    status: &str,
+    detail: String,
+    source: &str,
+    evidence: Value,
+) -> Value {
+    json!({
+        "id": id,
+        "name": name,
+        // agent | workspace | composition — which object the loop actually runs
+        // on. A workspace-scoped loop reported against an agent is reported
+        // across every workspace the agent belongs to, and saying so stops the
+        // number being read as the agent's own.
+        "scope": scope,
+        // closed | partial | open | unmeasured
+        "status": status,
+        "detail": detail,
+        "source": source,
+        "evidence": evidence,
+    })
+}
+
+pub async fn agent_loops_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = require_owner_or_admin(&state, &principal, &agent_id).await?;
+    let aid = db_agent.agent_id;
+    let db = &state.db;
+
+    let mut loops: Vec<Value> = Vec::new();
+
+    // ── Loop 1 — individual agent learning ──────────────────────────────
+    //
+    // Both halves in one query so they cannot be reported out of step with
+    // each other: `signal_*` is what the agent was told about itself,
+    // `cycles`/`ontology_size` is what it did with that.
+    let l1 = sqlx::query(
+        "SELECT (SELECT COUNT(*) FROM eval_runs WHERE agent_id=$1)                  AS runs,
+                (SELECT COUNT(*) FROM eval_signals WHERE agent_id=$1)               AS signals,
+                (SELECT COUNT(DISTINCT dimension) FROM eval_signals WHERE agent_id=$1) AS dims,
+                (SELECT COUNT(*) FROM consolidation_jobs
+                  WHERE agent_id=$1 AND status='completed')                         AS cycles,
+                (SELECT COUNT(*) FROM consolidation_jobs
+                  WHERE agent_id=$1 AND status='failed')                            AS failed_cycles,
+                (SELECT COUNT(*) FROM entities WHERE agent_id=$1)                   AS entities,
+                (SELECT COUNT(*) FROM facts WHERE agent_id=$1)                      AS facts,
+                (SELECT COUNT(*) FROM semantic_rules WHERE agent_id=$1)             AS rules,
+                (SELECT COUNT(*) FROM episodes WHERE agent_id=$1)                   AS episodes,
+                (SELECT COUNT(*) FROM episodes
+                  WHERE agent_id=$1 AND NOT consolidated)                           AS backlog",
+    )
+    .bind(aid)
+    .fetch_one(db)
+    .await;
+
+    match l1 {
+        Ok(r) => {
+            let n = |k: &str| -> i64 { r.try_get::<i64, _>(k).unwrap_or(0) };
+            let i = Loop1aInputs {
+                eval_runs: n("runs"),
+                eval_signals: n("signals"),
+                dimensions: n("dims"),
+                completed_cycles: n("cycles"),
+                failed_cycles: n("failed_cycles"),
+                entities: n("entities"),
+                facts: n("facts"),
+                rules: n("rules"),
+                episodes: n("episodes"),
+                backlog: n("backlog"),
+            };
+            let (status, detail) = classify_loop1a(i);
+
+            loops.push(loop_verdict(
+                "1a",
+                "Individual learning",
+                "agent",
+                status,
+                detail,
+                "eval_runs + eval_signals (signal) · consolidation_jobs + entities/facts/semantic_rules (correction)",
+                json!({
+                    "eval_runs": i.eval_runs, "eval_signals": i.eval_signals,
+                    "dimensions": i.dimensions,
+                    "completed_cycles": i.completed_cycles, "failed_cycles": i.failed_cycles,
+                    "entities": i.entities, "facts": i.facts, "semantic_rules": i.rules,
+                    "ontology_rows": i.ontology_rows(),
+                    "episodes": i.episodes, "unconsolidated_episodes": i.backlog,
+                    "has_signal_half": i.has_signal(),
+                    "has_correction_half": i.has_correction(),
+                }),
+            ));
+        }
+        Err(e) => loops.push(loop_verdict(
+            "1a",
+            "Individual learning",
+            "agent",
+            "unmeasured",
+            format!("Could not read the learning tables: {e}"),
+            "eval_runs + eval_signals + consolidation_jobs",
+            Value::Null,
+        )),
+    }
+
+    // ── Loop 2 — HITL behavioural correction ─────────────────────────────
+    //
+    // "No anomalies detected" is genuinely ambiguous — a well-behaved agent and
+    // an agent nothing has ever scanned look the same from this table — so the
+    // scan count disambiguates it instead of leaving the operator to guess.
+    let l2 = sqlx::query(
+        "SELECT COUNT(*)                                                        AS total,
+                COUNT(*) FILTER (WHERE requires_review AND resolved_at IS NULL)  AS pending,
+                COUNT(*) FILTER (WHERE resolved_at IS NOT NULL)                  AS resolved,
+                MIN(detected_at) FILTER (WHERE requires_review AND resolved_at IS NULL)
+                                                                                 AS oldest_pending
+           FROM anomaly_events WHERE agent_id = $1",
+    )
+    .bind(aid)
+    .fetch_one(db)
+    .await;
+
+    match l2 {
+        Ok(r) => {
+            let n = |k: &str| -> i64 { r.try_get::<i64, _>(k).unwrap_or(0) };
+            let (total, pending, resolved) = (n("total"), n("pending"), n("resolved"));
+            let oldest = r
+                .try_get::<Option<chrono::DateTime<Utc>>, _>("oldest_pending")
+                .ok()
+                .flatten();
+            let status = if resolved > 0 && pending == 0 {
+                "closed"
+            } else if pending > 0 {
+                "partial"
+            } else {
+                "open"
+            };
+            let detail = if pending > 0 {
+                let age = oldest
+                    .map(|t| {
+                        format!(
+                            ", oldest {} day(s) old",
+                            ((Utc::now() - t).num_seconds() / 86_400).max(0)
+                        )
+                    })
+                    .unwrap_or_default();
+                format!(
+                    "{pending} anomal(ies) awaiting review{age}. {resolved} previously \
+                     resolved — visit the review queue."
+                )
+            } else if resolved > 0 {
+                format!("{resolved} anomal(ies) reviewed and resolved, none outstanding.")
+            } else {
+                "No anomalies have ever been raised for this agent. Nothing to correct — which \
+                 means the loop has not been exercised, not that it works."
+                    .to_string()
+            };
+            loops.push(loop_verdict(
+                "2",
+                "HITL correction",
+                "agent",
+                status,
+                detail,
+                "anomaly_events",
+                json!({
+                    "total": total, "pending_review": pending, "resolved": resolved,
+                    "oldest_pending_at": oldest,
+                }),
+            ));
+        }
+        Err(e) => loops.push(loop_verdict(
+            "2",
+            "HITL correction",
+            "agent",
+            "unmeasured",
+            format!("Could not read anomaly_events: {e}"),
+            "anomaly_events",
+            Value::Null,
+        )),
+    }
+
+    // ── Loop 3a — workspace coherence (inner) ────────────────────────────
+    //
+    // Workspace-scoped, and therefore measurable per-agent only as "across the
+    // workspaces this agent is in". That was the excuse for hardcoding it; it
+    // is not a good one, because the join is two tables wide.
+    let l3 = sqlx::query(
+        "SELECT COUNT(DISTINCT wa.workspace_id)                     AS workspaces,
+                COUNT(DISTINCT ce.workspace_id)                     AS evaluated_workspaces,
+                COUNT(ce.eval_id)                                   AS evaluations,
+                MAX(ce.created_at)                                  AS last_eval_at,
+                AVG(ce.global_score)                                AS mean_score
+           FROM workspace_agents wa
+           LEFT JOIN coherence_evaluations ce ON ce.workspace_id = wa.workspace_id
+          WHERE wa.agent_id = $1",
+    )
+    .bind(aid)
+    .fetch_one(db)
+    .await;
+
+    match l3 {
+        Ok(r) => {
+            let n = |k: &str| -> i64 { r.try_get::<i64, _>(k).unwrap_or(0) };
+            let (ws, evaluated, evals) =
+                (n("workspaces"), n("evaluated_workspaces"), n("evaluations"));
+            let last = r
+                .try_get::<Option<chrono::DateTime<Utc>>, _>("last_eval_at")
+                .ok()
+                .flatten();
+            let mean = r.try_get::<Option<f64>, _>("mean_score").ok().flatten();
+
+            // A coherence score below 0.4 is the documented chronic-low band,
+            // so a loop that is evaluating and sitting there is turning but not
+            // correcting — partial, not closed.
+            let status = if ws == 0 {
+                "open"
+            } else if evals == 0 {
+                "open"
+            } else if mean.map(|m| m < 0.4).unwrap_or(false) {
+                "partial"
+            } else {
+                "closed"
+            };
+            let detail = if ws == 0 {
+                "Not a member of any workspace, so there is no discourse to cohere. Loop 3 runs \
+                 on workspaces, not on lone agents."
+                    .to_string()
+            } else if evals == 0 {
+                format!(
+                    "In {ws} workspace(s), none of which has ever been coherence-evaluated. \
+                     Check COHERENCE_AUTO_EVAL_INTERVAL or invoke cohere_and_coordinate."
+                )
+            } else {
+                let score = mean
+                    .map(|m| format!("Γ(C) mean {:.2}", m))
+                    .unwrap_or_else(|| "no score".into());
+                let age = last
+                    .map(|t| {
+                        format!(
+                            " · last {} day(s) ago",
+                            ((Utc::now() - t).num_seconds() / 86_400).max(0)
+                        )
+                    })
+                    .unwrap_or_default();
+                let verdict = if mean.map(|m| m < 0.4).unwrap_or(false) {
+                    " — chronic low coherence; the brief is being produced but not acted on"
+                } else {
+                    ""
+                };
+                format!(
+                    "{evals} evaluation(s) across {evaluated}/{ws} workspace(s) · {score}{age}{verdict}"
+                )
+            };
+            loops.push(loop_verdict(
+                "3a",
+                "Coherence (inner)",
+                "workspace",
+                status,
+                detail,
+                "workspace_agents ⋈ coherence_evaluations",
+                json!({
+                    "workspaces": ws, "evaluated_workspaces": evaluated,
+                    "evaluations": evals, "mean_global_score": mean, "last_eval_at": last,
+                }),
+            ));
+        }
+        Err(e) => loops.push(loop_verdict(
+            "3a",
+            "Coherence (inner)",
+            "workspace",
+            "unmeasured",
+            format!("Could not join workspace_agents to coherence_evaluations: {e}"),
+            "workspace_agents ⋈ coherence_evaluations",
+            Value::Null,
+        )),
+    }
+
+    // ── Loop 4 — composition evolution ────────────────────────────────
+    //
+    // Closed means a strategist proposed a membership change and a human
+    // accepted it. A version history consisting only of `proposed_by='user'`
+    // rows is a human editing a team, which is not the loop.
+    let l4 = sqlx::query(
+        "SELECT COUNT(DISTINCT wa.workspace_id)                            AS workspaces,
+                COUNT(cv.composition_version_id)                           AS versions,
+                COUNT(cv.composition_version_id) FILTER (
+                    WHERE cv.proposed_by IS NOT NULL
+                      AND cv.proposed_by <> 'user')                         AS strategist_proposals,
+                COUNT(cv.composition_version_id) FILTER (
+                    WHERE cv.proposed_by IS NOT NULL
+                      AND cv.proposed_by <> 'user'
+                      AND cv.accepted_by IS NOT NULL)                       AS accepted_proposals,
+                MAX(cv.created_at)                                          AS last_version_at
+           FROM workspace_agents wa
+           LEFT JOIN composition_versions cv ON cv.workspace_id = wa.workspace_id
+          WHERE wa.agent_id = $1",
+    )
+    .bind(aid)
+    .fetch_one(db)
+    .await;
+
+    match l4 {
+        Ok(r) => {
+            let n = |k: &str| -> i64 { r.try_get::<i64, _>(k).unwrap_or(0) };
+            let (ws, versions) = (n("workspaces"), n("versions"));
+            let (proposed, accepted) = (n("strategist_proposals"), n("accepted_proposals"));
+            let last = r
+                .try_get::<Option<chrono::DateTime<Utc>>, _>("last_version_at")
+                .ok()
+                .flatten();
+
+            let status = if accepted > 0 {
+                "closed"
+            } else if proposed > 0 {
+                "partial"
+            } else {
+                "open"
+            };
+            let detail = if accepted > 0 {
+                format!(
+                    "{accepted} of {proposed} strategist proposal(s) accepted across {ws} \
+                     workspace(s) — team membership has actually changed on the strength of \
+                     accumulated sessions."
+                )
+            } else if proposed > 0 {
+                format!(
+                    "{proposed} strategist proposal(s) raised, none accepted. The loop reaches \
+                     the owner and stops there — review the proposals."
+                )
+            } else if ws == 0 {
+                "Not a member of any workspace. Loop 4 evolves compositions, so there is \
+                 nothing for it to act on."
+                    .to_string()
+            } else if versions > 0 {
+                format!(
+                    "{versions} composition version(s) across {ws} workspace(s), all \
+                     human-authored — no strategist has proposed a change yet. Stage 4 \
+                     dreaming needs roughly 10 sessions of history before it will."
+                )
+            } else {
+                format!(
+                    "In {ws} workspace(s), none of which has a composition identity yet — no \
+                     mission, no strategist, so nothing versions."
+                )
+            };
+            loops.push(loop_verdict(
+                "4",
+                "Composition evolution",
+                "composition",
+                status,
+                detail,
+                "workspace_agents ⋈ composition_versions",
+                json!({
+                    "workspaces": ws, "versions": versions,
+                    "strategist_proposals": proposed, "accepted_proposals": accepted,
+                    "last_version_at": last,
+                }),
+            ));
+        }
+        Err(e) => loops.push(loop_verdict(
+            "4",
+            "Composition evolution",
+            "composition",
+            "unmeasured",
+            format!("Could not join workspace_agents to composition_versions: {e}"),
+            "workspace_agents ⋈ composition_versions",
+            Value::Null,
+        )),
+    }
+
+    // ── Loops 1b and 5a — both read the calibration profile ────────────────
+    //
+    // Calling `compute_agent_calibration` rather than re-deriving the numbers:
+    // the Brier-skill gating below is only meaningful if it is gating on the
+    // same figures `/api/agents/:id/calibration` reports, and a second
+    // implementation would drift.
+    let calib = fermi::calibration::compute_agent_calibration(
+        db,
+        &db_agent,
+        &fermi::calibration::CalibrationQuery::default(),
+    )
+    .await;
+
+    match calib {
+        Ok(c) => {
+            // Loop 1b — projection accuracy against real SOSA observations.
+            let proj = c["projection_accuracy_mean"].as_f64();
+            let n_proj = c["n_projection_observations"].as_i64().unwrap_or(0);
+            loops.push(loop_verdict(
+                "1b",
+                "Projection accuracy",
+                "agent",
+                if proj.is_some() { "closed" } else { "open" },
+                match proj {
+                    Some(p) => format!(
+                        "{:.0}% mean accuracy over n={n_proj} matched observation(s).",
+                        p * 100.0
+                    ),
+                    None => {
+                        "No projected value has been matched to a real observation yet.".to_string()
+                    }
+                },
+                "GET /api/agents/:id/calibration ← observations",
+                json!({ "projection_accuracy_mean": proj, "n_projection_observations": n_proj }),
+            ));
+
+            // Loop 5a — Brier calibration. Gated on skill over the base rate,
+            // never on the raw score: on the 48 World Cup tournament-winner
+            // forecasts (47 NO, 1 YES) a forecaster that knows nothing scores
+            // ~98% raw, and gating on that reported base-rate skew as a closed
+            // loop.
+            let score = c["calibration_score"].as_f64();
+            let n_res = c["n_resolved_forecasts"].as_i64().unwrap_or(0);
+            let bss = c["brier_skill_score"].as_f64();
+            let base = c["outcome_base_rate"].as_f64();
+            let ev = c["evidence_class"].as_str().unwrap_or("none").to_string();
+
+            // EVIDENCE axis: how much the number means.
+            let (mut status, evidence_detail) = match score {
+                None => ("open", "No resolved forecasts yet.".to_string()),
+                Some(s) => {
+                    let raw = format!("{:.0}% raw · n={n_res}", s * 100.0);
+                    if n_res < 5 {
+                        ("partial", format!("{raw} — needs ≥5 resolved forecasts."))
+                    } else {
+                        match bss {
+                            None => (
+                                "partial",
+                                format!("{raw} — no base-rate reference (all outcomes resolved alike); skill undefined."),
+                            ),
+                            Some(b) if b > 0.05 => {
+                                let caveat = if ev == "provisional" || ev == "thin" {
+                                    format!(" · {ev} evidence")
+                                } else {
+                                    String::new()
+                                };
+                                (
+                                    "closed",
+                                    format!(
+                                        "{raw} · skill +{b:.2} vs {:.0}% base rate{caveat}",
+                                        base.unwrap_or(0.0) * 100.0
+                                    ),
+                                )
+                            }
+                            Some(b) => (
+                                "partial",
+                                format!(
+                                    "{raw} but skill {b:.2} — no better than always predicting the \
+                                     {:.0}% base rate. The raw score is base-rate skew, not calibration.",
+                                    base.unwrap_or(0.0) * 100.0
+                                ),
+                            ),
+                        }
+                    }
+                }
+            };
+
+            // MECHANISM axis: whether the chain that produced the number works.
+            //
+            // Run only when there is something to interpret and the caller may
+            // see it. Skipping on n=0 is not laziness: the probe is thirteen
+            // aggregate queries over `fermi_forecasts` with lateral jsonb
+            // expansion, and for a non-forecasting agent the answer changes
+            // nothing — an empty loop is `open` regardless of wiring.
+            let mechanism: &str;
+            let mut failing: Vec<Value> = Vec::new();
+            let (mut mech_ok, mut mech_viol) = (0usize, 0usize);
+
+            if n_res == 0 {
+                mechanism = "not_applicable";
+            } else if !principal.can_admin() {
+                // Not defaulted to "sound". Assuming soundness because we could
+                // not check is how a broken chain gets read as thin data.
+                mechanism = "unverified";
+            } else {
+                let m = probe_loop5_mechanism(db).await;
+                failing = m.failing();
+                mech_ok = m.ok;
+                mech_viol = m.violations;
+                mechanism = m.verdict;
+            }
+
+            let evidence = evidence_band(n_res, &ev);
+
+            // The gate. A number produced by a broken chain is not a weak
+            // measurement, it is not a measurement — so it must not be able to
+            // reach `closed` on the strength of looking good.
+            let mut detail = evidence_detail.clone();
+            match mechanism {
+                "broken" => {
+                    status = "broken";
+                    let ids: Vec<&str> = failing.iter().filter_map(|c| c["id"].as_str()).collect();
+                    let named = if ids.is_empty() {
+                        "see the mechanism probe".to_string()
+                    } else {
+                        ids.join(", ")
+                    };
+                    detail = format!(
+                        "WIRING BROKEN — {mech_viol} mechanism violation(s) ({named}). The score \
+                         is not trustworthy at any sample size, and more forecasts will not help: \
+                         {evidence_detail}"
+                    );
+                }
+                "inconclusive" => {
+                    // Cannot certify, so cannot close. Distinct from `broken`:
+                    // the probe failed, the chain did not.
+                    if status == "closed" {
+                        status = "partial";
+                    }
+                    detail = format!(
+                        "{evidence_detail} · mechanism UNKNOWN — a probe query errored, so \
+                         soundness could not be established."
+                    );
+                }
+                "sound" => {
+                    detail = format!(
+                        "{evidence_detail} · wiring verified sound ({mech_ok}/{} mechanism checks \
+                         clean), evidence is {evidence} — so any weakness here is data volume, \
+                         not a fault.",
+                        LOOP5_MECHANISM_CHECKS.len()
+                    );
+                }
+                "unverified" => {
+                    detail = format!(
+                        "{evidence_detail} · wiring NOT verified (the mechanism probe spans all \
+                         tenants and is admin-only), so thin cannot be told from broken here."
+                    );
+                }
+                _ => {}
+            }
+
+            loops.push(loop_verdict(
+                "5a",
+                "Brier calibration",
+                "agent",
+                status,
+                detail,
+                if mechanism == "sound" || mechanism == "broken" || mechanism == "inconclusive" {
+                    "GET /api/agents/:id/calibration + 9 MECHANISM checks (scripts/loop5_brier_mechanical_check.sql)"
+                } else {
+                    "GET /api/agents/:id/calibration ← fermi_forecasts + eval_signals"
+                },
+                json!({
+                    "calibration_score": score,
+                    "n_resolved_forecasts": n_res,
+                    "brier_skill_score": bss,
+                    "outcome_base_rate": base,
+                    "evidence_class": ev,
+                    // The two axes, kept apart on purpose. `mechanism` says
+                    // whether the chain works; `evidence_band` says how much has
+                    // come through it. They fail independently and have opposite
+                    // remedies — repair versus wait — so a single status cannot
+                    // carry both.
+                    "health": {
+                        "mechanism": mechanism,
+                        "mechanism_checks_ok": mech_ok,
+                        "mechanism_violations": mech_viol,
+                        "failing_checks": failing,
+                        "evidence_band": evidence,
+                        "interpretation": if mechanism == "not_applicable" {
+                            "No forecast has resolved for this agent, so there is no Loop 5 \
+                             signal to be thin or broken. Mechanism soundness is moot until \
+                             one does."
+                        } else {
+                            loop5_interpretation(mechanism, evidence)
+                        },
+                    },
+                    "mechanism_probe": "GET /api/observatory/loops/brier/mechanism",
+                }),
+            ));
+        }
+        Err(e) => {
+            for (id, name) in [("1b", "Projection accuracy"), ("5a", "Brier calibration")] {
+                loops.push(loop_verdict(
+                    id,
+                    name,
+                    "agent",
+                    "unmeasured",
+                    format!("Calibration profile could not be computed: {e}"),
+                    "GET /api/agents/:id/calibration",
+                    Value::Null,
+                ));
+            }
+        }
+    }
+
+    // Stable display order, independent of the order the queries returned in.
+    const ORDER: &[&str] = &["1a", "1b", "2", "3a", "4", "5a"];
+    loops.sort_by_key(|l| {
+        ORDER
+            .iter()
+            .position(|o| Some(*o) == l["id"].as_str())
+            .unwrap_or(usize::MAX)
+    });
+
+    let count = |s: &str| loops.iter().filter(|l| l["status"] == s).count();
+
+    Ok(Json(json!({
+        "agent_id": db_agent.agent_id,
+        "agent_name": db_agent.agent_name,
+        "measured_at": Utc::now(),
+        "loops": loops,
+        "summary": {
+            "closed": count("closed"),
+            "partial": count("partial"),
+            "open": count("open"),
+            // A loop whose machinery is wired wrong. Ranked above `open`
+            // because an absent loop is a backlog and a broken one is a bug
+            // actively producing wrong numbers.
+            "broken": count("broken"),
+            // Non-zero means this page is missing information, not that the
+            // loops are broken. Kept out of `open` for exactly that reason.
+            "unmeasured": count("unmeasured"),
+        },
+        "note": "Five statuses, and the distinctions are load-bearing. `closed`: turning. \
+                 `partial`: turning, but the signal is thin or unskilled — remedy is volume. \
+                 `broken`: the machinery is wired wrong — remedy is repair, and more volume \
+                 makes it worse. `open`: measurably not turning. `unmeasured`: a query failed \
+                 and this surface cannot say either way. Every loop carries the `source` it was \
+                 derived from — nothing on this endpoint is a constant.",
+    })))
+}
+
+#[cfg(test)]
+mod loop_health_tests {
+    use super::*;
+
+    /// The regression this module exists for.
+    ///
+    /// `macro_forecaster` had 140 runs, 4 eval runs and 2 tracked dimensions,
+    /// and the Loops tab reported "1a Individual learning — closed". It had
+    /// never consolidated, so nothing it had ever been told about itself had
+    /// been written back anywhere. The loop was half open and reported shut.
+    #[test]
+    fn eval_runs_alone_do_not_close_the_learning_loop() {
+        let (status, detail) = classify_loop1a(Loop1aInputs {
+            eval_runs: 4,
+            eval_signals: 12,
+            dimensions: 2,
+            episodes: 140,
+            backlog: 140,
+            ..Default::default()
+        });
+        assert_eq!(
+            status, "partial",
+            "signal without correction is half a loop"
+        );
+        assert!(
+            detail.contains("never dreamt"),
+            "must name the missing half, got: {detail}"
+        );
+        assert!(
+            detail.contains("140 episode(s) waiting"),
+            "must quantify what has not been learned from, got: {detail}"
+        );
+    }
+
+    #[test]
+    fn both_halves_turning_is_closed() {
+        let (status, detail) = classify_loop1a(Loop1aInputs {
+            eval_runs: 6,
+            eval_signals: 30,
+            dimensions: 8,
+            completed_cycles: 3,
+            entities: 40,
+            facts: 12,
+            rules: 5,
+            episodes: 200,
+            ..Default::default()
+        });
+        assert_eq!(status, "closed");
+        assert!(detail.contains("57 ontology row(s)"), "got: {detail}");
+    }
+
+    /// A cycle that ran and extracted nothing corrected nothing. Counting the
+    /// cycle rather than its yield is what let 91 zero-yield cycles look like a
+    /// healthy loop.
+    #[test]
+    fn a_zero_yield_cycle_is_not_a_correction() {
+        let i = Loop1aInputs {
+            eval_runs: 2,
+            completed_cycles: 5,
+            episodes: 80,
+            ..Default::default()
+        };
+        assert!(!i.has_correction());
+        let (status, detail) = classify_loop1a(i);
+        assert_eq!(status, "partial");
+        assert!(
+            detail.contains("learning nothing"),
+            "a cycle that extracted nothing must say so, got: {detail}"
+        );
+    }
+
+    /// Consolidating without ever being evaluated is also half a loop — the
+    /// agent is accumulating knowledge with no measure of whether it improved.
+    #[test]
+    fn consolidation_without_evaluation_is_also_partial() {
+        let (status, detail) = classify_loop1a(Loop1aInputs {
+            completed_cycles: 4,
+            entities: 30,
+            rules: 3,
+            episodes: 90,
+            ..Default::default()
+        });
+        assert_eq!(status, "partial");
+        assert!(detail.contains("no eval run"), "got: {detail}");
+    }
+
+    /// An idle agent is not a broken agent. 537 of 731 agents on this fleet
+    /// have zero episodes, so conflating "nothing to learn from" with "failed
+    /// to learn" reports most of the platform as broken when it is merely new.
+    #[test]
+    fn an_agent_with_no_episodes_is_told_to_run_first() {
+        let (status, detail) = classify_loop1a(Loop1aInputs::default());
+        assert_eq!(status, "open");
+        assert!(detail.contains("execute it first"), "got: {detail}");
+    }
+
+    #[test]
+    fn failed_cycles_are_named_rather_than_counted_as_absence() {
+        let (status, detail) = classify_loop1a(Loop1aInputs {
+            failed_cycles: 3,
+            episodes: 40,
+            backlog: 40,
+            ..Default::default()
+        });
+        assert_eq!(status, "open");
+        assert!(
+            detail.contains("3 cycle(s) failed"),
+            "a loop that tried and failed must not look like one that never tried, got: {detail}"
+        );
+    }
+
+    /// `unmeasured` must stay distinct from `open`. `open` asserts the loop is
+    /// not turning; `unmeasured` admits the page cannot tell. Collapsing them
+    /// turns a missing table into a confident negative verdict.
+    #[test]
+    fn the_five_statuses_are_distinct() {
+        let statuses = ["closed", "partial", "open", "broken", "unmeasured"];
+        let v = loop_verdict(
+            "3a",
+            "Coherence (inner)",
+            "workspace",
+            "unmeasured",
+            "probe failed".into(),
+            "workspace_agents ⋈ coherence_evaluations",
+            Value::Null,
+        );
+        assert_eq!(v["status"], "unmeasured");
+        assert_ne!(v["status"], "open");
+        assert_ne!(v["status"], "broken");
+        // Every verdict must be attributable; an unsourced row is the thing
+        // this endpoint replaced.
+        assert!(v["source"].as_str().is_some_and(|s| !s.is_empty()));
+        assert!(v["scope"].as_str().is_some_and(|s| !s.is_empty()));
+        assert!(statuses.contains(&v["status"].as_str().unwrap()));
+    }
+
+    // ── Loop 5: thin versus broken ───────────────────────────────────────
+    //
+    // The whole point of separating MECHANISM from EVIDENCE. These two states
+    // produce similar-looking weak numbers and have opposite remedies, and a
+    // single status cannot carry both.
+
+    #[test]
+    fn thin_and_broken_are_never_the_same_message() {
+        let thin = loop5_interpretation("sound", "thin");
+        let broken = loop5_interpretation("broken", "thin");
+        assert_ne!(thin, broken);
+
+        // Thin: wait. Explicitly says nothing needs fixing, because the most
+        // expensive wrong move here is debugging a loop that is merely young.
+        assert!(thin.contains("THIN"), "{thin}");
+        assert!(thin.contains("Nothing needs fixing"), "{thin}");
+        assert!(thin.contains("volume"), "{thin}");
+
+        // Broken: repair. Must say that volume makes it worse — the opposite
+        // instruction — and must not tell the operator to be patient.
+        assert!(broken.contains("BROKEN"), "{broken}");
+        assert!(
+            broken.contains("not thin"),
+            "the broken message must actively rule out the thin reading: {broken}"
+        );
+        assert!(broken.contains("Repair"), "{broken}");
+        assert!(
+            !broken.to_lowercase().contains("nothing needs fixing"),
+            "{broken}"
+        );
+    }
+
+    /// Broken wiring dominates the evidence axis. A great-looking score coming
+    /// through a chain that drops or double-counts signals is not a strong
+    /// measurement; it is not a measurement.
+    #[test]
+    fn broken_wiring_overrides_good_evidence() {
+        for evidence in ["none", "provisional", "thin", "usable"] {
+            let m = loop5_interpretation("broken", evidence);
+            assert!(
+                m.contains("BROKEN"),
+                "evidence={evidence} must not soften a broken verdict: {m}"
+            );
+        }
+    }
+
+    /// Not being able to check is its own state. Defaulting to "sound" for a
+    /// non-admin would let a broken chain read as thin data, which is exactly
+    /// the confusion this split exists to prevent.
+    #[test]
+    fn unverified_claims_neither_soundness_nor_breakage() {
+        let m = loop5_interpretation("unverified", "thin");
+        assert!(m.contains("UNVERIFIED"), "{m}");
+        assert!(
+            m.contains("cannot tell you"),
+            "must admit the limit rather than implying soundness: {m}"
+        );
+        assert_ne!(m, loop5_interpretation("sound", "thin"));
+        assert_ne!(m, loop5_interpretation("inconclusive", "thin"));
+    }
+
+    /// `inconclusive` (a probe query errored) is not `broken` (the chain is
+    /// wrong). One is a broken tool, the other a broken subject.
+    #[test]
+    fn an_errored_probe_is_not_a_broken_loop() {
+        let inc = loop5_interpretation("inconclusive", "usable");
+        assert!(inc.contains("UNKNOWN"), "{inc}");
+        assert!(!inc.contains("BROKEN"), "{inc}");
+        assert_ne!(inc, loop5_interpretation("broken", "usable"));
+    }
+
+    #[test]
+    fn sound_and_sufficient_is_the_only_message_that_endorses_the_number() {
+        let good = loop5_interpretation("sound", "usable");
+        assert!(good.contains("real measurement"), "{good}");
+        for m in [
+            loop5_interpretation("sound", "thin"),
+            loop5_interpretation("sound", "none"),
+            loop5_interpretation("broken", "usable"),
+            loop5_interpretation("unverified", "usable"),
+            loop5_interpretation("inconclusive", "usable"),
+        ] {
+            assert!(!m.contains("real measurement"), "{m}");
+        }
+    }
+
+    #[test]
+    fn evidence_band_never_reports_usable_on_an_empty_set() {
+        assert_eq!(evidence_band(0, "usable"), "none");
+        assert_eq!(evidence_band(0, ""), "none");
+        assert_eq!(evidence_band(3, ""), "provisional");
+        assert_eq!(evidence_band(10, ""), "thin");
+        assert_eq!(evidence_band(50, ""), "usable");
+        // The calibration endpoint's own class wins when it has one.
+        assert_eq!(evidence_band(50, "thin"), "thin");
+    }
 }

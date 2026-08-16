@@ -44,6 +44,14 @@ pub mod tools;
 /// Weather forecasting + prediction-market tools backing the `weather_oracle`
 /// composition. Research provenance: `docs/WEATHER_MARKETS_RESEARCH.md`.
 pub mod weather_tools;
+// NCBI Assembly — the tool that gives genome_profiler's genome fields a
+// real source, so `unavailable_no_tool_source` can become `tool_verified`.
+pub mod ncbi_tools;
+
+// The delegation envelope — carries the producer's own document, enforced
+// against its grounding contract, across a hop. Additive: every existing key
+// in the execute_agent result is preserved.
+pub mod envelope;
 
 #[allow(ambiguous_glob_reexports)]
 pub use agent_card::*;

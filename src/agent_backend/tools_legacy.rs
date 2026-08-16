@@ -170,6 +170,30 @@ pub fn platform_tool_names() -> Vec<&'static str> {
     builtin_tools().into_iter().map(|t| t.name).collect()
 }
 
+/// Arms that exist in `ToolRegistry::execute` but have no `BuiltinToolDef`.
+///
+/// Such a tool *runs* — card declarations carrying a schema are advertised to
+/// the model verbatim and the arm dispatches — but `invalid_tool_declarations`
+/// rejects the card on any write, so the agent cannot be re-saved through the
+/// API without silently losing the capability.
+///
+/// This should stay empty. It exists so the condition is nameable rather than
+/// invisible: `equity_analyst` carried nine such tools (`fmp_*`, fully
+/// implemented since inception) and the only symptom was a confusing 400 on
+/// republish.
+const ARMS_WITHOUT_DEFS: &[&str] = &[];
+
+/// Every tool name the runtime can actually dispatch.
+///
+/// Distinct from [`platform_tool_names`], which is what card *validation*
+/// checks. Use this to answer "will this call succeed"; use that to answer
+/// "can this card be saved".
+pub fn dispatchable_tool_names() -> Vec<&'static str> {
+    let mut names = platform_tool_names();
+    names.extend_from_slice(ARMS_WITHOUT_DEFS);
+    names
+}
+
 /// Why a declared tool name can't be published.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolDeclarationError {
@@ -249,6 +273,358 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
 
 fn builtin_tools_core() -> Vec<BuiltinToolDef> {
     vec![
+        // ── FPL simulation (in-process; also exposed over MCP) ──
+        BuiltinToolDef {
+            name: "fermi_execute_fpl",
+            description: "Execute a Fermi FPL program. Runs a real Monte Carlo simulation (default 10,000 iterations, max 100,000) and returns mean, median, std_dev, p5, p25, p75, p95, min, max, base_rate and divergence figures.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "fpl_program": {"type": "string", "description": "A complete valid FPL program."},
+                    "iterations": {"type": "integer", "description": "Monte Carlo iterations (default 10000, max 100000)."},
+                    "seed": {"type": "integer", "description": "Optional seed for reproducibility."}
+                },
+                "required": ["fpl_program"]
+            }),
+            ..Default::default()
+        },
+        BuiltinToolDef {
+            name: "fermi_sensitivity_analysis",
+            description: "Run Sobol sensitivity analysis on an FPL program. Returns first-order and total-order indices per driver — real variance decomposition identifying which drivers actually drive output variance, with standard errors and confidence intervals.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "fpl_program": {"type": "string", "description": "The same FPL program passed to fermi_execute_fpl."},
+                    "iterations": {"type": "integer", "description": "Iterations (default 5000, max 50000)."}
+                },
+                "required": ["fpl_program"]
+            }),
+            ..Default::default()
+        },
+        // ── Financial Modeling Prep — implemented, never declared ──
+        //
+        // `execute_fmp_api` has dispatched these since `equity_analyst`
+        // shipped, so they have always worked when the model called them. They
+        // were simply absent from `builtin_tools()`, which is what card
+        // validation checks — so any write to `equity_analyst` through the API
+        // would be rejected, or would strip the tools. Descriptions and schemas
+        // below are the card's own, kept verbatim so the two cannot disagree.
+        BuiltinToolDef {
+            name: "fmp_company_profile",
+            description: "Get company profile including price, market cap, sector, industry, beta, 52-week range, CEO, description. Use this first to identify the company and get current market data.",
+            input_schema: json!({
+                            "type": "object",
+                            "properties": {
+                                            "symbol": {
+                                                            "type": "string",
+                                                            "description": "Stock ticker symbol (e.g., AAPL, MSFT, GOOGL, TSLA)"
+                                            }
+                            },
+                            "required": [
+                                            "symbol"
+                            ]
+            }),
+            ..Default::default()
+        },
+        BuiltinToolDef {
+            name: "fmp_income_statement",
+            description: "Get income statement data: revenue, gross profit, operating income, net income, EPS, EBITDA. Essential for growth analysis and profitability assessment.",
+            input_schema: json!({
+                            "type": "object",
+                            "properties": {
+                                            "symbol": {
+                                                            "type": "string",
+                                                            "description": "Stock ticker symbol"
+                                            },
+                                            "period": {
+                                                            "type": "string",
+                                                            "enum": [
+                                                                            "annual",
+                                                                            "quarter"
+                                                            ],
+                                                            "description": "Reporting period (annual or quarter)"
+                                            },
+                                            "limit": {
+                                                            "type": "integer",
+                                                            "description": "Number of periods to return (default 3)",
+                                                            "default": 3
+                                            }
+                            },
+                            "required": [
+                                            "symbol",
+                                            "period"
+                            ]
+            }),
+            ..Default::default()
+        },
+        BuiltinToolDef {
+            name: "fmp_balance_sheet",
+            description: "Get balance sheet data: assets, liabilities, equity, cash, debt, inventory. Essential for financial health and leverage analysis.",
+            input_schema: json!({
+                            "type": "object",
+                            "properties": {
+                                            "symbol": {
+                                                            "type": "string",
+                                                            "description": "Stock ticker symbol"
+                                            },
+                                            "period": {
+                                                            "type": "string",
+                                                            "enum": [
+                                                                            "annual",
+                                                                            "quarter"
+                                                            ],
+                                                            "description": "Reporting period"
+                                            },
+                                            "limit": {
+                                                            "type": "integer",
+                                                            "description": "Number of periods to return",
+                                                            "default": 3
+                                            }
+                            },
+                            "required": [
+                                            "symbol",
+                                            "period"
+                            ]
+            }),
+            ..Default::default()
+        },
+        BuiltinToolDef {
+            name: "fmp_cash_flow",
+            description: "Get cash flow statement: operating cash flow, capex, free cash flow, buybacks, dividends. Essential for cash generation quality and capital allocation analysis.",
+            input_schema: json!({
+                            "type": "object",
+                            "properties": {
+                                            "symbol": {
+                                                            "type": "string",
+                                                            "description": "Stock ticker symbol"
+                                            },
+                                            "period": {
+                                                            "type": "string",
+                                                            "enum": [
+                                                                            "annual",
+                                                                            "quarter"
+                                                            ],
+                                                            "description": "Reporting period"
+                                            },
+                                            "limit": {
+                                                            "type": "integer",
+                                                            "description": "Number of periods to return",
+                                                            "default": 3
+                                            }
+                            },
+                            "required": [
+                                            "symbol",
+                                            "period"
+                            ]
+            }),
+            ..Default::default()
+        },
+        BuiltinToolDef {
+            name: "fmp_ratios",
+            description: "Get pre-calculated financial ratios: profitability margins, liquidity ratios, leverage ratios, valuation multiples (P/E, P/B, P/S, EV/EBITDA, PEG), efficiency ratios, dividend yield.",
+            input_schema: json!({
+                            "type": "object",
+                            "properties": {
+                                            "symbol": {
+                                                            "type": "string",
+                                                            "description": "Stock ticker symbol"
+                                            },
+                                            "period": {
+                                                            "type": "string",
+                                                            "enum": [
+                                                                            "annual",
+                                                                            "quarter"
+                                                            ],
+                                                            "description": "Reporting period"
+                                            },
+                                            "limit": {
+                                                            "type": "integer",
+                                                            "description": "Number of periods to return",
+                                                            "default": 3
+                                            }
+                            },
+                            "required": [
+                                            "symbol",
+                                            "period"
+                            ]
+            }),
+            ..Default::default()
+        },
+        BuiltinToolDef {
+            name: "fmp_key_metrics",
+            description: "Get key financial metrics: market cap, enterprise value, EV/EBITDA, EV/Sales, ROE, ROA, ROIC, FCF yield, debt/equity, earnings yield, book value per share, Graham number.",
+            input_schema: json!({
+                            "type": "object",
+                            "properties": {
+                                            "symbol": {
+                                                            "type": "string",
+                                                            "description": "Stock ticker symbol"
+                                            },
+                                            "period": {
+                                                            "type": "string",
+                                                            "enum": [
+                                                                            "annual",
+                                                                            "quarter"
+                                                            ],
+                                                            "description": "Reporting period"
+                                            },
+                                            "limit": {
+                                                            "type": "integer",
+                                                            "description": "Number of periods to return",
+                                                            "default": 3
+                                            }
+                            },
+                            "required": [
+                                            "symbol",
+                                            "period"
+                            ]
+            }),
+            ..Default::default()
+        },
+        BuiltinToolDef {
+            name: "fmp_dcf",
+            description: "Get discounted cash flow (DCF) intrinsic value estimate vs current stock price. Shows whether the stock is over- or under-valued based on fundamental analysis.",
+            input_schema: json!({
+                            "type": "object",
+                            "properties": {
+                                            "symbol": {
+                                                            "type": "string",
+                                                            "description": "Stock ticker symbol"
+                                            }
+                            },
+                            "required": [
+                                            "symbol"
+                            ]
+            }),
+            ..Default::default()
+        },
+        BuiltinToolDef {
+            name: "fmp_analyst_estimates",
+            description: "Get Wall Street analyst consensus estimates: revenue, EBITDA, EBIT, net income, EPS (low/avg/high) with number of analysts. Forward-looking data for 1-5 years.",
+            input_schema: json!({
+                            "type": "object",
+                            "properties": {
+                                            "symbol": {
+                                                            "type": "string",
+                                                            "description": "Stock ticker symbol"
+                                            },
+                                            "period": {
+                                                            "type": "string",
+                                                            "enum": [
+                                                                            "annual",
+                                                                            "quarter"
+                                                            ],
+                                                            "description": "Reporting period"
+                                            },
+                                            "limit": {
+                                                            "type": "integer",
+                                                            "description": "Number of estimate periods to return",
+                                                            "default": 5
+                                            }
+                            },
+                            "required": [
+                                            "symbol",
+                                            "period"
+                            ]
+            }),
+            ..Default::default()
+        },
+        BuiltinToolDef {
+            name: "fmp_historical_price",
+            description: "Get historical daily price data (OHLCV) for a date range. Useful for trend analysis, volatility assessment, and price momentum.",
+            input_schema: json!({
+                            "type": "object",
+                            "properties": {
+                                            "symbol": {
+                                                            "type": "string",
+                                                            "description": "Stock ticker symbol"
+                                            },
+                                            "from": {
+                                                            "type": "string",
+                                                            "description": "Start date in YYYY-MM-DD format"
+                                            },
+                                            "to": {
+                                                            "type": "string",
+                                                            "description": "End date in YYYY-MM-DD format"
+                                            }
+                            },
+                            "required": [
+                                            "symbol"
+                            ]
+            }),
+            ..Default::default()
+        },
+        // ── Loop 5: the router's read path onto measured calibration ──
+        //
+        // Declared on three strategist cards long before this entry existed.
+        // A dispatch arm alone is not enough: cards are validated against
+        // `builtin_tools()`, so a tool missing from this list is a phantom
+        // tool even when the arm is present.
+        BuiltinToolDef {
+            name: "get_agent_calibration",
+            description: "Get an agent's measured calibration profile — how accurately its outputs have been validated against ground truth over time. Returns calibration_score, brier_skill_score (performance against a base-rate forecaster — gate routing decisions on this, not on calibration_score, which is inflated by outcome-skewed question sets), trend, evidence_class, n_resolved_forecasts, projection_accuracy_mean and a domain_calibration breakdown.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "agent_id": {
+                        "type": "string",
+                        "description": "The agent_id or agent_name to get calibration for."
+                    }
+                },
+                "required": ["agent_id"]
+            }),
+            ..Default::default()
+        },
+        // ── Loop 3: the strategist writes into a member's memory ──
+        BuiltinToolDef {
+            name: "record_coordination_observation",
+            description: "Write a coordination observation into a member agent's episodic memory, so it is consolidated into a semantic rule on that agent's next dreaming cycle. This is how coordination feedback becomes durable learning rather than one-off advice. Use for: what coherence role the agent played, where it duplicated another member, which evidence it left unengaged, what it could do differently. Only the workspace's coordination strategist may call this, and only for current members.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "agent_id": {
+                        "type": "string",
+                        "description": "The member agent (agent_id or agent_name) whose memory to write into."
+                    },
+                    "observation": {
+                        "type": "string",
+                        "description": "The observation, addressed to that agent. Structural and specific — name the pattern and cite what happened, do not prescribe a fix."
+                    },
+                    "session_summary": {
+                        "type": "string",
+                        "description": "Optional context about the session this observation came from."
+                    }
+                },
+                "required": ["agent_id", "observation"]
+            }),
+            requires_workspace: true,
+            ..Default::default()
+        },
+        // ── Loop 3b / 4: the strategist raises a composition proposal ──
+        BuiltinToolDef {
+            name: "propose_composition_change",
+            description: "Propose a structural change to the workspace composition. Creates a pending composition_versions row for the workspace owner to accept or reject. Use ONLY when dreaming has identified a persistent structural issue — valence homophily, chronic destructive incoherence, or a role gap. Provide diff_summary and rationale. Do NOT specify which agent to add; that is the owner's decision.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "diff_summary": {
+                        "type": "string",
+                        "description": "Plain-language description of what should change and why."
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": "Which episodes, principle patterns and valence distribution drove this."
+                    },
+                    "homophily_detected": {
+                        "type": "boolean",
+                        "description": "True when the valence audit found arousal or valence spread < 0.25."
+                    }
+                },
+                "required": ["diff_summary", "rationale"]
+            }),
+            requires_workspace: true,
+            ..Default::default()
+        },
         BuiltinToolDef {
             name: "search_knowledge",
             description: "Search the agent's episodic memory for relevant past experiences using semantic similarity. Returns the most relevant episodes.",
@@ -344,6 +720,65 @@ fn builtin_tools_core() -> Vec<BuiltinToolDef> {
             }),
             requires_workspace: true,
             is_delegation: true,
+        },
+        // Contract validation, so an author can iterate against the SAME
+        // checker the publish gate runs rather than against a description of
+        // it. A guide that merely describes the rules drifts from them; this
+        // calls `card_contract::validate` directly.
+        // The tool that turns genome_profiler's `unavailable_no_tool_source`
+        // fields into `tool_verified` ones. See src/agent_backend/ncbi_tools.rs
+        // for why `ploidy` is deliberately NOT among them.
+        BuiltinToolDef {
+            name: "ncbi_genome_search",
+            description: "Look up assembled genome statistics for a species from NCBI \
+                          Assembly: genome size in Mb and assembled chromosome count, with \
+                          the assembly name and accession that supplied them. Returns \
+                          found=false for unsequenced species — most insects — which is a \
+                          real answer, not an error.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "scientific_name": {
+                        "type": "string",
+                        "description": "Species binomial, e.g. 'Danaus plexippus'"
+                    }
+                },
+                "required": ["scientific_name"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
+            name: "validate_agent_card",
+            description: "Check a draft agent card against the publish contract: typed \
+                          output schema, ports that reference the declared type, and a \
+                          grounding entry per output field saying where its value comes \
+                          from. Returns every finding with the fix, or confirms it would \
+                          publish. Use before proposing a card to a developer.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Id of the agent being authored (checked against the grandfathering list)"
+                    },
+                    "output_contract": {
+                        "type": "object",
+                        "description": "The draft `capabilities.output_contract`: produces_schema, schema, grounding"
+                    },
+                    "produces": {
+                        "type": "array", "items": { "type": "string" },
+                        "description": "Draft `produces` ports; each must equal the declared type name"
+                    },
+                    "tool_names": {
+                        "type": "array", "items": { "type": "string" },
+                        "description": "Tools the agent declares. A field marked `sourced` must name one of these."
+                    }
+                },
+                "required": ["agent_id"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
         },
         BuiltinToolDef {
             name: "list_agents",
@@ -1942,6 +2377,10 @@ impl ToolRegistry {
             "search_knowledge" => execute_search_knowledge(input, ctx).await,
             "query_ontology" => execute_query_ontology(input, ctx).await,
             "execute_agent" => execute_execute_agent(input, ctx).await,
+            "ncbi_genome_search" => {
+                crate::agent_backend::ncbi_tools::execute_ncbi_genome_search(input).await
+            }
+            "validate_agent_card" => crate::card_contract::execute_validate_tool(input),
             "list_agents" => execute_list_agents(ctx).await,
             "read_workspace_file" => execute_read_workspace_file(input, ctx).await,
             "read_workspace_output" => execute_read_workspace_output(input, ctx).await,
@@ -2106,6 +2545,13 @@ impl ToolRegistry {
             "classify_anomaly" => execute_classify_anomaly(input, ctx).await,
             "route_to_hitl" => execute_route_to_hitl(input, ctx).await,
             "run_evaluator_registry" => execute_run_evaluator_registry(input, ctx).await,
+            "get_agent_calibration" => execute_get_agent_calibration(input, ctx).await,
+            "propose_composition_change" => execute_propose_composition_change(input, ctx).await,
+            "record_coordination_observation" => {
+                execute_record_coordination_observation(input, ctx).await
+            }
+            "fermi_execute_fpl" => execute_fermi_execute_fpl(input).await,
+            "fermi_sensitivity_analysis" => execute_fermi_sensitivity_analysis(input).await,
 
             // Fallthrough: a name no builtin claims may be a remote MCP
             // tool this agent's card authorised. Checked last on purpose
@@ -2125,6 +2571,428 @@ impl ToolRegistry {
             },
         }
     }
+}
+
+// ─── Loop 5: routing reads measured calibration ────────────────────
+
+/// `get_agent_calibration` — the router's read path onto Loop 5.
+///
+/// Declared on `moe_router_strategist`, `debate_strategist` and
+/// `vote_strategist`, and dispatched by none of them until now: the only
+/// implementation was the HTTP route, so Stage 0's "call
+/// `get_agent_calibration` for each candidate member" returned
+/// `Unknown tool: get_agent_calibration`. Worse, the card's own cold-start
+/// language ("calibration data not yet available") made that read as sparse
+/// data rather than a broken wire, so the loop looked young instead of
+/// disconnected.
+///
+/// Delegates to `compute_agent_calibration`, the same function the route
+/// calls, so the two cannot drift.
+async fn execute_get_agent_calibration(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let agent_id = resolve_agent_id(input, "agent_id", ctx).await?;
+    let db = ctx
+        .db
+        .as_ref()
+        .ok_or_else(|| "get_agent_calibration requires a database context".to_string())?;
+
+    let agent = ctx
+        .memory_store
+        .get_agent(agent_id)
+        .await
+        .map_err(|e| format!("Failed to load agent: {e}"))?
+        .ok_or_else(|| format!("Agent not found: {agent_id}"))?;
+
+    let calibration = crate::calibration::compute_agent_calibration(
+        db,
+        &agent,
+        &crate::calibration::CalibrationQuery::default(),
+    )
+    .await?;
+
+    serde_json::to_string_pretty(&calibration).map_err(|e| format!("Serialization error: {e}"))
+}
+
+// ─── Loop 3b / 4: the strategist can propose a composition change ──
+
+/// `propose_composition_change` — writes a pending `composition_versions` row.
+///
+/// Declared with a full `input_schema` on `cohere_and_coordinate`, and the
+/// composition-dreaming prompt instructs Stage 4 to call it. It had no dispatch
+/// arm, so every tension audit that concluded "the team should change" ended in
+/// `Unknown tool`. That is why the Loop 4 dashboard card read "no pending
+/// evolution proposals" permanently: as `handlers::composition_evolution` puts
+/// it, "nothing ever generated one".
+///
+/// Deliberately does **not** accept `member_agent_ids`. The card is explicit —
+/// "Do NOT specify which agent to add; that is the owner's decision" — and the
+/// strategist's evidence is qualitative (coherence patterns, valence spread),
+/// unlike the Shapley path in `composition_evolution`, which has per-agent
+/// credit and may name names.
+async fn execute_propose_composition_change(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let workspace_id = ctx.workspace_id.ok_or_else(|| {
+        "propose_composition_change must be called inside a workspace".to_string()
+    })?;
+
+    let diff_summary = input
+        .get("diff_summary")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| "diff_summary is required".to_string())?;
+    let rationale = input
+        .get("rationale")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| "rationale is required".to_string())?;
+    let homophily = input
+        .get("homophily_detected")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    // Same prefix convention the HTTP proposal route uses, so the owner sees
+    // one vocabulary regardless of which path raised the proposal.
+    let summary = if homophily {
+        format!("[homophily detected] {diff_summary}")
+    } else {
+        diff_summary.to_string()
+    };
+
+    let version = agent_bestiary_memory::CompositionVersion {
+        composition_version_id: Uuid::new_v4(),
+        workspace_id,
+        version_number: 0, // assigned by create_composition_version
+        mission: None,
+        coordination_strategist_id: ctx.current_agent_id,
+        member_agent_ids: None,
+        member_weights: None,
+        diff_summary: Some(summary),
+        proposed_by: Some("cohere_and_coordinate".to_string()),
+        accepted_by: None,
+        rejected_by: None,
+        rejection_note: Some(rationale.to_string()),
+        created_at: chrono::Utc::now(),
+    };
+
+    let version_id = ctx
+        .memory_store
+        .create_composition_version(&version)
+        .await
+        .map_err(|e| format!("Failed to create composition version: {e}"))?;
+
+    serde_json::to_string_pretty(&json!({
+        "version_id": version_id,
+        "workspace_id": workspace_id,
+        "status": "pending",
+        "message": "Composition change proposed — the workspace owner must accept or reject it.",
+    }))
+    .map_err(|e| format!("Serialization error: {e}"))
+}
+
+// ─── Loop 3 cascade: the strategist writes into a member's memory ──
+
+/// `record_coordination_observation` — Loop 3's actual correction mechanism.
+///
+/// The coordination strategist observes how a member behaved in a session and
+/// writes that observation into **that member's episodic memory**. The member
+/// picks it up on its next dreaming cycle, distils it into a semantic rule, and
+/// carries it into every later execution via KG injection.
+///
+/// This is what makes Loop 3 adaptive rather than advisory. The previous design
+/// wrote `_coordination/brief.md` to workspace git, which nothing read:
+/// consolidation reads `episodes`, and workspace auto-injection only loads
+/// files under `context/`. A brief could be written perfectly and never reach
+/// a single agent.
+///
+/// ## Authorisation
+///
+/// This writes into another agent's memory, so it is the one tool where a
+/// missing check is a memory-poisoning primitive. Two gates, both required:
+///
+/// 1. the caller must be the workspace's registered
+///    `coordination_strategist_id`, and
+/// 2. the target must be a current member of that same workspace.
+///
+/// Without (1) any agent that declared the tool could rewrite its peers'
+/// beliefs; without (2) a strategist could write into agents outside the
+/// workspace it coordinates.
+async fn execute_record_coordination_observation(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let workspace_id = ctx.workspace_id.ok_or_else(|| {
+        "record_coordination_observation must be called inside a workspace".to_string()
+    })?;
+    let db = ctx
+        .db
+        .as_ref()
+        .ok_or_else(|| "record_coordination_observation requires a database context".to_string())?;
+    let caller = ctx
+        .current_agent_id
+        .ok_or_else(|| "caller identity unavailable".to_string())?;
+
+    // Gate 1 — only this workspace's coordination strategist.
+    let strategist: Option<Uuid> =
+        sqlx::query_scalar("SELECT coordination_strategist_id FROM teams WHERE id = $1")
+            .bind(workspace_id)
+            .fetch_optional(db)
+            .await
+            .map_err(|e| format!("Failed to read workspace: {e}"))?
+            .flatten();
+    if strategist != Some(caller) {
+        return Err(
+            "Only the workspace's coordination strategist may write coordination \
+             observations into member memory."
+                .to_string(),
+        );
+    }
+
+    let target = resolve_agent_id(input, "agent_id", ctx).await?;
+
+    // Gate 2 — target must be a member of this workspace.
+    let is_member: Option<i32> = sqlx::query_scalar(
+        "SELECT 1 FROM workspace_agents WHERE workspace_id = $1 AND agent_id = $2",
+    )
+    .bind(workspace_id)
+    .bind(target)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| format!("Failed to check workspace membership: {e}"))?;
+    if is_member.is_none() {
+        return Err(format!(
+            "Agent {target} is not a member of this workspace; refusing to write \
+             into its memory."
+        ));
+    }
+
+    let observation = input
+        .get("observation")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "observation is required".to_string())?;
+    let session_summary = input
+        .get("session_summary")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    // What the member will actually consolidate. Phrased as a second-person
+    // observation because that is how it will read once it becomes a rule in
+    // the agent's own knowledge graph.
+    let query = format!("Coordination observation from this workspace: {observation}");
+    let body = if session_summary.is_empty() {
+        observation.to_string()
+    } else {
+        format!("{observation}\n\nSession context: {session_summary}")
+    };
+
+    // Embed it, or the member cannot cluster it and cannot retrieve it. Every
+    // path that reads episodes for consolidation filters `embedding IS NOT
+    // NULL`; an unembedded observation is written and then invisible.
+    let provenance = ctx
+        .embedder
+        .generate_provenanced(&format!("{query} {body}"))
+        .await
+        .map_err(|e| format!("Failed to embed observation: {e}"))?;
+
+    let episode = agent_bestiary_memory::Episode {
+        episode_id: Uuid::new_v4(),
+        agent_id: target,
+        timestamp_ref: chrono::Utc::now(),
+        query,
+        context: json!({
+            "kind": "coordination_observation",
+            "workspace_id": workspace_id,
+            "strategist_agent_id": caller,
+        }),
+        execution_status: agent_bestiary_memory::ExecutionStatus::Success,
+        error_details: None,
+        execution_time_ms: 0,
+        tokens_used: None,
+        cost_usd: None,
+        // Not a run: no provider was called on this agent's behalf. Leaving
+        // these null is what keeps `agent_execution_rollup` honest alongside
+        // the provenance filter added in mig-200.
+        input_tokens: None,
+        output_tokens: None,
+        cost_basis: None,
+        cost_rate_key: None,
+        parent_episode_id: None,
+        response_text: Some(body),
+        embedding: None, // set from `provenance` by the storing call below
+        consolidated: false,
+        tags: vec![
+            "coordination_observation".to_string(),
+            "dreaming_material".to_string(),
+        ],
+        provenance: agent_bestiary_memory::Provenance::CoordinatorObservation,
+        // Above an ordinary episode (0.5) so it survives the top-30 extraction
+        // budget in a busy agent, well below a human correction (1.0). The
+        // strategist is an LLM making a second-order judgement about behaviour,
+        // not ground truth, and should not outrank what the agent actually did.
+        authority_weight: 0.6,
+        dyad_id: None,
+        persona_version_at_write: None,
+        provider_used: None,
+        model_used: None,
+    };
+
+    let source_ref = json!({
+        "kind": "coordination_observation",
+        "workspace_id": workspace_id,
+        "strategist_agent_id": caller,
+    });
+    let episode_id = ctx
+        .memory_store
+        .store_episode_with_provenance(episode, Some(&provenance), Some(source_ref))
+        .await
+        .map_err(|e| format!("Failed to write observation: {e}"))?;
+
+    serde_json::to_string_pretty(&json!({
+        "episode_id": episode_id,
+        "agent_id": target,
+        "workspace_id": workspace_id,
+        "status": "recorded",
+        "message": "Observation written to the member's episodic memory. It will be \
+                    consolidated into a semantic rule on that agent's next dreaming cycle.",
+    }))
+    .map_err(|e| format!("Serialization error: {e}"))
+}
+
+// ─── FPL execution as in-process platform tools ────────────────────
+
+/// Parse FPL through the full pipeline: lex → parse → semantic analysis.
+///
+/// Mirrors `agent-mcp-server`'s private `parse_fpl`. The whole pipeline lives in
+/// this crate (`fermi::lexer`, `parser`, `semantic`), which is why these are
+/// in-process tools rather than a card pointing at an external MCP server: the
+/// executor is already linked in, so a network hop would buy nothing.
+fn parse_fpl_source(source: &str) -> Result<crate::ast::Program, String> {
+    let tokens = crate::lexer::Lexer::new(source)
+        .tokenize()
+        .map_err(|errs| {
+            errs.iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("; ")
+        })?;
+    let program = crate::parser::Parser::new(tokens)
+        .parse()
+        .map_err(|e| format!("Parse error: {e}"))?;
+    let analysis = crate::semantic::SemanticAnalyzer::new().analyze(&program);
+    if !analysis.errors.is_empty() {
+        return Err(format!(
+            "Semantic error: {}",
+            analysis
+                .errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("; ")
+        ));
+    }
+    Ok(program)
+}
+
+/// `fermi_execute_fpl` — run a Monte Carlo simulation over an FPL program.
+///
+/// `monte_carlo_sim` declared this (and the sensitivity tool below) as platform
+/// tools while both existed only on `agent-mcp-server`, and the card declared no
+/// `mcp_servers` to resolve them through. So the model was advertised a
+/// simulation capability and got `Unknown tool` — the agent's entire purpose.
+async fn execute_fermi_execute_fpl(input: &serde_json::Value) -> Result<String, String> {
+    let source = input
+        .get("fpl_program")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| "fpl_program is required".to_string())?;
+    let program = parse_fpl_source(source)?;
+
+    // Same bounds the MCP surface applies. The cap matters here more than
+    // there: this runs inside a request-serving process.
+    let iterations = input
+        .get("iterations")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(10_000)
+        .min(100_000) as usize;
+
+    let mut executor = match input.get("seed").and_then(|v| v.as_u64()) {
+        Some(seed) => crate::executor::Executor::with_seed(iterations, seed),
+        None => crate::executor::Executor::new(iterations),
+    };
+    let r = executor
+        .execute(&program)
+        .map_err(|e| format!("Execution failed: {e}"))?;
+
+    serde_json::to_string_pretty(&json!({
+        "iterations": r.iterations,
+        "mean": r.mean,
+        "median": r.median,
+        "std_dev": r.std_dev,
+        "p5": r.p5,
+        "p25": r.p25,
+        "p75": r.p75,
+        "p95": r.p95,
+        "min": r.min,
+        "max": r.max,
+        "base_rate": r.base_rate,
+        "divergence_relative": r.divergence_relative,
+        "divergence_absolute": r.divergence_absolute,
+    }))
+    .map_err(|e| format!("Serialization error: {e}"))
+}
+
+/// `fermi_sensitivity_analysis` — Sobol variance decomposition over an FPL program.
+async fn execute_fermi_sensitivity_analysis(input: &serde_json::Value) -> Result<String, String> {
+    let source = input
+        .get("fpl_program")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| "fpl_program is required".to_string())?;
+    let program = parse_fpl_source(source)?;
+
+    let iterations = input
+        .get("iterations")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(5_000)
+        .min(50_000) as usize;
+
+    let analysis = crate::sensitivity::full_sensitivity_analysis(&program, iterations)
+        .map_err(|e| format!("Sensitivity analysis failed: {e}"))?;
+
+    let drivers: Vec<serde_json::Value> = analysis
+        .ranked_drivers
+        .iter()
+        .filter_map(|name| analysis.driver_sensitivities.get(name))
+        .map(|s| {
+            json!({
+                "driver": s.driver_name,
+                "first_order_index": s.first_order_index,
+                "total_order_index": s.total_order_index,
+                "variance_contribution": s.variance_contribution,
+                "standard_error": s.standard_error,
+                "ci_low": (s.total_order_index - 1.96 * s.standard_error).max(0.0),
+                "ci_high": (s.total_order_index + 1.96 * s.standard_error).min(1.0),
+            })
+        })
+        .collect();
+
+    serde_json::to_string_pretty(&json!({
+        "iterations": iterations,
+        "baseline": {
+            "mean": analysis.baseline.mean,
+            "std_dev": analysis.baseline.std_dev,
+            "p5": analysis.baseline.p5,
+            "p95": analysis.baseline.p95,
+        },
+        "drivers": drivers,
+        "top_driver": analysis.ranked_drivers.first(),
+    }))
+    .map_err(|e| format!("Serialization error: {e}"))
 }
 
 // ─── Tool implementations ──────────────────────────────────────────
@@ -4581,6 +5449,11 @@ async fn execute_execute_agent(
         confidence_threshold: None,
     };
 
+    // Captured before `card` moves into the execution context below: the
+    // envelope needs only the declared contract, and holding a whole card
+    // alive for it would be wrong.
+    let declared_output_contract = card.capabilities.output_contract.clone();
+
     let context = crate::agent_backend::executor::ExecutionContext {
         program: crate::ast::Program { statements: vec![] },
         agent_card: card,
@@ -4693,11 +5566,30 @@ async fn execute_execute_agent(
 
     // Format the output — include metadata.reasoning so callers can
     // parse domain-specific JSON (e.g. forage_scout's structured response)
+    // ── the delegation envelope (additive) ────────────────────────────
+    //
+    // Every key below this is unchanged. The envelope is added alongside so
+    // existing coordinator prompts, which read `response` and `evidence`,
+    // keep working byte-for-byte.
+    //
+    // What it adds is the thing delegation never had: the child's OWN
+    // document, enforced against its grounding contract, with per-block
+    // provenance. Before this, `response` was `metadata.reasoning` — a
+    // per-agent parser's reading of the output — and a fabricated field
+    // stripped at the creature-module boundary passed freely between agents.
+    let envelope = crate::agent_backend::envelope::build(
+        agent_name,
+        declared_output_contract.as_ref(),
+        &output,
+        child_episode_id,
+    );
+
     let result = json!({
         "agent": output.agent_name,
         "confidence": output.confidence,
         "status": format!("{:?}", output.status),
         "response": output.metadata.reasoning,
+        "envelope": envelope,
         "evidence": output.evidence.iter().map(|e| {
             json!({
                 "summary": e.summary,

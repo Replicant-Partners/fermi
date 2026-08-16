@@ -152,16 +152,43 @@
   .rcs-pending_scan{color:var(--fg4);border-color:var(--bg3);}
   .rcs-cooling{color:var(--orange,var(--yellow));border-color:var(--orange,var(--yellow));}
   .rc-origin{font-size:0.6rem;color:var(--fg4);border:1px solid var(--bg3);padding:1px 4px;margin-left:6px;}
+  .rc-unresolved{font-size:0.6rem;color:var(--orange,var(--yellow));border:1px solid var(--orange,var(--yellow));padding:1px 4px;margin-left:6px;}
+  .rc-who{font-size:0.66rem;color:var(--fg3);margin-bottom:2px;}
   .rc-name-input{background:var(--bg0);border:1px solid var(--bg3);color:var(--fg2);padding:3px 6px;font-family:inherit;font-size:0.75rem;width:100%;margin-top:6px;}
   .rc-save{font-size:0.68rem;color:var(--aqua);cursor:pointer;background:none;border:none;font-family:inherit;padding:2px 0;}
 
   /* ── Loop health ── */
-  .loop-row{display:grid;grid-template-columns:32px 140px 1fr 70px;gap:10px;padding:6px 4px;border-bottom:1px dashed var(--bg2);font-size:0.75rem;align-items:start;}
+  .loop-row{display:grid;grid-template-columns:32px 150px 1fr 96px;gap:10px;padding:8px 4px;border-bottom:1px dashed var(--bg2);font-size:0.75rem;align-items:start;}
   .loop-row:last-child{border-bottom:none;}
   .loop-num{font-size:0.68rem;color:var(--fg4);background:var(--bg2);padding:2px 5px;text-align:center;}
+  .loop-scope{font-size:0.6rem;color:var(--fg4);border:1px solid var(--bg3);padding:0 4px;margin-left:6px;}
+  .loop-source{font-size:0.62rem;color:var(--fg4);opacity:0.75;margin-top:3px;font-style:italic;}
   .loop-closed{color:var(--green);}
   .loop-partial{color:var(--yellow);}
   .loop-open{color:var(--fg4);}
+  .loop-broken{color:var(--red);font-weight:600;}
+  .loop-unmeasured{color:var(--purple,var(--orange));}
+  /* The thin-vs-broken line. Deliberately the most prominent thing in the row
+     when the wiring is at fault, because it inverts the recommended action. */
+  .loop-health{font-size:0.7rem;margin-top:4px;padding:4px 7px;border-left:2px solid;line-height:1.45;}
+  .lh-sound{color:var(--fg3);border-color:var(--green);background:rgba(152,151,26,0.05);}
+  .lh-broken{color:var(--red);border-color:var(--red);background:rgba(204,36,29,0.07);}
+  .lh-unverified{color:var(--fg4);border-color:var(--bg3);}
+  .lh-inconclusive{color:var(--orange,var(--yellow));border-color:var(--orange,var(--yellow));}
+  .lh-not_applicable{color:var(--fg4);border-color:var(--bg3);}
+  .lh-checks{font-size:0.64rem;color:var(--red);margin-top:3px;font-family:inherit;}
+
+  /* ── Dreaming (Loop 1 correction half) ── */
+  .dream-band{font-size:0.7rem;padding:2px 8px;border:1px solid;text-transform:uppercase;letter-spacing:0.06em;}
+  .db-dormant{color:var(--fg4);border-color:var(--bg3);}
+  .db-unused{color:var(--fg4);border-color:var(--bg3);}
+  .db-unproductive{color:var(--red);border-color:var(--red);}
+  .db-developing{color:var(--yellow);border-color:var(--yellow);}
+  .db-mature{color:var(--green);border-color:var(--green);}
+  .dream-diag{font-size:0.78rem;color:var(--fg2);line-height:1.5;padding:10px 12px;background:var(--bg1);border-left:3px solid var(--bg3);}
+  .dream-synopsis{font-size:0.78rem;color:var(--fg3);line-height:1.6;white-space:pre-wrap;padding:10px 12px;background:var(--bg1);border-left:3px solid var(--purple,var(--aqua));}
+  .btn-dream-sm{color:var(--purple,var(--aqua));border-color:var(--purple,var(--aqua));}
+  .btn-dream-sm:hover{background:var(--bg2);}
 
   /* ── Test cases ── */
   .tc-row{display:grid;grid-template-columns:1fr 1fr 60px;gap:8px;padding:7px 4px;border-bottom:1px dashed var(--bg2);font-size:0.75rem;align-items:start;}
@@ -293,6 +320,20 @@
         <div id="maturity-chart" style="display:flex;gap:6px;align-items:flex-end;height:60px;"></div>
         <div id="maturity-legend" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;font-size:0.72rem;color:var(--fg4);"></div>
       </div>
+
+      <!-- Loop 1 across the fleet. `unproductive` is the number that matters:
+           cycles ran on real episodes and produced no knowledge. -->
+      <div class="panel" id="fleet-dreaming-panel" style="display:none;">
+        <div class="panel-title">Dreaming — Loop 1 across your agents
+          <span id="fleet-dream-meta" style="color:var(--fg4);font-weight:normal;text-transform:none;letter-spacing:0;"></span>
+        </div>
+        <div style="font-size:0.72rem;color:var(--fg4);margin-bottom:10px;">
+          <strong>unproductive</strong> consolidated real episodes and still produced nothing — that is a
+          fault. <strong>unused</strong> has no episodes yet, so an empty ontology is the correct result.
+        </div>
+        <div id="fleet-dream-bands" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;"></div>
+        <div id="fleet-dream-attention"></div>
+      </div>
     </div>
 
     <!-- Agent detail (hidden until selected) -->
@@ -307,6 +348,11 @@
           <span style="font-size:0.72rem;color:var(--fg4)" id="av-last-updated"></span>
           <button class="btn-sm btn-eval-sm" id="single-run-btn" onclick="triggerSingleEval()" disabled>▶ Eval</button>
           <button class="btn-sm" id="scan-btn" onclick="triggerScan()" disabled>⊙ Scan</button>
+          <!-- The correction half of Loop 1. The observatory could run evals
+               (signal) but never consolidation, so the one action that closes
+               the learning loop was the one action this page could not take. -->
+          <button class="btn-sm btn-dream-sm" id="dream-btn" onclick="triggerDream()" disabled
+                  title="Run a consolidation cycle: cluster unconsolidated episodes, extract entities/facts/rules, snapshot the ontology, narrate the dream. Costs 1 dreaming credit + gas.">☾ Dream</button>
           <select id="window-select" style="background:var(--bg1);color:var(--fg2);border:1px solid var(--bg3);padding:4px 6px;font-family:inherit;font-size:0.72rem;" onchange="loadAgentData()">
             <option value="20">20</option><option value="50" selected>50</option><option value="100">100</option>
           </select>
@@ -324,6 +370,7 @@
         <div class="tab active" onclick="switchTab('overview')">Overview</div>
         <div class="tab" onclick="switchTab('history')">History</div>
         <div class="tab" onclick="switchTab('relationships')" id="tab-relationships">Relationships</div>
+        <div class="tab" onclick="switchTab('dreaming')" id="tab-dreaming">Dreaming</div>
         <div class="tab" onclick="switchTab('sessions')">Sessions</div>
         <div class="tab" onclick="switchTab('testcases')" id="tab-tc">Test cases</div>
         <div class="tab" onclick="switchTab('loops')">Loops</div>
@@ -374,6 +421,33 @@
         </div>
       </div>
 
+      <!-- ── DREAMING ── -->
+      <div class="tab-panel" id="panel-dreaming">
+        <div class="panel">
+          <div class="panel-title">Consolidation — what this agent has actually learned
+            <div style="display:flex;gap:6px;align-items:center;">
+              <span id="dream-band" class="dream-band db-dormant">—</span>
+              <button class="btn-xs" onclick="triggerDream()" id="dream-run-btn">☾ Run cycle</button>
+            </div>
+          </div>
+          <div class="dream-diag" id="dream-diagnosis">Loading…</div>
+          <div class="vitals-grid" id="dream-vitals" style="margin-top:12px;"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title">Cycles vs yield vs ontology</div>
+          <div style="font-size:0.72rem;color:var(--fg4);margin-bottom:10px;">
+            These three can disagree, and each disagreement is a different fault.
+            <em>Cycles</em> says the machinery ran; <em>yield</em> says the ontologist produced
+            something; <em>ontology</em> is what persisted.
+          </div>
+          <div id="dream-ledger"></div>
+        </div>
+        <div class="panel" id="dream-synopsis-panel" style="display:none;">
+          <div class="panel-title">Latest dream synopsis <span id="dream-snap-meta" style="color:var(--fg4);font-weight:normal;text-transform:none;letter-spacing:0;"></span></div>
+          <div class="dream-synopsis" id="dream-synopsis"></div>
+        </div>
+      </div>
+
       <!-- ── SESSIONS ── -->
       <div class="tab-panel" id="panel-sessions">
         <div class="panel">
@@ -400,7 +474,17 @@
       <!-- ── LOOPS ── -->
       <div class="tab-panel" id="panel-loops">
         <div class="panel">
-          <div class="panel-title">RSI feedback loop health</div>
+          <div class="panel-title">RSI feedback loop health <span id="loops-summary" style="color:var(--fg4);font-weight:normal;text-transform:none;letter-spacing:0;"></span></div>
+          <div style="font-size:0.72rem;color:var(--fg4);margin-bottom:10px;">
+            Every row is derived from a query named under it — nothing here is a constant.
+            <span class="loop-open">○ open</span> means the loop is measurably not turning;
+            <span class="loop-broken">✕ broken</span> means the machinery is wired wrong — volume
+            makes it worse, not better;
+            <span class="loop-unmeasured">⊘ unmeasured</span> means a query failed and this page
+            cannot say either way.
+            For Loop 5a, <em>thin</em> (sound wiring, little data — wait) and <em>broken</em>
+            (faulty wiring — repair) are reported separately, because the remedies are opposite.
+          </div>
           <div id="loop-health-list"></div>
         </div>
       </div>
@@ -422,6 +506,8 @@ let _calib        = null;
 let _evalRuns     = null;
 let _evalSignals  = null;
 let _rels         = null;
+let _dream        = null; // GET /api/agents/:id/dreaming
+let _loops        = null; // GET /api/observatory/agents/:id/loops
 let _testCases    = [];
 let _filterMaturity = null;
 let _filterProvider = "";
@@ -433,14 +519,16 @@ let _currentTab   = "overview";
 // ════════════════════════════════════════════════════════════════════════
 async function boot() {
   try {
-    const [summaryResp, agentsResp, providersResp] = await Promise.all([
+    const [summaryResp, agentsResp, providersResp, dreamResp] = await Promise.all([
       fetch("/api/observatory/fleet/summary"),
       fetch("/api/observatory/fleet/agents"),
       fetch("/api/me/providers"),
+      fetch("/api/observatory/loops/dreaming/maturity"),
     ]);
     const summary   = summaryResp.ok   ? await summaryResp.json()   : {};
     const agData    = agentsResp.ok    ? await agentsResp.json()    : {};
     const provData  = providersResp.ok ? await providersResp.json() : {};
+    const dreamData = dreamResp.ok     ? await dreamResp.json()     : null;
 
     _allAgents = (agData.agents || []).sort(agentUrgencySort);
 
@@ -448,6 +536,7 @@ async function boot() {
     renderRegister(_allAgents);
     populateProviderDropdowns(provData.providers || []);
     renderFleetView(summary);
+    renderFleetDreaming(dreamData);
 
     // Deep-link
     const urlParam = new URLSearchParams(location.search).get("agent");
@@ -562,6 +651,45 @@ function renderFleetView(summary) {
   renderMaturityChart(summary.maturity_buckets || {});
 }
 
+// Loop 1 across the fleet. The endpoint existed and nothing rendered it, so
+// "91 cycles burned for zero entities, facts and rules" was only visible by
+// curling the API.
+function renderFleetDreaming(d) {
+  const panel = document.getElementById("fleet-dreaming-panel");
+  if (!d || !d.counts) { panel.style.display = "none"; return; }
+  panel.style.display = "";
+
+  const c = d.counts;
+  setText("fleet-dream-meta", `· ${c.total||0} agent(s)`);
+
+  const BANDS = [
+    ["mature",       c.mature,       "var(--green)"],
+    ["developing",   c.developing,   "var(--yellow)"],
+    ["unproductive", c.unproductive, "var(--red)"],
+    ["dormant",      c.dormant,      "var(--fg4)"],
+    ["unused",       c.unused,       "var(--fg4)"],
+  ];
+  document.getElementById("fleet-dream-bands").innerHTML = BANDS.map(([k,v,col])=>
+    `<span class="dream-band db-${k}" style="color:${col};border-color:${col};">${v||0} ${k}</span>`
+  ).join("");
+
+  // Name the faulty agents rather than only counting them — a count you cannot
+  // act on is the thing this whole pass is removing.
+  const bad = (d.agents||[]).filter(a=>a.maturity==="unproductive");
+  const el = document.getElementById("fleet-dream-attention");
+  if (!bad.length) {
+    el.innerHTML = `<div style="color:var(--fg4);font-size:0.75rem;">No agent has consolidated real episodes and produced nothing.</div>`;
+    return;
+  }
+  el.innerHTML = bad.map(a=>`
+    <div class="prov-row" style="grid-template-columns:160px 120px 1fr;cursor:pointer;"
+         onclick="selectAgent('${a.agent_name}','${a.agent_name}');switchTab('dreaming')">
+      <span style="color:var(--red)">${escHtml(a.display_alias||a.agent_name)}</span>
+      <span style="color:var(--fg3)">${a.completed_cycles} cycle(s)</span>
+      <span style="color:var(--fg4);font-size:0.72rem">${escHtml(a.diagnosis||"")}</span>
+    </div>`).join("");
+}
+
 function renderFleetProviderHealth(ph) {
   if (!ph) {
     // Re-fetch summary for provider data
@@ -661,6 +789,7 @@ async function selectAgent(agentId, agentName) {
   // Enable buttons
   document.getElementById("single-run-btn").disabled = false;
   document.getElementById("scan-btn").disabled = false;
+  document.getElementById("dream-btn").disabled = false;
   document.getElementById("run-eval-btn").disabled = false;
 
   setStatus("Loading…", "scanning");
@@ -673,7 +802,10 @@ async function loadAgentData() {
   const id  = _agent.agent_id;
   const win = document.getElementById("window-select").value;
 
-  const [tl, dyads, anoms, calib, runs, rels, tcData] = await Promise.all([
+  // `loops` and `dreaming` are server-computed. The Loops tab used to assemble
+  // its verdicts here from whatever else happened to be in flight, which is how
+  // two of the six rows ended up as hardcoded strings.
+  const [tl, dyads, anoms, calib, runs, rels, tcData, dream, loops] = await Promise.all([
     fetchJson(`/api/observatory/agents/${enc(id)}/timeline?window=${win}`).catch(()=>null),
     fetchJson(`/api/observatory/agents/${enc(id)}/dyads`).catch(()=>null),
     fetchJson(`/api/observatory/agents/${enc(id)}/anomalies?limit=50`).catch(()=>null),
@@ -681,10 +813,12 @@ async function loadAgentData() {
     fetchJson(`/api/agents/${enc(id)}/eval/runs`).catch(()=>null),
     fetchJson(`/api/observatory/agents/${enc(id)}/relationships`).catch(()=>null),
     fetchJson(`/api/agents/${enc(id)}/eval/test-cases`).catch(()=>null),
+    fetchJson(`/api/agents/${enc(id)}/dreaming`).catch(()=>null),
+    fetchJson(`/api/observatory/agents/${enc(id)}/loops`).catch(e=>({_error:e.message})),
   ]);
 
   _tl = tl; _dyads = dyads; _anoms = anoms; _calib = calib;
-  _evalRuns = runs; _rels = rels;
+  _evalRuns = runs; _rels = rels; _dream = dream; _loops = loops;
   _testCases = tcData?.test_cases || [];
 
   // Signals for latest run
@@ -729,12 +863,19 @@ function renderAgentView(fa) {
   document.getElementById("tab-tc").innerHTML =
     "Test cases" + (noRubric > 0 ? `<span class="tab-badge" style="background:var(--orange)">${noRubric}</span>` : "");
 
+  // Dreaming tab badge = episodes waiting to be consolidated. This is the
+  // actionable number: a backlog is material the agent has not learned from yet.
+  const backlog = _dream?.backlog?.unconsolidated_episodes || 0;
+  document.getElementById("tab-dreaming").innerHTML =
+    "Dreaming" + (backlog > 0 ? `<span class="tab-badge" style="background:var(--purple,var(--aqua))">${backlog}</span>` : "");
+
   renderOverviewTab(fa);
   renderHistoryTab();
   renderSessionsTab();
   renderRelationshipsTab();
+  renderDreamingTab();
   renderTestCasesTab();
-  renderLoopsTab(fa);
+  renderLoopsTab();
 }
 
 // ── Overview ──────────────────────────────────────────────────────────
@@ -758,6 +899,12 @@ function renderOverviewTab(fa) {
     { label:"Relationships", value: _rels?.relationship_count||0, sub:"Active dyads", color:"var(--fg2)" },
     { label:"Calibration", value: _calib?.calibration_score!=null?`${pct(_calib.calibration_score)}%`:"—", sub: _calib?.trend||"No data", color:_calib?.calibration_score!=null?colorFor(_calib.calibration_score):"var(--fg4)" },
     { label:"Persona version", value: `v${fa.persona_version||1}`, sub:`${fa.total_executions||0} total runs`, color:"var(--fg2)" },
+    // Eval scores measure how the agent performed; this measures whether any of
+    // that performance was retained. An agent can hold a healthy score forever
+    // while having learned literally nothing, and until this card existed the
+    // overview could not tell the two apart.
+    { label:"Learned", value: dreamOntologyRows(), sub: _dream ? `ontology rows · ${_dream.maturity||"—"}` : "Not loaded",
+      color: dreamColor() },
   ].map(v=>`<div class="vital-card">
     <div class="vc-label">${v.label}</div>
     <div class="vc-value" style="color:${v.color}">${v.value}</div>
@@ -959,12 +1106,23 @@ function renderRelationshipsTab() {
     return;
   }
   const pending = _rels?.pending_scan_count || 0;
-  const banner = pending
-    ? `<div style="color:var(--fg4);font-size:0.7rem;margin-bottom:8px;">${pending} relationship(s) have conversation history but no rapport scores yet — run ⊙ Scan to score them.</div>`
-    : "";
+  const unresolved = _rels?.unresolved_human_count || 0;
+  let banner = "";
+  if (pending) banner += `<div style="color:var(--fg4);font-size:0.7rem;margin-bottom:4px;">${pending} relationship(s) have conversation history but no rapport scores yet — run ⊙ Scan to score them.</div>`;
+  if (unresolved) banner += `<div style="color:var(--orange,var(--yellow));font-size:0.7rem;margin-bottom:8px;">${unresolved} dyad(s) reference a user id with no account on this platform — shown as “unknown user” rather than dressed up as a name.</div>`;
+  if (banner) banner = `<div style="margin-bottom:8px;">${banner}</div>`;
   el.innerHTML = banner + rels.map(r => {
     const statusCls = `rcs-${r.relationship_status}`;
-    const name = r.display_name || r.human_id || r.dyad_id;
+    // Card headline: the operator's own label if they set one, else the person's
+    // real name resolved from `users`, else an explicit admission. It used to be
+    // the raw user UUID, which made every unnamed dyad unreadable and made two
+    // cards for the same person impossible to tell apart at a glance.
+    const name = r.display_name || "unknown";
+    // When the operator has named the dyad, still say who it actually is — a
+    // nickname you cannot trace back to a person is not an improvement.
+    const named = !!(r.profile?.display_name || "").trim();
+    const who = (named && r.human_label)
+      ? `<div class="rc-who">${escHtml(r.human_label)}</div>` : "";
     // health is null until the social pass has scored this dyad; show "—"
     // rather than a misleading 0%.
     const scored = r.health !== null && r.health !== undefined;
@@ -974,9 +1132,13 @@ function renderRelationshipsTab() {
     const origin = r.origin === "eval"
       ? '<span class="rc-origin" title="Synthetic history from the eval pipeline, not a real conversation">eval</span>'
       : "";
+    const unres = r.human_unresolved
+      ? '<span class="rc-unresolved" title="This dyad\'s user id matches no row in users — a deleted account, or an id that was never a user">unresolved</span>'
+      : "";
     return `<div class="rel-card">
-      <div class="rc-name" id="rcn-${r.dyad_id}">${escHtml(name)}${origin}</div>
-      <div class="rc-id">${r.dyad_id}</div>
+      <div class="rc-name" id="rcn-${r.dyad_id}">${escHtml(name)}${origin}${unres}</div>
+      ${who}
+      <div class="rc-id" title="${escHtml(r.dyad_id)}">${escHtml(r.human_id||r.dyad_id)}</div>
       <div class="rc-vitals">
         ${vital("Rapport", r.rapport)}
         ${vital("Trust", r.trust)}
@@ -1000,8 +1162,10 @@ async function saveDyadName(dyadId) {
       method:"PATCH", headers:{"Content-Type":"application/json"},
       body: JSON.stringify({display_name: name||null})
     });
-    if (document.getElementById(`rcn-${dyadId}`)) document.getElementById(`rcn-${dyadId}`).textContent = name || dyadId;
     setStatus("Relationship name saved.", "done");
+    // Re-fetch rather than patching the DOM node: clearing a name has to fall
+    // back to the resolved user label, and only the server knows what that is.
+    await loadAgentData();
   } catch(e) { setStatus("Save failed: "+e.message,"error"); }
 }
 
@@ -1073,68 +1237,234 @@ async function generateRubrics() {
   finally{btn.disabled=false;btn.textContent="✦ Generate rubrics";}
 }
 
-// ── Loops ─────────────────────────────────────────────────────────────
-function renderLoopsTab(fa) {
-  const runs=_evalRuns?.runs||[];
-  const anoms=_anoms?.anomalies||[];
-  const calib=_calib;
-  const series=_tl?.trend?.series||{};
+// ── Loops ──────────────────────────────────────────────────
+//
+// Pure rendering. Every verdict, its wording and its provenance come from
+// GET /api/observatory/agents/:id/loops, computed server-side against real
+// tables. This function used to derive them here, and two of the six rows
+// ("3a Coherence: partial", "4 Composition evolution: open") were string
+// literals that rendered identically for every agent on the platform —
+// indistinguishable, in a column of live status glyphs, from a measurement.
+const LOOP_ICONS  = {closed:"✓", partial:"◑", open:"○", broken:"✕", unmeasured:"⊘"};
+const LOOP_COLORS = {closed:"var(--green)", partial:"var(--yellow)", open:"var(--fg4)",
+                     broken:"var(--red)", unmeasured:"var(--purple,var(--orange))"};
 
-  // Loop 5a: "closed" requires demonstrated skill over the base-rate
-  // reference, not just a high raw score on n>=5 forecasts. On a question set
-  // where nearly every outcome resolves NO (e.g. the 48 World Cup
-  // tournament-winner forecasts: 47 NO, one YES), a forecaster that knows
-  // nothing scores ~98% raw. Gating on the raw number alone reported
-  // base-rate skew as a closed loop. `brier_skill_score` comes from
-  // GET /api/agents/:id/calibration: > 0 beats the base-rate forecaster.
-  const loop5a = (() => {
-    if (calib?.calibration_score == null)
-      return {status:"open", detail:"No resolved forecasts yet."};
-    const n    = calib.n_resolved_forecasts || 0;
-    const bss  = calib.brier_skill_score;
-    const base = calib.outcome_base_rate;
-    const raw  = `${pct(calib.calibration_score)}% raw · n=${n}`;
-    if (n < 5)
-      return {status:"partial", detail:`${raw} — needs ≥5 resolved forecasts.`};
-    if (bss == null)
-      return {status:"partial", detail:`${raw} — no base-rate reference (all outcomes resolved alike); skill undefined.`};
-    if (bss > 0.05) {
-      // Mechanically sound + skilled, but say how much evidence backs it.
-      // "closed" is about the loop turning, not about the number being final;
-      // evidence_class (none|provisional|thin|usable) carries that separately.
-      const ev = calib.evidence_class;
-      const caveat = (ev === "provisional" || ev === "thin") ? ` · ${ev} evidence` : "";
-      return {status:"closed",
-              detail:`${raw} · skill +${bss.toFixed(2)} vs ${pct(base)}% base rate${caveat}`};
+// Short label for the mechanism axis. Kept distinct from the status glyph
+// because a loop can be `partial` for two unrelated reasons and the operator
+// needs to know which: not enough data, or a chain that mangles it.
+const MECH_LABEL = {
+  sound:          "wiring sound",
+  broken:         "wiring BROKEN",
+  inconclusive:   "wiring unknown",
+  unverified:     "wiring unverified",
+  not_applicable: "no signal yet",
+};
+
+function renderLoopsTab() {
+  const el = document.getElementById("loop-health-list");
+
+  if (!_loops || _loops._error || !Array.isArray(_loops.loops)) {
+    // Failing to fetch the verdicts is itself reported rather than silently
+    // falling back to plausible-looking defaults.
+    setText("loops-summary", "");
+    el.innerHTML = `<div style="color:var(--orange,var(--yellow));font-size:0.75rem;">
+      Loop health could not be read${_loops?._error?`: ${escHtml(_loops._error)}`:""}.
+      No verdict is shown rather than a guessed one.</div>`;
+    return;
+  }
+
+  const s = _loops.summary || {};
+  setText("loops-summary",
+    `${s.closed||0} closed · ${s.partial||0} partial · ${s.open||0} open`
+    + ((s.broken||0)     ? ` · ${s.broken} BROKEN` : "")
+    + ((s.unmeasured||0) ? ` · ${s.unmeasured} unmeasured` : ""));
+
+  el.innerHTML = _loops.loops.map(l => {
+    // The two-axis block — currently only Loop 5a carries one. `interpretation`
+    // is the sentence that says thin-versus-broken in words, rather than leaving
+    // the operator to infer opposite remedies from a colour.
+    const h = l.evidence && l.evidence.health;
+    let health = "";
+    if (h && h.mechanism) {
+      const failing = (h.failing_checks || [])
+        .map(c => `${c.id} (${c.severity} ×${c.count})`).join(" · ");
+      health = `<div class="loop-health lh-${escHtml(h.mechanism)}">`
+        + `<strong>${escHtml(MECH_LABEL[h.mechanism] || h.mechanism)}</strong>`
+        + (h.evidence_band ? ` · <strong>${escHtml(h.evidence_band)}</strong> evidence` : "")
+        + (h.mechanism === "sound" && h.mechanism_checks_ok
+            ? ` <span style="opacity:0.7">(${h.mechanism_checks_ok} checks clean)</span>` : "")
+        + `<div style="margin-top:3px">${escHtml(h.interpretation || "")}</div>`
+        + (failing ? `<div class="lh-checks">failing: ${escHtml(failing)}</div>` : "")
+        + `</div>`;
     }
-    return {status:"partial",
-            detail:`${raw} but skill ${bss.toFixed(2)} — no better than always predicting the ${pct(base)}% base rate. Raw score is base-rate skew, not calibration.`};
-  })();
 
-  const loops=[
-    {n:"1a",name:"Individual learning",
-     status:runs.length>0?"closed":Object.keys(series).length>0?"partial":"open",
-     detail:runs.length>0?`${runs.length} eval run(s) · ${Object.keys(series).length} dimensions tracked`:"No eval runs — run a baseline eval."},
-    {n:"1b",name:"Projection accuracy",
-     status:calib?.projection_accuracy_mean!=null?"closed":"open",
-     detail:calib?.projection_accuracy_mean!=null?`${pct(calib.projection_accuracy_mean)}% · n=${calib.n_projection_observations}`:"No real SOSA observations matched yet."},
-    {n:"2",name:"HITL correction",
-     status:anoms.some(a=>a.resolved_at)?"closed":anoms.some(a=>a.requires_review&&!a.resolved_at)?"partial":"open",
-     detail:anoms.filter(a=>a.requires_review&&!a.resolved_at).length>0?`${anoms.filter(a=>a.requires_review&&!a.resolved_at).length} pending — visit Review queue`:anoms.some(a=>a.resolved_at)?"Corrections applied":"No anomalies detected."},
-    {n:"3a",name:"Coherence (inner)",status:"partial",detail:"Auto-attached to workspaces · outer loop needs session history."},
-    {n:"4",name:"Composition evolution",status:"open",detail:"Needs accumulated session patterns."},
-    {n:"5a",name:"Brier calibration",status:loop5a.status,detail:loop5a.detail},
+    const scope = (l.scope && l.scope !== "agent")
+      ? `<span class="loop-scope" title="This loop runs on ${escHtml(l.scope)}s, so the figures span every ${escHtml(l.scope)} this agent belongs to">${escHtml(l.scope)}</span>`
+      : "";
+
+    return `<div class="loop-row">
+      <span class="loop-num">${escHtml(l.id)}</span>
+      <span style="color:var(--fg3)">${escHtml(l.name)}${scope}</span>
+      <span>
+        <span style="color:var(--fg4);font-size:0.72rem">${escHtml(l.detail||"")}</span>
+        ${l.source ? `<div class="loop-source" title="Where this verdict came from">← ${escHtml(l.source)}</div>` : ""}
+        ${health}
+      </span>
+      <span style="color:${LOOP_COLORS[l.status]||"var(--fg4)"}">${LOOP_ICONS[l.status]||"·"} ${escHtml(l.status)}</span>
+    </div>`;
+  }).join("");
+}
+
+// ── Dreaming (Loop 1, correction half) ─────────────────────────────
+function dreamOntologyRows() {
+  if (!_dream) return "—";
+  const o = _dream.ontology || {};
+  return (o.entities||0) + (o.facts||0) + (o.semantic_rules||0);
+}
+function dreamColor() {
+  const band = _dream?.maturity;
+  return {dormant:"var(--fg4)", unused:"var(--fg4)", unproductive:"var(--red)",
+          developing:"var(--yellow)", mature:"var(--green)"}[band] || "var(--fg4)";
+}
+
+function renderDreamingTab() {
+  const bandEl = document.getElementById("dream-band");
+  const diagEl = document.getElementById("dream-diagnosis");
+
+  if (!_dream) {
+    bandEl.textContent = "—"; bandEl.className = "dream-band db-dormant";
+    diagEl.textContent = "Dreaming state could not be read for this agent.";
+    document.getElementById("dream-vitals").innerHTML = "";
+    document.getElementById("dream-ledger").innerHTML = "";
+    document.getElementById("dream-synopsis-panel").style.display = "none";
+    return;
+  }
+
+  const band = _dream.maturity || "dormant";
+  bandEl.textContent = band;
+  bandEl.className = `dream-band db-${band}`;
+  diagEl.textContent = _dream.diagnosis || "";
+  diagEl.style.borderLeftColor = dreamColor();
+
+  const bg = _dream.backlog || {}, bu = _dream.budget || {}, cy = _dream.cycles || {};
+  const y = _dream.yield || {}, o = _dream.ontology || {};
+
+  document.getElementById("dream-vitals").innerHTML = [
+    { label:"Unconsolidated", value: bg.unconsolidated_episodes ?? "—",
+      sub:`of ${bg.total_episodes ?? 0} episodes`,
+      color:(bg.unconsolidated_episodes||0)>0?"var(--yellow)":"var(--green)" },
+    { label:"Cycles", value: cy.completed ?? 0,
+      sub:`${cy.failed||0} failed · ${cy.zero_yield||0} zero-yield`,
+      color:(cy.zero_yield||0)>0?"var(--red)":"var(--fg2)" },
+    { label:"Ontology rows", value: dreamOntologyRows(),
+      sub:`${o.entities||0}e · ${o.facts||0}f · ${o.semantic_rules||0}r`, color:dreamColor() },
+    { label:"Dream credits", value:`${bu.remaining ?? "—"}`,
+      sub:`${bu.used||0}/${bu.total||0} used`,
+      color: bu.exhausted ? "var(--red)" : "var(--fg2)" },
+    { label:"Last dreamt", value: _dream.last_consolidated_at ? timeSince(_dream.last_consolidated_at) : "never",
+      sub: o.snapshot_version!=null ? `snapshot v${o.snapshot_version}` : "no snapshot",
+      color: _dream.last_consolidated_at ? "var(--fg2)" : "var(--fg4)" },
+  ].map(v=>`<div class="vital-card">
+    <div class="vc-label">${v.label}</div>
+    <div class="vc-value" style="color:${v.color}">${v.value}</div>
+    <div class="vc-sub">${v.sub}</div>
+  </div>`).join("");
+
+  // The three-ledger comparison. `verification_rate` is the one number that
+  // separates "the ontologist proposed nothing" from "it proposed plenty and
+  // verification threw all of it out" — identical ontology size, opposite fix.
+  const vr = y.verification_rate;
+  const rows = [
+    ["Cycles", `${cy.completed||0} completed`, `${cy.failed||0} failed · ${cy.running||0} running · ${cy.zero_yield||0} produced nothing`],
+    ["Episodes processed", y.episodes_processed||0, `${y.clusters_identified||0} clusters identified`],
+    ["Rules", `${y.rules_extracted||0} extracted`,
+      `${y.rules_verified||0} verified · ${y.rules_rejected||0} rejected` +
+      (vr!=null?` · ${pct(vr)}% survived verification`:" · verification has adjudicated none")],
+    ["Entities / facts", `${y.entities_created||0} / ${y.facts_created||0} created`,
+      `${o.entities||0} / ${o.facts||0} currently in the graph`],
+    ["Verified rules", `${o.verified_rules||0}`, `of ${o.semantic_rules||0} in the graph`],
   ];
-
-  const ICONS={closed:"✓",partial:"◑",open:"○"};
-  const COLORS={closed:"var(--green)",partial:"var(--yellow)",open:"var(--fg4)"};
-  document.getElementById("loop-health-list").innerHTML = loops.map(l=>`
-    <div class="loop-row">
-      <span class="loop-num">${l.n}</span>
-      <span style="color:var(--fg3)">${l.name}</span>
-      <span style="color:var(--fg4);font-size:0.72rem">${l.detail}</span>
-      <span style="color:${COLORS[l.status]}">${ICONS[l.status]} ${l.status}</span>
+  document.getElementById("dream-ledger").innerHTML = rows.map(([k,v,note])=>`
+    <div class="prov-row" style="grid-template-columns:160px 160px 1fr;">
+      <span style="color:var(--fg3)">${k}</span>
+      <span style="color:var(--fg2)">${v}</span>
+      <span style="color:var(--fg4);font-size:0.72rem">${note}</span>
     </div>`).join("");
+
+  // A snapshot without a synopsis means consolidation worked and narration
+  // didn't — cosmetic, but it is the thing an operator notices missing first.
+  const panel = document.getElementById("dream-synopsis-panel");
+  if (o.dream_synopsis) {
+    panel.style.display = "";
+    document.getElementById("dream-synopsis").textContent = o.dream_synopsis;
+    setText("dream-snap-meta", o.last_snapshot_at ? `· v${o.snapshot_version} · ${timeSince(o.last_snapshot_at)}` : "");
+  } else if (o.snapshot_version != null) {
+    panel.style.display = "";
+    document.getElementById("dream-synopsis").textContent =
+      "Snapshot v" + o.snapshot_version + " exists but carries no dream synopsis — " +
+      "consolidation committed the graph and the narrator did not run.";
+    setText("dream-snap-meta", "· narration missing");
+  } else {
+    panel.style.display = "none";
+  }
+}
+
+// Run a consolidation cycle. The observatory previously had no way to do this,
+// so the only loop it could actually turn was the eval loop — the half that
+// measures, not the half that learns.
+async function triggerDream() {
+  if (!_agent) return;
+  const btns = [document.getElementById("dream-btn"), document.getElementById("dream-run-btn")]
+    .filter(Boolean);
+  const labels = btns.map(b=>b.textContent);
+  btns.forEach(b=>{ b.disabled=true; b.textContent="Dreaming…"; });
+  setStatus("Consolidating episodes…", "scanning");
+  try {
+    const r = await fetchJson(`/api/agents/${enc(_agent.agent_id)}/consolidate`, {method:"POST"});
+    if (r.status === "completed") {
+      // Synchronous "nothing to do" path — no job to poll.
+      setStatus(r.result?.message || "Nothing to consolidate.", "done");
+      await loadAgentData();
+      return;
+    }
+    if (r.degraded) {
+      setStatus("Running DEGRADED: no extraction model, so no facts or rules can be produced.", "error");
+    } else {
+      setStatus(`Dreaming… job ${String(r.job_id).slice(0,8)} · ${r.dreaming_credits_remaining} credit(s) left`, "scanning");
+    }
+    await pollDreamJob(r.job_id);
+  } catch(e) {
+    // 402 (no credits) and 424 (no extraction model) both carry an actionable
+    // message from the server; surfacing it verbatim beats "request failed".
+    setStatus("Dream failed: " + e.message, "error");
+  } finally {
+    btns.forEach((b,i)=>{ b.disabled=false; b.textContent=labels[i]; });
+  }
+}
+
+async function pollDreamJob(jobId, tries=0) {
+  if (tries > 90) { setStatus("Dream still running — stopped polling. Reload to check.", "error"); return; }
+  await new Promise(r=>setTimeout(r, 2000));
+  const j = await fetchJson(`/api/agents/${enc(_agent.agent_id)}/consolidation/jobs/${enc(jobId)}`)
+    .catch(()=>null);
+  if (!j) return pollDreamJob(jobId, tries+1);
+  if (j.status === "running") {
+    setStatus(`Dreaming… (${tries*2}s)`, "scanning");
+    return pollDreamJob(jobId, tries+1);
+  }
+  await loadAgentData();
+  if (j.status === "failed") {
+    setStatus("Dream failed: " + (j.error_message || "unknown error"), "error");
+  } else {
+    // Report the yield, not just the completion. A cycle that completes having
+    // extracted nothing is the platform's documented silent failure, and
+    // "completed" alone is exactly how it stayed silent.
+    const learned = (j.entities_created||0) + (j.facts_created||0) + (j.rules_extracted||0);
+    setStatus(learned > 0
+      ? `Dream complete · ${j.episodes_processed} episode(s) → ${j.entities_created} entities, ${j.facts_created} facts, ${j.rules_extracted} rules (${j.rules_verified||0} verified).`
+      : `Dream completed and extracted nothing from ${j.episodes_processed} episode(s) — the cycle ran and the agent learned nothing. Check the ontologist's model and credentials.`,
+      learned > 0 ? "done" : "error");
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════

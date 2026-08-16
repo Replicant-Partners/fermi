@@ -230,10 +230,10 @@ pub async fn evaluate_coherence_handler(
                 // the platform's env key. `cohere_and_coordinate` is a
                 // platform-service agent, so resolving its DB row funds it
                 // from the `abw-system` principal's store.
-                let credentials = match crate::resolve_agent(&state, "cohere_and_coordinate").await
-                {
+                let strategist = crate::resolve_agent(&state, "cohere_and_coordinate").await;
+                let credentials = match &strategist {
                     Ok(db_agent) => {
-                        crate::build_execution_credentials(&state, &db_agent, &card).await
+                        crate::build_execution_credentials(&state, db_agent, &card).await
                     }
                     // Not registered in the DB: unfunded, which fails
                     // loudly below rather than silently spending.
@@ -247,9 +247,52 @@ pub async fn evaluate_coherence_handler(
                     agent_card: card,
                     creature_id: None,
                     cognition_tier: None,
-                    credentials,
+                    credentials: credentials.clone(),
                 };
-                match state.registry.execute_agent(&agent_stmt, &context).await {
+
+                // Run the strategist WITH tools.
+                //
+                // This path used to call `registry.execute_agent` directly,
+                // which builds no `ToolContext` — so the strategist ran with no
+                // tools at all. Its card declares a four-stage protocol that is
+                // almost entirely tool calls (read the intention map, snapshot
+                // coherence, list members, record observations), and none of
+                // them could execute. The shelf returned prose describing work
+                // the agent had not done, and Loop 3's correction half never
+                // ran.
+                //
+                // `record_coordination_observation` is the one that matters:
+                // it is how a coordination finding reaches a member agent's
+                // memory and survives into its next dreaming cycle.
+                let slug = get_workspace_slug(&state.db, ws_uuid)
+                    .await
+                    .unwrap_or_else(|_| ws_uuid.to_string());
+                let tool_context = Arc::new(ToolContext {
+                    parent_episode_id: None,
+                    memory_store: state.memory_store.clone(),
+                    embedder: state.embedder.clone(),
+                    registry: state.registry.clone(),
+                    // Identifies the caller to `record_coordination_observation`,
+                    // which refuses to write unless this matches the workspace's
+                    // registered coordination_strategist_id.
+                    current_agent_id: strategist.as_ref().ok().map(|a| a.agent_id),
+                    workspace_id: Some(ws_uuid),
+                    workspace_slug: Some(slug),
+                    workspace_git: Some(state.workspace_git.clone()),
+                    db: Some(state.db.clone()),
+                    gas_fees: Some(state.gas_fees.clone()),
+                    user_id: Some(user_id.clone()),
+                    user_secrets: None,
+                    credentials,
+                    eval_trigger: None,
+                    remote_mcp: None,
+                });
+                let tool_executor = ToolAwareExecutor::new(
+                    state.registry.executor_arc(),
+                    ToolRegistry::with_workspace(),
+                    tool_context,
+                );
+                match tool_executor.execute(&agent_stmt, &context).await {
                     Ok(output) => output.metadata.reasoning,
                     Err(e) => {
                         eprintln!("cohere_and_coordinate failed: {:?}", e);

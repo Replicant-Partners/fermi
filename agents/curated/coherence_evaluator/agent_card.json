@@ -23,7 +23,7 @@
         }
       },
       {
-        "name": "get_coherence_snapshot",
+        "name": "coherence_snapshot",
         "description": "Get current coherence evaluation state for a conversation",
         "input_schema": {
           "type": "object",

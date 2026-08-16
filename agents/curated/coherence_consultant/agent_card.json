@@ -24,7 +24,7 @@
         }
       },
       {
-        "name": "workspace_messages",
+        "name": "get_workspace_messages",
         "description": "Read recent workspace conversation messages for analysis",
         "input_schema": {
           "type": "object",

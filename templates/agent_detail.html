@@ -2034,22 +2034,40 @@
           fetch(`/api/agents/${agentId}/ontology`)
             .then((r) => (r.ok ? r.json() : null))
             .then((data) => {
-              if (data && data.stats) {
-                kgNodeCount = data.stats.entity_count || nodeCount;
-                kgEdgeCount = data.stats.fact_count || edges.length;
-                // Populate Knowledge tab counts (rendered as "…" until this resolves)
-                const ecEl = document.getElementById("kg-entity-count");
-                const fcEl = document.getElementById("kg-fact-count");
-                const cmEl = document.getElementById("kg-commits");
-                if (ecEl) ecEl.textContent = data.stats.entity_count ?? 0;
-                if (fcEl) fcEl.textContent = data.stats.fact_count ?? 0;
-                if (cmEl) cmEl.textContent = data.evolution_commits ?? 0;
-              }
+              // The Knowledge tab renders these three fields as a literal "…"
+              // and relies on this handler to replace them. It previously only
+              // did so `if (data && data.stats)`, so any payload without a
+              // stats block left the ellipsis in place forever — indis-
+              // tinguishable from a request still in flight, and shown even
+              // when the true answer was a confident zero. Resolve the
+              // placeholder on every outcome, including failure.
+              const entityCount =
+                data?.stats?.entity_count ?? data?.entities?.length ?? 0;
+              const factCount =
+                data?.stats?.fact_count ?? data?.relationships?.length ?? 0;
+              const commits = data?.evolution_commits ?? 0;
+
+              const ecEl = document.getElementById("kg-entity-count");
+              const fcEl = document.getElementById("kg-fact-count");
+              const cmEl = document.getElementById("kg-commits");
+              if (ecEl) ecEl.textContent = entityCount;
+              if (fcEl) fcEl.textContent = factCount;
+              if (cmEl) cmEl.textContent = commits;
+
+              // The decorative canvas keeps its placeholder geometry when the
+              // graph is empty; the stat line must still report the truth.
+              kgNodeCount = entityCount || nodeCount;
+              kgEdgeCount = factCount || edges.length;
               const el = document.getElementById("kg-stat");
               if (el)
                 el.textContent = `${kgNodeCount} entities / ${kgEdgeCount} facts`;
             })
-            .catch(() => {});
+            .catch(() => {
+              for (const id of ["kg-entity-count", "kg-fact-count", "kg-commits"]) {
+                const el = document.getElementById(id);
+                if (el && el.textContent.trim() === "…") el.textContent = "—";
+              }
+            });
 
           function tick() {
             const c = colors();

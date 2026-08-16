@@ -228,6 +228,19 @@ pub fn describe_relkind(k: &str) -> &'static str {
 /// production incidents (v0.10.15 → v0.10.29). Extend when a new
 /// column becomes load-bearing.
 pub const SCHEMA_COLUMNS: &[(&str, &str)] = &[
+    // ── observability sweeper (live Loop 1 → Loop 2) ──────────────
+    // `sweep_observability_once` joins these two to find agents with
+    // unscanned timeline entries. Declared because the sweep's only error
+    // handling is a log line: a renamed column would silently stop drift and
+    // anomaly detection platform-wide rather than failing loudly. An earlier
+    // draft did exactly that, guessing `last_scanned_at`.
+    ("agent_observability_state", "agent_id"),
+    ("agent_observability_state", "last_scan_completed_at"),
+    ("agent_timeline_entries", "agent_id"),
+    ("agent_timeline_entries", "created_at"),
+    ("agent_timeline_entries", "persona_version"),
+    ("agent_timeline_entries", "anomaly_flags"),
+    ("agent_timeline_entries", "dim_scores"),
     // ── agents ─────────────────────────────────────────────────────
     // Every one of these has been referenced in a bug in the last
     // month. The trust contract exists to keep them present.

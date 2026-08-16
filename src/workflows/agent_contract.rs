@@ -71,6 +71,18 @@ pub struct ContractView<'a> {
     /// that never reaches a model, which teaches them the checks are
     /// theatre.
     pub requires_persona: bool,
+
+    // ── typed tier (see `TYPED_TIER_EXEMPT`) ───────────────────────
+    /// Stable id, used only to look up the legacy exemption.
+    pub agent_id: &'a str,
+    /// The card's `output_contract`: type name, JSON Schema, and the
+    /// field-to-tool map. `None` means the agent has declared nothing about
+    /// what it returns.
+    pub output_contract: Option<&'a serde_json::Value>,
+    /// Tools the agent actually declares. Needed because the load-bearing
+    /// grounding check is a cross-reference: a field may not claim to be
+    /// sourced from a tool the agent cannot call.
+    pub tool_names: Vec<String>,
 }
 
 /// One unmet requirement.
@@ -150,6 +162,131 @@ fn requirements() -> &'static [Requirement] {
     ]
 }
 
+/// Agents that predate the typed tier and are allowed to stay published
+/// without a schema or a field-to-tool map.
+///
+/// ## Why this list exists rather than a flag day
+///
+/// When the typed tier landed, **1 of 100 curated cards** declared a schema
+/// and 3 of 339 `produces` labels resolved to a type. Making it blocking for
+/// everyone would have failed the next republish of essentially every agent
+/// in the catalogue, and the gate would have been switched off within a
+/// week — the standard way a control earns the right to be ignored.
+///
+/// So the tier is blocking for **new** agents from the moment it shipped,
+/// and the existing corpus burns down through this list.
+///
+/// ## The list may only shrink
+///
+/// `typed_tier_exemptions_only_shrink` pins its length. Removing a name is
+/// ordinary work; adding one is a deliberate, reviewable edit that has to
+/// explain itself. An agent not on this list — which is every agent created
+/// from now on — gets the full contract.
+pub const TYPED_TIER_EXEMPT: &[&str] = &[
+    // Everything in the curated corpus at the time the tier landed, minus
+    // the pilot. Burn this down; do not extend it.
+    "adaptogen_curator",
+    "adc_pk_oracle",
+    "anomaly_triager",
+    "ar_avatar_renderer",
+    "ar_beacon",
+    "ar_card_producer",
+    "ar_cartographer",
+    "ar_choreographer",
+    "bioreactor_modeler",
+    "biotech_analyst",
+    "bluesky_publisher",
+    "cohere_and_coordinate",
+    "coherence_consultant",
+    "coherence_evaluator",
+    "companion_builder_coach",
+    "comparator",
+    "condition_forecaster",
+    "daily_puzzle",
+    "deal_finder",
+    "debate_strategist",
+    "delivery",
+    "dream_coordinator",
+    "dream_narrator",
+    "dyad_observer",
+    "embedding_broker",
+    "embedding_projector_guide",
+    "enemy_sensor",
+    "energy_advisor",
+    "entity_investigator",
+    "equity_analyst",
+    "eval_runner",
+    "fermi",
+    "fixture_context_agent",
+    "flavor_profiler",
+    "flight_coordinator",
+    "football_analyst",
+    "football_institution_agent",
+    "forage_scout",
+    "harvest_advisor",
+    "instagram_publisher",
+    "intention_coordinator",
+    "keeper",
+    "marketing_composer",
+    "moe_router_strategist",
+    "naturalist",
+    "navigator",
+    "notebook_runner",
+    "ontologist",
+    "performance_coach",
+    "pipeline_strategist",
+    "polymarket_analyst",
+    "preference_modeler",
+    "prey_locator",
+    "product_scout",
+    "publish_coach",
+    "rabble_curator",
+    "regulatory_scanner",
+    "reynolds_flock",
+    "sensor_advisor",
+    "sidestream_miner",
+    "simops_advisor",
+    "simops_cascade",
+    "simops_companion",
+    "simops_dynamics_runner",
+    "simops_narrator",
+    "simops_narrator_local",
+    "simops_optimizer",
+    "simops_predictor",
+    "social_media_studio",
+    "species_resolver",
+    "specimen_minter",
+    "style_transfer",
+    "supply_chain_oracle",
+    "swarm_host",
+    "swarm_telemetry_analyst",
+    "trend_scout",
+    "valuechain_mapper",
+    "vote_strategist",
+    "watermark",
+    "weather_calibrator",
+    "weather_ensemble_forecaster",
+    "weather_market_analyst",
+    "weather_oracle",
+    "wild_companion",
+    "wild_narrator",
+    "xaman_ek",
+];
+
+/// Is this agent exempt from the typed tier?
+pub fn is_typed_tier_exempt(agent_id: &str) -> bool {
+    TYPED_TIER_EXEMPT.contains(&agent_id)
+}
+
+/// Typed-tier violations for a view: schema, resolving ports, field-to-tool
+/// map. Empty for exempt agents and for agents that satisfy the contract.
+pub fn typed_tier_violations(view: &ContractView) -> Vec<crate::card_contract::Finding> {
+    if is_typed_tier_exempt(view.agent_id) {
+        return Vec::new();
+    }
+    crate::card_contract::validate(view.output_contract, view.produces, &view.tool_names)
+}
+
 /// Judge a view against the contract. Empty result means conforming.
 pub fn contract_violations(view: &ContractView) -> Vec<Violation> {
     requirements()
@@ -202,8 +339,31 @@ impl<'a> From<&'a agent_bestiary_memory::types::Agent> for ContractView<'a> {
                 a.executor_type.to_ascii_lowercase().as_str(),
                 "mcp" | "manual" | "skill"
             ),
+            agent_id: &a.agent_name,
+            output_contract: a.output_contract.as_ref(),
+            tool_names: tool_names_from_json(a.mcp_tools.as_ref()),
         }
     }
+}
+
+/// Tool names out of the DB's free-form `mcp_tools` JSONB.
+///
+/// Tolerant of both shapes seen in the wild: an array of objects with a
+/// `name`, and an array of bare strings. Returns empty for anything else,
+/// which makes a `sourced` claim fail loudly rather than pass by accident.
+fn tool_names_from_json(v: Option<&serde_json::Value>) -> Vec<String> {
+    v.and_then(|x| x.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|t| {
+                    t.get("name")
+                        .and_then(|n| n.as_str())
+                        .or_else(|| t.as_str())
+                        .map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 impl<'a> From<&'a crate::agent_backend::agent_card::AgentCard> for ContractView<'a> {
@@ -219,6 +379,14 @@ impl<'a> From<&'a crate::agent_backend::agent_card::AgentCard> for ContractView<
             produces: &c.produces,
             has_valence: c.metadata.valence.is_some(),
             requires_persona: matches!(c.capabilities.executor, ExecutorType::LLM),
+            agent_id: &c.agent_id,
+            output_contract: c.capabilities.output_contract.as_ref(),
+            tool_names: c
+                .capabilities
+                .mcp_tools
+                .iter()
+                .map(|t| t.name.clone())
+                .collect(),
         }
     }
 }
@@ -258,7 +426,95 @@ mod tests {
             produces,
             has_valence: true,
             requires_persona: true,
+            // Typed-tier defaults: an id nobody grandfathered, and nothing
+            // declared. Tests that care override them.
+            agent_id: "probe",
+            output_contract: None,
+            tool_names: vec![],
         }
+    }
+
+    // ── typed tier ─────────────────────────────────────────────────
+
+    /// The exemption list may only shrink.
+    ///
+    /// Pinned rather than merely documented, because "we will burn this
+    /// down" is exactly the kind of intention that survives as a comment
+    /// while the list quietly grows. Removing a name is ordinary work and
+    /// makes this fail loudly in the good direction; adding one requires
+    /// editing this number in the same commit, where a reviewer sees it.
+    #[test]
+    fn typed_tier_exemptions_only_shrink() {
+        const BASELINE: usize = 86;
+        assert!(
+            TYPED_TIER_EXEMPT.len() <= BASELINE,
+            "the typed-tier exemption list grew from {BASELINE} to {}. A new agent \
+             must satisfy the full contract; if this is a deliberate grandfathering, \
+             lower BASELINE in the same commit so the loosening is reviewable.",
+            TYPED_TIER_EXEMPT.len()
+        );
+        if TYPED_TIER_EXEMPT.len() < BASELINE {
+            println!(
+                "typed-tier exemptions: {} of {BASELINE} remaining — lower BASELINE to lock it in",
+                TYPED_TIER_EXEMPT.len()
+            );
+        }
+    }
+
+    #[test]
+    fn the_exemption_list_has_no_duplicates() {
+        let mut seen = std::collections::HashSet::new();
+        for id in TYPED_TIER_EXEMPT {
+            assert!(
+                seen.insert(id),
+                "`{id}` is listed twice — the count is a lie"
+            );
+        }
+    }
+
+    #[test]
+    fn a_new_agent_must_satisfy_the_full_contract() {
+        // The whole point: an id nobody grandfathered gets no discount.
+        let (tags, samples, accepts, produces) = conforming();
+        let v = typed_tier_violations(&view(&tags, &samples, &accepts, &produces));
+        assert!(
+            !v.is_empty(),
+            "a new agent with no output_contract must not be publishable"
+        );
+        assert!(v.iter().any(|f| f.check == "output_contract_present"));
+    }
+
+    #[test]
+    fn a_grandfathered_agent_is_not_blocked() {
+        let (tags, samples, accepts, produces) = conforming();
+        let mut vw = view(&tags, &samples, &accepts, &produces);
+        vw.agent_id = "xaman_ek";
+        assert!(
+            typed_tier_violations(&vw).is_empty(),
+            "existing agents must keep working, or the gate gets switched off \
+             the first week it inconveniences someone"
+        );
+    }
+
+    #[test]
+    fn a_new_agent_with_a_complete_contract_passes() {
+        let (tags, samples, accepts, _) = conforming();
+        let produces = strings(&["acme/risk_report"]);
+        let oc = serde_json::json!({
+            "produces_schema": "acme/risk_report",
+            "schema": { "type": "object", "properties": { "risk": {}, "notes": {} } },
+            "grounding": {
+                "risk": { "status": "inferred", "from": "the retrieved incident history",
+                          "why": "A judgement the agent is commissioned to make; no database holds it." },
+                "notes": { "status": "narrative",
+                           "why": "Prose accompanying the rating, constrained to what the sources support." }
+            }
+        });
+        let mut vw = view(&tags, &samples, &accepts, &produces);
+        vw.agent_id = "acme_risk_agent";
+        vw.output_contract = Some(&oc);
+        let v = typed_tier_violations(&vw);
+        assert!(v.is_empty(), "a well-formed new agent must publish: {v:?}");
     }
 
     #[test]
@@ -276,6 +532,9 @@ mod tests {
         let tags = strings(&["pipeline"]);
         let empty: Vec<String> = vec![];
         let v = ContractView {
+            agent_id: "probe",
+            output_contract: None,
+            tool_names: vec![],
             name: "efra_scout",
             description: Some("SCOUT is the first and cheapest filter in the pipeline."),
             system_prompt: Some("You are SCOUT."),
@@ -437,6 +696,9 @@ mod tests {
         let empty: Vec<String> = vec![];
         let tags = strings(&["x"]);
         let v = ContractView {
+            agent_id: "probe",
+            output_contract: None,
+            tool_names: vec![],
             name: "probe",
             description: Some("d"),
             system_prompt: Some("p"),

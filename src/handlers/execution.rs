@@ -291,6 +291,16 @@ pub async fn execute_agent_handler(
     // invisible to the companion loop.
     let dyad_id = agent_bestiary_memory::dyad_id(db_agent.agent_id, &caller_id);
     episode.dyad_id = Some(dyad_id.clone());
+    // Stamp the persona version this run was produced under.
+    //
+    // Live episodes were built with `persona_version_at_write: None`, which
+    // `EpisodeScorer` turned into `unwrap_or(1)`, and `ObservabilityWorker`
+    // skips every entry with `persona_version <= 1`. Drift was therefore
+    // unreachable on live traffic no matter how much of it flowed. It also
+    // kept live embeddings out of `mean_embedding_for_persona_version`, whose
+    // baseline query filters on this exact column — so the drift baselines
+    // were built from eval fixtures alone.
+    episode.persona_version_at_write = Some(db_agent.persona_version);
     // Fold this exchange into the running relationship state.
     crate::spawn_dyad_observation(&state, db_agent.agent_id, dyad_id, &body.query, &output);
 
@@ -325,6 +335,11 @@ pub async fn execute_agent_handler(
         "query_len": body.query.len(),
     });
 
+    // Kept for the observability pass below, which needs the episode's own
+    // fields (dyad, persona version, provenance) after the value is moved into
+    // storage.
+    let episode_for_observation = episode.clone();
+
     let episode_id = state
         .memory_store
         .store_episode_with_provenance(episode, provenance.as_ref(), Some(source_ref))
@@ -333,6 +348,22 @@ pub async fn execute_agent_handler(
             eprintln!("Warning: failed to store episode: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
         })?;
+
+    // Make this turn visible to drift + anomaly detection. Without a timeline
+    // entry the observability worker never sees live traffic, so the HITL
+    // queue is fed only by eval runs. Deterministic evaluators only — no LLM
+    // tokens, no added latency; see `handlers::live_observability`.
+    crate::handlers::live_observability::spawn_live_observation(
+        &state,
+        crate::handlers::live_observability::LiveObservation {
+            episode: episode_for_observation,
+            agent: db_agent.clone(),
+            // Same field the eval pipeline puts in the agent transcript turn.
+            response: output.metadata.reasoning.clone().unwrap_or_default(),
+            session_id: Some("live:execute".to_string()),
+            rupture_detected: false,
+        },
+    );
 
     // 6. Charge credits via GasFees struct
     let tokens = output.tokens_used.unwrap_or(0) as i32;

@@ -74,6 +74,7 @@ mod legacy;
 
 // Re-export everything the rest of the codebase uses from the legacy module.
 pub use legacy::{
+    dispatchable_tool_names,
     // Tool-declaration validation. Names in `capabilities.mcp_tools` must
     // resolve to a dispatch arm in `ToolRegistry::execute`, or they become
     // phantom tools: advertised to the model and over `/mcp/agents/:id`,

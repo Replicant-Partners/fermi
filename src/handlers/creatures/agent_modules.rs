@@ -1678,27 +1678,50 @@ pub async fn creature_dream_handler(
                             .execute(pool_bg)
                             .await;
 
-                            // Update the in-memory registry's ontology_stats so
-                            // enrich_with_kg_context stops fast-pathing this agent.
-                            // We fetch the live entity count from DB rather than
-                            // using result.entities_created (which is the delta,
-                            // not the total).
+                            // Keep the card's ontology_stats honest for display.
+                            //
+                            // This block used to count `SELECT COUNT(*) FROM
+                            // kg_entities` — a table that has never existed. The
+                            // error was swallowed by `.ok().flatten().unwrap_or(0)`,
+                            // so it wrote zero on every cycle while its comment
+                            // claimed it existed to stop `enrich_with_kg_context`
+                            // fast-pathing the agent. It did the exact opposite,
+                            // silently, for every agent that ever dreamt.
+                            //
+                            // The retrieval gate no longer depends on this — it
+                            // queries the knowledge tables directly — so these
+                            // numbers are now presentation only. They are still
+                            // worth getting right, and worth reading from the
+                            // same tables the gate reads.
                             if result.entities_created > 0 || result.rules_extracted > 0 {
-                                let total_entities: i64 = sqlx::query_scalar(
-                                    "SELECT COUNT(*) FROM kg_entities WHERE agent_id = $1",
+                                let counts: Option<(i64, i64)> = sqlx::query_as(
+                                    "SELECT \
+                                       (SELECT COUNT(*) FROM entities \
+                                         WHERE agent_id = $1 \
+                                           AND (t_invalid IS NULL OR t_invalid > NOW())), \
+                                       (SELECT COUNT(*) FROM facts \
+                                         WHERE agent_id = $1 \
+                                           AND (t_invalid IS NULL OR t_invalid > NOW()))",
                                 )
                                 .bind(agent_uuid)
                                 .fetch_optional(pool_bg)
                                 .await
                                 .ok()
-                                .flatten()
-                                .unwrap_or(0);
+                                .flatten();
 
-                                if let Ok(mut card) = spawn_state.registry.get(agent_name) {
-                                    card.ontology_stats.entities = total_entities as u32;
-                                    card.ontology_stats.relationships = result.facts_created as u32;
-                                    card.ontology_stats.evolution_commits += 1;
-                                    let _ = spawn_state.registry.update(card);
+                                if let Some((total_entities, total_facts)) = counts {
+                                    if let Ok(mut card) = spawn_state.registry.get(agent_name) {
+                                        card.ontology_stats.entities = total_entities as u32;
+                                        card.ontology_stats.relationships = total_facts as u32;
+                                        card.ontology_stats.evolution_commits += 1;
+                                        let _ = spawn_state.registry.update(card);
+                                    }
+                                } else {
+                                    tracing::warn!(
+                                        agent_id = %agent_uuid,
+                                        "[dream] could not read knowledge counts; card \
+                                         ontology_stats left stale"
+                                    );
                                 }
                             }
                         }

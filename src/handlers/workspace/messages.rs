@@ -523,6 +523,10 @@ pub async fn post_workspace_message_handler(
                         let dyad_id =
                             agent_bestiary_memory::dyad_id(db_agent.agent_id, &user_id2);
                         episode.dyad_id = Some(dyad_id.clone());
+                        // Persona version — see execution.rs. Without it the
+                        // observability worker skips the entry entirely.
+                        episode.persona_version_at_write =
+                            Some(db_agent.persona_version);
                         crate::spawn_dyad_observation(
                             &state2,
                             db_agent.agent_id,
@@ -557,11 +561,27 @@ pub async fn post_workspace_message_handler(
                         let _ = state2
                             .memory_store
                             .store_episode_with_provenance(
-                                episode,
+                                episode.clone(),
                                 provenance.as_ref(),
                                 Some(source_ref),
                             )
                             .await;
+
+                        // Make this turn visible to drift + anomaly detection.
+                        crate::handlers::live_observability::spawn_live_observation(
+                            &state2,
+                            crate::handlers::live_observability::LiveObservation {
+                                episode,
+                                agent: db_agent.clone(),
+                                response: output
+                                    .metadata
+                                    .reasoning
+                                    .clone()
+                                    .unwrap_or_default(),
+                                session_id: Some("live:workspace".to_string()),
+                                rupture_detected: false,
+                            },
+                        );
 
                         // Charge execution gas from workspace wallet
                         let tokens = output.tokens_used.unwrap_or(0) as i32;

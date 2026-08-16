@@ -205,6 +205,9 @@ pub async fn execute_agent_stream_handler(
     // path can verify the interface match the same way execution.rs does.
     let declared_accepts = card.accepts.clone();
     let agent_tier = db_agent.tier.clone();
+    // Captured for the live observability pass, which needs the agent's
+    // persona version and card snapshot after the handler frame is gone.
+    let db_agent_obs = db_agent.clone();
 
     let stream = async_stream::stream! {
         let start = Instant::now();
@@ -276,6 +279,9 @@ pub async fn execute_agent_stream_handler(
                 // Stamp the (agent, human) dyad — see execution.rs.
                 let dyad_id = agent_bestiary_memory::dyad_id(agent_db_id, &caller_clone);
                 episode.dyad_id = Some(dyad_id.clone());
+                // Persona version — see execution.rs. Without it the
+                // observability worker skips the entry and drift never fires.
+                episode.persona_version_at_write = Some(db_agent_obs.persona_version);
                 crate::spawn_dyad_observation(
                     &state_clone,
                     agent_db_id,
@@ -314,6 +320,8 @@ pub async fn execute_agent_stream_handler(
                     "query_len": query.len(),
                 });
 
+                let episode_for_observation = episode.clone();
+
                 // Store episode
                 let episode_id = match state_clone
                     .memory_store
@@ -326,6 +334,24 @@ pub async fn execute_agent_stream_handler(
                         None
                     }
                 };
+
+                // Make this turn visible to drift + anomaly detection.
+                if episode_id.is_some() {
+                    crate::handlers::live_observability::spawn_live_observation(
+                        &state_clone,
+                        crate::handlers::live_observability::LiveObservation {
+                            episode: episode_for_observation,
+                            agent: db_agent_obs.clone(),
+                            response: output
+                                .metadata
+                                .reasoning
+                                .clone()
+                                .unwrap_or_default(),
+                            session_id: Some("live:execute_stream".to_string()),
+                            rupture_detected: false,
+                        },
+                    );
+                }
 
                 // Charge credits
                 let tokens = output.tokens_used.unwrap_or(0) as i32;

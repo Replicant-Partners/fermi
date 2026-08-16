@@ -72,6 +72,7 @@ pub mod impersonation;
 pub mod invites;
 pub mod kg;
 pub mod lifecycle;
+pub mod live_observability;
 pub mod marketplace;
 pub mod mcp;
 pub mod metrics;

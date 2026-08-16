@@ -41,10 +41,49 @@ pub async fn enrich_with_kg_context(
     // Phase 0 — baseline timing span
     let t_total = tokio::time::Instant::now();
 
-    // Fast-path: skip external embedding call when KG is empty.
-    // Common case for new agents; avoids ~300-800ms API call that finds nothing.
-    if card.ontology_stats.entities == 0 && card.ontology_stats.relationships == 0 {
-        return (card, None);
+    // Fast-path: skip the external embedding call when there is nothing to
+    // retrieve. Avoids a ~300-800ms API call that would find nothing.
+    //
+    // ## Why this asks the database and not the card
+    //
+    // This gate used to read `card.ontology_stats`, which is a field on the
+    // agent card that essentially nothing maintains:
+    //
+    //   * cards reconstructed from a DB row hardcode `entities: 0`
+    //     (`api_server.rs`, `db_agent_to_card`)
+    //   * 31 of 100 curated card JSONs omit the block entirely, and every
+    //     field is `#[serde(default)]`, so it deserialises to zero
+    //   * the single code path that ever updated it counted
+    //     `SELECT COUNT(*) FROM kg_entities` — a table that does not exist.
+    //     The error was swallowed by `.ok().flatten().unwrap_or(0)`, so it
+    //     wrote zero every time. Its own comment said it existed "so
+    //     enrich_with_kg_context stops fast-pathing this agent".
+    //
+    // The consequence was that the gate was closed for virtually every agent,
+    // permanently. Consolidation extracted entities and rules, stored them
+    // correctly, and no execution ever read them back — Loop 1 wrote to memory
+    // it could not consult. An agent with a hundred learned rules behaved
+    // exactly like one that had never dreamed.
+    //
+    // So ask the tables. An indexed `EXISTS` costs well under a millisecond
+    // against the hundreds we are deciding whether to spend, and it cannot
+    // drift from the truth the way a denormalised counter can.
+    match retrievable_knowledge(memory_store, agent_uuid).await {
+        Retrievable::Nothing => return (card, None),
+        Retrievable::PresentButUnembedded => {
+            // Distinct from "nothing learned", and worth saying out loud.
+            // Retrieval is embedding-based on both the ANN and the fallback
+            // path, so a row with a NULL embedding is invisible to every
+            // reader. The agent has knowledge it structurally cannot recall.
+            tracing::warn!(
+                agent_id = %agent_uuid,
+                site = "kg_context_gate",
+                "agent has knowledge rows but none carry embeddings — nothing is \
+                 retrievable; backfill embeddings to close Loop 1 for this agent"
+            );
+            return (card, None);
+        }
+        Retrievable::Yes => {}
     }
 
     // Generate query embedding (Phase 1: returned to caller)
@@ -164,14 +203,26 @@ pub async fn enrich_with_kg_context(
     // Build prompt block (ANN path: no per-item scores available, use confidence)
     let episodic_owned: Vec<_> = episodic_entities.into_iter().cloned().collect();
     let kg_block = build_kg_block_ann(&top_rules, &episodic_owned, &cep_entities);
-    if !kg_block.is_empty() {
-        let base = card.system_prompt.unwrap_or_default();
-        card.system_prompt = Some(format!("{}{}", base, kg_block));
+    let injected = !kg_block.is_empty();
+    if injected {
+        card.system_prompt = Some(append_kg_block(card.system_prompt.take(), &kg_block));
     }
 
+    // Record what actually reached the prompt, not merely that we tried.
+    //
+    // The previous log fired identically whether the agent received a hundred
+    // recalled rules or nothing at all, which made "is retrieval working?"
+    // unanswerable from logs — the question that mattered most while the gate
+    // was silently closed for every agent. These fields make an execution's
+    // recall auditable after the fact.
     tracing::info!(
         elapsed_ms = t_total.elapsed().as_millis() as u64,
         agent_id = %agent_uuid,
+        injected,
+        rules = top_rules.len(),
+        episodic_entities = episodic_owned.len(),
+        cep_entities = cep_entities.len(),
+        block_chars = kg_block.len(),
         "kg_context_enrich"
     );
 
@@ -179,6 +230,242 @@ pub async fn enrich_with_kg_context(
 }
 
 /// Try pgvector ANN retrieval. Returns None if HNSW indices aren't ready yet.
+/// What the knowledge tables can actually serve for an agent.
+#[derive(Debug, PartialEq, Eq)]
+enum Retrievable {
+    /// No entities and no active rules. A new agent, or one that has never
+    /// consolidated. Skipping is correct and cheap.
+    Nothing,
+    /// Rows exist, but none carry an embedding, so no reader can reach them.
+    /// Distinguished from `Nothing` because it is a defect, not a lifecycle
+    /// stage — something wrote knowledge without embedding it.
+    PresentButUnembedded,
+    /// At least one embedded entity or active rule. Worth paying for a query
+    /// embedding.
+    Yes,
+}
+
+/// Single indexed round-trip answering "is there anything to retrieve?".
+///
+/// Embedded rows count because that is what similarity retrieval requires: the
+/// ANN path matches on the `embedding` column and the load-all fallback does
+/// `filter_map(|r| r.embedding.as_ref())`.
+///
+/// `cep_*` entities count **without** an embedding. They are seed reference
+/// data — `get_top_k_entities_with_cep` returns them via a `UNION ALL` branch
+/// that is neither similarity-gated nor embedding-filtered, so they are always
+/// injected. Requiring an embedding of them would suppress the one class of
+/// knowledge that is deliberately stored without one.
+async fn retrievable_knowledge(store: &Arc<MemoryStore>, agent_id: Uuid) -> Retrievable {
+    let row = sqlx::query(
+        r#"
+        SELECT
+          EXISTS(SELECT 1 FROM entities
+                  WHERE agent_id = $1
+                    AND (t_invalid IS NULL OR t_invalid > NOW())) AS any_entity,
+          EXISTS(SELECT 1 FROM semantic_rules
+                  WHERE agent_id = $1 AND is_active)              AS any_rule,
+          EXISTS(SELECT 1 FROM entities
+                  WHERE agent_id = $1 AND embedding IS NOT NULL
+                    AND (t_invalid IS NULL OR t_invalid > NOW())) AS embedded_entity,
+          EXISTS(SELECT 1 FROM semantic_rules
+                  WHERE agent_id = $1 AND is_active
+                    AND embedding IS NOT NULL)                    AS embedded_rule,
+          EXISTS(SELECT 1 FROM entities
+                  WHERE agent_id = $1 AND entity_type LIKE 'cep\_%'
+                    AND (t_invalid IS NULL OR t_invalid > NOW())) AS any_cep
+        "#,
+    )
+    .bind(agent_id)
+    .fetch_optional(store.pool())
+    .await;
+
+    let Ok(Some(row)) = row else {
+        // A failed probe must not silently disable learning. Assume there is
+        // something to retrieve and let the real query decide — the cost of
+        // being wrong is one embedding call, and the cost of the opposite
+        // default is the bug this function was written to fix.
+        return Retrievable::Yes;
+    };
+
+    classify_retrievable(
+        row.get::<bool, _>("any_entity") || row.get::<bool, _>("any_rule"),
+        row.get::<bool, _>("embedded_entity") || row.get::<bool, _>("embedded_rule"),
+        row.get::<bool, _>("any_cep"),
+    )
+}
+
+/// Append the retrieved-knowledge block to an agent's system prompt.
+///
+/// Trivial, and extracted anyway: this single concatenation is the whole
+/// mechanism by which everything Loop 1 learns reaches the model. From here it
+/// travels `card.system_prompt` → `ExecutionContext.agent_card` →
+/// `LlmExecutor::build_system_prompt` → the `system` field of the provider
+/// request. If this appends to the wrong thing, or the caller drops the
+/// returned card, every embedding on the platform is dead weight.
+fn append_kg_block(system_prompt: Option<String>, block: &str) -> String {
+    format!("{}{}", system_prompt.unwrap_or_default(), block)
+}
+
+/// Decide what the counts mean. Split out so the semantics are pinned by test
+/// rather than by a DB fixture.
+fn classify_retrievable(any_rows: bool, any_embedded: bool, any_cep: bool) -> Retrievable {
+    match (any_rows, any_embedded || any_cep) {
+        (_, true) => Retrievable::Yes,
+        (true, false) => Retrievable::PresentButUnembedded,
+        (false, false) => Retrievable::Nothing,
+    }
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+
+    /// The gate that broke Loop 1. An agent with learned knowledge must not be
+    /// classified as having nothing to retrieve — that is what a stale
+    /// `ontology_stats` counter did for every agent on the platform.
+    #[test]
+    fn embedded_knowledge_opens_the_gate() {
+        assert_eq!(classify_retrievable(true, true, false), Retrievable::Yes);
+    }
+
+    /// A genuinely new agent. Skipping is correct and saves a 300-800ms call.
+    #[test]
+    fn no_knowledge_closes_the_gate() {
+        assert_eq!(
+            classify_retrievable(false, false, false),
+            Retrievable::Nothing
+        );
+    }
+
+    /// The state worth naming: rows exist, none are reachable. Retrieval is
+    /// embedding-based on both the ANN and fallback paths, so an unembedded
+    /// row is invisible — paying for a query embedding would find nothing.
+    /// Distinguished from `Nothing` so it can be logged as the defect it is.
+    #[test]
+    fn unembedded_knowledge_is_distinguished_from_none() {
+        assert_eq!(
+            classify_retrievable(true, false, false),
+            Retrievable::PresentButUnembedded
+        );
+        assert_ne!(
+            classify_retrievable(true, false, false),
+            classify_retrievable(false, false, false),
+            "an agent that learned but cannot recall is not the same as a new agent"
+        );
+    }
+
+    /// CEP seed entities are deliberately stored without embeddings and are
+    /// injected unconditionally by `get_top_k_entities_with_cep`'s second
+    /// UNION branch. Requiring an embedding of them would suppress the only
+    /// knowledge class designed not to have one — on this deployment that is
+    /// 107 rows across agents like `biotech_analyst`, whose entire ontology is
+    /// CEP seed data.
+    use agent_bestiary_memory::{Entity, SemanticRule};
+    use chrono::Utc;
+
+    fn rule(content: &str) -> SemanticRule {
+        SemanticRule {
+            rule_id: Uuid::new_v4(),
+            agent_id: Uuid::nil(),
+            rule_content: content.to_string(),
+            rule_description: None,
+            confidence_score: 0.9,
+            verification_status: agent_bestiary_memory::VerificationStatus::Pending,
+            verification_method: None,
+            source_episode_cluster: vec![],
+            episode_count: 3,
+            embedding: None,
+            is_active: true,
+            created_at: Utc::now(),
+        }
+    }
+
+    fn seed_entity(name: &str, etype: &str, summary: &str) -> Entity {
+        Entity {
+            entity_id: Uuid::new_v4(),
+            agent_id: Uuid::nil(),
+            entity_name: name.to_string(),
+            entity_type: etype.to_string(),
+            summary: Some(summary.to_string()),
+            t_valid: Utc::now(),
+            t_invalid: None,
+            source_episodes: vec![],
+            extraction_confidence: 0.85,
+            embedding: None,
+            properties: None,
+        }
+    }
+
+    /// The end of the chain, and the reason embeddings are worth generating.
+    ///
+    /// Retrieved knowledge is only useful if its *text* reaches the model. This
+    /// asserts the actual rule content and entity names appear in the block —
+    /// not merely that a block was produced. A block that renders headings and
+    /// drops the content would satisfy every count-based check while teaching
+    /// the agent nothing.
+    #[test]
+    fn retrieved_knowledge_reaches_the_prompt_text() {
+        let r = rule("kombucha_fermentation overestimates yield above 65C");
+        let learned = seed_entity("Kelly criterion", "concept", "bet sizing rule");
+        let cep = seed_entity(
+            "AFC confederation strength",
+            "cep_base_rate",
+            "coefficient 0.82",
+        );
+
+        let block = build_kg_block_inner(&[(None, &r)], &[(None, &learned)], &[&cep]);
+
+        assert!(
+            block.contains("kombucha_fermentation overestimates yield above 65C"),
+            "learned rule content must reach the prompt, got: {block}"
+        );
+        assert!(
+            block.contains("Kelly criterion"),
+            "retrieved entity name must reach the prompt, got: {block}"
+        );
+        assert!(
+            block.contains("AFC confederation strength"),
+            "CEP seed must reach the prompt, got: {block}"
+        );
+
+        // And the block must survive the append onto an existing prompt.
+        let enriched = append_kg_block(Some("You are a forecaster.".into()), &block);
+        assert!(
+            enriched.starts_with("You are a forecaster."),
+            "base prompt preserved"
+        );
+        assert!(
+            enriched.contains("kombucha_fermentation overestimates yield above 65C"),
+            "knowledge must survive the append into system_prompt"
+        );
+    }
+
+    /// An agent with no prior system prompt must still receive its knowledge.
+    #[test]
+    fn append_works_without_a_base_prompt() {
+        let out = append_kg_block(None, "\n\n## Learned Knowledge\n- something");
+        assert!(out.contains("## Learned Knowledge"));
+        assert!(out.contains("- something"));
+    }
+
+    /// Nothing retrieved must produce nothing appended, so an empty recall
+    /// cannot silently pad every prompt with an empty heading.
+    #[test]
+    fn empty_retrieval_produces_no_block() {
+        assert!(build_kg_block_inner(&[], &[], &[]).is_empty());
+    }
+
+    #[test]
+    fn cep_seeds_open_the_gate_without_embeddings() {
+        assert_eq!(
+            classify_retrievable(true, false, true),
+            Retrievable::Yes,
+            "an agent holding only CEP seeds has retrievable knowledge"
+        );
+    }
+}
+
 async fn try_ann_retrieval(
     store: &Arc<MemoryStore>,
     agent_id: Uuid,

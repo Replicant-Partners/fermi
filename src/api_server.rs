@@ -228,7 +228,13 @@ const LLM_SPEND_ROUTES: &[&str] = &[
     "/api/agents/*/execute/stream",
     "/api/agents/*/eval/run",
     "/api/agents/*/consolidate",
-    "/api/agents/*/dreaming",
+    // NOT `/api/agents/*/dreaming`. That path is a GET returning Loop 1
+    // maturity — five COUNT queries and no model call. It was listed here as
+    // though it were a dispatch, and since the matcher is path-only (no
+    // method), the effect was a 10/min ceiling on a read. The observatory
+    // loads it on every agent selection, so an operator clicking through
+    // eleven agents in a minute got a 429 from a rate limiter that exists to
+    // cap the LLM bill. The dispatch on this loop is `*/consolidate`, above.
     "/api/me/eval/runs/batch",
     "/api/creatures/*/enemy-sensor",
     "/api/creatures/*/genome-profiler",
@@ -1127,6 +1133,7 @@ async fn run_migrations(db: &PgPool) {
         // base for inducing output types, so the port-typing campaign cannot
         // start. See docs/ABW_VERIFICATION_RECONCILIATION.md §7.7.
         "migrations/199_episode_response_retention.sql",
+        "migrations/200_coordinator_observation_provenance.sql",
         // `anomaly_events.kind` gains 'grounding', so a field the agent could
         // not have sourced becomes a reportable event rather than a stderr
         // line. Also tags the 13 cached genome profiles written before the
@@ -1975,7 +1982,7 @@ async fn main() {
 
     // Seed filesystem agents into database (idempotent)
     println!("Seeding agents to database...");
-    seed_agents_to_database(&memory_store, &registry).await;
+    seed_agents_to_database(&memory_store, &registry, &embedder).await;
 
     // SPEC_30 / mig-186 — classify any agent still lacking a taxonomy.
     //
@@ -2210,6 +2217,16 @@ async fn main() {
     // this is idempotent with the hooks rather than competing with them.
     // Disable with FERMI_HISTORY_RECONCILE_SECS=0.
     handlers::forecast_git::spawn_history_reconciler(state.db.clone(), state.workspace_git.clone());
+
+    // Loop 1 → Loop 2: read the timeline entries live executions now write.
+    //
+    // `ObservabilityWorker::scan_agent` had three call sites, all of them
+    // either the eval pipeline or a manual observatory endpoint. Nothing ran
+    // it on a schedule, so drift and anomaly detection only happened when
+    // someone asked. With live traffic producing entries, this is what turns
+    // them into `anomaly_events` and therefore into HITL review items.
+    // Disable with OBSERVABILITY_SCAN_SECS=0.
+    handlers::live_observability::spawn_observability_sweeper(state.clone());
 
     // Spawn rate limiter cleanup task (every 5 min)
     let rl_clone = state.rate_limits.clone();
@@ -2476,6 +2493,13 @@ async fn main() {
         .route(
             "/api/observatory/agents/:agent_id/anomalies",
             get(handlers::observatory::list_agent_anomalies_handler),
+        )
+        // Per-agent RSI loop health. Replaces the observatory Loops tab's
+        // client-side assembly, two rows of which were hardcoded constants
+        // rendered under a live status column.
+        .route(
+            "/api/observatory/agents/:agent_id/loops",
+            get(handlers::observatory::agent_loops_handler),
         )
         .route(
             "/api/observatory/agents/:agent_id/scan",
@@ -4780,7 +4804,11 @@ async fn fallback_404() -> (StatusCode, Html<String>) {
 
 // ─── Agent seeding (filesystem → database) ─────────────────────────
 
-async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentRegistry) {
+async fn seed_agents_to_database(
+    memory_store: &MemoryStore,
+    registry: &AgentRegistry,
+    embedder: &Arc<dyn EmbeddingGenerator>,
+) {
     let cards = match registry.list_cards() {
         Ok(cards) => cards,
         Err(_) => return,
@@ -4958,7 +4986,7 @@ async fn seed_agents_to_database(memory_store: &MemoryStore, registry: &AgentReg
                 // Seed CEP knowledge-graph entities from fermi_contract.seed_facts (idempotent)
                 if let Some(fc) = &card.capabilities.fermi_contract {
                     if !fc.seed_facts.is_empty() {
-                        seed_cep_entities(memory_store, id, &card.agent_id, fc).await;
+                        seed_cep_entities(memory_store, embedder, id, &card.agent_id, fc).await;
                     }
 
                     // SPEC_29 / mig-180 — grant Fermi orchestra membership
@@ -5214,22 +5242,99 @@ async fn seed_apps_to_database(db: &sqlx::PgPool) {
 
 async fn seed_cep_entities(
     memory_store: &MemoryStore,
+    embedder: &Arc<dyn EmbeddingGenerator>,
     agent_uuid: uuid::Uuid,
     agent_name: &str,
     fc: &fermi::agent_backend::agent_card::FermiContract,
 ) {
-    // Check if CEP entities already exist to stay idempotent across restarts.
+    // Idempotency is per fact, keyed on (name, type) — not on a naming
+    // convention.
+    //
+    // This guard used to be `existing.any(|e| e.entity_type.starts_with("cep_"))`,
+    // while the loop below writes whatever `entity_type` the card declares. For
+    // any card whose seed facts are not `cep_`-prefixed — `field_baseline`,
+    // `confederation_coefficient`, `fixture_congestion`, and the rest — the
+    // guard could never fire, so **every server boot re-seeded the entire set**.
+    //
+    // Measured on this deployment before the fix: 15 distinct seed facts stored
+    // as 2,475 rows. Exactly 165 identical copies of each, across
+    // `football_institution_agent`, `macro_data_agent` and `fixture_context_agent`
+    // — one per boot, growing without bound. `weather_oracle` was unaffected
+    // only because it happens to declare six genuinely `cep_`-prefixed facts,
+    // which tripped the old guard.
+    //
+    // Keying on (name, type) is idempotent per fact rather than per agent, so a
+    // card that gains a new seed fact picks it up on next boot instead of being
+    // skipped wholesale.
     let existing = memory_store
         .get_agent_entities(agent_uuid)
         .await
         .unwrap_or_default();
-    let has_cep = existing.iter().any(|e| e.entity_type.starts_with("cep_"));
-    if has_cep {
+    let existing_facts: std::collections::HashSet<(&str, &str)> = existing
+        .iter()
+        .map(|e| (e.entity_name.as_str(), e.entity_type.as_str()))
+        .collect();
+
+    let pending: Vec<_> = fc
+        .seed_facts
+        .iter()
+        .filter(|sf| !existing_facts.contains(&(sf.name.as_str(), sf.entity_type.as_str())))
+        .collect();
+    let skipped = fc.seed_facts.len() - pending.len();
+    if pending.is_empty() {
         return;
     }
 
+    // Embed seed facts at write time.
+    //
+    // These used to be stored with `embedding: None`, on the reasoning that
+    // "the consolidation worker may later opportunistically embed
+    // `entity_name` if needed". It never did, and nothing else does either, so
+    // the vectors were never created.
+    //
+    // That is only survivable for `cep_`-typed rows, which
+    // `get_top_k_entities_with_cep` injects unconditionally. Everything else
+    // needs a vector to be reachable at all: both retrieval paths filter on
+    // `embedding IS NOT NULL`. Seeding without one produces curated knowledge
+    // that no agent can ever recall.
+    //
+    // Embedding here also makes seed data *scale*. Always-injection is fine
+    // for a handful of constants but blows the context window at volume;
+    // similarity retrieval returns the top-k that matter for the actual query.
+    //
+    // Cost is bounded: the idempotency filter above runs first, so a steady
+    // -state boot embeds nothing. Only genuinely new facts are paid for.
+    let texts: Vec<String> = pending
+        .iter()
+        .map(|sf| format!("{}: {}", sf.name, sf.description))
+        .collect();
+    let embeddings = match embedder.generate_provenanced_batch(&texts).await {
+        Ok(v) if v.len() == pending.len() => Some(v),
+        Ok(v) => {
+            eprintln!(
+                "  Warning: embedder returned {} vectors for {} seed facts on {} — \
+                 storing without embeddings",
+                v.len(),
+                pending.len(),
+                agent_name
+            );
+            None
+        }
+        Err(e) => {
+            // Never block boot on an embedding outage. The rows are still
+            // written; the retrievability census will report them as stranded.
+            eprintln!(
+                "  Warning: could not embed seed facts for {} ({}); storing \
+                 without embeddings — they will not be retrievable until \
+                 backfilled",
+                agent_name, e
+            );
+            None
+        }
+    };
+
     let mut seeded = 0usize;
-    for sf in &fc.seed_facts {
+    for (i, sf) in pending.iter().enumerate() {
         let entity = agent_bestiary_memory::Entity {
             entity_id: uuid::Uuid::new_v4(),
             agent_id: agent_uuid,
@@ -5240,19 +5345,18 @@ async fn seed_cep_entities(
             t_invalid: None,
             source_episodes: vec![],
             extraction_confidence: sf.confidence,
-            embedding: None,
+            embedding: None, // set by store_entity_with_provenance below
             properties: Some(sf.properties.clone()),
         };
-        // CEP seed entities have NULL embedding by design (no vector available
-        // at seed time; the consolidation worker may later opportunistically
-        // embed `entity_name` if needed). Stamp source_ref so the row is
-        // identifiable as a CEP seed.
+        // Stamp source_ref so the row is identifiable as a seed rather than
+        // something an episode produced.
         let source_ref = serde_json::json!({
             "kind": "cep_seed",
             "agent_name": agent_name,
         });
+        let provenance = embeddings.as_ref().map(|v| &v[i]);
         match memory_store
-            .store_entity_with_provenance(entity, None, Some(source_ref))
+            .store_entity_with_provenance(entity, provenance, Some(source_ref))
             .await
         {
             Ok(_) => seeded += 1,
@@ -5263,7 +5367,10 @@ async fn seed_cep_entities(
         }
     }
     if seeded > 0 {
-        println!("  Seeded {} CEP entities for {}", seeded, agent_name);
+        println!(
+            "  Seeded {} CEP entities for {} ({} already present)",
+            seeded, agent_name, skipped
+        );
     }
 }
 
@@ -6041,7 +6148,6 @@ mod failure_provenance_tests {
             "/api/agents/1f3c-abc/execute/stream",
             "/api/agents/1f3c-abc/eval/run",
             "/api/agents/1f3c-abc/consolidate",
-            "/api/agents/1f3c-abc/dreaming",
             "/api/me/eval/runs/batch",
             "/api/creatures/9a/genome-profiler",
             "/api/creatures/9a/enemy-sensor",
@@ -6069,6 +6175,11 @@ mod failure_provenance_tests {
             "/api/agents/1f3c-abc",
             "/api/agents/1f3c-abc/episodes",
             "/api/agents/1f3c-abc/eval/runs",
+            // Loop 1 maturity: a read the observatory issues on every agent
+            // selection. It was on the LLM list, which capped the clinical
+            // view at ten agents per minute.
+            "/api/agents/1f3c-abc/dreaming",
+            "/api/observatory/agents/1f3c-abc/loops",
             "/api/forecasts",
             "/api/creatures/9a",
             "/api/workspaces/w1/messages",

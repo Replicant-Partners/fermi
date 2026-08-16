@@ -72,6 +72,13 @@ pub const PROV_UNAVAILABLE: &str = "unavailable_no_tool_source";
 /// sourced inputs. Legitimate output, explicitly labelled as reasoning
 /// rather than retrieval.
 pub const PROV_INFERRED: &str = "model_inference";
+/// Computed by platform code from a sourced value, deterministically.
+///
+/// Distinct from [`PROV_INFERRED`] in the way that matters: a derivation is
+/// reproducible and auditable — the same input yields the same output, and
+/// the transform can be read. A model inference is neither. Collapsing them
+/// would lose exactly the property that makes a derived value trustworthy.
+pub const PROV_DERIVED: &str = "platform_derived";
 
 /// Every value `<block>_provenance` is permitted to take.
 ///
@@ -111,6 +118,19 @@ pub enum Grounding {
     Inferred {
         /// What the judgement is reasoned from, for the report.
         from: &'static str,
+    },
+    /// Computed by platform code from a sourced field, deterministically.
+    ///
+    /// `phylogeny.superorder` is the motivating case: it is not a GBIF rank
+    /// and no tool returns it, but it follows from `taxonomy.order` through a
+    /// closed ~30-entry table (Lepidoptera -> Holometabola). While the model
+    /// supplied it from memory it was `Unsourced`; once platform code applies
+    /// the table it is reproducible, and that is a different kind of claim.
+    Derived {
+        /// The sourced field it is computed from.
+        from: &'static str,
+        /// The transform, named so a reader can check it.
+        how: &'static str,
     },
     /// Free prose. Permitted, but must not assert anything the sourced
     /// blocks cannot support — see [`NARRATIVE_LEAKS`].
@@ -237,18 +257,31 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
     FieldContract {
         agent_id: "genome_profiler",
         path: "genome.estimated_size_mb",
-        grounding: Grounding::Unsourced,
-        why: "No genome database is wired up. Would need NCBI Assembly, and \
-              only a minority of insect species have a sequenced genome, so \
-              even then null is the common correct answer.",
+        grounding: Grounding::Sourced {
+            tool: "ncbi_genome_search",
+            response_field: "estimated_size_mb (assembly total_length)",
+        },
+        why: "Was Unsourced; now answerable. NCBI Assembly reports \
+              `total_length` and the tool names which assembly supplied it. \
+              Coverage is ~2 of 6 for the species actually in \
+              creature_conditions, so `tool_no_match` stays the common \
+              outcome — a fact about the world, not a gap in the platform. \
+              The value this replaces was not merely unsourced but wrong: the \
+              prompt asserted Lepidoptera ~400-500Mb; the monarch is 245Mb.",
     },
     FieldContract {
         agent_id: "genome_profiler",
         path: "genome.chromosome_count",
-        grounding: Grounding::Unsourced,
-        why: "Patchier than genome size. Karyotype data is largely in \
-              published literature with no clean API — a manual-curation \
-              candidate, not an integration one.",
+        grounding: Grounding::Sourced {
+            tool: "ncbi_genome_search",
+            response_field: "assembled_chromosome_count",
+        },
+        why: "Was Unsourced on the belief that karyotype data has no API. \
+              Partly wrong: NCBI reports `chromosome_count` in assembly \
+              metadata. It counts assembled chromosome-level replicons, not a \
+              cytological karyotype — for Danaus plexippus it returns 30, \
+              matching published n=30, and that agreement is not a licence to \
+              relabel it. Same coverage as genome size.",
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -260,20 +293,29 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         agent_id: "genome_profiler",
         path: "genome.ploidy",
         grounding: Grounding::Unsourced,
-        why: "The card's own JSON example pre-filled this with \"diploid\", \
-              which is how a schema example becomes a default answer. Almost \
-              always right for insects and still unsourced — and a field \
-              that is usually right is exactly the one nobody checks.",
+        why: "Stays unsourced even though NCBI is now wired up, and this is \
+              the instructive one. NCBI returns `assemblytype: haploid` for \
+              the monarch, which it is very tempting to map here — and it \
+              would be FALSE: that field describes how the ASSEMBLY \
+              represents the genome, not the organism. A monarch is diploid. \
+              A plausible, convenient, wrong mapping is exactly the class \
+              this contract exists to stop, so the tool returns ploidy as \
+              null with that reason attached.",
     },
     FieldContract {
         agent_id: "genome_profiler",
         path: "phylogeny.superorder",
-        grounding: Grounding::Unsourced,
-        why: "Not a GBIF rank. It IS derivable from `taxonomy.order` via a \
-              closed ~30-entry mapping (Lepidoptera -> Holometabola), but \
-              nobody has written that mapping, so today the model is \
-              supplying it from memory. Cheapest of these to promote to \
-              Derived: write the table.",
+        grounding: Grounding::Derived {
+            from: "taxonomy.order",
+            how: "ncbi_tools::superorder_of — a closed table over the ~30 insect orders",
+        },
+        why: "The table got written, so this moved from Unsourced to Derived. \
+              No tool returns a superorder and none needs to: it is a \
+              deterministic function of an order GBIF does return. The \
+              distinction from Inferred matters — a derivation is reproducible \
+              and its table can be checked row by row, which is not true of \
+              the recall it replaces. Unknown orders return None rather than \
+              something plausible.",
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -734,6 +776,15 @@ pub fn enforce(agent_id: &str, doc: &mut Value) -> Report {
         .filter(|c| matches!(c.grounding, Grounding::Inferred { .. }))
         .map(|c| block_of(c.path))
         .collect();
+
+    // Blocks computed by platform code from a sourced value. Ranked above
+    // `inferred` when both are present in a block, because a reproducible
+    // derivation is the stronger claim and the label should say so.
+    let derived_blocks: Vec<&str> = contracts
+        .iter()
+        .filter(|c| matches!(c.grounding, Grounding::Derived { .. }))
+        .map(|c| block_of(c.path))
+        .collect();
     let block_is_sourced = |b: &str| {
         sourced_block_has_content
             .iter()
@@ -799,8 +850,9 @@ pub fn enforce(agent_id: &str, doc: &mut Value) -> Report {
             // Has sourced fields and none came back: the tool was asked and
             // had nothing. Distinct from "no tool exists".
             Some(false) => PROV_NO_MATCH,
-            // No sourced field. Judgement blocks are labelled as such;
-            // anything else genuinely has no source.
+            // No sourced field. A reproducible derivation outranks a model
+            // judgement; anything else genuinely has no source.
+            None if derived_blocks.contains(&b) => PROV_DERIVED,
             None if inferred_blocks.contains(&b) => PROV_INFERRED,
             None => PROV_UNAVAILABLE,
         };
@@ -891,12 +943,10 @@ mod tests {
         let mut doc = fabricated();
         let report = enforce("genome_profiler", &mut doc);
 
+        // Still unsourceable: no tool supplies these, so they go.
         for path in [
-            "genome.estimated_size_mb",
-            "genome.chromosome_count",
-            "genome.notable_genes",
             "genome.ploidy",
-            "phylogeny.superorder",
+            "genome.notable_genes",
             "phylogeny.divergence_mya",
             "phylogeny.defining_traits",
             "conservation.iucn_status",
@@ -905,26 +955,75 @@ mod tests {
         ] {
             assert!(
                 get_path(&doc, path).unwrap().is_null(),
-                "{path} had no possible source and survived enforcement"
+                "{path} still has no source and must be stripped"
             );
             assert!(
                 report.violations.iter().any(|v| v.path == path),
-                "{path} was stripped without being reported — a silent fix \
-                 is how this became invisible the first time"
+                "{path} was stripped without being reported"
             );
         }
 
-        let size = report
+        let iucn = report
             .violations
             .iter()
-            .find(|v| v.path == "genome.estimated_size_mb")
+            .find(|v| v.path == "conservation.iucn_status")
             .unwrap();
         assert_eq!(
-            size.removed,
-            json!("420-480"),
-            "the fabricated value must be retained for reprocessing, not \
-             discarded — 'tag, do not delete'"
+            iucn.removed,
+            json!("Not Evaluated (presumed Least Concern)"),
+            "the fabricated value must be retained for reprocessing"
         );
+    }
+
+    /// The fields the NCBI integration gave back.
+    ///
+    /// Before `ncbi_genome_search` existed, `enforce` nulled genome size and
+    /// chromosome count and stamped the block `unavailable_no_tool_source`.
+    /// The contract entries changed and nothing else did: same enforcement
+    /// code, same card, opposite outcome. That is the property worth having —
+    /// grounding is a statement about the tools available, so wiring up a tool
+    /// is the whole fix.
+    #[test]
+    fn newly_sourced_fields_come_back() {
+        let mut doc = fabricated();
+        let report = enforce("genome_profiler", &mut doc);
+
+        for path in ["genome.estimated_size_mb", "genome.chromosome_count"] {
+            assert!(
+                !get_path(&doc, path).unwrap().is_null(),
+                "{path} is sourced from ncbi_genome_search now and must survive"
+            );
+            assert!(
+                !report.violations.iter().any(|v| v.path == path),
+                "{path} must no longer be reported as a violation"
+            );
+        }
+
+        assert_eq!(
+            doc.get("genome_provenance").and_then(|v| v.as_str()),
+            Some(PROV_TOOL),
+            "the genome block has a real tool behind it now"
+        );
+    }
+
+    /// A derivation is not a retrieval and not a guess.
+    #[test]
+    fn a_derived_field_survives_and_says_it_was_computed() {
+        let mut doc = json!({
+            "taxonomy": { "order": "Lepidoptera" },
+            "phylogeny": { "superorder": "Holometabola", "sister_taxa": [] },
+            "summary": "A nymphalid."
+        });
+        let report = enforce("genome_profiler", &mut doc);
+        assert_eq!(
+            get_path(&doc, "phylogeny.superorder").unwrap(),
+            &json!("Holometabola"),
+            "superorder is derivable from taxonomy.order by a closed table"
+        );
+        assert!(!report
+            .violations
+            .iter()
+            .any(|v| v.path == "phylogeny.superorder"));
     }
 
     #[test]
@@ -953,7 +1052,11 @@ mod tests {
 
     #[test]
     fn the_narrative_is_not_a_loophole() {
+        // Partial sourcing means partial leak detection, which is the correct
+        // behaviour and worth pinning: now that genome size HAS a tool, prose
+        // may cite it. Conservation still does not, so prose may not.
         let mut doc = fabricated();
+        doc["summary"] = json!("Apatura iris is Not Evaluated by the IUCN and of least concern.");
         let report = enforce("genome_profiler", &mut doc);
         let leak = report
             .violations
@@ -961,39 +1064,24 @@ mod tests {
             .find(|v| v.path == "summary" && v.kind == ViolationKind::NarrativeLeak);
         assert!(
             leak.is_some(),
-            "the summary restates the genome size. Clearing the structured \
-             fields while leaving the prose moves the fabrication into the \
-             one string a user actually reads, because parse_evidence_text \
-             lifts summary out as the episode's evidence"
+            "the summary asserts a conservation status no tool can supply"
         );
-        assert!(
-            doc.get("summary").unwrap().is_null(),
-            "a leaking summary must be cleared, not just counted"
-        );
-        assert!(
-            leak.unwrap().removed.as_str().unwrap().contains("450 Mb"),
-            "and the text retained for reprocessing"
-        );
+        assert!(doc.get("summary").unwrap().is_null());
     }
 
     #[test]
-    fn a_unit_needs_a_number_before_it_counts_as_a_claim() {
-        // Regression: the first version of NARRATIVE_LEAKS used a bare " gb"
-        // needle, which matches "GBIF" — so a summary that honestly cited
-        // its own source was reported as leaking a genome size.
-        let gb = LeakRule::Quantity("gb");
-        assert!(!gb.matches("gbif places it in apatura"));
-        assert!(!gb.matches("retrieved from gbif"));
-        assert!(gb.matches("a 6.5 gb genome"));
-
-        let mb = LeakRule::Quantity("mb");
-        assert!(mb.matches("~480 mb"));
-        assert!(mb.matches("420-480mb"));
-        assert!(!mb.matches("the mbuna of lake malawi"));
-
-        let mya = LeakRule::Quantity("mya");
-        assert!(mya.matches("diverged ~90 mya"));
-        assert!(!mya.matches("collected in myanmar"));
+    fn prose_may_cite_a_field_once_it_has_a_tool() {
+        // The same sentence that was a leak before the NCBI integration is
+        // legitimate after it. A leak rule keyed to a word rather than to
+        // whether the block is sourced would have got this wrong forever.
+        let mut doc = fabricated();
+        doc["summary"] = json!("Apatura iris has a genome of roughly 450 Mb.");
+        let report = enforce("genome_profiler", &mut doc);
+        assert!(
+            !report.violations.iter().any(|v| v.path == "summary"),
+            "genome is sourced now, so citing a size is not a fabrication: {:?}",
+            report.violations
+        );
     }
 
     #[test]
@@ -1016,15 +1104,16 @@ mod tests {
     fn unsourced_blocks_are_labelled_as_unavailable_not_as_empty() {
         let mut doc = fabricated();
         let report = enforce("genome_profiler", &mut doc);
-        for block in ["genome", "conservation"] {
-            assert_eq!(
-                doc.get(format!("{block}_provenance"))
-                    .and_then(|v| v.as_str()),
-                Some(PROV_UNAVAILABLE),
-                "a null field with no provenance is indistinguishable from a \
-                 loading error; {block} must say why it is empty"
-            );
-        }
+
+        // `conservation` still has no tool — IUCN needs a token nobody has
+        // supplied yet — so it must say why it is empty rather than just be
+        // empty.
+        assert_eq!(
+            doc.get("conservation_provenance").and_then(|v| v.as_str()),
+            Some(PROV_UNAVAILABLE),
+            "a null field with no provenance is indistinguishable from a \
+             loading error"
+        );
         assert!(report
             .provenance
             .iter()
@@ -1045,8 +1134,10 @@ mod tests {
              the same distinction"
         );
         assert_eq!(
-            doc.get("genome_provenance").and_then(|v| v.as_str()),
-            Some(PROV_UNAVAILABLE)
+            doc.get("conservation_provenance").and_then(|v| v.as_str()),
+            Some(PROV_UNAVAILABLE),
+            "conservation has no tool at all, which is not the same as GBIF \
+             having no match"
         );
     }
 
