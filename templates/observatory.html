@@ -173,7 +173,6 @@
   .loop-health{font-size:0.7rem;margin-top:4px;padding:4px 7px;border-left:2px solid;line-height:1.45;}
   .lh-sound{color:var(--fg3);border-color:var(--green);background:rgba(152,151,26,0.05);}
   .lh-broken{color:var(--red);border-color:var(--red);background:rgba(204,36,29,0.07);}
-  .lh-unverified{color:var(--fg4);border-color:var(--bg3);}
   .lh-inconclusive{color:var(--orange,var(--yellow));border-color:var(--orange,var(--yellow));}
   .lh-not_applicable{color:var(--fg4);border-color:var(--bg3);}
   .lh-checks{font-size:0.64rem;color:var(--red);margin-top:3px;font-family:inherit;}
@@ -1253,10 +1252,9 @@ const LOOP_COLORS = {closed:"var(--green)", partial:"var(--yellow)", open:"var(-
 // because a loop can be `partial` for two unrelated reasons and the operator
 // needs to know which: not enough data, or a chain that mangles it.
 const MECH_LABEL = {
-  sound:          "wiring sound",
-  broken:         "wiring BROKEN",
-  inconclusive:   "wiring unknown",
-  unverified:     "wiring unverified",
+  sound:          "this agent's wiring sound",
+  broken:         "this agent's wiring BROKEN",
+  inconclusive:   "wiring unknown (probe errored)",
   not_applicable: "no signal yet",
 };
 
@@ -1288,13 +1286,17 @@ function renderLoopsTab() {
     if (h && h.mechanism) {
       const failing = (h.failing_checks || [])
         .map(c => `${c.id} (${c.severity} ×${c.count})`).join(" · ");
+      // Checks the scoped probe could not attribute to this agent. Shown, not
+      // hidden — otherwise "all clean" would mean more than it measured.
+      const unscoped = (h.not_scopable||[]).map(c=>c.id).join(", ");
       health = `<div class="loop-health lh-${escHtml(h.mechanism)}">`
         + `<strong>${escHtml(MECH_LABEL[h.mechanism] || h.mechanism)}</strong>`
         + (h.evidence_band ? ` · <strong>${escHtml(h.evidence_band)}</strong> evidence` : "")
-        + (h.mechanism === "sound" && h.mechanism_checks_ok
-            ? ` <span style="opacity:0.7">(${h.mechanism_checks_ok} checks clean)</span>` : "")
+        + (h.mechanism === "sound" && h.mechanism_checks_total
+            ? ` <span style="opacity:0.7">(${h.mechanism_checks_ok}/${h.mechanism_checks_total} checks clean)</span>` : "")
         + `<div style="margin-top:3px">${escHtml(h.interpretation || "")}</div>`
         + (failing ? `<div class="lh-checks">failing: ${escHtml(failing)}</div>` : "")
+        + (unscoped ? `<div style="font-size:0.63rem;opacity:0.7;margin-top:3px">not agent-attributable, fleet probe only: ${escHtml(unscoped)}</div>` : "")
         + `</div>`;
     }
 

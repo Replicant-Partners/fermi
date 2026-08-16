@@ -90,6 +90,11 @@ pub mod port_trust;
 // compiled const. So the map lives in the card and Rust keeps the checker.
 pub mod card_contract;
 
+// A minimal JSON Schema validator. Seven keywords, no new dependency, and
+// an unsupported keyword is NOT a pass — a validator that silently ignores
+// what it cannot interpret returns `valid` for a document it never checked.
+pub mod schema_validate;
+
 // Agent economics — one definition of "how much has this agent run, and
 // what did it cost", measured from `episodes` rather than from the
 // denormalised counters on `agents` that no code path maintains.

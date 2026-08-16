@@ -85,7 +85,13 @@ pub const PROV_DERIVED: &str = "platform_derived";
 /// A closed set, asserted by [`tests::provenance_values_are_closed`]. An
 /// open one would let a future edit invent `"estimated"`, which is the
 /// fabrication reappearing as a metadata value.
-pub const PROVENANCE_VALUES: &[&str] = &[PROV_TOOL, PROV_NO_MATCH, PROV_UNAVAILABLE, PROV_INFERRED];
+pub const PROVENANCE_VALUES: &[&str] = &[
+    PROV_TOOL,
+    PROV_NO_MATCH,
+    PROV_UNAVAILABLE,
+    PROV_INFERRED,
+    PROV_DERIVED,
+];
 
 // ─── contract ──────────────────────────────────────────────────────────
 
@@ -922,6 +928,73 @@ mod tests {
                  mentions — the rule can never be adjudicated"
             );
         }
+    }
+
+    /// No card may declare a provenance value the runtime cannot emit.
+    ///
+    /// This exists because the drift actually happened, during the work that
+    /// introduced it. `PROV_GBIF = "gbif_verified"` was renamed to
+    /// `PROV_TOOL = "tool_verified"` when a second agent joined the contract
+    /// and a status string naming one specific tool stopped being true. The
+    /// Rust constant changed; `genome_profiler`'s card kept declaring the old
+    /// enum. Nothing noticed until a schema-validation test compared the two,
+    /// by which point the card was asserting a vocabulary its own platform
+    /// had abandoned.
+    ///
+    /// A closed vocabulary split across two files is only closed if something
+    /// checks both.
+    #[test]
+    fn no_card_declares_a_provenance_value_the_runtime_cannot_emit() {
+        let mut checked = 0usize;
+        for entry in std::fs::read_dir("agents").expect("agents/") {
+            let tier = entry.expect("dir").path();
+            if !tier.is_dir() {
+                continue;
+            }
+            for agent in std::fs::read_dir(&tier).expect("tier") {
+                let path = agent.expect("dir").path().join("agent_card.json");
+                if !path.exists() {
+                    continue;
+                }
+                let raw = std::fs::read_to_string(&path).expect("read card");
+                let card: Value = serde_json::from_str(&raw)
+                    .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                let Some(props) = card
+                    .pointer("/capabilities/output_contract/schema/properties")
+                    .and_then(|p| p.as_object())
+                else {
+                    continue;
+                };
+                for (field, spec) in props {
+                    if !field.ends_with("_provenance") {
+                        continue;
+                    }
+                    checked += 1;
+                    let declared: Vec<String> = match (spec.get("enum"), spec.get("const")) {
+                        (Some(Value::Array(a)), _) => a
+                            .iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect(),
+                        (_, Some(Value::String(c))) => vec![c.clone()],
+                        _ => continue,
+                    };
+                    for v in declared {
+                        assert!(
+                            PROVENANCE_VALUES.contains(&v.as_str()),
+                            "{}: `{field}` declares provenance value `{v}`, which is \
+                             not in PROVENANCE_VALUES {PROVENANCE_VALUES:?}. The card \
+                             and the runtime have drifted — a closed vocabulary split \
+                             across two files is only closed if something checks both.",
+                            path.display()
+                        );
+                    }
+                }
+            }
+        }
+        assert!(
+            checked > 0,
+            "no provenance enums found in any card — this guard is inert"
+        );
     }
 
     #[test]

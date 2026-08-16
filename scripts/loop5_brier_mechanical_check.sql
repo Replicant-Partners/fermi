@@ -41,6 +41,29 @@
 -- Read it as: MECHANISM all-OK ⇒ the loop is sound and simply needs volume.
 -- MECHANISM violation ⇒ fix the code before trusting any number it emits.
 --
+-- SCOPE — fleet, then per agent
+--
+-- The MECHANISM checks below are fleet-wide. That answers "is the platform's
+-- Loop 5 sound". It does NOT answer "is this agent's loop sound", because one
+-- tenant's orphaned forecast turns the fleet verdict BROKEN for everybody.
+-- The MECHANISM ATTRIBUTION section near the end repeats the eight scopable
+-- checks per agent so a fault can be pinned on whoever owns it.
+--
+-- THREE COPIES, ONE CONTRACT
+--
+-- These checks exist three times and must not drift:
+--
+--   1. here                                        (fleet + per-agent, psql)
+--   2. LOOP5_MECHANISM_CHECKS  in src/handlers/observatory.rs   (fleet, admin)
+--   3. LOOP5_AGENT_CHECKS      in src/handlers/observatory.rs   (per agent)
+--
+-- Same ids, same severities, same predicates. The two Rust tables are held in
+-- step by `agent_and_fleet_checks_declare_the_same_ids` and
+-- `agent_and_fleet_checks_agree_on_severity`; this file is held in step by the
+-- ids being greppable across all three. Change one, change all three, in one
+-- commit — if they disagree, none of them can be trusted, which is worse than
+-- having no probe at all.
+--
 -- SAFETY
 --
 --   * No INSERT/UPDATE/DELETE/DDL against any application table.
@@ -649,6 +672,157 @@ SELECT agent_name,
   FROM agg
  ORDER BY n_pairs DESC, agent_name
  LIMIT 50;
+
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- MECHANISM ATTRIBUTION — whose wiring is broken?
+-- ═══════════════════════════════════════════════════════════════════════
+--
+-- The MECHANISM findings above are fleet-wide counts. That is the right
+-- scope for "is the platform's Loop 5 sound", and the wrong scope for the
+-- question an agent owner asks: "is MY loop broken, or just young?" A single
+-- orphaned forecast belonging to one tenant makes the fleet verdict BROKEN,
+-- and read off an agent's own dashboard that is an unattributable accusation.
+--
+-- So the eight *scopable* MECHANISM checks are repeated here per agent. Each
+-- block below is the same predicate as its fleet counterpart with the roster
+-- filter added, and is the SQL twin of `LOOP5_AGENT_CHECKS` in
+-- src/handlers/observatory.rs.
+--
+-- L5-M03 IS ABSENT ON PURPOSE. It counts scored forecasts attributable to NO
+-- agent; being unattributable is the definition of that fault, so it cannot
+-- be filed under anybody. It stays fleet-only, and the Rust side declares it
+-- in `LOOP5_UNSCOPABLE` so a per-agent "all clean" does not overclaim.
+--
+-- ⚠ THREE COPIES, ONE CONTRACT. The check ids here, in
+--   `LOOP5_MECHANISM_CHECKS` and in `LOOP5_AGENT_CHECKS` must stay identical.
+--   The Rust pair is enforced by `agent_and_fleet_checks_declare_the_same_ids`;
+--   this file is enforced by the ids being greppable across all three. If you
+--   add, remove or re-scope a check, change all three in the same commit.
+
+\echo ''
+\echo '── MECHANISM violations by agent ──────────────────────────────────────'
+\echo '   Empty result = no agent-attributable wiring fault.'
+\echo '   L5-M03 is fleet-only and cannot appear here (see comment in file).'
+\echo ''
+
+WITH roster AS (
+  -- The three-shape join, once. Mirrors ROSTER_PREDICATE in observatory.rs and
+  -- eval_brier.rs::latest_for_agent.
+  SELECT DISTINCT f.id AS forecast_id, a.agent_id, a.agent_name
+    FROM fermi_forecasts f
+    CROSS JOIN LATERAL jsonb_array_elements(
+           CASE WHEN jsonb_typeof(f.agents_used)='array'
+                THEN f.agents_used ELSE '[]'::jsonb END) e
+    JOIN agents a ON a.agent_id::text = e->>'agent_id'
+                  OR a.agent_name     = e->>'agent_name'
+                  OR a.agent_name     = e->>'name'
+), emitted AS (
+  SELECT r.*, EXISTS (
+           SELECT 1 FROM eval_signals s
+            WHERE s.agent_id = r.agent_id
+              AND s.dimension = 'forecast_calibration'
+              AND s.rationale LIKE 'forecast ' || r.forecast_id || ' resolved%'
+         ) AS has_signal
+    FROM roster r
+   WHERE EXISTS (SELECT 1 FROM fermi_forecasts f
+                  WHERE f.id = r.forecast_id
+                    AND f.status='resolved' AND f.brier_score IS NOT NULL)
+), findings AS (
+  -- L5-M01 — resolved with an outcome but never scored
+  SELECT r.agent_name, 'L5-M01' AS check_id, 'CRITICAL' AS severity, count(*) AS violations
+    FROM roster r JOIN fermi_forecasts f ON f.id = r.forecast_id
+   WHERE f.status='resolved' AND f.actual_outcome IS NOT NULL AND f.brier_score IS NULL
+   GROUP BY r.agent_name
+
+  UNION ALL
+  -- L5-M02 — brier not reproducible from the frozen pair
+  SELECT r.agent_name, 'L5-M02', 'CRITICAL', count(*)
+    FROM roster r JOIN fermi_forecasts f ON f.id = r.forecast_id
+   WHERE f.status='resolved' AND f.brier_score IS NOT NULL AND f.scored_probability IS NOT NULL
+     AND abs(f.brier_score::float8
+             - power(f.scored_probability::float8
+                     - (CASE WHEN f.actual_outcome THEN 1.0 ELSE 0.0 END), 2)) > 1e-4
+   GROUP BY r.agent_name
+
+  UNION ALL
+  -- L5-M04 — a forecast this agent is on also names an agent that does not exist
+  SELECT r.agent_name, 'L5-M04', 'HIGH', count(*)
+    FROM roster r
+    JOIN fermi_forecasts f ON f.id = r.forecast_id
+    CROSS JOIN LATERAL jsonb_array_elements(
+           CASE WHEN jsonb_typeof(f.agents_used)='array'
+                THEN f.agents_used ELSE '[]'::jsonb END) e
+   WHERE f.status='resolved' AND f.brier_score IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM agents a
+                      WHERE a.agent_id::text = e->>'agent_id'
+                         OR a.agent_name     = e->>'agent_name'
+                         OR a.agent_name     = e->>'name')
+   GROUP BY r.agent_name
+
+  UNION ALL
+  -- L5-M05 — PARTIAL emission: others on this forecast got a signal, this agent did not
+  SELECT e.agent_name, 'L5-M05', 'CRITICAL', count(*)
+    FROM emitted e
+   WHERE NOT e.has_signal
+     AND EXISTS (SELECT 1 FROM emitted o
+                  WHERE o.forecast_id = e.forecast_id AND o.has_signal)
+   GROUP BY e.agent_name
+
+  UNION ALL
+  -- L5-M06 — stored score is not 1 - clamp(brier)
+  SELECT a.agent_name, 'L5-M06', 'HIGH', count(*)
+    FROM eval_signals s
+    JOIN agents a ON a.agent_id = s.agent_id
+    JOIN fermi_forecasts f ON s.rationale LIKE 'forecast ' || f.id || ' resolved%'
+   WHERE s.dimension='forecast_calibration' AND f.brier_score IS NOT NULL
+     AND abs(s.score - (1.0 - least(greatest(f.brier_score::float8,0.0),1.0))) > 1e-3
+   GROUP BY a.agent_name
+
+  UNION ALL
+  -- L5-M07 — signal outlived the forecast it cites
+  SELECT a.agent_name, 'L5-M07', 'MEDIUM', count(*)
+    FROM eval_signals s
+    JOIN agents a ON a.agent_id = s.agent_id
+   WHERE s.dimension='forecast_calibration'
+     AND s.evaluator_name='brier_forecast_resolver'
+     AND substring(s.rationale from 'forecast ([0-9a-fA-F-]{36})') IS NOT NULL
+     AND NOT EXISTS (
+       SELECT 1 FROM fermi_forecasts f
+        WHERE f.id = substring(s.rationale from 'forecast ([0-9a-fA-F-]{36})')
+          AND f.status='resolved' AND f.brier_score IS NOT NULL)
+   GROUP BY a.agent_name
+
+  UNION ALL
+  -- L5-M08 — duplicate (agent, forecast) signals
+  SELECT a.agent_name, 'L5-M08', 'MEDIUM', count(*)
+    FROM (
+      SELECT s.agent_id, s.rationale
+        FROM eval_signals s
+       WHERE s.dimension='forecast_calibration' AND s.rationale LIKE 'forecast %'
+       GROUP BY s.agent_id, s.rationale
+      HAVING count(*) > 1
+    ) d
+    JOIN agents a ON a.agent_id = d.agent_id
+   GROUP BY a.agent_name
+
+  UNION ALL
+  -- L5-M09 — reachable by name but not by agent_id
+  SELECT a.agent_name, 'L5-M09', 'HIGH', count(*)
+    FROM agents a
+    JOIN fermi_forecasts f
+      ON (f.agents_used @> jsonb_build_array(jsonb_build_object('agent_name', a.agent_name))
+       OR f.agents_used @> jsonb_build_array(jsonb_build_object('name', a.agent_name)))
+   WHERE f.status='resolved' AND f.brier_score IS NOT NULL
+     AND NOT (f.agents_used @> jsonb_build_array(
+                jsonb_build_object('agent_id', a.agent_id::text)))
+   GROUP BY a.agent_name
+)
+SELECT agent_name, check_id, severity, violations
+  FROM findings
+ WHERE violations > 0
+ ORDER BY CASE severity WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 ELSE 2 END,
+          violations DESC, agent_name, check_id;
 
 
 -- ═══════════════════════════════════════════════════════════════════════

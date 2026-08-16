@@ -148,6 +148,45 @@ pub fn build(
         .next()
         .is_some();
 
+    // Validate the enforced payload against the producer's declared schema.
+    //
+    // Order matters: grounding runs FIRST, then validation. A schema that
+    // pins an unsourceable field to `"type": "null"` would otherwise reject
+    // a document that grounding was about to clean, and the producer would
+    // be blamed for something the platform then fixed. Enforce, then verify
+    // what remains.
+    //
+    // Three outcomes, kept distinct because they need different fixes:
+    //   valid        checked and conforming
+    //   invalid      the document contradicts the declared type
+    //   unverified   no schema, no payload, or a schema keyword the
+    //                validator cannot evaluate — NOT a pass
+    let schema = output_contract
+        .and_then(|oc| oc.get("schema"))
+        .filter(|s| s.is_object());
+    let (validation_status, schema_violations, unsupported) = match (schema, payload.as_ref()) {
+        (Some(sch), Some(doc)) => {
+            let r = crate::schema_validate::validate(sch, doc);
+            let status = if r.is_valid() {
+                "valid"
+            } else if r.is_contradiction() {
+                "invalid"
+            } else {
+                "unverified_unsupported_schema"
+            };
+            (
+                status,
+                r.violations
+                    .iter()
+                    .map(|v| json!({ "path": v.path, "message": v.message }))
+                    .collect::<Vec<_>>(),
+                r.unsupported.clone(),
+            )
+        }
+        (None, _) => ("unverified_no_schema", vec![], vec![]),
+        (Some(_), None) => ("unverified_no_payload", vec![], vec![]),
+    };
+
     json!({
         "type": ty,
         // Stated rather than inferred from `type == null`, so a consumer does
@@ -156,6 +195,14 @@ pub fn build(
         "type_status": if ty_is_some(&ty) { "declared" } else { "undeclared" },
         "payload": payload,
         "payload_status": payload_status(output),
+        // Whether the payload was checked against `type`, and what happened.
+        // `unverified_*` is never a pass: a consumer that treats it as one
+        // has reintroduced the defect this envelope exists to close.
+        "validation": {
+            "status": validation_status,
+            "violations": schema_violations,
+            "unsupported": unsupported,
+        },
         "provenance": {
             "producer": agent_name,
             "episode_id": episode_id,
@@ -326,6 +373,75 @@ mod tests {
             "an empty block must say WHY it is empty, or a coordinator reads \
              it as a measurement of nothing"
         );
+    }
+
+    #[test]
+    fn a_conforming_payload_is_reported_valid() {
+        let oc = contract_for("genome_profiler");
+        let raw = r#"{
+            "taxonomy": {"kingdom":"Animalia","phylum":"Arthropoda","class":"Insecta",
+                         "order":"Lepidoptera","family":"Nymphalidae",
+                         "genus":"Apatura","species":"Apatura iris"},
+            "taxonomy_provenance": "gbif_verified",
+            "genome": {"estimated_size_mb":245.2,"chromosome_count":30,
+                       "assembly_name":"MEX_DaPlex","assembly_accession":"GCA_018135715.1",
+                       "notable_genes":null,"ploidy":null},
+            "genome_provenance": "tool_verified",
+            "phylogeny": {"sister_taxa":["Apatura ilia"],"superorder":"Holometabola",
+                          "divergence_mya":null,"defining_traits":null},
+            "phylogeny_provenance": "platform_derived",
+            "conservation": {"iucn_status":null,"population_trend":null,
+                             "genetic_diversity_notes":null},
+            "conservation_provenance": "unavailable_no_tool_source",
+            "summary": "GBIF places Apatura iris in Nymphalidae."
+        }"#;
+        let env = build(
+            "genome_profiler",
+            oc.as_ref(),
+            &output_with(Some(raw)),
+            Uuid::new_v4(),
+        );
+        assert_eq!(
+            env["validation"]["status"],
+            json!("valid"),
+            "violations: {}",
+            env["validation"]["violations"]
+        );
+    }
+
+    #[test]
+    fn a_type_violation_is_reported_not_swallowed() {
+        // A genome size as a range string — the shape that shipped for 56
+        // episodes. Grounding no longer strips it (the field is sourced
+        // now), so the SCHEMA is what has to catch it.
+        let oc = contract_for("genome_profiler");
+        let raw = r#"{"taxonomy":{},"genome":{"estimated_size_mb":"420-480"},"summary":"x"}"#;
+        let env = build(
+            "genome_profiler",
+            oc.as_ref(),
+            &output_with(Some(raw)),
+            Uuid::new_v4(),
+        );
+        assert_eq!(env["validation"]["status"], json!("invalid"));
+        let v = env["validation"]["violations"].as_array().unwrap();
+        assert!(
+            v.iter().any(|x| x["path"] == "genome.estimated_size_mb"),
+            "{v:?}"
+        );
+    }
+
+    #[test]
+    fn an_untyped_producer_is_unverified_never_valid() {
+        // The failure mode to avoid: an agent with no schema must not look
+        // like an agent that passed one.
+        let env = build(
+            "anomaly_triager",
+            None,
+            &output_with(Some(r#"{"anything":true}"#)),
+            Uuid::new_v4(),
+        );
+        assert_eq!(env["validation"]["status"], json!("unverified_no_schema"));
+        assert_ne!(env["validation"]["status"], json!("valid"));
     }
 
     #[test]

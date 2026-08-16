@@ -241,6 +241,16 @@ pub const SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("agent_timeline_entries", "persona_version"),
     ("agent_timeline_entries", "anomaly_flags"),
     ("agent_timeline_entries", "dim_scores"),
+    // `anomaly_events` has `created_at`, not `detected_at`. The Loop 2 health
+    // panel queried the latter, the query errored, and the panel reported Loop 2
+    // as "unmeasured" — which reads as "no data yet" rather than "this page is
+    // broken". Declared so a rename fails in CI instead of on the dashboard.
+    ("anomaly_events", "agent_id"),
+    ("anomaly_events", "created_at"),
+    ("anomaly_events", "requires_review"),
+    ("anomaly_events", "resolved_at"),
+    ("anomaly_events", "kind"),
+    ("anomaly_events", "severity"),
     // ── agents ─────────────────────────────────────────────────────
     // Every one of these has been referenced in a bug in the last
     // month. The trust contract exists to keep them present.

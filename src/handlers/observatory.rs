@@ -1721,6 +1721,175 @@ const LOOP5_INFO_CHECKS: &[(&str, &str, &str)] = &[
     ),
 ];
 
+// ─── Agent-scoped MECHANISM checks ───────────────────────────────────────────
+//
+// The fleet probe above aggregates across every tenant's forecasts, which makes
+// it admin-only and makes its verdict a poor answer to the question an agent
+// owner actually has: "is MY loop broken, or just young?" A fleet `broken`
+// caused by someone else's orphaned forecast would have shown up on this
+// agent's row, which is exactly the kind of unattributable claim the loops
+// endpoint exists to eliminate.
+//
+// THE MAINTENANCE CONTRACT — read before editing either table
+//
+// These are the SAME nine checks with the SAME ids and severities, restricted
+// to one agent. `scripts/loop5_brier_mechanical_check.sql` is the third copy.
+// If the three disagree, none of them can be trusted, so:
+//
+//   * ids and severities must match `LOOP5_MECHANISM_CHECKS` exactly. Enforced
+//     by `agent_and_fleet_checks_declare_the_same_ids` below, not by discipline.
+//   * the roster predicate appears ONCE, as `ROSTER_PREDICATE`, and is spliced
+//     in via `{ROSTER}`. Eight checks need it; writing it eight times is how it
+//     drifts from `eval_brier.rs::latest_for_agent` and `/calibration`.
+//   * a check that cannot be attributed to an agent is declared unscopable
+//     rather than quietly dropped. Silently omitting it would make a scoped
+//     "all clean" mean less than it appears to.
+//
+// The three-shape join (`agent_id` | `agent_name` | `name`) mirrors
+// `src/handlers/eval_brier.rs::latest_for_agent` and
+// `src/handlers/agents.rs::get_agent_calibration_handler`. Change one, change
+// all of them.
+const ROSTER_PREDICATE: &str = "EXISTS (
+           SELECT 1 FROM jsonb_array_elements(
+                    CASE WHEN jsonb_typeof(f.agents_used)='array'
+                         THEN f.agents_used ELSE '[]'::jsonb END) re
+             JOIN agents ra ON ra.agent_id::text = re->>'agent_id'
+                            OR ra.agent_name     = re->>'agent_name'
+                            OR ra.agent_name     = re->>'name'
+            WHERE ra.agent_id = $1)";
+
+/// One agent-scoped check: `(id, severity, count_sql)`.
+///
+/// `count_sql` takes `$1` = agent uuid and may contain `{ROSTER}`. A non-zero
+/// count is a violation *attributable to this agent*.
+type AgentCheck = (&'static str, &'static str, &'static str);
+
+/// Checks that cannot be scoped to an agent, with the reason. Declared so a
+/// scoped verdict can say what it did not cover instead of overclaiming.
+const LOOP5_UNSCOPABLE: &[(&str, &str)] = &[(
+    "L5-M03",
+    "Counts scored forecasts attributable to NO agent at all. Being unattributable is \
+     the definition of the fault, so by construction it cannot be filed under any \
+     agent — it is only visible in the fleet probe.",
+)];
+
+const LOOP5_AGENT_CHECKS: &[AgentCheck] = &[
+    (
+        "L5-M01",
+        "CRITICAL",
+        "SELECT count(*) FROM fermi_forecasts f
+          WHERE f.status='resolved' AND f.actual_outcome IS NOT NULL AND f.brier_score IS NULL
+            AND {ROSTER}",
+    ),
+    (
+        "L5-M02",
+        "CRITICAL",
+        "SELECT count(*) FROM fermi_forecasts f
+          WHERE f.status='resolved' AND f.brier_score IS NOT NULL
+            AND f.scored_probability IS NOT NULL
+            AND abs(f.brier_score::float8
+                    - power(f.scored_probability::float8
+                            - (CASE WHEN f.actual_outcome THEN 1.0 ELSE 0.0 END), 2)) > 1e-4
+            AND {ROSTER}",
+    ),
+    // L5-M03 is fleet-only — see LOOP5_UNSCOPABLE.
+    (
+        "L5-M04",
+        "HIGH",
+        // This agent's own forecasts whose roster ALSO names an agent that does
+        // not exist. The credit lost is lost from a forecast it participated in.
+        "SELECT count(*) FROM fermi_forecasts f
+          CROSS JOIN LATERAL jsonb_array_elements(
+                 CASE WHEN jsonb_typeof(f.agents_used)='array'
+                      THEN f.agents_used ELSE '[]'::jsonb END) e
+          WHERE f.status='resolved' AND f.brier_score IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM agents a
+                             WHERE a.agent_id::text = e->>'agent_id'
+                                OR a.agent_name     = e->>'agent_name'
+                                OR a.agent_name     = e->>'name')
+            AND {ROSTER}",
+    ),
+    (
+        "L5-M05",
+        "CRITICAL",
+        // The CTE stays fleet-wide on purpose: "did the emitter run for this
+        // forecast at all" can only be answered by looking at the other roster
+        // members. Only the counted row is scoped to $1.
+        "WITH pairs AS (
+           SELECT DISTINCT f.id AS forecast_id, a.agent_id
+             FROM fermi_forecasts f
+             CROSS JOIN LATERAL jsonb_array_elements(
+                    CASE WHEN jsonb_typeof(f.agents_used)='array'
+                         THEN f.agents_used ELSE '[]'::jsonb END) e
+             JOIN agents a ON a.agent_id::text = e->>'agent_id'
+                           OR a.agent_name     = e->>'agent_name'
+                           OR a.agent_name     = e->>'name'
+            WHERE f.status='resolved' AND f.brier_score IS NOT NULL
+         ), emitted AS (
+           SELECT p.*, EXISTS (
+                    SELECT 1 FROM eval_signals s
+                     WHERE s.agent_id = p.agent_id
+                       AND s.dimension = 'forecast_calibration'
+                       AND s.rationale LIKE 'forecast ' || p.forecast_id || ' resolved%'
+                  ) AS has_signal
+             FROM pairs p
+         )
+         SELECT count(*) FROM emitted e
+          WHERE NOT e.has_signal AND e.agent_id = $1
+            AND EXISTS (SELECT 1 FROM emitted o
+                         WHERE o.forecast_id = e.forecast_id AND o.has_signal)",
+    ),
+    (
+        "L5-M06",
+        "HIGH",
+        "SELECT count(*)
+           FROM eval_signals s
+           JOIN fermi_forecasts f ON s.rationale LIKE 'forecast ' || f.id || ' resolved%'
+          WHERE s.dimension='forecast_calibration' AND s.agent_id = $1
+            AND f.brier_score IS NOT NULL
+            AND abs(s.score - (1.0 - least(greatest(f.brier_score::float8,0.0),1.0))) > 1e-3",
+    ),
+    (
+        "L5-M07",
+        "MEDIUM",
+        "SELECT count(*) FROM eval_signals s
+          WHERE s.dimension='forecast_calibration' AND s.agent_id = $1
+            AND s.evaluator_name='brier_forecast_resolver'
+            AND substring(s.rationale from 'forecast ([0-9a-fA-F-]{36})') IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM fermi_forecasts f
+               WHERE f.id = substring(s.rationale from 'forecast ([0-9a-fA-F-]{36})')
+                 AND f.status='resolved' AND f.brier_score IS NOT NULL)",
+    ),
+    (
+        "L5-M08",
+        "MEDIUM",
+        "SELECT count(*) FROM (
+           SELECT s.rationale
+             FROM eval_signals s
+            WHERE s.dimension='forecast_calibration' AND s.agent_id = $1
+              AND s.rationale LIKE 'forecast %'
+            GROUP BY s.rationale
+           HAVING count(*) > 1
+         ) x",
+    ),
+    (
+        "L5-M09",
+        "HIGH",
+        // The fleet check sums (via_any - via_id) over every agent; restricted
+        // to one agent that is just the count of its own name-only forecasts.
+        "SELECT count(*) FROM fermi_forecasts f, agents a
+          WHERE a.agent_id = $1
+            AND f.status='resolved' AND f.brier_score IS NOT NULL
+            AND (f.agents_used @> jsonb_build_array(
+                     jsonb_build_object('agent_name', a.agent_name))
+              OR f.agents_used @> jsonb_build_array(
+                     jsonb_build_object('name', a.agent_name)))
+            AND NOT (f.agents_used @> jsonb_build_array(
+                     jsonb_build_object('agent_id', a.agent_id::text)))",
+    ),
+];
+
 /// Outcome of the MECHANISM probe: whether the Loop 5a chain moves a signal
 /// correctly, independent of whether the resulting numbers are impressive.
 ///
@@ -1739,11 +1908,27 @@ pub struct Loop5Mechanism {
 
 impl Loop5Mechanism {
     /// Only the MECHANISM checks that actually failed, for callers that want to
-    /// name the fault without carrying all thirteen rows.
+    /// name the fault without carrying every row.
+    ///
+    /// `NOT_SCOPABLE` is excluded deliberately: a check that cannot be filed
+    /// under this agent is not a finding against it. It is reported separately
+    /// by [`Loop5Mechanism::not_scopable`] so it stays visible without being
+    /// counted as a fault.
     pub fn failing(&self) -> Vec<Value> {
         self.checks
             .iter()
-            .filter(|c| c["class"] == "MECHANISM" && c["status"] != "OK")
+            .filter(|c| {
+                c["class"] == "MECHANISM" && c["status"] != "OK" && c["status"] != "NOT_SCOPABLE"
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Checks this probe could not attribute to the subject, with the reason.
+    pub fn not_scopable(&self) -> Vec<Value> {
+        self.checks
+            .iter()
+            .filter(|c| c["status"] == "NOT_SCOPABLE")
             .cloned()
             .collect()
     }
@@ -1812,6 +1997,85 @@ pub async fn probe_loop5_mechanism(db: &sqlx::PgPool) -> Loop5Mechanism {
                 }));
             }
         }
+    }
+
+    let verdict = if errored > 0 {
+        "inconclusive"
+    } else if violations == 0 {
+        "sound"
+    } else {
+        "broken"
+    };
+
+    Loop5Mechanism {
+        verdict,
+        violations,
+        ok,
+        errored,
+        checks,
+    }
+}
+
+/// Run the MECHANISM checks restricted to one agent.
+///
+/// Owner-safe by construction: every count is filtered to forecasts this agent
+/// is on the roster of, or to signals carrying its `agent_id`. That is what lets
+/// the per-agent loops endpoint answer "is MY wiring broken" without the
+/// admin gate the fleet probe needs.
+///
+/// The description text is reused from `LOOP5_MECHANISM_CHECKS` by id, so the
+/// two tables cannot describe the same check differently.
+pub async fn probe_loop5_mechanism_for_agent(db: &sqlx::PgPool, agent_id: Uuid) -> Loop5Mechanism {
+    let describe = |id: &str| -> &'static str {
+        LOOP5_MECHANISM_CHECKS
+            .iter()
+            .find(|(cid, ..)| *cid == id)
+            .map(|(_, _, d, _)| *d)
+            .unwrap_or("(no description — id missing from LOOP5_MECHANISM_CHECKS)")
+    };
+
+    let mut checks: Vec<Value> = Vec::new();
+    let (mut violations, mut ok, mut errored) = (0usize, 0usize, 0usize);
+
+    for (id, severity, sql) in LOOP5_AGENT_CHECKS {
+        let scoped = sql.replace("{ROSTER}", ROSTER_PREDICATE);
+        match sqlx::query_scalar::<_, i64>(&scoped)
+            .bind(agent_id)
+            .fetch_one(db)
+            .await
+        {
+            Ok(n) => {
+                if n == 0 {
+                    ok += 1;
+                } else {
+                    violations += 1;
+                }
+                checks.push(json!({
+                    "id": id, "class": "MECHANISM", "severity": severity,
+                    "status": if n == 0 { "OK" } else { "VIOLATION" },
+                    "count": n, "scope": "agent",
+                    "description": describe(id),
+                }));
+            }
+            Err(e) => {
+                errored += 1;
+                checks.push(json!({
+                    "id": id, "class": "MECHANISM", "severity": severity,
+                    "status": "ERROR", "count": null, "scope": "agent",
+                    "description": describe(id), "error": e.to_string(),
+                }));
+            }
+        }
+    }
+
+    // Declared, not dropped. A scoped "all clean" that silently omitted a check
+    // would claim more than it measured.
+    for (id, why) in LOOP5_UNSCOPABLE {
+        checks.push(json!({
+            "id": id, "class": "MECHANISM", "severity": "HIGH",
+            "status": "NOT_SCOPABLE", "count": null, "scope": "fleet_only",
+            "description": describe(id), "why_unscopable": why,
+        }));
     }
 
     let verdict = if errored > 0 {
@@ -1903,9 +2167,10 @@ fn evidence_class_static(s: &str) -> &'static str {
 
 /// The sentence an operator needs: is this thin, or is it broken?
 ///
-/// `mechanism` is one of `sound` | `broken` | `inconclusive` | `unverified`
-/// (`unverified` = the caller is not a platform admin, so the probe could not
-/// be run for them at all).
+/// `mechanism` is one of `sound` | `broken` | `inconclusive`, as returned by
+/// [`probe_loop5_mechanism_for_agent`]. There is deliberately no "could not
+/// check" arm any more: the agent-scoped probe needs no admin gate, so every
+/// caller who can see the agent can see whether its wiring works.
 fn loop5_interpretation(mechanism: &str, evidence: &str) -> &'static str {
     match (mechanism, evidence) {
         ("broken", _) => {
@@ -1917,11 +2182,6 @@ fn loop5_interpretation(mechanism: &str, evidence: &str) -> &'static str {
         ("inconclusive", _) => {
             "UNKNOWN. A mechanism probe query errored, so soundness could not be established \
              either way. Fix the probe before reading anything into the number."
-        }
-        ("unverified", _) => {
-            "UNVERIFIED. Mechanism soundness spans every tenant's forecasts and is therefore \
-             admin-only, so this surface cannot tell you whether a weak number here is thin \
-             data or broken wiring. Ask a platform admin for the mechanism probe."
         }
         ("sound", "none") => {
             "SOUND but empty. The wiring is verified correct and no forecast has resolved \
@@ -2204,7 +2464,7 @@ pub async fn agent_loops_handler(
         "SELECT COUNT(*)                                                        AS total,
                 COUNT(*) FILTER (WHERE requires_review AND resolved_at IS NULL)  AS pending,
                 COUNT(*) FILTER (WHERE resolved_at IS NOT NULL)                  AS resolved,
-                MIN(detected_at) FILTER (WHERE requires_review AND resolved_at IS NULL)
+                MIN(created_at) FILTER (WHERE requires_review AND resolved_at IS NULL)
                                                                                  AS oldest_pending
            FROM anomaly_events WHERE agent_id = $1",
     )
@@ -2556,17 +2816,20 @@ pub async fn agent_loops_handler(
             // nothing — an empty loop is `open` regardless of wiring.
             let mechanism: &str;
             let mut failing: Vec<Value> = Vec::new();
+            let mut not_scopable: Vec<Value> = Vec::new();
             let (mut mech_ok, mut mech_viol) = (0usize, 0usize);
 
             if n_res == 0 {
                 mechanism = "not_applicable";
-            } else if !principal.can_admin() {
-                // Not defaulted to "sound". Assuming soundness because we could
-                // not check is how a broken chain gets read as thin data.
-                mechanism = "unverified";
             } else {
-                let m = probe_loop5_mechanism(db).await;
+                // Agent-scoped, so no admin gate: every count is filtered to
+                // this agent's own roster or its own signals. The fleet probe
+                // could report `broken` because of a different tenant's
+                // orphaned forecast, which is precisely the unattributable
+                // claim this endpoint exists to remove.
+                let m = probe_loop5_mechanism_for_agent(db, aid).await;
                 failing = m.failing();
+                not_scopable = m.not_scopable();
                 mech_ok = m.ok;
                 mech_viol = m.violations;
                 mechanism = m.verdict;
@@ -2606,16 +2869,10 @@ pub async fn agent_loops_handler(
                 }
                 "sound" => {
                     detail = format!(
-                        "{evidence_detail} · wiring verified sound ({mech_ok}/{} mechanism checks \
-                         clean), evidence is {evidence} — so any weakness here is data volume, \
-                         not a fault.",
-                        LOOP5_MECHANISM_CHECKS.len()
-                    );
-                }
-                "unverified" => {
-                    detail = format!(
-                        "{evidence_detail} · wiring NOT verified (the mechanism probe spans all \
-                         tenants and is admin-only), so thin cannot be told from broken here."
+                        "{evidence_detail} · this agent's wiring verified sound ({mech_ok}/{} \
+                         scopable mechanism checks clean), evidence is {evidence} — so any \
+                         weakness here is data volume, not a fault.",
+                        LOOP5_AGENT_CHECKS.len()
                     );
                 }
                 _ => {}
@@ -2645,9 +2902,19 @@ pub async fn agent_loops_handler(
                     // carry both.
                     "health": {
                         "mechanism": mechanism,
+                        // Scoped to this agent, so a fault named here is this
+                        // agent's fault and not the fleet's.
+                        "mechanism_scope": "agent",
                         "mechanism_checks_ok": mech_ok,
+                        "mechanism_checks_total": LOOP5_AGENT_CHECKS.len(),
                         "mechanism_violations": mech_viol,
                         "failing_checks": failing,
+                        // Named rather than omitted: a scoped "all clean" that
+                        // silently skipped a check would overclaim.
+                        "not_scopable": not_scopable,
+                        "fleet_probe_note": "L5-M03 (forecasts attributable to no agent) cannot \
+                                             be filed under any agent by construction. Only the \
+                                             admin fleet probe sees it.",
                         "evidence_band": evidence,
                         "interpretation": if mechanism == "not_applicable" {
                             "No forecast has resolved for this agent, so there is no Loop 5 \
@@ -2895,19 +3162,203 @@ mod loop_health_tests {
         }
     }
 
-    /// Not being able to check is its own state. Defaulting to "sound" for a
-    /// non-admin would let a broken chain read as thin data, which is exactly
-    /// the confusion this split exists to prevent.
+    // ── The fleet/agent parity contract ──────────────────────────────────
+    //
+    // Three copies of these checks exist (fleet table, agent table, and
+    // scripts/loop5_brier_mechanical_check.sql). The first two are enforced
+    // here; the third is enforced by the header comment and by the ids being
+    // greppable across all three.
+
     #[test]
-    fn unverified_claims_neither_soundness_nor_breakage() {
-        let m = loop5_interpretation("unverified", "thin");
-        assert!(m.contains("UNVERIFIED"), "{m}");
-        assert!(
-            m.contains("cannot tell you"),
-            "must admit the limit rather than implying soundness: {m}"
+    fn agent_and_fleet_checks_declare_the_same_ids() {
+        let fleet: Vec<&str> = LOOP5_MECHANISM_CHECKS.iter().map(|(id, ..)| *id).collect();
+        let mut agent: Vec<&str> = LOOP5_AGENT_CHECKS.iter().map(|(id, ..)| *id).collect();
+        agent.extend(LOOP5_UNSCOPABLE.iter().map(|(id, _)| *id));
+        agent.sort_unstable();
+
+        let mut expected = fleet.clone();
+        expected.sort_unstable();
+
+        assert_eq!(
+            agent, expected,
+            "every fleet MECHANISM check must be either agent-scoped or explicitly declared \
+             unscopable — a check that is neither has been silently dropped from the \
+             per-agent verdict"
         );
-        assert_ne!(m, loop5_interpretation("sound", "thin"));
-        assert_ne!(m, loop5_interpretation("inconclusive", "thin"));
+    }
+
+    #[test]
+    fn agent_and_fleet_checks_agree_on_severity() {
+        for (id, severity, ..) in LOOP5_AGENT_CHECKS {
+            let fleet_sev = LOOP5_MECHANISM_CHECKS
+                .iter()
+                .find(|(fid, ..)| fid == id)
+                .map(|(_, s, ..)| *s)
+                .unwrap_or("<missing>");
+            assert_eq!(
+                *severity, fleet_sev,
+                "{id} is {severity} when scoped to an agent and {fleet_sev} across the fleet; \
+                 the same fault cannot have two severities"
+            );
+        }
+    }
+
+    /// Every agent-scoped check must actually be scoped. A check that forgot its
+    /// filter would silently report another tenant's fault against this agent —
+    /// the exact bug the agent-scoped table was added to fix.
+    #[test]
+    fn every_agent_check_is_actually_scoped_to_an_agent() {
+        for (id, _, sql) in LOOP5_AGENT_CHECKS {
+            assert!(
+                sql.contains("{ROSTER}") || sql.contains("$1"),
+                "{id} references neither the roster predicate nor $1, so it is not \
+                 agent-scoped and would count fleet-wide violations against one agent"
+            );
+        }
+    }
+
+    /// The roster predicate must exist once, not once per check. Eight copies is
+    /// how it drifts out of step with `eval_brier.rs::latest_for_agent`.
+    #[test]
+    fn the_roster_predicate_is_written_once_and_matches_the_three_shape_join() {
+        for shape in ["agent_id", "agent_name", "name"] {
+            assert!(
+                ROSTER_PREDICATE.contains(&format!("'{shape}'")),
+                "roster predicate must match the {shape} shape, like every other reader"
+            );
+        }
+        assert!(ROSTER_PREDICATE.contains("$1"));
+        // No check should inline its own copy.
+        for (id, _, sql) in LOOP5_AGENT_CHECKS {
+            assert!(
+                !sql.contains("re->>'agent_name'") || sql.contains("{ROSTER}"),
+                "{id} appears to inline the roster join instead of using {{ROSTER}}"
+            );
+        }
+    }
+
+    /// Structural sanity on the hand-written SQL constants.
+    ///
+    /// These cannot prove the queries are *correct* — that needs a database and
+    /// a schema — but they catch the failure modes that hand-edited SQL string
+    /// literals actually hit: an unbalanced paren, a stray quote, or a
+    /// `{ROSTER}` that never got substituted and would reach Postgres verbatim.
+    ///
+    /// A malformed check is not silent at runtime either: `probe_*` catches the
+    /// per-check `Err`, records `status: ERROR`, and the verdict becomes
+    /// `inconclusive` — reported to the operator as "mechanism UNKNOWN", never
+    /// as `sound`.
+    #[test]
+    fn agent_check_sql_is_structurally_well_formed() {
+        for (id, _, sql) in LOOP5_AGENT_CHECKS {
+            let resolved = sql.replace("{ROSTER}", ROSTER_PREDICATE);
+
+            // A placeholder is `{UPPERCASE}`. `{36}` in L5-M07 is a POSIX regex
+            // quantifier and must not trip this.
+            let unsubstituted: Vec<&str> = resolved
+                .match_indices('{')
+                .filter(|(i, _)| {
+                    resolved[*i + 1..]
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_uppercase())
+                })
+                .map(|(i, _)| &resolved[i..(i + 12).min(resolved.len())])
+                .collect();
+            assert!(
+                unsubstituted.is_empty(),
+                "{id} still has an unsubstituted placeholder after {{ROSTER}} expansion \
+                 ({unsubstituted:?}); it would be sent to Postgres literally"
+            );
+
+            let opens = resolved.matches('(').count();
+            let closes = resolved.matches(')').count();
+            assert_eq!(opens, closes, "{id} has unbalanced parentheses");
+
+            assert_eq!(
+                resolved.matches('\'').count() % 2,
+                0,
+                "{id} has an odd number of single quotes"
+            );
+
+            assert!(
+                resolved.trim_start().to_uppercase().starts_with("SELECT")
+                    || resolved.trim_start().to_uppercase().starts_with("WITH"),
+                "{id} must be a read-only SELECT/WITH — this probe never writes"
+            );
+
+            for forbidden in [
+                "INSERT ",
+                "UPDATE ",
+                "DELETE ",
+                "DROP ",
+                "ALTER ",
+                "TRUNCATE ",
+            ] {
+                assert!(
+                    !resolved.to_uppercase().contains(forbidden),
+                    "{id} contains {forbidden} — the mechanism probe is strictly read-only"
+                );
+            }
+        }
+    }
+
+    /// The `{ROSTER}` splice must land inside a WHERE/AND context in every check
+    /// that uses it, not be concatenated somewhere it changes meaning.
+    #[test]
+    fn the_roster_splice_is_always_a_conjunct() {
+        for (id, _, sql) in LOOP5_AGENT_CHECKS {
+            if let Some(pos) = sql.find("{ROSTER}") {
+                let before = sql[..pos].trim_end();
+                assert!(
+                    before.to_uppercase().ends_with("AND")
+                        || before.to_uppercase().ends_with("WHERE"),
+                    "{id} splices the roster predicate after `{}`; it must be a WHERE/AND \
+                     conjunct or it silently changes what the check counts",
+                    before.split_whitespace().last().unwrap_or("")
+                );
+            }
+        }
+    }
+
+    /// A check that cannot be attributed to an agent must be declared, not
+    /// dropped, or a scoped "all clean" claims more than it measured.
+    #[test]
+    fn unscopable_checks_are_declared_with_a_reason() {
+        assert!(
+            !LOOP5_UNSCOPABLE.is_empty(),
+            "L5-M03 counts forecasts attributable to no agent and cannot be scoped"
+        );
+        for (id, why) in LOOP5_UNSCOPABLE {
+            assert!(why.len() > 60, "{id} needs a real reason, got: {why}");
+            assert!(
+                !LOOP5_AGENT_CHECKS.iter().any(|(aid, ..)| aid == id),
+                "{id} is declared both scopable and unscopable"
+            );
+        }
+    }
+
+    /// `NOT_SCOPABLE` must never be counted as a fault against the agent.
+    #[test]
+    fn a_not_scopable_check_is_not_a_failing_check() {
+        let m = Loop5Mechanism {
+            verdict: "sound",
+            violations: 0,
+            ok: 8,
+            errored: 0,
+            checks: vec![
+                json!({"id":"L5-M01","class":"MECHANISM","status":"OK"}),
+                json!({"id":"L5-M03","class":"MECHANISM","status":"NOT_SCOPABLE"}),
+                json!({"id":"L5-M06","class":"MECHANISM","status":"VIOLATION"}),
+            ],
+        };
+        let failing: Vec<String> = m
+            .failing()
+            .iter()
+            .filter_map(|c| c["id"].as_str().map(str::to_owned))
+            .collect();
+        assert_eq!(failing, vec!["L5-M06".to_string()]);
+        assert_eq!(m.not_scopable().len(), 1);
     }
 
     /// `inconclusive` (a probe query errored) is not `broken` (the chain is
@@ -2928,8 +3379,10 @@ mod loop_health_tests {
             loop5_interpretation("sound", "thin"),
             loop5_interpretation("sound", "none"),
             loop5_interpretation("broken", "usable"),
-            loop5_interpretation("unverified", "usable"),
             loop5_interpretation("inconclusive", "usable"),
+            // An unrecognised mechanism must fall through to the catch-all
+            // rather than accidentally endorsing the number.
+            loop5_interpretation("something_new", "usable"),
         ] {
             assert!(!m.contains("real measurement"), "{m}");
         }
