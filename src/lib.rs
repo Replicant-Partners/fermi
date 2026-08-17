@@ -102,6 +102,23 @@ pub mod provenance_oracle;
 // keyed on, and computes `confidence_display` rather than accepting it.
 pub mod hud_contract;
 
+// Liveness trust contract — the fifth sibling, and the one that would have
+// caught the other four. Every contract above examines data that EXISTS; none
+// of them can see a table that is empty because nothing ever wrote to it.
+//
+// That blind spot produced five findings in an afternoon: a CHECK constraint
+// declared by seventeen migrations and applied by none; a provenance oracle
+// wired into one of three call sites; `forecast_agent_claims` coded, wired,
+// exhaustively commented and holding zero rows; `anomaly_events` never fired;
+// and `semantic_rules.application_count` declared in migration 010 and never
+// incremented. Reading the code proves nothing — in every case the code looks
+// right.
+//
+// Nobody writes this check because `count(*) = 0` is ambiguous. The
+// disambiguator is the OPPORTUNITY count: zero claims beside fourteen
+// multiplier-bearing episodes is broken; zero beside zero is merely unused.
+pub mod liveness_trust;
+
 // Port trust contract — whether the caller is sending what the agent said it
 // takes. `negotiate::bind_input` in the console answered this correctly and
 // was wired only into the desktop client, so every HTTP execute path went
