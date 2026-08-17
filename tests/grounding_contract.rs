@@ -85,13 +85,17 @@ fn the_empirical_tier_is_not_entirely_exemptions() {
 /// two disagree instead of when someone forgets to update a third copy.
 #[test]
 fn the_migration_check_matches_the_runtime_vocabulary() {
-    let sql = std::fs::read_to_string("migrations/203_semantic_rule_provenance_floor.sql")
-        .expect("migration 203 must exist; it is registered in run_migrations");
+    // 205, not 203: it redefines the CHECK to include the pending tier, and
+    // the LATEST definition is the one the database ends up holding. Pointing
+    // this test at the older migration would have it pass against a vocabulary
+    // that no longer applies — a check measuring a superseded declaration.
+    let sql = std::fs::read_to_string("migrations/205_assertion_layer.sql")
+        .expect("migration 205 must exist; it is registered in run_migrations");
 
     // The CHECK body, between `provenance_floor IN (` and its closing paren.
     let start = sql
         .find("provenance_floor IN (")
-        .expect("migration must constrain provenance_floor to a closed vocabulary");
+        .expect("migration 205 must constrain provenance_floor to a closed vocabulary");
     let body = &sql[start..];
     let end = body.find(')').expect("unterminated IN list");
     let declared: std::collections::BTreeSet<String> = body[..end]

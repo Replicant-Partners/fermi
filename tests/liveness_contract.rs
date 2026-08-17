@@ -240,3 +240,102 @@ async fn report_quantified_output_the_platform_discards() {
         );
     }
 }
+
+/// Every verification must point at an assertion that exists.
+///
+/// The price of storing assertions flat in a JSONB array. `episodes.assertions`
+/// is fast to read and genuinely immutable, but Postgres cannot put a foreign
+/// key on an element inside an array, so `assertion_verifications.assertion_id`
+/// is a reference nothing enforces.
+///
+/// That is a dangling citation, and this codebase already has one: a semantic
+/// rule naming three episodes with no rows behind them. Unenforced integrity is
+/// acceptable only if it is *checked*, and the check has to ship with the
+/// schema rather than after it — which is why this test exists in the same
+/// change as migration 205 rather than in the follow-up that would never have
+/// been written.
+///
+/// A dangling verification is worse than a missing one: it asserts that
+/// something was verified while pointing at nothing, so the assertion it was
+/// supposed to settle stays pending for ever while the queue reports work done.
+#[tokio::test]
+#[ignore = "needs DATABASE_URL"]
+async fn every_verification_points_at_an_assertion_that_exists() {
+    let pool = pool().await;
+
+    if !column_exists(&pool, "assertion_verifications", "verdict").await {
+        println!("  migration 205 not deployed — nothing to check yet.");
+        return;
+    }
+
+    // Left join the log against the assertion ids actually present in
+    // `episodes.assertions`. A row with no match is unresolvable.
+    let dangling: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint \
+           FROM assertion_verifications v \
+          WHERE NOT EXISTS ( \
+                SELECT 1 FROM episodes e, jsonb_array_elements(e.assertions) AS a \
+                 WHERE e.assertions IS NOT NULL \
+                   AND (a ->> 'assertion_id')::uuid = v.assertion_id)",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("dangling probe");
+
+    let total: i64 = sqlx::query_scalar("SELECT count(*)::bigint FROM assertion_verifications")
+        .fetch_one(&pool)
+        .await
+        .expect("total");
+
+    println!("  {total} verification(s), {dangling} unresolvable");
+
+    assert_eq!(
+        dangling, 0,
+        "{dangling} of {total} verification(s) reference an assertion_id that \
+         exists in no episode. Flat storage cannot enforce this with a foreign \
+         key, which is exactly why it is checked here. A dangling verification \
+         is worse than a missing one: the queue reports the work as done while \
+         the assertion it should have settled stays pending for ever."
+    );
+}
+
+/// A human verdict without a citation must be impossible, not merely
+/// discouraged.
+///
+/// Enforced by CHECK in migration 205, asserted here against the live database
+/// because a constraint that was declared and never applied is the failure this
+/// afternoon found seventeen times over. `human_sourced` scores as high as
+/// `tool_verified` precisely because someone else can follow the citation to the
+/// same source — so an uncited one would be a one-click path from a guess to a
+/// fact, with a person's name attached.
+#[tokio::test]
+#[ignore = "needs DATABASE_URL"]
+async fn an_uncited_human_verification_is_rejected_by_the_database() {
+    let pool = pool().await;
+
+    if !column_exists(&pool, "assertion_verifications", "verdict").await {
+        println!("  migration 205 not deployed — constraint not yet in force.");
+        return;
+    }
+
+    // Attempted inside a transaction that is always rolled back, so the probe
+    // cannot leave a row behind whether it succeeds or fails.
+    let mut tx = pool.begin().await.expect("begin");
+    let attempt = sqlx::query(
+        "INSERT INTO assertion_verifications \
+             (assertion_id, episode_id, verdict, actor, actor_kind) \
+         SELECT gen_random_uuid(), episode_id, 'human_sourced', 'probe', 'human' \
+           FROM episodes LIMIT 1",
+    )
+    .execute(&mut *tx)
+    .await;
+    let _ = tx.rollback().await;
+
+    assert!(
+        attempt.is_err(),
+        "the database accepted a `human_sourced` verification with no citation. \
+         That makes the human route the cheapest way to turn a guess into a fact \
+         — it scores level with a tool call, and the citation is the only thing \
+         that earns the score."
+    );
+}

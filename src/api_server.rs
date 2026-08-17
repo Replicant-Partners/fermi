@@ -1169,6 +1169,15 @@ async fn run_migrations(db: &PgPool) {
         // bare `&str` at every call site, so this CHECK is the only closed set
         // in the system.
         "migrations/204_restore_credit_ledger_tx_type_check.sql",
+        // The assertion layer. `forecast_agent_claims.workspace_id` is NOT NULL,
+        // so an agent evaluated outside a workspace had its quantified judgement
+        // discarded — measured: 14 judgements, 14 discarded, 0 claims. An
+        // assertion is what the agent said (immutable, flat on `episodes`); a
+        // claim is that assertion bound to a driver (0..n). Verification is a
+        // separate append-only log, because a mutable status column would
+        // destroy the previous verdict and a rejected-then-reverified assertion
+        // would read as plain "verified".
+        "migrations/205_assertion_layer.sql",
     ];
 
     for file in &migration_files {

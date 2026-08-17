@@ -80,6 +80,54 @@ pub const PROV_INFERRED: &str = "model_inference";
 /// would lose exactly the property that makes a derived value trustworthy.
 pub const PROV_DERIVED: &str = "platform_derived";
 
+// ─── verification states (the pending tier) ────────────────────────────
+//
+// The four verdicts below exist because stripping an ungrounded value was
+// destroying research. `enforce` nulls a field a tool could not have supplied,
+// and `Violation.removed` retains it — but nothing ever looked at the
+// quarantine, so the practical effect was deletion with extra steps.
+//
+// A claim nobody has checked yet is not the same as a claim nothing could
+// check. The first is work waiting to be done; the second is an honest
+// absence. Collapsing them loses the only actionable state in the system.
+//
+// The route falls out of the contract with no new declarations:
+// `Grounding::Sourced { tool, response_field }` already names the tool and the
+// field, so a Sourced value that arrived without a recorded tool call has an
+// automated check available and knows which one. An Unsourced value has no tool
+// at all, so it routes to a person — and increments the tool-integration demand
+// signal, which is the same fact seen from the other side.
+
+/// Declared `Sourced`, value present, no tool call recorded. An automated
+/// check exists and [`FIELD_CONTRACTS`] already names it.
+pub const PROV_PENDING_TOOL: &str = "pending_tool_check";
+/// No tool can answer this. A person must source it, or a tool must be built.
+pub const PROV_PENDING_HUMAN: &str = "pending_human_check";
+/// A person checked it and recorded what they checked it against.
+///
+/// Strength 2, alongside [`PROV_TOOL`], and the citation is what earns that: a
+/// verdict someone else can follow to the same source is reproducible, which is
+/// the only property the ladder measures. Enforced at the database level — a
+/// `human_sourced` row without a citation is rejected by CHECK, because a
+/// one-click "verified" button is how a queue becomes a laundering UI.
+pub const PROV_HUMAN_SOURCED: &str = "human_sourced";
+/// A person vouched for it without citing anything.
+///
+/// Deliberately available, deliberately weaker. Requiring a citation for every
+/// judgement would push reviewers to paste a plausible URL, which is worse than
+/// an honest "I believe this". Strength 1, level with
+/// [`PROV_INFERRED`]: an uncited human opinion and a model's judgement are the
+/// same kind of claim, and pretending otherwise because a person typed it is
+/// exactly the deference this module exists to remove.
+pub const PROV_HUMAN_ENDORSED: &str = "human_endorsed";
+/// Checked, and found wrong.
+///
+/// Strength 0. Reliance-wise that is identical to unknown, and the ladder only
+/// measures reliance — what differs is what happens next, which is routing.
+/// Retained rather than deleted: a rejection rate is the first per-agent
+/// quality signal on this platform that is not self-reported.
+pub const PROV_REJECTED: &str = "rejected";
+
 /// Every value `<block>_provenance` is permitted to take.
 ///
 /// A closed set, asserted by [`tests::provenance_values_are_closed`]. An
@@ -91,6 +139,11 @@ pub const PROVENANCE_VALUES: &[&str] = &[
     PROV_UNAVAILABLE,
     PROV_INFERRED,
     PROV_DERIVED,
+    PROV_PENDING_TOOL,
+    PROV_PENDING_HUMAN,
+    PROV_HUMAN_SOURCED,
+    PROV_HUMAN_ENDORSED,
+    PROV_REJECTED,
 ];
 
 /// `Sourced` fields the platform holds no independent copy of, with the
@@ -290,9 +343,22 @@ pub const PRE_CONTRACT_MARKER: &str = "_grounding_review";
 /// block was extracted from prose, and prose is ungrounded.
 pub fn strength(verdict: &str) -> u8 {
     match verdict {
-        PROV_TOOL | PROV_DERIVED => 2,
-        PROV_INFERRED => 1,
-        // unavailable_no_tool_source, tool_no_match, and anything unrecognised
+        // Reproducible: run the tool, apply the transform, or follow the
+        // citation, and you land on the same value.
+        PROV_TOOL | PROV_DERIVED | PROV_HUMAN_SOURCED => 2,
+        // A judgement. Legitimate, and not a retrieval. An uncited human
+        // opinion sits here too: a person saying so is the same kind of claim
+        // as a model saying so.
+        PROV_INFERRED | PROV_HUMAN_ENDORSED => 1,
+        // Nothing to rely on yet. pending_* is weaker than model_inference on
+        // purpose — a judgement the agent was ASKED to make is legitimate
+        // output, while a retrieval claim with no retrieval behind it is not
+        // yet anything. `rejected` is also 0: reliance-wise a disproven value
+        // is worth exactly as much as an unknown one, and the difference is
+        // routing rather than reliance.
+        //
+        // unavailable_no_tool_source, tool_no_match, pending_tool_check,
+        // pending_human_check, rejected, and anything unrecognised.
         _ => 0,
     }
 }
@@ -309,17 +375,38 @@ pub const EXTRACTION_CEILING: &str = PROV_INFERRED;
 /// No sources means no evidence, which must not read as clean. An empty
 /// iterator returning the strongest value is the single most common way a
 /// floor calculation silently inverts.
+///
+/// Returns a verdict that **actually occurred** among the inputs, never a
+/// stand-in for its strength tier. The first draft collapsed to one
+/// representative per tier — `tool_verified` for anything scoring 2 — so a
+/// value settled by a human citing a source came back claiming a tool had run,
+/// and `tool_no_match` ("the tool answered, and had nothing") came back as
+/// `unavailable_no_tool_source` ("no tool exists"). Both are misattributions of
+/// mechanism, which is the specific error this module exists to prevent, and
+/// both were invisible because the strength was right.
+///
+/// Ties at the minimum resolve to the first one seen. Any of them is a true
+/// statement about a real source, which is the property that matters; where
+/// there is exactly one source the answer is exactly right.
+///
+/// Asserted by [`tests::the_floor_never_invents_a_verdict_that_was_not_there`].
 pub fn floor<'a>(sources: impl IntoIterator<Item = &'a str>) -> &'static str {
-    let mut worst: Option<u8> = None;
+    let mut worst: Option<(u8, &'static str)> = None;
     for s in sources {
+        // Canonicalise to the &'static str from PROVENANCE_VALUES so the
+        // returned verdict is one the runtime can emit, and an unrecognised
+        // input cannot be echoed back as though it were vocabulary.
+        let canonical = PROVENANCE_VALUES.iter().copied().find(|v| *v == s);
         let v = strength(s);
-        worst = Some(worst.map_or(v, |w| w.min(v)));
+        let candidate = (v, canonical.unwrap_or(PROV_UNAVAILABLE));
+        worst = Some(match worst {
+            Some((w, _)) if w <= v => worst.unwrap(),
+            _ => candidate,
+        });
     }
-    match worst {
-        Some(2) => PROV_TOOL,
-        Some(1) => PROV_INFERRED,
-        _ => PROV_UNAVAILABLE,
-    }
+    worst
+        .map(|(_, verdict)| verdict)
+        .unwrap_or(PROV_UNAVAILABLE)
 }
 
 /// Provenance for a value derived by extraction from `sources`.
@@ -2372,7 +2459,12 @@ mod tests {
         assert_eq!(floor(many), PROV_UNAVAILABLE);
         assert_eq!(floor(vec![PROV_TOOL, PROV_INFERRED]), PROV_INFERRED);
         assert_eq!(floor(vec![PROV_TOOL, PROV_DERIVED]), PROV_TOOL);
-        assert_eq!(floor(vec![PROV_INFERRED, PROV_NO_MATCH]), PROV_UNAVAILABLE);
+        // `tool_no_match` survives rather than collapsing to
+        // `unavailable_no_tool_source`. Both score 0, but they say different
+        // things — "the tool answered and had nothing for this subject" versus
+        // "no tool exists" — and the second is a claim about our tooling that
+        // would be false here.
+        assert_eq!(floor(vec![PROV_INFERRED, PROV_NO_MATCH]), PROV_NO_MATCH);
     }
 
     #[test]
@@ -2402,6 +2494,32 @@ mod tests {
     }
 
     #[test]
+    fn the_floor_never_invents_a_verdict_that_was_not_there() {
+        // The invariant the tier-representative version violated. A floor that
+        // reports a mechanism nobody used is a misattribution, and it is the
+        // hardest kind to notice because the strength is correct.
+        let cases: &[&[&str]] = &[
+            &[PROV_HUMAN_SOURCED],
+            &[PROV_DERIVED],
+            &[PROV_NO_MATCH],
+            &[PROV_HUMAN_ENDORSED],
+            &[PROV_REJECTED],
+            &[PROV_TOOL, PROV_HUMAN_SOURCED],
+            &[PROV_TOOL, PROV_PENDING_TOOL],
+        ];
+        for inputs in cases {
+            let got = floor(inputs.iter().copied());
+            assert!(
+                inputs.contains(&got),
+                "floor({inputs:?}) returned `{got}`, which no source claimed"
+            );
+        }
+        // The single documented exception: with nothing to report, the floor
+        // must still not read as clean.
+        assert_eq!(floor(Vec::<&str>::new()), PROV_UNAVAILABLE);
+    }
+
+    #[test]
     fn an_unrecognised_verdict_is_worthless_rather_than_trusted() {
         // Vocabulary drift is the failure this module has already had once
         // (`gbif_verified` for `tool_verified`). If a stale or misspelled
@@ -2423,9 +2541,10 @@ mod tests {
         // stop trusting the floor. Force the decision at compile-time-ish.
         for v in PROVENANCE_VALUES {
             let expected = match *v {
-                PROV_TOOL | PROV_DERIVED => 2,
-                PROV_INFERRED => 1,
-                PROV_UNAVAILABLE | PROV_NO_MATCH => 0,
+                PROV_TOOL | PROV_DERIVED | PROV_HUMAN_SOURCED => 2,
+                PROV_INFERRED | PROV_HUMAN_ENDORSED => 1,
+                PROV_UNAVAILABLE | PROV_NO_MATCH | PROV_PENDING_TOOL | PROV_PENDING_HUMAN
+                | PROV_REJECTED => 0,
                 other => panic!(
                     "provenance value `{other}` has no declared strength; \
                      decide whether it is reproducible (2), a judgement (1), \
@@ -2434,6 +2553,52 @@ mod tests {
             };
             assert_eq!(strength(v), expected, "strength of `{v}`");
         }
+    }
+
+    #[test]
+    fn a_pending_claim_is_weaker_than_a_judgement_the_agent_was_asked_to_make() {
+        // The ordering that makes the pending tier honest. `enemy_sensor` is
+        // ASKED to rate predation risk: that judgement is its product and is
+        // legitimate output. A retrieval claim with no retrieval behind it is
+        // not yet anything at all. If pending outranked inference, an agent
+        // could improve its floor by asserting an unsourced fact instead of
+        // reasoning — rewarding exactly the behaviour the contract exists to
+        // discourage.
+        assert!(strength(PROV_PENDING_TOOL) < strength(PROV_INFERRED));
+        assert!(strength(PROV_PENDING_HUMAN) < strength(PROV_INFERRED));
+        assert_eq!(
+            floor(vec![PROV_INFERRED, PROV_PENDING_TOOL]),
+            // Reported as `pending_tool_check`, not flattened to
+            // `unavailable_no_tool_source`: the first says a check is available
+            // and owed, the second says no tool exists. Only one is a work item,
+            // and losing that distinction loses the whole pending tier.
+            PROV_PENDING_TOOL
+        );
+    }
+
+    #[test]
+    fn a_cited_human_check_is_worth_a_tool_call_and_an_uncited_one_is_not() {
+        // The citation is the whole difference, and it is the only thing that
+        // makes the human route safe: a verdict someone else can follow to the
+        // same source is reproducible, which is all the ladder measures. Drop
+        // the citation and it becomes an opinion — the same kind of claim a
+        // model makes, and deferring to it because a person typed it is the
+        // deference this module exists to remove.
+        assert_eq!(strength(PROV_HUMAN_SOURCED), strength(PROV_TOOL));
+        assert_eq!(strength(PROV_HUMAN_ENDORSED), strength(PROV_INFERRED));
+        assert!(strength(PROV_HUMAN_ENDORSED) < strength(PROV_HUMAN_SOURCED));
+    }
+
+    #[test]
+    fn a_rejected_claim_cannot_be_relied_on_and_cannot_lift_a_floor() {
+        // Disproven and unknown are worth the same when you are deciding what
+        // to trust; they differ in what happens next, which is routing rather
+        // than reliance.
+        assert_eq!(strength(PROV_REJECTED), 0);
+        // `rejected` survives the floor. "Checked and found wrong" is the most
+        // actionable thing the platform can say, and collapsing it would report
+        // a disproven value as a merely missing one.
+        assert_eq!(floor(vec![PROV_TOOL, PROV_REJECTED]), PROV_REJECTED);
     }
 
     #[test]

@@ -102,6 +102,23 @@ pub mod provenance_oracle;
 // keyed on, and computes `confidence_display` rather than accepting it.
 pub mod hud_contract;
 
+// What an agent quantified, recorded whether or not there is a forecast to
+// bind it to.
+//
+// `forecast_agent_claims.workspace_id` is NOT NULL, which is right for a claim
+// — a claim is an adjustment to a driver and is neutralisable at 1.0, which is
+// what makes exact Shapley credit cheap. But it was the ONLY home for an
+// agent's quantified output, so a standalone evaluation lost it: 14 quantified
+// judgements measured, 14 discarded, 0 claims. Standalone evaluation is how
+// agents are mostly exercised, so no agent could build a track record.
+//
+// An assertion is what the agent said; a claim is that assertion bound to a
+// driver, 0..n per assertion. The load-bearing rule is that a multiplier can
+// never be tool_verified — no database contains "the multiplier for this
+// driver" — so a multiplier is not a checkable proposition and verification
+// routes to its basis instead.
+pub mod assertions;
+
 // Liveness trust contract — the fifth sibling, and the one that would have
 // caught the other four. Every contract above examines data that EXISTS; none
 // of them can see a table that is empty because nothing ever wrote to it.

@@ -132,8 +132,9 @@ pub const KNOWN_SILENT: &[(&str, &str)] = &[(
     "semantic_rules.application_count",
     "The write (`kg_context::record_rule_retrievals`) is new, spawned off the \
      hot path, and has not yet been observed firing against this database. \
-     1,829 episodes belong to agents holding retrievable rules, so the \
-     opportunity is real and this is not merely unused. Until it fires, \
+     Well over a thousand episodes belong to agents holding retrievable \
+     rules — the runner prints the current figure — so the opportunity is \
+     real and this is not merely unused. Until it fires, \
      `extraction_utility` cannot distinguish a rule the platform wanted back \
      from one nobody ever retrieved, which is the entire signal the \
      ontologist's own Loop 1 runs on. Remove this entry the first time any \
@@ -216,6 +217,58 @@ pub const LIVENESS_CONTRACTS: &[LivenessContract] = &[
                       those 52 rule-bearing agents actually run through. The \
                       update is spawned and its failure only logged, so check for \
                       `kg_retrieval_credit_failed`.",
+    },
+    LivenessContract {
+        sink: "episodes.assertions",
+        writer: "agent_backend::tool_executor (assertion capture at episode write)",
+        sink_sql: "SELECT count(*)::bigint AS writes FROM episodes \
+                    WHERE assertions IS NOT NULL",
+        // An episode whose response quantified something is an opportunity.
+        // Deliberately the LOOSE pattern: any `Suggested p50` line at all,
+        // including the eight of fourteen the old regex could not parse because
+        // the model wrote `**1.15**`. That is the point — the assertion layer
+        // exists so a format failure is a recorded fact rather than a silent
+        // discard, so a line the extractor gave up on still counts as an
+        // opportunity it should have recorded something about.
+        opportunity_sql: "SELECT count(*)::bigint AS opportunities FROM episodes \
+                           WHERE response_text ~ 'Suggested p50'",
+        expectation: Expectation::EveryOpportunity,
+        requires: Some(("episodes", "assertions")),
+        why: "Without assertions an agent evaluated outside a workspace leaves no \
+              trace of what it quantified, so it can never accumulate a track \
+              record and the recommendation problem has no data underneath it. \
+              Measured before migration 205: 14 quantified judgements, 14 \
+              discarded, 0 claims.",
+        remediation: "Capture assertions at episode write, unconditionally — not \
+                      gated on a workspace, which is the gate that caused the \
+                      loss. `NULL` means pre-205 and `[]` means asserted nothing; \
+                      writing `[]` is what makes this contract go live.",
+    },
+    LivenessContract {
+        sink: "assertion_verifications",
+        writer: "the verification queue (automated route + forecast owner review)",
+        sink_sql: "SELECT count(*)::bigint AS writes FROM assertion_verifications",
+        // Only an assertion that is actually pending is an opportunity. A
+        // corpus of fully-verified assertions owes no verifications, and
+        // counting all assertions would make this permanently red for a reason
+        // nobody can fix.
+        opportunity_sql: "SELECT count(*)::bigint AS opportunities \
+                            FROM episodes e, \
+                                 jsonb_array_elements(e.assertions) AS a \
+                           WHERE e.assertions IS NOT NULL \
+                             AND a ->> 'provenance' IN ('pending_tool_check', \
+                                                        'pending_human_check')",
+        expectation: Expectation::EveryOpportunity,
+        requires: Some(("assertion_verifications", "verdict")),
+        why: "A queue nobody works is indistinguishable from trusting everything \
+              in it. While this is empty, every pending assertion is presented \
+              with a badge and never resolved, which is the failure mode the \
+              pending tier was supposed to replace — unverified data reading as \
+              acceptable because it has been sitting there long enough.",
+        remediation: "Run the automated route first: `Grounding::Sourced` already \
+                      names the tool and response field, so those checks need no \
+                      new declarations. Only what no tool can settle should reach \
+                      a person.",
     },
     // ── positive controls ───────────────────────────────────────────
     //
