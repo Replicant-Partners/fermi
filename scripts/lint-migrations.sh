@@ -43,7 +43,14 @@ lint_file() {
     local stripped
     stripped=$(echo "$content" | sed '/^--/d' | perl -0777 -pe 's/DO\s+\$\$.*?\$\$\s*;//gs' 2>/dev/null || echo "$content" | sed '/^--/d')
     local stmt_count
-    stmt_count=$(echo "$stripped" | grep -c ';\s*$' 2>/dev/null || echo 0)
+    # `grep -c` prints 0 AND exits 1 when there are no matches, so the old
+    # `|| echo 0` fallback appended a SECOND zero and produced "0\n0". `[ "0
+    # 0" -gt 1 ]` then errored, and because the error is not fatal Rule 2 was
+    # silently skipped for every migration with no top-level statements — a
+    # check that cannot run, reporting nothing, indistinguishable from clean.
+    # `|| true` keeps grep's own count and lets its exit code go.
+    stmt_count=$(echo "$stripped" | grep -c ';[[:space:]]*$' || true)
+    stmt_count=${stmt_count:-0}
 
     if [ "$stmt_count" -gt 1 ]; then
         # Check if it's a DROP+ADD constraint pattern

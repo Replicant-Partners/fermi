@@ -53,38 +53,48 @@
 -- Cost: 2 credits per regeneration, charged to whoever next opens the card.
 -- 13 rows.
 --
--- Idempotent via the `superseded_profile` guard. No BEGIN/COMMIT and no
--- DROP+ADD CONSTRAINT — PgBouncer transaction mode.
+-- Idempotent via the `superseded_profile` guard.
+--
+-- One DO block rather than three top-level statements. Not because the two
+-- UPDATEs need to be atomic — both are guarded and `run_migrations` replays on
+-- every boot, so a half-apply self-heals — but because PgBouncer is in
+-- transaction-pooling mode and `scripts/lint-migrations.sh` warns on the shape.
+-- A warning nobody acts on is a warning everybody learns to scroll past, and
+-- the next migration with the same shape will be the one where atomicity did
+-- matter.
 
--- ─── Part 1: un-tag the post-contract profiles ────────────────────────
+DO $$
+BEGIN
+    -- ─── Part 1: un-tag the post-contract profiles ────────────────────────
 
-UPDATE public.creature_conditions
-   SET genome_profile = genome_profile - '_grounding_review'
- WHERE genome_profile IS NOT NULL
-   AND genome_profile ? '_grounding_review'
-   AND genome_profile ? 'taxonomy_provenance';
+    UPDATE public.creature_conditions
+       SET genome_profile = genome_profile - '_grounding_review'
+     WHERE genome_profile IS NOT NULL
+       AND genome_profile ? '_grounding_review'
+       AND genome_profile ? 'taxonomy_provenance';
 
-COMMENT ON COLUMN public.creature_conditions.genome_profile IS
-  'Cached phylogenetic profile. A `_grounding_review` key means the document predates the grounding contract (src/grounding_trust.rs) and every non-narrative field is treated as unsourced. Presence of `taxonomy_provenance` means the reverse: it was written under the contract. Never tag on shape alone — see migration 201.';
+    COMMENT ON COLUMN public.creature_conditions.genome_profile IS
+      'Cached phylogenetic profile. A `_grounding_review` key means the document predates the grounding contract (src/grounding_trust.rs) and every non-narrative field is treated as unsourced. Presence of `taxonomy_provenance` means the reverse: it was written under the contract. Never tag on shape alone — see migration 202.';
 
--- ─── Part 2: archive and clear the genuine legacy rows ────────────────
+    -- ─── Part 2: archive and clear the genuine legacy rows ────────────────
 
-UPDATE public.creature_conditions
-   SET genome_profile = jsonb_build_object(
-           '_grounding_review',
-           coalesce(genome_profile -> '_grounding_review', '{}'::jsonb)
-           || jsonb_build_object(
-                  'superseded_profile', genome_profile - '_grounding_review',
-                  'invalidated_at', to_jsonb(now()),
-                  'invalidated_by', 'migrations/202',
-                  'reason', 'Cleared to force regeneration under the grounding '
-                            'contract: ncbi_genome_search can now source genome '
-                            'size and chromosome count, and reconcile() corrects '
-                            'taxonomy against the creature record. The superseded '
-                            'document is retained verbatim for comparison.'
-              )
-       )
- WHERE genome_profile IS NOT NULL
-   AND genome_profile ? '_grounding_review'
-   AND NOT genome_profile ? 'taxonomy_provenance'
-   AND NOT (genome_profile -> '_grounding_review') ? 'superseded_profile';
+    UPDATE public.creature_conditions
+       SET genome_profile = jsonb_build_object(
+               '_grounding_review',
+               coalesce(genome_profile -> '_grounding_review', '{}'::jsonb)
+               || jsonb_build_object(
+                      'superseded_profile', genome_profile - '_grounding_review',
+                      'invalidated_at', to_jsonb(now()),
+                      'invalidated_by', 'migrations/202',
+                      'reason', 'Cleared to force regeneration under the grounding '
+                                'contract: ncbi_genome_search can now source genome '
+                                'size and chromosome count, and reconcile() corrects '
+                                'taxonomy against the creature record. The superseded '
+                                'document is retained verbatim for comparison.'
+                  )
+           )
+     WHERE genome_profile IS NOT NULL
+       AND genome_profile ? '_grounding_review'
+       AND NOT genome_profile ? 'taxonomy_provenance'
+       AND NOT (genome_profile -> '_grounding_review') ? 'superseded_profile';
+END $$;
