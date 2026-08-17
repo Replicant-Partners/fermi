@@ -597,6 +597,17 @@ impl SeedData {
                     // extractor's utility score, which is what we want — a
                     // fixture must not flatter or damn a real agent.
                     extracted_by: None,
+                    // Same reasoning for the floor, and it matters more here:
+                    // a fixture that claimed `tool_verified` would put
+                    // fabricated grounding into the corpus that reports read,
+                    // and the numbers would improve every time someone
+                    // re-seeded. UNKNOWN is the truth — no episodes were ever
+                    // graded, because no episodes were ever run.
+                    provenance_floor: None,
+                    provenance_floor_basis: Some(serde_json::json!({
+                        "sources": [],
+                        "reason": "seed_fixture_no_real_episodes"
+                    })),
                 }
             })
             .collect()

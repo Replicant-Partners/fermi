@@ -894,7 +894,18 @@ pub async fn consolidate_agent_handler(
         // stamps nothing because the pattern fallback passes `None` explicitly,
         // but branching here would be one more place for either to get dropped.
         .with_extractor_guidance(extractor_guidance)
-        .with_extractor_identity(extractor_identity);
+        .with_extractor_identity(extractor_identity)
+        // Migration 203. Every rule this cycle writes records how
+        // well-grounded the episodes behind it were, because the rules do not
+        // stay in the table: `kg_context` injects them into other agents'
+        // prompts as "Learned Knowledge". Applied to both arms for the same
+        // reason as the two above — the pattern fallback reads the same
+        // episodes, so a regex generalising over ungrounded text produces an
+        // ungrounded rule, and exempting it would leave the one path that
+        // cannot explain itself also unlabelled.
+        .with_provenance_oracle(Some(Arc::new(
+            fermi::provenance_oracle::DbProvenanceOracle::new(spawn_state.db.clone()),
+        )));
 
         // Pass the client's job_id through so the worker's own statistics and
         // completion land on the row the client is polling.

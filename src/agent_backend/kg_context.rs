@@ -452,6 +452,8 @@ mod gate_tests {
             is_active: true,
             created_at: Utc::now(),
             extracted_by: None,
+            provenance_floor: None,
+            provenance_floor_basis: None,
         }
     }
 
@@ -521,6 +523,88 @@ mod gate_tests {
         let out = append_kg_block(None, "\n\n## Learned Knowledge\n- something");
         assert!(out.contains("## Learned Knowledge"));
         assert!(out.contains("- something"));
+    }
+
+    // ─── the prompt must not launder a rule ───
+    //
+    // This is the boundary where a stored claim becomes another agent's
+    // premise. Everything upstream — the floor column, the oracle, the
+    // ceiling — exists to reach these four tests, and if the rendering drops
+    // the floor then all of it is bookkeeping nobody reads.
+
+    fn rule_with_floor(content: &str, floor: Option<&str>) -> SemanticRule {
+        let mut r = rule(content);
+        r.provenance_floor = floor.map(|s| s.to_string());
+        r
+    }
+
+    /// The invariant, stated over every value the vocabulary permits plus the
+    /// unknown case, so it holds by exhaustion rather than by inspection of
+    /// the branches someone remembered to check.
+    #[test]
+    fn no_rule_can_ever_render_as_tool_verified() {
+        let mut floors: Vec<Option<&str>> = vec![None];
+        floors.extend(
+            crate::grounding_trust::PROVENANCE_VALUES
+                .iter()
+                .map(|v| Some(*v)),
+        );
+
+        for floor in floors {
+            let r = rule_with_floor("Aeshna cyanea preys on Lepidoptera", floor);
+            let block = build_kg_block_inner(&[(Some(0.9), &r)], &[], &[]);
+            let lower = block.to_lowercase();
+            for needle in ["tool_verified", "tool-verified", "verified", "measured"] {
+                assert!(
+                    !lower.contains(needle),
+                    "floor {floor:?} rendered a rule containing `{needle}`. A rule \
+                     cannot be tool-verified — EXTRACTION_CEILING is \
+                     model_inference — so any wording a model could read that way \
+                     reports a fact about the sources as a fact about the rule.\n{block}"
+                );
+            }
+        }
+    }
+
+    /// The number that used to carry all the weight must not read as
+    /// calibration. `confidence_score` is the extraction model rating its own
+    /// output; labelling it plain "confidence" next to a similarity score is
+    /// what made the block persuasive.
+    #[test]
+    fn the_self_report_is_labelled_as_a_self_report() {
+        let r = rule_with_floor("something", Some("model_inference"));
+        let block = build_kg_block_inner(&[(None, &r)], &[], &[]);
+        assert!(
+            block.contains("self-rated"),
+            "the model\'s own confidence must be named as such, got: {block}"
+        );
+    }
+
+    /// Known-bad and unknown must be distinguishable in the prompt, because
+    /// the remedy differs: one rule should be retracted, the other is waiting
+    /// on retention and contracts. Collapsing them would make the honest
+    /// state of the corpus unreadable to the agent and to us.
+    #[test]
+    fn ungrounded_and_unknown_are_not_the_same_word() {
+        let bad = rule_with_floor("x", Some("unavailable_no_tool_source"));
+        let unknown = rule_with_floor("x", None);
+        let a = build_kg_block_inner(&[(None, &bad)], &[], &[]);
+        let b = build_kg_block_inner(&[(None, &unknown)], &[], &[]);
+        assert_ne!(a, b, "absence is not a verdict, and must not print as one");
+        assert!(a.to_uppercase().contains("UNGROUNDED"), "{a}");
+        assert!(b.contains("grounding unknown"), "{b}");
+    }
+
+    /// The floor is worthless if the reading model is not told what to do
+    /// about it. A label it cannot act on is decoration.
+    #[test]
+    fn the_block_tells_the_model_not_to_cite_an_ungrounded_rule() {
+        let r = rule_with_floor("x", None);
+        let block = build_kg_block_inner(&[(None, &r)], &[], &[]);
+        assert!(
+            block.contains("must not cite it as established"),
+            "the rules section must carry its own reading instructions: {block}"
+        );
     }
 
     /// Nothing retrieved must produce nothing appended, so an empty recall
@@ -602,6 +686,58 @@ fn build_kg_block_ann(
     )
 }
 
+/// How a learned rule was grounded, in words the reading model will act on.
+///
+/// # Why the prompt has to say this
+///
+/// The line above this function used to read `- (72% match, 90% confidence)
+/// <rule>`. Both numbers are real and neither is a measurement.
+/// `confidence_score` is the extraction model's own self-report about a
+/// generalisation it had just written, and `match` is cosine similarity
+/// between two embeddings. Rendered side by side and labelled "confidence",
+/// they read as calibration — to a model, `90% confidence` is a strong signal
+/// to assert the content downstream.
+///
+/// That is the last step of a laundering path, and it is the step that
+/// matters, because it is where the claim leaves the database and enters
+/// another agent's reasoning. A rule extracted from ten paragraphs of prose
+/// arrives in the prompt looking exactly like one extracted from ten tool
+/// calls. Worse than a bare hallucination: the citation is real, because
+/// `source_episode_cluster` genuinely points at episodes that genuinely said
+/// that.
+///
+/// # Why never "verified"
+///
+/// No branch returns anything a model could read as tool-backed, and that is
+/// not caution, it is arithmetic: `EXTRACTION_CEILING` is `model_inference`,
+/// so a rule *cannot* hold `tool_verified` however well-sourced its episodes
+/// were. Reading well-grounded episodes and writing a generalisation about
+/// them is judgement, and judgement does not inherit retrieval. A rule
+/// claiming otherwise would be reporting a fact about its sources as a fact
+/// about itself.
+///
+/// Guarded by `no_rule_can_ever_render_as_tool_verified`.
+fn grounding_note(rule: &agent_bestiary_memory::SemanticRule) -> &'static str {
+    use crate::grounding_trust::{PROV_INFERRED, PROV_NO_MATCH, PROV_UNAVAILABLE};
+    match rule.provenance_floor.as_deref() {
+        // The best an extracted rule can be: reasoned from evidence something
+        // could actually check.
+        Some(PROV_INFERRED) => "inferred from sourced evidence",
+        // Known bad. The episodes it came from asserted things no tool could
+        // supply, so the rule inherits nothing to stand on.
+        Some(PROV_UNAVAILABLE) | Some(PROV_NO_MATCH) => "UNGROUNDED - no tool could confirm this",
+        // Unknown, and it must not read as either of the above. Distinct
+        // wording because the remedy is different: retention and contracts,
+        // not retracting the rule.
+        None => "grounding unknown",
+        // Any other value is a vocabulary the runtime has grown without
+        // updating this function. Refuse to characterise it rather than
+        // guessing upward; `PROVENANCE_VALUES` is closed and tested, so this
+        // is reachable only mid-change.
+        Some(_) => "grounding unrecognised - treat as unknown",
+    }
+}
+
 fn build_kg_block_inner(
     rules: &[(Option<f32>, &agent_bestiary_memory::SemanticRule)],
     episodic: &[(Option<f32>, &agent_bestiary_memory::Entity)],
@@ -651,15 +787,21 @@ fn build_kg_block_inner(
              Use it as context — prioritise your core instructions over these where they conflict.\n",
         );
         if !rules.is_empty() {
-            block.push_str("\n### Learned Rules\n");
+            block.push_str(
+                "\n### Learned Rules\n\
+                 Each rule carries how it was grounded. A rule marked ungrounded \
+                 or unknown was distilled from text that no tool could confirm; \
+                 it is a hypothesis, and you must not cite it as established.\n",
+            );
             for (score, rule) in rules {
                 let score_str = score
-                    .map(|s| format!("({:.0}% match, ", s * 100.0))
+                    .map(|s| format!("{:.0}% match, ", s * 100.0))
                     .unwrap_or_default();
                 block.push_str(&format!(
-                    "- {}{:.0}% confidence) {}\n",
+                    "- ({}{:.0}% self-rated, {}) {}\n",
                     score_str,
                     rule.confidence_score * 100.0,
+                    grounding_note(rule),
                     rule.rule_content
                 ));
             }

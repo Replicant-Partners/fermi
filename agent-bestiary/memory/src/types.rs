@@ -387,6 +387,28 @@ pub struct SemanticRule {
     /// does not know its extractor. Readers must exclude `None` rather than
     /// attribute it to anyone.
     pub extracted_by: Option<Uuid>,
+    /// Weakest provenance among the source episodes, capped at
+    /// `model_inference` because extraction is judgement (migration 203).
+    ///
+    /// Rules do not stay in this table. They are retrieved and injected into
+    /// other agents' prompts, which makes them things the platform tells its
+    /// own agents are true. Without this column a rule extracted from ten
+    /// tool-verified lookups and a rule extracted from ten paragraphs of model
+    /// prose are stored identically and retrieved identically, and the second
+    /// kind is more dangerous than a bare hallucination because its citation
+    /// is real: `source_episode_cluster` genuinely points at episodes that
+    /// genuinely said that. That is a laundering path, and it runs outward.
+    ///
+    /// `None` means UNKNOWN, never clean. See
+    /// [`crate::provenance::ProvenanceOracle`] for the three ways the honest
+    /// answer is unknown.
+    #[serde(default)]
+    pub provenance_floor: Option<String>,
+    /// The working behind `provenance_floor`, so a reader can recompute it and
+    /// disagree. A floor with no working shown is an assertion, and an
+    /// assertion is the thing being replaced.
+    #[serde(default)]
+    pub provenance_floor_basis: Option<serde_json::Value>,
 }
 
 /// Shopping preference profile (consumer side of embedding marketplace)

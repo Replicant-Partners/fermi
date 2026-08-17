@@ -12,9 +12,9 @@
 
 use crate::{
     generate_structured_with_usage, Cardinality, ConsolidationLock, DBSCANClustering,
-    EmbeddingGenerator, Entity, Episode, EpisodeCluster, ExecutionStatus, Fact, GenerationConfig,
-    LLMProvider, MemoryError, MemoryStore, Message, MessageRole, ProvenancedEmbedding, Result,
-    SemanticRule, VerificationStatus,
+    EmbeddingGenerator, Entity, Episode, EpisodeCluster, ExecutionStatus, ExtractionFloor, Fact,
+    GenerationConfig, LLMProvider, MemoryError, MemoryStore, Message, MessageRole,
+    ProvenanceOracle, ProvenancedEmbedding, Result, SemanticRule, VerificationStatus,
 };
 use chrono::Utc;
 use std::sync::Arc;
@@ -134,7 +134,6 @@ pub struct ConsolidationWorker {
     lock: Arc<ConsolidationLock>,
     embedder: Arc<dyn EmbeddingGenerator>,
     llm: Option<Arc<dyn LLMProvider>>,
-    #[allow(dead_code)]
     worker_id: String,
     /// Extraction cost for the cycle in flight. `Mutex` rather than threading a
     /// counter through five private methods; contention is nil because a worker
@@ -146,6 +145,9 @@ pub struct ConsolidationWorker {
     /// Who to credit for rules produced this cycle.
     /// See [`ConsolidationWorker::with_extractor_identity`].
     extractor_identity: Option<Uuid>,
+    /// Resolves how well-grounded the source episodes were.
+    /// See [`ConsolidationWorker::with_provenance_oracle`].
+    provenance_oracle: Option<Arc<dyn ProvenanceOracle>>,
 }
 
 impl ConsolidationWorker {
@@ -165,6 +167,7 @@ impl ConsolidationWorker {
             usage: std::sync::Mutex::new(ExtractorUsage::default()),
             extractor_guidance: None,
             extractor_identity: None,
+            provenance_oracle: None,
         }
     }
 
@@ -185,6 +188,7 @@ impl ConsolidationWorker {
             usage: std::sync::Mutex::new(ExtractorUsage::default()),
             extractor_guidance: None,
             extractor_identity: None,
+            provenance_oracle: None,
         }
     }
 
@@ -201,6 +205,67 @@ impl ConsolidationWorker {
     pub fn with_extractor_identity(mut self, agent_id: Option<Uuid>) -> Self {
         self.extractor_identity = agent_id;
         self
+    }
+
+    /// How to find out how well-grounded the evidence was (migration 203).
+    ///
+    /// The rules this worker writes do not stay in `semantic_rules`. They are
+    /// retrieved and injected into other agents' prompts, which makes them
+    /// things the platform tells its own agents are true. A rule extracted
+    /// from ten tool-verified lookups and a rule extracted from ten paragraphs
+    /// of model prose are otherwise stored identically and retrieved
+    /// identically — and the second is worse than a bare hallucination,
+    /// because its citation is real: `source_episode_cluster` genuinely points
+    /// at episodes that genuinely said that.
+    ///
+    /// The oracle lives in the upper crate because the field contracts do. See
+    /// [`crate::provenance`] for why this is a trait and not a function.
+    ///
+    /// `None` — no oracle wired, as in tests — means every rule this cycle
+    /// writes records an UNKNOWN floor. Not a clean one. The distinction is
+    /// the whole point of the column.
+    pub fn with_provenance_oracle(mut self, oracle: Option<Arc<dyn ProvenanceOracle>>) -> Self {
+        self.provenance_oracle = oracle;
+        self
+    }
+
+    /// The provenance floor for a rule about to be written from `episode_ids`.
+    ///
+    /// One helper rather than three inlined copies, because there are three
+    /// rule-construction sites and a fourth will be added. A site that forgot
+    /// to call this would write `None` — which is the safe direction, but
+    /// silently, and would show up in reporting as missing coverage rather
+    /// than as a bug.
+    ///
+    /// An oracle error is UNKNOWN, never clean: a database hiccup must not be
+    /// able to promote a rule's grounding, and consolidation must not fail
+    /// because the floor could not be computed. The reason is recorded so the
+    /// two cases stay distinguishable in the basis column.
+    async fn floor_for(&self, episode_ids: &[Uuid]) -> ExtractionFloor {
+        let Some(oracle) = self.provenance_oracle.as_ref() else {
+            // Loud on purpose. A cycle that writes rules nobody can grade is
+            // a cycle whose output will be injected into prompts marked
+            // "grounding unknown" forever, and the only place that decision
+            // is visible is here.
+            tracing::warn!(
+                worker = %self.worker_id,
+                "no provenance oracle wired: every rule this cycle writes will \
+                 record an UNKNOWN grounding floor"
+            );
+            return ExtractionFloor::unknown("no_provenance_oracle_wired");
+        };
+        match oracle.extraction_floor(episode_ids).await {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    sources = episode_ids.len(),
+                    "provenance floor unresolved; recording UNKNOWN rather than \
+                     assuming clean"
+                );
+                ExtractionFloor::unknown("oracle_error")
+            }
+        }
     }
 
     /// Give the extractor back what it has learned about extracting.
@@ -732,6 +797,12 @@ impl ConsolidationWorker {
             generate_structured_with_usage(llm.as_ref(), messages, &config).await?;
         self.record_usage(&usage);
 
+        // One floor per cluster, not per rule: every rule from this call was
+        // extracted from the same episodes, so the answer cannot differ, and
+        // asking once keeps a three-rule extraction from making three
+        // identical database round-trips.
+        let floor = self.floor_for(episode_ids).await;
+
         // Convert to SemanticRule objects with provenance
         for llm_rule in llm_rules {
             let provenance = self
@@ -757,6 +828,9 @@ impl ConsolidationWorker {
                 embedding,
                 is_active: true,
                 created_at: chrono::Utc::now(),
+                // Migration 203.
+                provenance_floor: floor.floor.clone(),
+                provenance_floor_basis: Some(floor.basis.clone()),
             };
 
             rules.push((rule, provenance));
@@ -782,6 +856,7 @@ impl ConsolidationWorker {
             .collect();
 
         if !error_messages.is_empty() {
+            let floor = self.floor_for(episode_ids).await;
             let rule_content = format!(
                 "Common failure pattern identified across {} episodes",
                 cluster.episodes.len()
@@ -816,6 +891,11 @@ impl ConsolidationWorker {
                 // reward it for rules a regex wrote and pollute the very signal
                 // migration 201 exists to produce.
                 extracted_by: None,
+                // The floor is about the EVIDENCE, not the extractor, so this
+                // path records it exactly like the LLM path does. A regex
+                // reading ungrounded episodes produces an ungrounded rule.
+                provenance_floor: floor.floor,
+                provenance_floor_basis: Some(floor.basis),
             };
 
             rules.push((rule, provenance));
@@ -1170,6 +1250,8 @@ impl ConsolidationWorker {
             generate_structured_with_usage(llm.as_ref(), messages, &config).await?;
         self.record_usage(&usage);
 
+        let floor = self.floor_for(&episode_ids).await;
+
         let mut rules: Vec<(SemanticRule, Option<ProvenancedEmbedding>)> = Vec::new();
         for llm_rule in llm_rules {
             let provenance = self
@@ -1198,6 +1280,9 @@ impl ConsolidationWorker {
                     created_at: Utc::now(),
                     // Migration 201 — credit the author, not just the subject.
                     extracted_by: self.extractor_identity,
+                    // Migration 203 — and record what the evidence was worth.
+                    provenance_floor: floor.floor.clone(),
+                    provenance_floor_basis: Some(floor.basis.clone()),
                 },
                 provenance,
             ));

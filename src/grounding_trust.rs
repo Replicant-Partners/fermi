@@ -93,6 +93,271 @@ pub const PROVENANCE_VALUES: &[&str] = &[
     PROV_DERIVED,
 ];
 
+/// `Sourced` fields the platform holds no independent copy of, with the
+/// reason and what it would take to change that.
+///
+/// This list is the honest half of the completeness claim. A `Sourced` field
+/// that is neither cross-checked nor listed here is a claim nobody can
+/// falsify, and `every_sourced_field_is_verifiable_or_admits_it_is_not`
+/// refuses to compile such a contract. The point is not that everything is
+/// verified — it is that nothing is *silently* unverified.
+///
+/// `(agent_id, path, why_not_and_what_would_fix_it)`
+pub const CROSS_CHECK_EXEMPTIONS: &[(&str, &str, &str)] = &[
+    (
+        "genome_profiler",
+        "phylogeny.sister_taxa",
+        "GBIF returns sibling taxa but the platform stores none of them, so \
+         there is no second copy to disagree with. Fixable by persisting the \
+         sibling list on the creature row at creation, the same way \
+         `taxonomy` already is — at which point this becomes a cross-check \
+         identical to the taxonomy one.",
+    ),
+    (
+        "genome_profiler",
+        "genome.estimated_size_mb",
+        "NCBI is the only holder; the platform keeps no assembly mirror. The \
+         tool does return `assembly_accession`, so a replay check is possible: \
+         re-query that accession and compare `total_length`. Deferred because \
+         it costs an external call per row and the value is immutable once an \
+         assembly is released.",
+    ),
+    (
+        "genome_profiler",
+        "genome.chromosome_count",
+        "Same as genome size: sourced from the same assembly record, \
+         verifiable only by replaying the accession against NCBI.",
+    ),
+    (
+        "genome_profiler",
+        "genome.assembly_name",
+        "Provenance metadata naming its own source. Cross-checking it would \
+         require the replay that would supersede it.",
+    ),
+    (
+        "genome_profiler",
+        "genome.assembly_accession",
+        "The identifier a replay check would be keyed on, so cross-checking it \
+         against itself is circular. It becomes verifiable the moment the \
+         accession is re-queried, which is the deferred replay noted above.",
+    ),
+    (
+        "enemy_sensor",
+        "threats[].species",
+        "The scan's `scientific_name` travels with the `creature_id` on the \
+         same row, and that id IS cross-checked. Verifying the name \
+         separately would re-derive it from the creature row, which is the \
+         same assertion twice.",
+    ),
+    (
+        "prey_locator",
+        "prey_targets[].creature_id",
+        "Identical in kind to the enemy_sensor check and worth adding; \
+         deferred only because this agent's output shape has two modes (scan \
+         and stalk) and the SQL must not treat a stalk response as a missing \
+         prey list.",
+    ),
+    (
+        "prey_locator",
+        "prey_targets[].species",
+        "Carried on the same scan row as the creature_id, so verifying it \
+         separately re-derives the same assertion twice. Becomes covered the \
+         moment the prey_targets[].creature_id check above is written, since \
+         that check reaches the row this name came from.",
+    ),
+    (
+        "prey_locator",
+        "prey_targets[].order",
+        "Resolved from stored taxonomy on the same scan row as the id, so it \
+         is covered by whatever checks that id. Fixed alongside the \
+         prey_targets[].creature_id check.",
+    ),
+    (
+        "hud_field_scout",
+        "taxonomy",
+        "There is nothing to compare against, and the reason is structural \
+         rather than a missing integration. `genome_profiler`'s taxonomy is \
+         cross-checkable because the platform independently holds \
+         `creatures.taxonomy` for a minted creature; here the subject is \
+         whatever a wearer pointed a camera at, and no platform row claims to \
+         know what that was. The check that WOULD be meaningful is a different \
+         one: agreement between two independent determiners on the same frame. \
+         That needs a second recogniser, which is a capability decision, not a \
+         query someone forgot to write.",
+    ),
+    (
+        "hud_field_scout",
+        "taxonomy.fungal_nomenclature",
+        "MycoBank is the only source the platform has for fungal name status, \
+         so comparing it to itself is circular. It becomes checkable against \
+         GBIF's accepted-name view for the same binomial, which is worth doing \
+         precisely because the two databases disagree often enough for the \
+         disagreement to be the interesting signal — deferred rather than \
+         dismissed.",
+    ),
+    (
+        "hud_field_scout",
+        "observations",
+        "iNaturalist occurrence counts are a live third-party aggregate the \
+         platform stores no copy of, and a snapshot would go stale faster than \
+         it could be verified against. Replaying the same bounded query and \
+         comparing counts would test iNaturalist's stability, not this agent's \
+         honesty.",
+    ),
+];
+
+/// Is this `Sourced` field knowingly un-cross-checked?
+pub fn cross_check_exempt(agent_id: &str, path: &str) -> bool {
+    CROSS_CHECK_EXEMPTIONS
+        .iter()
+        .any(|(a, p, _)| *a == agent_id && *p == path)
+}
+
+/// Every declared cross-check, for the live tier to run.
+pub fn cross_checks() -> impl Iterator<Item = (&'static str, &'static str, &'static str)> {
+    FIELD_CONTRACTS
+        .iter()
+        .filter_map(|c| c.cross_check_sql.map(|sql| (c.agent_id, c.path, sql)))
+}
+
+/// Marker written by migration 200 onto profiles produced **before** any
+/// grounding contract existed.
+///
+/// It exists because of a trap this codebase walked into: when
+/// `ncbi_genome_search` was added, `genome.estimated_size_mb` moved from
+/// `Unsourced` to `Sourced` — and `enforce` therefore stopped stripping it.
+/// The 13 cached profiles written while the field was fabricated suddenly had
+/// their invented values *un-stripped*, because the field had become
+/// sourceable in general even though those particular values were never
+/// sourced.
+///
+/// Wiring up a tool must not retroactively bless data that predates it. A
+/// document carrying this marker has every non-narrative field treated as
+/// unsourced regardless of the current contract, because provenance is a
+/// claim about how a value was obtained, not about what is obtainable now.
+pub const PRE_CONTRACT_MARKER: &str = "_grounding_review";
+
+/// Minimum length of a `why`.
+
+// ─── the provenance lattice ────────────────────────────────────────────
+//
+// Provenance is a **floor, not a stamp**. It can only decrease along a
+// derivation chain, and this is the machinery that enforces that.
+//
+// ## The cycle this exists to break
+//
+// `football_analyst` has one tool: `execute_agent`. No football data source
+// at all. It nonetheless declares `ELO`, `MATCH STATS` and `INJURY IMPACT`
+// as finding labels, and it is the second most-run agent on the platform.
+// So its numbers are model output. Then:
+//
+// ```text
+//   football_analyst  →  "Liverpool ELO 1823"          [ungrounded]
+//     → episode
+//     → ontologist extraction  →  semantic_rules
+//                                 verification_method = 'llm_extraction:<model>'
+//     → football_analyst reads the KG fact back as knowledge
+// ```
+//
+// `semantic_rules` records how a rule was made and never what it was made
+// *from*. So a fabrication acquires institutional standing by passing through
+// extraction, and the knowledge graph becomes a laundry. Every dream cycle
+// adds more, and the source episodes eventually age out, at which point the
+// groundedness is unrecoverable.
+//
+// ## Two rules
+//
+// 1. **A derived value is never stronger than its weakest source.**
+// 2. **Extraction is itself an inference**, so an extracted rule is capped at
+//    [`EXTRACTION_CEILING`] however well-sourced its inputs were. The
+//    ontologist reading prose and writing "teams with higher ELO win 62% of
+//    the time" has made a judgement, not performed a lookup — even when every
+//    number it read was tool-verified.
+//
+// Consequence, and the point of the whole exercise: **a knowledge-graph fact
+// can never be presented as `tool_verified`.** It is at best a judgement, and
+// at worst a laundered invention.
+
+/// How much a value can be trusted, as an ordinal for taking minima.
+///
+/// Deliberately coarse. A finer scale would invite arguments about whether
+/// `platform_derived` outranks `tool_verified`, which is not a question worth
+/// having: both are reproducible, and that is the only property a floor cares
+/// about.
+///
+/// The two "absent" verdicts collapse to 0 because they describe the lack of
+/// a value rather than the strength of one. A rule extracted from an empty
+/// block was extracted from prose, and prose is ungrounded.
+pub fn strength(verdict: &str) -> u8 {
+    match verdict {
+        PROV_TOOL | PROV_DERIVED => 2,
+        PROV_INFERRED => 1,
+        // unavailable_no_tool_source, tool_no_match, and anything unrecognised
+        _ => 0,
+    }
+}
+
+/// The strongest provenance an *extracted* value may claim.
+///
+/// Extraction reads text and writes an assertion. That is inference, so no
+/// amount of well-sourced input makes the output a retrieval.
+pub const EXTRACTION_CEILING: &str = PROV_INFERRED;
+
+/// Weakest verdict among `sources`, or `unavailable_no_tool_source` when
+/// there are none.
+///
+/// No sources means no evidence, which must not read as clean. An empty
+/// iterator returning the strongest value is the single most common way a
+/// floor calculation silently inverts.
+pub fn floor<'a>(sources: impl IntoIterator<Item = &'a str>) -> &'static str {
+    let mut worst: Option<u8> = None;
+    for s in sources {
+        let v = strength(s);
+        worst = Some(worst.map_or(v, |w| w.min(v)));
+    }
+    match worst {
+        Some(2) => PROV_TOOL,
+        Some(1) => PROV_INFERRED,
+        _ => PROV_UNAVAILABLE,
+    }
+}
+
+/// Provenance for a value derived by extraction from `sources`.
+///
+/// `min(floor(sources), EXTRACTION_CEILING)` — both rules applied at once.
+/// This is what `semantic_rules.provenance_floor` should be written with.
+pub fn extracted_floor<'a>(sources: impl IntoIterator<Item = &'a str>) -> &'static str {
+    let base = floor(sources);
+    if strength(base) > strength(EXTRACTION_CEILING) {
+        EXTRACTION_CEILING
+    } else {
+        base
+    }
+}
+
+/// The provenance floor of one agent response.
+///
+/// Runs the grounding contract over a raw response and returns the weakest
+/// block verdict. This is how an episode gets a groundedness score at all:
+/// before migration 199 the response was discarded, so nothing about a
+/// historical episode's groundedness is recoverable — those rows get `None`,
+/// which must be read as *unknown*, never as clean.
+pub fn response_floor(agent_id: &str, response_text: &str) -> Option<&'static str> {
+    let mut doc: Value = match serde_json::from_str::<Value>(response_text) {
+        Ok(v) if v.is_object() => v,
+        // Prose. An extraction from prose is ungrounded by construction: there
+        // are no typed fields to have been sourced.
+        _ => return Some(PROV_UNAVAILABLE),
+    };
+    if contracts_for(agent_id).next().is_none() {
+        // No contract, so nothing is known about this agent's grounding.
+        // Distinct from "ungrounded" — see the caller.
+        return None;
+    }
+    let report = enforce(agent_id, &mut doc);
+    Some(floor(report.provenance.iter().map(|(_, v)| *v)))
+}
+
 // ─── contract ──────────────────────────────────────────────────────────
 
 /// Where a field's value can legitimately come from.
@@ -155,6 +420,28 @@ pub struct FieldContract {
     /// Why, in enough detail that the next person does not have to
     /// re-derive it from the tool list.
     pub why: &'static str,
+    /// A read-only query returning **one row per disagreement** between what
+    /// the agent produced and an independently-held source of truth.
+    ///
+    /// Modelled directly on [`crate::rollup_trust::RollupContract::mismatch_sql`],
+    /// because it answers the same question one layer up. `rollup_trust`
+    /// exists because `agents.total_executions` was present, correctly typed,
+    /// declared in the schema contract, and permanently zero — a *content*
+    /// failure invisible to every check that reasons about shape.
+    ///
+    /// `Grounding::Sourced` turned out to have the same hole. It asserts a
+    /// tool COULD supply a field; it never compared the value to anything. So
+    /// `Antaxius beieri`, a bush-cricket, was profiled as a cerambycid beetle
+    /// and passed every check: present, non-null, correctly typed, declared
+    /// sourced. The verified answer was one `JOIN` away the whole time.
+    ///
+    /// `None` means the platform holds no independent copy to compare
+    /// against; it must then appear in [`CROSS_CHECK_EXEMPTIONS`] with a
+    /// reason. A `Sourced` field that is neither cross-checked nor explicitly
+    /// exempt is a claim nobody can falsify, which is what
+    /// `every_sourced_field_is_verifiable_or_admits_it_is_not` refuses to
+    /// allow.
+    pub cross_check_sql: Option<&'static str>,
 }
 
 /// How a leak needle is matched.
@@ -245,6 +532,23 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         },
         why: "The one block with a real tool. GBIF returns the full rank \
               ladder with keys.",
+        // The check that would have caught `Antaxius beieri` — a bush-cricket
+        // profiled as a cerambycid beetle — without a human noticing.
+        // Post-contract rows only: pre-contract documents are known-bad and
+        // archived by migration 202, so including them would leave this
+        // permanently red and therefore permanently ignored.
+        cross_check_sql: Some(
+            "SELECT count(*)::bigint AS mismatches \
+               FROM creature_conditions cc \
+               JOIN creatures c ON c.creature_id = cc.creature_id \
+              WHERE cc.genome_profile IS NOT NULL \
+                AND NOT cc.genome_profile ? '_grounding_review' \
+                AND cc.genome_profile->'taxonomy'->>'order' IS NOT NULL \
+                AND ( lower(c.taxonomy->>'order') \
+                        <> lower(cc.genome_profile->'taxonomy'->>'order') \
+                   OR lower(c.taxonomy->>'family') \
+                        <> lower(cc.genome_profile->'taxonomy'->>'family') )",
+        ),
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -259,6 +563,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               real — stripping it along with its neighbours would be a \
               check that overreaches, and an overreaching check gets \
               switched off.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -274,6 +579,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               outcome — a fact about the world, not a gap in the platform. \
               The value this replaces was not merely unsourced but wrong: the \
               prompt asserted Lepidoptera ~400-500Mb; the monarch is 245Mb.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -288,12 +594,40 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               cytological karyotype — for Danaus plexippus it returns 30, \
               matching published n=30, and that agreement is not a licence to \
               relabel it. Same coverage as genome size.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "genome_profiler",
+        path: "genome.assembly_name",
+        grounding: Grounding::Sourced {
+            tool: "ncbi_genome_search",
+            response_field: "assembly_name",
+        },
+        why: "Names WHICH assembly supplied the size and chromosome count, so \
+              a number is traceable to a specific release rather than to \
+              \"NCBI\". Without it the figures are unfalsifiable even when \
+              correct, because nobody can tell which of several assemblies \
+              they came from.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "genome_profiler",
+        path: "genome.assembly_accession",
+        grounding: Grounding::Sourced {
+            tool: "ncbi_genome_search",
+            response_field: "assembly_accession",
+        },
+        why: "The stable identifier the replay cross-check would use: given an \
+              accession, NCBI can be re-queried and the size compared. It is \
+              therefore the field that makes the other two verifiable later.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
         path: "genome.notable_genes",
         grounding: Grounding::Unsourced,
         why: "Species-level gene-family claims have no tool behind them.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -307,6 +641,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               A plausible, convenient, wrong mapping is exactly the class \
               this contract exists to stop, so the tool returns ploidy as \
               null with that reason attached.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -322,6 +657,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               and its table can be checked row by row, which is not true of \
               the recall it replaces. Unknown orders return None rather than \
               something plausible.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -330,12 +666,14 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "Needs a dated phylogeny (TimeTree). Coverage is decent at \
               order/family and sparse at species, so null stays the common \
               answer even once wired.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
         path: "phylogeny.defining_traits",
         grounding: Grounding::Unsourced,
         why: "Order-level trait narration from parametric knowledge.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -347,6 +685,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               lookup. Once the IUCN tool exists this needs its own \
               provenance value — a queried NE is data; an invented one is \
               not.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -355,6 +694,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "An IUCN Red List field with no IUCN tool wired up. Reported \
               as \"stable\" for species that have never been assessed, which \
               reads as a measurement of a population nobody has counted.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -362,6 +702,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         grounding: Grounding::Unsourced,
         why: "No structured source at species level. Deprioritised \
               indefinitely absent a literature-mining step.",
+        cross_check_sql: None,
     },
     // ── enemy_sensor ────────────────────────────────────────
     // Tools: scan_nearby_creatures (returns the actual nearby rows),
@@ -379,6 +720,23 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "The scan returns the creatures; the agent may only report ones \
               it was handed. An id not in the scan would be an invented \
               creature.",
+        // Generality check: this agent keeps no cache table, so its output is
+        // read back out of `episodes.response_text` (mig-199). Every creature
+        // id it reports must exist. `jsonb` cast is guarded by a regex so a
+        // prose response cannot raise instead of returning zero rows.
+        cross_check_sql: Some(
+            "SELECT count(*)::bigint AS mismatches \
+               FROM ( \
+                 SELECT jsonb_array_elements(e.response_text::jsonb->'threats') AS t \
+                   FROM episodes e JOIN agents a ON a.agent_id = e.agent_id \
+                  WHERE a.agent_name = 'enemy_sensor' \
+                    AND e.response_text ~ '^\\s*\\{' \
+               ) x \
+              WHERE x.t->>'creature_id' IS NOT NULL \
+                AND NOT EXISTS ( \
+                      SELECT 1 FROM creatures c \
+                       WHERE c.creature_id::text = x.t->>'creature_id')",
+        ),
     },
     FieldContract {
         agent_id: "enemy_sensor",
@@ -389,6 +747,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         },
         why: "Same row as the creature_id it accompanies — the scan carries \
               scientific_name, family and order for every hit.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "enemy_sensor",
@@ -401,6 +760,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               guards it — 'Do not invent predation relationships that do not \
               exist' — and that guard is aimed correctly, unlike the one on \
               genome_profiler.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "enemy_sensor",
@@ -410,6 +770,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         },
         why: "An enumerated judgement over sourced inputs. Producing it is \
               the entire point of the agent.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "enemy_sensor",
@@ -418,6 +779,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             from: "the aggregate of threats[].risk",
         },
         why: "Roll-up of the per-threat judgements; same status as its parts.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "enemy_sensor",
@@ -426,6 +788,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "Prose over the assessment. Checked for the same reason \
               genome_profiler's is: parse_evidence_text lifts it out as the \
               episode's evidence, so it is the sentence a reader sees.",
+        cross_check_sql: None,
     },
     // ── prey_locator ────────────────────────────────────────
     // Same scan tool as enemy_sensor, but this card asks for GEOMETRY, and
@@ -442,6 +805,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             response_field: "nearby[].creature_id",
         },
         why: "As enemy_sensor: prey must be a creature the scan returned.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -453,6 +817,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "Carried on the same scan row as the creature_id, so it is \
               retrieved rather than recalled — the agent cannot name a \
               species the scan did not hand it.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -462,6 +827,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             response_field: "nearby[].order",
         },
         why: "The scan resolves order and family from stored taxonomy.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -470,6 +836,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             from: "size ratio, life stage, defences, habitat overlap",
         },
         why: "The tactical judgement the agent exists to make.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -478,6 +845,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             from: "the factors behind the vulnerability rating",
         },
         why: "Explanation of a judgement, and therefore judgement.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -490,6 +858,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               `execute_scan_nearby_creatures` and it becomes Sourced. Until \
               someone does, the number is the model's guess at a quantity \
               the platform could state exactly.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -501,6 +870,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               where a plausible-looking wrong number is acted on rather than \
               read. H3 cell centres are exactly resolvable, so this is a \
               missing derivation rather than an impossible one.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -508,6 +878,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         grounding: Grounding::Unsourced,
         why: "Same as the latitude it is paired with — no coordinate for any \
               nearby creature reaches this agent.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -515,6 +886,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         grounding: Grounding::Unsourced,
         why: "No altitude appears in any tool response, and unlike the \
               coordinates it is not derivable from an H3 cell either.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -523,6 +895,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "A metre distance to a creature whose position the agent was \
               never told. Derivable once cell centres are resolved; guessed \
               today.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -531,6 +904,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             from: "predator capability and prey escape behaviour",
         },
         why: "Tactical judgement, which is the requested product.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -541,6 +915,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "Tactical judgement over the approach vector — no tool \
               returns an intercept plan, and none could; it is the \
               reasoning the caller is paying for.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -549,6 +924,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             from: "the intercept problem as assessed",
         },
         why: "An enumerated judgement, not a measured quantity.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -556,6 +932,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         grounding: Grounding::Narrative,
         why: "Prose over the scan result; same leak channel as every other \
               summary field in this contract.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -563,6 +940,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         grounding: Grounding::Narrative,
         why: "Free prose accompanying the flight plan, and therefore the \
               place a stripped coordinate would reappear as text.",
+        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -572,6 +950,169 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               `parse_evidence_text` lifts it out as the episode's evidence, \
               making it the sentence a user actually reads — and therefore \
               the channel a stripped number moves into.",
+        cross_check_sql: None,
+    },
+    // ── hud_field_scout ────────────────────────────────────────────
+    // Tools: gbif_species_search, inat_observations, mycobank_lookup.
+    // Read alongside `crate::hud_contract`, which conditions every block
+    // below on `subject` before choosing how to render it.
+    //
+    // The block layout is deliberate: `capture` (reproducible) and `subject`
+    // (a guess) are separate blocks even though a wearer would describe them
+    // as one thing. Merging them would put a `Derived` field and an
+    // `Inferred` field in the same block, and `enforce` ranks Derived above
+    // Inferred when both appear — so the species guess would inherit
+    // `platform_derived` and render on glass with no marker at all. The
+    // split exists to stop that.
+    FieldContract {
+        agent_id: "hud_field_scout",
+        path: "capture.modality",
+        grounding: Grounding::Derived {
+            from: "the request envelope",
+            how: "presence of an image part in the MCP request: text-only \
+                  yields `voice`, an image part yields `voice+image`",
+        },
+        why: "Which sensors fed this answer is a fact about the request the \
+              platform can read off the envelope, so it is reproducible and \
+              belongs in its own block. It also has to be on the card: a \
+              wearer judging an identification needs to know whether the \
+              agent looked at anything or only heard a description.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "hud_field_scout",
+        path: "subject.scientific_name",
+        grounding: Grounding::Inferred {
+            from: "the voice transcript and, when an image is present, the \
+                   model's reading of the frame",
+        },
+        why: "This is the load-bearing entry. A model's guess about what is in \
+              frame is a judgement, never a retrieval, and it is not a \
+              `Derived` value either: two runs over the same photograph can \
+              disagree, so it fails the reproducibility test that makes a \
+              derivation auditable. There is no ground-truth database to match \
+              a live frame against, so `Sourced` is unavailable by \
+              construction rather than by omission. Everything downstream is \
+              keyed on this name, which is why `hud_contract::conditioned` \
+              floors every other block against it.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "hud_field_scout",
+        path: "subject.common_name",
+        grounding: Grounding::Inferred {
+            from: "the same transcript and frame as the scientific name",
+        },
+        why: "Same status as the binomial and stated separately because a \
+              vernacular name is the part a wearer actually reads, and it is \
+              the part most likely to be right about a genus while wrong about \
+              the species that matters.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "hud_field_scout",
+        path: "taxonomy",
+        grounding: Grounding::Sourced {
+            tool: "gbif_species_search",
+            response_field: "results[0] rank ladder (kingdom..species) and usageKey",
+        },
+        why: "GBIF really does return this ladder for a name, so the block is a \
+              genuine retrieval. What it is NOT is confirmation that the \
+              wearer is looking at that species — the lookup is keyed on an \
+              inferred name. The distinction is invisible in the data layer, \
+              which is exactly why the display layer conditions on \
+              `subject` before choosing a marker.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "hud_field_scout",
+        path: "taxonomy.fungal_nomenclature",
+        grounding: Grounding::Sourced {
+            tool: "mycobank_lookup",
+            response_field: "records[].name_status / current_name",
+        },
+        why: "MycoBank is the nomenclatural authority for fungi and returns \
+              whether a name is current or a synonym. Worth surfacing because \
+              a superseded name is the common way a field guide and a database \
+              appear to disagree about a mushroom when they do not.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "hud_field_scout",
+        path: "observations",
+        grounding: Grounding::Sourced {
+            tool: "inat_observations",
+            response_field: "total_results and results[].observed_on / place_guess",
+        },
+        why: "Corroboration that is real, cheap, and honest about what it is: \
+              how often this taxon has been recorded near here recently. It \
+              does not identify anything, and the card must not imply that it \
+              does — a dense observation cluster raises a prior, it does not \
+              confirm a determination.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "hud_field_scout",
+        path: "edibility.verdict",
+        grounding: Grounding::Unsourced,
+        why: "The most important null in this contract. No tool this agent has \
+              returns edibility: GBIF returns taxonomy, MycoBank returns \
+              nomenclature, iNaturalist returns occurrences. A model asked \
+              whether something is edible will answer, fluently, from \
+              parametric memory — the `genome_profiler` failure mode with a \
+              consequence worse than a wrong megabase count. The refusal is \
+              the product: a wearer who sees `not available` consults a human, \
+              whereas one who sees a confident answer does not.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "hud_field_scout",
+        path: "edibility.lookalikes",
+        grounding: Grounding::Unsourced,
+        why: "A toxic-lookalike list is a claim about the world held in \
+              references this agent cannot query, and it is the field where a \
+              plausible-but-invented answer does the most harm: naming three \
+              real lookalikes while omitting the one that matters reads as \
+              thorough. Null until a curated lookalike source is wired — \
+              `adaptogen_curator` holds the nearest existing schema for this.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "hud_field_scout",
+        path: "edibility.hazard_check_performed",
+        grounding: Grounding::Unsourced,
+        why: "Kept as an explicit field, and explicitly null, so the absence \
+              of a safety check is something the card can SAY rather than \
+              something a wearer has to notice by the silence. An unmentioned \
+              check reads as a passed check.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "hud_field_scout",
+        path: "card",
+        grounding: Grounding::Derived {
+            from: "the provenance verdicts of every other block",
+            how: "hud_contract::enforce — subject conditioning, then floor() \
+                  for confidence_display and treatment() per line",
+        },
+        why: "The card is computed by platform code from the blocks above, so \
+              it is reproducible: the same document yields the same markers \
+              and the same confidence band. Declared `Derived` rather than \
+              left uncontracted because `confidence_display` is the single \
+              field a wearer reads as a verdict, and an uncontracted field is \
+              one nothing stops the model from writing itself.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "hud_field_scout",
+        path: "summary",
+        grounding: Grounding::Narrative,
+        why: "Prose for the audio channel, where there are no markers at all \
+              and therefore no typographic cue to carry provenance. It is \
+              scanned for the same reason every other summary here is: a \
+              stripped edibility verdict reappearing as a spoken sentence is \
+              the worst outcome this contract can produce.",
+        cross_check_sql: None,
     },
 ];
 
@@ -597,6 +1138,18 @@ pub enum ViolationKind {
     /// A `Narrative` field asserted something an unsourced block would have
     /// had to supply.
     NarrativeLeak,
+    /// A `Sourced` field disagreed with the canonical record it claims to
+    /// come from.
+    ///
+    /// This kind exists because `Sourced` turned out to be a weaker claim
+    /// than it reads as. It asserts *a tool could supply this field* — not
+    /// *this value came from that tool*. `Antaxius beieri` is the canonical
+    /// case: a bush-cricket (Orthoptera / Tettigoniidae) whose profile
+    /// confidently reported Coleoptera / Cerambycidae and called it a
+    /// longhorn beetle, while the GBIF-verified answer sat one table over on
+    /// the creature record. Every check passed: the field was present,
+    /// non-null, correctly typed, and declared sourced.
+    ContradictsCanonical,
 }
 
 /// What [`enforce`] did.
@@ -732,6 +1285,119 @@ pub fn contracts_for(agent_id: &str) -> impl Iterator<Item = &'static FieldContr
         .filter(move |c| c.agent_id == agent_id)
 }
 
+/// Check `Sourced` fields against the canonical record they claim to derive
+/// from, overwriting disagreements and reporting them.
+///
+/// ## Why this is separate from `enforce`
+///
+/// `enforce` answers *could this value have come from anywhere*. It cannot
+/// answer *did it*, because it never sees the tool response. So a model that
+/// calls GBIF and then writes taxonomy from memory produces a document
+/// `enforce` passes completely.
+///
+/// The cheap fix is not to verify the tool response but to **stop
+/// regenerating what is already known**. A Rabble creature row already
+/// carries GBIF-verified `taxonomy` and a `gbif_key`; the profile has no
+/// business re-deriving it. Passing that record in here makes the canonical
+/// copy authoritative: a mismatch is overwritten, not merely flagged, because
+/// a reader who sees a corrected value is better served than one who sees a
+/// wrong value with a warning attached.
+///
+/// `canonical` is a document whose shape mirrors the output. Only paths that
+/// are present in BOTH the canonical record and the contract as `Sourced` are
+/// compared — a canonical record that happens to be missing a field must not
+/// erase a legitimately retrieved one.
+pub fn reconcile(agent_id: &str, doc: &mut Value, canonical: &Value) -> Vec<Violation> {
+    let mut out = Vec::new();
+    let sourced: Vec<&'static str> = contracts_for(agent_id)
+        .filter(|c| matches!(c.grounding, Grounding::Sourced { .. }))
+        .map(|c| c.path)
+        .collect();
+
+    // Compare leaf-by-leaf beneath each Sourced path, so a contract naming a
+    // whole block (`taxonomy`) still checks the fields inside it.
+    for path in sourced {
+        let Some(expected_node) = get_path(canonical, path) else {
+            continue;
+        };
+        match expected_node {
+            Value::Object(fields) => {
+                for (leaf, expected) in fields {
+                    if !is_claim(expected) {
+                        continue;
+                    }
+                    let leaf_path = format!("{path}.{leaf}");
+                    let Some(actual) = get_path(doc, &leaf_path) else {
+                        continue;
+                    };
+                    if !is_claim(actual) || values_agree(actual, expected) {
+                        continue;
+                    }
+                    let removed = actual.clone();
+                    if set_path(doc, &leaf_path, expected.clone()) {
+                        out.push(Violation {
+                            path: leaf_path,
+                            removed,
+                            kind: ViolationKind::ContradictsCanonical,
+                        });
+                    }
+                }
+            }
+            expected => {
+                let Some(actual) = get_path(doc, path) else {
+                    continue;
+                };
+                if is_claim(actual) && !values_agree(actual, expected) {
+                    let removed = actual.clone();
+                    if set_path(doc, path, expected.clone()) {
+                        out.push(Violation {
+                            path: path.to_string(),
+                            removed,
+                            kind: ViolationKind::ContradictsCanonical,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Compare two values as an author would: case- and whitespace-insensitively
+/// for strings, exactly otherwise.
+///
+/// Deliberately not fuzzy beyond that. "Coleoptera" and "Orthoptera" are not
+/// near-misses, and a comparison loose enough to forgive a real contradiction
+/// would defeat the check.
+fn values_agree(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::String(x), Value::String(y)) => x.trim().eq_ignore_ascii_case(y.trim()),
+        _ => a == b,
+    }
+}
+
+/// Write `value` at a dotted path, returning whether the slot existed.
+fn set_path(doc: &mut Value, path: &str, value: Value) -> bool {
+    let segs: Vec<&str> = path.split('.').collect();
+    let Some((last, parents)) = segs.split_last() else {
+        return false;
+    };
+    let mut cur = doc;
+    for seg in parents {
+        match cur.get_mut(seg) {
+            Some(next) => cur = next,
+            None => return false,
+        }
+    }
+    match cur.get_mut(last) {
+        Some(slot) => {
+            *slot = value;
+            true
+        }
+        None => false,
+    }
+}
+
 /// Strip ungrounded values from `doc`, stamp provenance, and report what
 /// was wrong.
 ///
@@ -747,8 +1413,14 @@ pub fn enforce(agent_id: &str, doc: &mut Value) -> Report {
     let mut report = Report::default();
 
     // 1. Ungrounded structured fields.
+    // A document written before any contract existed cannot have
+    // tool-verified fields, whatever the contract says today.
+    let pre_contract = doc.get(PRE_CONTRACT_MARKER).is_some();
+
     for c in &contracts {
-        if c.grounding != Grounding::Unsourced {
+        let treat_as_unsourced = c.grounding == Grounding::Unsourced
+            || (pre_contract && c.grounding != Grounding::Narrative);
+        if !treat_as_unsourced {
             continue;
         }
         let populated = path_has_claim(doc, c.path);
@@ -768,7 +1440,7 @@ pub fn enforce(agent_id: &str, doc: &mut Value) -> Report {
     for c in &contracts {
         if let Grounding::Sourced { .. } = c.grounding {
             let b = block_of(c.path);
-            let has = path_has_claim(doc, c.path);
+            let has = !pre_contract && path_has_claim(doc, c.path);
             match sourced_block_has_content.iter_mut().find(|(n, _)| *n == b) {
                 Some(entry) => entry.1 |= has,
                 None => sourced_block_has_content.push((b, has)),
@@ -850,17 +1522,26 @@ pub fn enforce(agent_id: &str, doc: &mut Value) -> Report {
     // summary is not a data block and labelling it as one would imply a
     // retrieval claim it never makes.
     for b in blocks {
-        let verdict = match block_is_sourced(b) {
-            // Has sourced fields, and at least one came back populated.
-            Some(true) => PROV_TOOL,
-            // Has sourced fields and none came back: the tool was asked and
-            // had nothing. Distinct from "no tool exists".
-            Some(false) => PROV_NO_MATCH,
-            // No sourced field. A reproducible derivation outranks a model
-            // judgement; anything else genuinely has no source.
-            None if derived_blocks.contains(&b) => PROV_DERIVED,
-            None if inferred_blocks.contains(&b) => PROV_INFERRED,
-            None => PROV_UNAVAILABLE,
+        // A pre-contract document consulted no tool, so no block of it can
+        // claim one. Deliberately reusing `unavailable_no_tool_source` rather
+        // than minting a fifth value: the card schemas declare the closed set
+        // in their provenance enums, and a verdict they cannot express would
+        // make every legacy document fail validation for the wrong reason.
+        let verdict = if pre_contract {
+            PROV_UNAVAILABLE
+        } else {
+            match block_is_sourced(b) {
+                // Has sourced fields, and at least one came back populated.
+                Some(true) => PROV_TOOL,
+                // Has sourced fields and none came back: the tool was asked and
+                // had nothing. Distinct from "no tool exists".
+                Some(false) => PROV_NO_MATCH,
+                // No sourced field. A reproducible derivation outranks a model
+                // judgement; anything else genuinely has no source.
+                None if derived_blocks.contains(&b) => PROV_DERIVED,
+                None if inferred_blocks.contains(&b) => PROV_INFERRED,
+                None => PROV_UNAVAILABLE,
+            }
         };
         if let Some(obj) = doc.as_object_mut() {
             obj.insert(format!("{b}_provenance"), Value::String(verdict.into()));
@@ -994,6 +1675,113 @@ mod tests {
         assert!(
             checked > 0,
             "no provenance enums found in any card — this guard is inert"
+        );
+    }
+
+    /// **The completeness tripwire.**
+    ///
+    /// Every `Sourced` field must either declare a cross-check or appear in
+    /// [`CROSS_CHECK_EXEMPTIONS`] with a reason. Neither is optional.
+    ///
+    /// This test is the answer to "why did the verification system miss a
+    /// bush-cricket reported as a beetle". It missed it because `Sourced`
+    /// asserted *a tool could supply this* and nothing ever compared the
+    /// value to anything — and nothing in the contract required anyone to
+    /// notice that gap. `rollup_trust` had already solved the identical
+    /// problem for database columns via `mismatch_sql`; the grounding
+    /// contract simply stopped one rung short and said nothing about it.
+    ///
+    /// The claim this test enforces is deliberately weak and therefore
+    /// keepable: **not that every sourced field is verified, but that no
+    /// sourced field is *silently* unverified.**
+    #[test]
+    fn every_sourced_field_is_verifiable_or_admits_it_is_not() {
+        let mut unaccounted = Vec::new();
+        for c in FIELD_CONTRACTS {
+            if !matches!(c.grounding, Grounding::Sourced { .. }) {
+                continue;
+            }
+            if c.cross_check_sql.is_none() && !cross_check_exempt(c.agent_id, c.path) {
+                unaccounted.push(format!("{}.{}", c.agent_id, c.path));
+            }
+        }
+        assert!(
+            unaccounted.is_empty(),
+            "{} `Sourced` field(s) can neither be cross-checked nor say why \
+             not:\n  {}\n\nDeclaring a field `Sourced` asserts a tool COULD \
+             supply it. It does not assert the value CAME from that tool — \
+             which is how `Antaxius beieri` was profiled as a cerambycid \
+             beetle with every check green. Either add a `cross_check_sql` \
+             comparing it against an independently-held copy, or add it to \
+             CROSS_CHECK_EXEMPTIONS with what it would take to fix.",
+            unaccounted.len(),
+            unaccounted.join("\n  ")
+        );
+    }
+
+    #[test]
+    fn cross_check_queries_are_read_only_and_shaped_for_the_harness() {
+        // Same discipline as rollup_trust: these run against production.
+        for (agent, path, sql) in cross_checks() {
+            let lower = sql.to_lowercase();
+            assert!(
+                lower.trim_start().starts_with("select"),
+                "{agent}.{path}: cross_check_sql must be a bare SELECT"
+            );
+            assert!(
+                lower.contains("as mismatches"),
+                "{agent}.{path}: must alias its count as `mismatches`"
+            );
+            for forbidden in [
+                "insert ",
+                "update ",
+                "delete ",
+                "drop ",
+                "alter ",
+                "truncate ",
+                "grant ",
+            ] {
+                assert!(
+                    !lower.contains(forbidden),
+                    "{agent}.{path}: must not contain `{forbidden}` — this runs \
+                     against a live database"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cross_check_exemptions_are_real_and_reference_real_fields() {
+        for (agent, path, why) in CROSS_CHECK_EXEMPTIONS {
+            assert!(
+                FIELD_CONTRACTS
+                    .iter()
+                    .any(|c| c.agent_id == *agent && c.path == *path),
+                "exemption for {agent}.{path} names no declared field"
+            );
+            assert!(
+                FIELD_CONTRACTS.iter().any(|c| c.agent_id == *agent
+                    && c.path == *path
+                    && matches!(c.grounding, Grounding::Sourced { .. })),
+                "{agent}.{path} is exempted from cross-checking but is not \
+                 Sourced — only Sourced fields make a retrieval claim"
+            );
+            assert!(
+                why.len() > 60,
+                "exemption for {agent}.{path} needs to say why not AND what \
+                 would fix it, not `{why}`"
+            );
+        }
+    }
+
+    #[test]
+    fn at_least_one_cross_check_exists_or_this_is_all_theatre() {
+        // A contract where every field is exempt satisfies the tripwire above
+        // while verifying nothing. Guard against arriving there by attrition.
+        assert!(
+            cross_checks().count() >= 2,
+            "the empirical tier has fewer than two real cross-checks; the \
+             completeness claim would be satisfied entirely by exemptions"
         );
     }
 
@@ -1395,6 +2183,153 @@ mod tests {
         );
     }
 
+    // ── Case 1 / Case 2 regression fixtures (2026-08-16 field report) ──
+
+    /// `Sphingonotus personatus`, verbatim from `creature_conditions`.
+    ///
+    /// The UI rendered "8001200 Mb" and "21624 chromosomes (10812 pairs)".
+    /// Neither number is in the data: the client coerced these free-text
+    /// strings to numbers by stripping non-digits, so "800–1200" became
+    /// 8001200 and "2n = 16–24 (typical for Acrididae)" became 21624. The
+    /// chart marker sat near 8000 Mb because it plotted the coerced value
+    /// while the label printed the string — one bug, not two sources.
+    #[test]
+    fn case_1_a_pre_contract_profile_is_stripped_even_now_the_field_is_sourced() {
+        let mut doc = json!({
+            "_grounding_review": { "reason": "written before migration 200" },
+            "taxonomy": { "order": "Orthoptera", "family": "Acrididae",
+                          "species": "Sphingonotus personatus" },
+            "genome": { "estimated_size_mb": "800–1200",
+                        "chromosome_count": "2n = 16–24 (typical for Acrididae)" },
+            "phylogeny": { "sister_taxa": [] },
+            "conservation": { "iucn_status": "Not Evaluated (NE)" },
+            "summary": "An Italian sand grasshopper."
+        });
+        let report = enforce("genome_profiler", &mut doc);
+
+        // The trap: `estimated_size_mb` became Sourced when NCBI was wired
+        // up. Without the pre-contract marker these fabricated strings would
+        // now survive, because the FIELD is sourceable even though THIS
+        // VALUE never was.
+        assert!(
+            get_path(&doc, "genome.estimated_size_mb")
+                .unwrap()
+                .is_null(),
+            "a value predating the tool must not be blessed by the tool's arrival"
+        );
+        assert!(get_path(&doc, "genome.chromosome_count").unwrap().is_null());
+        assert!(get_path(&doc, "conservation.iucn_status")
+            .unwrap()
+            .is_null());
+        assert!(report
+            .violations
+            .iter()
+            .any(|v| v.path == "genome.estimated_size_mb"));
+        assert_eq!(
+            doc.get("genome_provenance").and_then(|v| v.as_str()),
+            Some(PROV_UNAVAILABLE),
+            "a pre-contract document cannot claim tool_verified"
+        );
+    }
+
+    /// `Antaxius beieri` — a bush-cricket reported as a longhorn beetle.
+    ///
+    /// Canonical GBIF taxonomy (already on the creature row, gbif_key
+    /// 1683920): Orthoptera / Tettigoniidae. The profile said Coleoptera /
+    /// Cerambycidae. `enforce` passed it completely: the field is declared
+    /// `Sourced`, and `Sourced` only ever asserted that a tool COULD supply
+    /// it.
+    #[test]
+    fn case_2_enforce_alone_cannot_catch_a_contradicted_sourced_field() {
+        let mut doc = json!({
+            "taxonomy": { "order": "Coleoptera", "family": "Cerambycidae",
+                          "genus": "Antaxius", "species": "Antaxius beieri" },
+            "phylogeny": { "sister_taxa": ["Antaxius wroughtoni"] },
+            "summary": "Antaxius beieri is a cerambycid beetle."
+        });
+        let report = enforce("genome_profiler", &mut doc);
+        assert!(
+            !report
+                .violations
+                .iter()
+                .any(|v| v.path.starts_with("taxonomy")),
+            "this is the gap: grounding cannot see that a sourced value is wrong"
+        );
+        assert_eq!(
+            get_path(&doc, "taxonomy.order").unwrap(),
+            &json!("Coleoptera"),
+            "and so the fabrication survives enforcement untouched"
+        );
+    }
+
+    #[test]
+    fn case_2_reconcile_corrects_it_against_the_creature_record() {
+        let mut doc = json!({
+            "taxonomy": { "order": "Coleoptera", "family": "Cerambycidae",
+                          "genus": "Antaxius", "species": "Antaxius beieri" },
+            "phylogeny": { "sister_taxa": ["Antaxius wroughtoni"] },
+            "summary": "Antaxius beieri is a cerambycid beetle."
+        });
+        // Shape mirrors the output; this is `creatures.taxonomy` for gbif_key
+        // 1683920.
+        let canonical = json!({
+            "taxonomy": { "order": "Orthoptera", "family": "Tettigoniidae" }
+        });
+        let violations = reconcile("genome_profiler", &mut doc, &canonical);
+
+        assert_eq!(
+            get_path(&doc, "taxonomy.order").unwrap(),
+            &json!("Orthoptera")
+        );
+        assert_eq!(
+            get_path(&doc, "taxonomy.family").unwrap(),
+            &json!("Tettigoniidae")
+        );
+        assert_eq!(violations.len(), 2, "{violations:?}");
+        assert!(violations
+            .iter()
+            .all(|v| v.kind == ViolationKind::ContradictsCanonical));
+        let order = violations
+            .iter()
+            .find(|v| v.path == "taxonomy.order")
+            .unwrap();
+        assert_eq!(
+            order.removed,
+            json!("Coleoptera"),
+            "the contradicted value is retained so the fabrication is auditable"
+        );
+    }
+
+    #[test]
+    fn reconcile_leaves_agreeing_and_absent_fields_alone() {
+        let mut doc = json!({
+            "taxonomy": { "order": "orthoptera", "family": "Tettigoniidae",
+                          "genus": "Antaxius" }
+        });
+        // Case-insensitive agreement, and a canonical record that says
+        // nothing about `genus` must not erase it.
+        let canonical = json!({ "taxonomy": { "order": "Orthoptera" } });
+        let v = reconcile("genome_profiler", &mut doc, &canonical);
+        assert!(v.is_empty(), "{v:?}");
+        assert_eq!(
+            get_path(&doc, "taxonomy.genus").unwrap(),
+            &json!("Antaxius")
+        );
+    }
+
+    #[test]
+    fn reconcile_does_not_touch_fields_that_are_not_sourced() {
+        // `conservation.iucn_status` is Unsourced. A canonical record must not
+        // become a back door for populating it.
+        let mut doc = json!({ "conservation": { "iucn_status": null } });
+        let canonical = json!({ "conservation": { "iucn_status": "LC" } });
+        let v = reconcile("genome_profiler", &mut doc, &canonical);
+        assert!(v.is_empty());
+        assert!(get_path(&doc, "conservation.iucn_status")
+            .unwrap()
+            .is_null());
+    }
+
     #[test]
     fn an_agent_with_no_contract_is_left_entirely_alone() {
         let mut doc = fabricated();
@@ -1403,5 +2338,155 @@ mod tests {
         assert_eq!(doc, before, "silence is not a verdict");
         assert!(report.is_clean());
         assert!(report.provenance.is_empty());
+    }
+
+    // ─── the provenance floor ──────────────────────────────────────────
+    //
+    // The floor exists because provenance is not transitive upward. A rule
+    // extracted from a well-sourced episode is not itself sourced, and a
+    // rollup over a mixed set of episodes is only as good as its worst
+    // member. Both of those are one-line arithmetic; both invert silently
+    // if you get the empty case or the direction wrong, and an inverted
+    // floor reads as *more* trustworthy than no floor at all. So each way
+    // of getting it wrong gets a named test.
+
+    #[test]
+    fn an_empty_source_set_floors_to_unavailable_not_to_verified() {
+        // `min` over an empty iterator has no answer, and the two ways of
+        // supplying one are not symmetric: the identity element for `min`
+        // is the *maximum* value, which here means "tool_verified". A rule
+        // whose source cluster came back empty would then claim to be
+        // measured. This is the single most likely way the floor breaks,
+        // and it breaks in the direction that manufactures trust.
+        let none: Vec<&str> = vec![];
+        assert_eq!(floor(none), PROV_UNAVAILABLE);
+        assert_eq!(extracted_floor(Vec::<&str>::new()), PROV_UNAVAILABLE);
+    }
+
+    #[test]
+    fn the_floor_is_the_weakest_link_not_the_most_common_one() {
+        // Nine sourced episodes and one guess is a guess. Averaging, or
+        // taking a majority, would let volume launder a fabrication.
+        let mut many = vec![PROV_TOOL; 9];
+        many.push(PROV_UNAVAILABLE);
+        assert_eq!(floor(many), PROV_UNAVAILABLE);
+        assert_eq!(floor(vec![PROV_TOOL, PROV_INFERRED]), PROV_INFERRED);
+        assert_eq!(floor(vec![PROV_TOOL, PROV_DERIVED]), PROV_TOOL);
+        assert_eq!(floor(vec![PROV_INFERRED, PROV_NO_MATCH]), PROV_UNAVAILABLE);
+    }
+
+    #[test]
+    fn an_extraction_from_verified_sources_is_still_only_an_inference() {
+        // The ceiling, which is the half of the rule the floor cannot
+        // express. Reading ten tool-verified episodes and writing down a
+        // semantic rule is an act of judgement about them; it does not
+        // inherit their retrieval. Without this, the ontologist would
+        // manufacture `tool_verified` facts out of nothing but its own
+        // reading, and the KG would be full of claims no tool ever made.
+        assert_eq!(
+            extracted_floor(vec![PROV_TOOL, PROV_TOOL, PROV_DERIVED]),
+            PROV_INFERRED
+        );
+    }
+
+    #[test]
+    fn the_ceiling_never_raises_a_weak_floor() {
+        // The ceiling caps; it must not lift. An extraction from prose is
+        // ungrounded, and `min(unavailable, inferred)` has to stay
+        // unavailable rather than settling at the ceiling.
+        assert_eq!(
+            extracted_floor(vec![PROV_TOOL, PROV_UNAVAILABLE]),
+            PROV_UNAVAILABLE
+        );
+        assert_eq!(extracted_floor(vec![PROV_UNAVAILABLE]), PROV_UNAVAILABLE);
+    }
+
+    #[test]
+    fn an_unrecognised_verdict_is_worthless_rather_than_trusted() {
+        // Vocabulary drift is the failure this module has already had once
+        // (`gbif_verified` for `tool_verified`). If a stale or misspelled
+        // verdict scored as strong, a renamed constant would quietly raise
+        // every floor computed from it. Unknown means unknown.
+        assert_eq!(strength("gbif_verified"), 0);
+        assert_eq!(strength(""), 0);
+        assert_eq!(
+            floor(vec![PROV_TOOL, "verified_probably"]),
+            PROV_UNAVAILABLE
+        );
+    }
+
+    #[test]
+    fn every_provenance_value_has_a_deliberate_strength() {
+        // Adding a verdict to PROVENANCE_VALUES without deciding where it
+        // sits would default it to 0 — safe, but silently, and a genuinely
+        // strong new verdict reading as ungrounded would push authors to
+        // stop trusting the floor. Force the decision at compile-time-ish.
+        for v in PROVENANCE_VALUES {
+            let expected = match *v {
+                PROV_TOOL | PROV_DERIVED => 2,
+                PROV_INFERRED => 1,
+                PROV_UNAVAILABLE | PROV_NO_MATCH => 0,
+                other => panic!(
+                    "provenance value `{other}` has no declared strength; \
+                     decide whether it is reproducible (2), a judgement (1), \
+                     or an absence (0) and say so in `strength`"
+                ),
+            };
+            assert_eq!(strength(v), expected, "strength of `{v}`");
+        }
+    }
+
+    #[test]
+    fn a_response_floor_is_the_weakest_block_of_a_real_response() {
+        // `enemy_sensor` retrieves its neighbour rows and judges the risk.
+        // The response as a whole is therefore a judgement: one inferred
+        // block drags the floor down even though the scan data is real.
+        let response = json!({
+            "threat_level": "medium",
+            "threats": [{
+                "creature_id": "6f1a...",
+                "species": "Aeshna cyanea",
+                "relationship": "Odonata are aerial predators of Lepidoptera",
+                "risk": "medium"
+            }],
+            "summary": "One dragonfly within the scan radius poses a moderate risk."
+        })
+        .to_string();
+        assert_eq!(
+            response_floor("enemy_sensor", &response),
+            Some(PROV_INFERRED)
+        );
+    }
+
+    #[test]
+    fn prose_has_no_floor_above_ungrounded() {
+        // 74 of 100 curated agents return prose only. There are no typed
+        // fields, so nothing was sourced, so an extraction from the text is
+        // ungrounded by construction. This is the common case, and it is
+        // supposed to look poor: that is the demand signal for tools.
+        assert_eq!(
+            response_floor("enemy_sensor", "Two dragonflies are nearby. Be careful."),
+            Some(PROV_UNAVAILABLE)
+        );
+    }
+
+    #[test]
+    fn an_uncontracted_agent_has_an_unknown_floor_not_a_clean_one() {
+        // Absence is not a verdict. `weather_oracle` has no field contract,
+        // so we know nothing about its grounding, and `None` has to travel
+        // all the way to storage as NULL rather than being coerced to the
+        // best or the worst value on the way. Callers that cannot represent
+        // "unknown" must refuse the row, not guess it.
+        let response = json!({"forecast": "rain", "confidence": 0.8}).to_string();
+        assert_eq!(response_floor("weather_oracle", &response), None);
+    }
+
+    #[test]
+    fn a_historical_episode_with_no_retained_response_has_no_floor() {
+        // Before migration 199 the response text was discarded. Nothing
+        // about those episodes' groundedness is recoverable, and a floor
+        // computed from an empty string must not read as a finding.
+        assert_eq!(response_floor("enemy_sensor", ""), Some(PROV_UNAVAILABLE));
+        assert_eq!(response_floor("weather_oracle", ""), Some(PROV_UNAVAILABLE));
     }
 }

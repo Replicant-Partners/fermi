@@ -1688,7 +1688,8 @@ impl MemoryStore {
                 "INSERT INTO semantic_rules \
                  (rule_id, agent_id, rule_content, rule_description, confidence_score, \
                   verification_status, verification_method, source_episode_cluster, \
-                  episode_count, embedding, is_active, extracted_by) ",
+                  episode_count, embedding, is_active, extracted_by, \
+                  provenance_floor, provenance_floor_basis) ",
             );
             qb.push_values(chunk.iter(), |mut b, r| {
                 b.push_bind(r.rule_id)
@@ -1710,7 +1711,14 @@ impl MemoryStore {
                     // (the subject). Both inserts stamp it; a path that
                     // silently dropped it would leave rules unattributable
                     // and the extractor unscoreable.
-                    .push_bind(r.extracted_by);
+                    .push_bind(r.extracted_by)
+                    // Migration 203 — how well-grounded the evidence was.
+                    // NULL is UNKNOWN, and both insert paths must carry it: a
+                    // path that dropped the column would write rules
+                    // indistinguishable from unknown-provenance ones, so the
+                    // corpus would appear to get cleaner as coverage got worse.
+                    .push_bind(r.provenance_floor.clone())
+                    .push_bind(r.provenance_floor_basis.clone());
             });
             qb.push(" ON CONFLICT (rule_id) DO NOTHING");
             total += qb.build().execute(&self.pool).await?.rows_affected() as usize;
@@ -1792,9 +1800,10 @@ impl MemoryStore {
               verification_status, verification_method, source_episode_cluster,
               episode_count, embedding, is_active, extracted_by,
               embedding_model_id, embedding_model_version, embedding_dim,
-              source_text, source_ref, provenance_trusted)
+              source_text, source_ref, provenance_trusted,
+              provenance_floor, provenance_floor_basis)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-                     $13, $14, $15, $16, $17, $18)",
+                     $13, $14, $15, $16, $17, $18, $19, $20)",
         )
         .bind(rule.rule_id)
         .bind(rule.agent_id)
@@ -1818,6 +1827,13 @@ impl MemoryStore {
         .bind(provenance.map(|p| p.source_text.as_str()))
         .bind(&source_ref)
         .bind(trusted)
+        // Migration 203. Note `provenance_trusted` immediately above: that is
+        // embedding provenance (does `source_text` reconstruct `embedding`?),
+        // a different axis from whether anything could have known the rule is
+        // true. A rule can be perfectly embedding-trusted and epistemically
+        // worthless.
+        .bind(&rule.provenance_floor)
+        .bind(&rule.provenance_floor_basis)
         .execute(&mut *tx)
         .await?;
 
@@ -1845,7 +1861,8 @@ impl MemoryStore {
         let row = sqlx::query(
             "SELECT rule_id, agent_id, rule_content, rule_description, confidence_score,
                     verification_status, verification_method, source_episode_cluster,
-                    episode_count, embedding, is_active, created_at, extracted_by
+                    episode_count, embedding, is_active, created_at, extracted_by,
+                    provenance_floor, provenance_floor_basis
              FROM semantic_rules
              WHERE rule_id = $1",
         )
@@ -1872,7 +1889,8 @@ impl MemoryStore {
         let rows = sqlx::query(
             r#"SELECT rule_id, agent_id, rule_content, rule_description, confidence_score,
                       verification_status, verification_method, source_episode_cluster,
-                      episode_count, embedding, is_active, created_at, extracted_by
+                      episode_count, embedding, is_active, created_at, extracted_by,
+                    provenance_floor, provenance_floor_basis
                FROM semantic_rules
                WHERE agent_id = $2
                  AND is_active = true
@@ -1957,7 +1975,8 @@ impl MemoryStore {
         let rows = sqlx::query(
             "SELECT rule_id, agent_id, rule_content, rule_description, confidence_score,
                     verification_status, verification_method, source_episode_cluster,
-                    episode_count, embedding, is_active, created_at, extracted_by
+                    episode_count, embedding, is_active, created_at, extracted_by,
+                    provenance_floor, provenance_floor_basis
              FROM semantic_rules
              WHERE agent_id = $1 AND is_active = true
              ORDER BY confidence_score DESC",
@@ -1998,6 +2017,14 @@ impl MemoryStore {
             // not ask for the column should get `None` (author unknown to this
             // query) rather than an error that fails the whole read.
             extracted_by: row.try_get("extracted_by").ok().flatten(),
+            // Same `try_get` reasoning as `extracted_by`, with a sharper
+            // consequence: a query that omits the column yields `None`, and
+            // `None` here means UNKNOWN. Any consumer that renders a rule as
+            // grounded must check for `Some`, never for absence of a weak
+            // value — otherwise every rule read by a pre-203 SELECT would
+            // present as clean.
+            provenance_floor: row.try_get("provenance_floor").ok().flatten(),
+            provenance_floor_basis: row.try_get("provenance_floor_basis").ok().flatten(),
         })
     }
 
@@ -5265,6 +5292,8 @@ mod tests {
             is_active: true,
             created_at: Utc::now(),
             extracted_by: None,
+            provenance_floor: None,
+            provenance_floor_basis: None,
         };
 
         // Store rule

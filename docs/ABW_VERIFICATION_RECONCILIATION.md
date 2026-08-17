@@ -636,6 +636,120 @@ that the precedence is implicit — unlike `mcp_servers` directly below it,
 which documents an explicit three-way NULL/`[]`/non-empty table, `accepts` has
 no way to express "deliberately none".
 
+### 7.11 The provenance floor (step 7, done)
+
+**The laundering path.** Everything in §7.8–§7.10 governs what an agent may say
+in one response. It says nothing about what happens to that response next, and
+what happens next is this: the `ontologist` reads an agent's episodes during a
+dream cycle, writes `semantic_rules` from them, and `kg_context` retrieves
+those rules and appends them to an agent's system prompt under **"Learned
+Knowledge"**. At that point a stored sentence has become a premise another
+agent reasons from.
+
+Nothing in that path recorded how well-grounded the episodes were. A rule
+extracted from ten `tool_verified` lookups and a rule extracted from ten
+paragraphs of prose were stored in the same table, retrieved by the same query,
+and rendered in the same line of the same prompt. The second is **worse than a
+bare hallucination**, because its citation is real: `source_episode_cluster`
+genuinely points at episodes that genuinely said that.
+
+The prompt line read:
+
+```
+- (72% match, 90% confidence) <rule content>
+```
+
+Both numbers are real and neither is a measurement. `confidence_score` is the
+extraction model's self-report about a generalisation it had just written;
+`match` is cosine similarity. Labelled "confidence" and set side by side, they
+read as calibration, and to a model `90% confidence` is licence to assert the
+content downstream. It now reads:
+
+```
+- (72% match, 90% self-rated, UNGROUNDED - no tool could confirm this) <rule content>
+```
+
+**Two rules, not one.**
+
+| rule | statement | why |
+|---|---|---|
+| floor | the **weakest** verdict among the sources | nine sourced episodes and one guess is a guess; averaging lets volume launder a fabrication |
+| ceiling | never stronger than `model_inference` | reading well-sourced episodes and generalising is *judgement*, and judgement does not inherit retrieval |
+
+So the best value an extracted rule can ever hold is `model_inference`. That is
+not a defect, it is the honest ceiling for the class of operation, and it is
+asserted by `no_rule_can_ever_render_as_tool_verified` over every value the
+vocabulary permits.
+
+**Unknown is not a rung on the ladder.** The subtle part, and the one that took
+two attempts. Verdicts are ordered, but *unknown* is the absence of information
+about an order and cannot participate in the `min`. Nine `tool_verified`
+episodes and one whose response was never retained does **not** floor at
+`tool_verified` — the tenth could be anything. Nor at `unavailable`: the tenth
+is not known to be bad either. The answer is unknown.
+
+But nine `tool_verified`, one *known* ungrounded, and one unretained floors at
+`unavailable`, and the unknown changes nothing: no verdict it could turn out to
+hold would lower a floor already resting on the bottom. **An unknown source
+poisons the result only when it could still move it.** Implemented as
+`FloorAccumulator` in `src/provenance_oracle.rs` and tested both ways, because
+getting it wrong in the lenient direction lets one ungradeable episode in a
+cluster of ten manufacture a clean floor for the other nine.
+
+**Why the memory crate declares a trait.** `fermi` depends on
+`agent-bestiary-memory`, so the memory crate cannot call `grounding_trust`
+without a cycle. Copying the arithmetic across was the obvious alternative and
+would have produced two answers to the same question — and the one that
+disagrees is the one that gets believed, because it is the one nearest the
+writer. This module has already had that bug once (`gbif_verified` for
+`tool_verified`). So `ProvenanceOracle` is declared where it is needed and
+implemented where the contracts live, exactly as `LLMProvider` already is.
+
+**The site that was missed.** There were three production `ConsolidationWorker`
+construction sites and the first pass wired one. The one missed —
+`handlers/creatures/agent_modules.rs` — is the **highest-volume rule writer on
+the platform**, because creature dreams run on a timer while the HTTP handler
+runs when somebody asks. Wiring the path you are looking at and missing the
+path that runs by itself is the normal shape of this mistake and it does not
+announce itself: the rules still get written, just ungraded. Now enforced by
+`tests/provenance_floor_coverage.rs`, which scans for construction sites and
+requires each to be wired or named in `EXEMPT` with a reason. Verified able to
+fail by unwiring the creature path.
+
+**Measured state of the corpus** (165 active rules, live, read-only):
+
+| state | rules |
+|---|---|
+| ungradeable — evidence not retained (pre-migration-199) | 159 |
+| fully retained, gradeable | 5 |
+| dangling — cited episodes have no rows | 1 |
+
+and the 5 gradeable rules — all `genome_profiler`, all about tool ordering —
+floor at **`unavailable_no_tool_source`**. Correctly: the weakest block in a
+`genome_profiler` response is its `genome` block, which no tool can source, so
+an extraction over that document can only be as good as the weakest part it
+might have read. Those five rules are live in production and being injected
+into `genome_profiler`'s own prompt. They will rise to `model_inference` when
+`ncbi_genome_search` covers the field — which is the point: **the floor is the
+demand signal for tool integration, expressed in the one place it changes
+behaviour.**
+
+The 96% ungradeable figure is not a failure of this work, it is its first
+finding, and it must be read as missing coverage rather than as ungrounded
+rules — the remedy is retention and contracts, not retraction. `NULL` therefore
+means *unknown* everywhere: in the column, in `SemanticRule`, in the oracle, and
+in the prompt ("grounding unknown", deliberately distinct wording from
+"UNGROUNDED"). A report that counted `NULL` as grounded would show the corpus
+getting cleaner as coverage got worse.
+
+**Artifacts.** Migration 203 (`provenance_floor` + `provenance_floor_basis`,
+CHECK kept in step with `PROVENANCE_VALUES` by a test that parses the SQL);
+`agent_bestiary_memory::provenance`; `src/provenance_oracle.rs`;
+`grounding_trust::{strength, floor, extracted_floor, response_floor,
+EXTRACTION_CEILING}`; `kg_context::grounding_note`;
+`tests/provenance_floor_coverage.rs`; corpus report and live oracle run in
+`scripts/grounding_contract_live.sh`.
+
 ### 7.6 Census findings — offline half
 
 `scripts/port_census.py`, 100 curated cards, label-set fingerprint `d9fc503bdf753a79`.

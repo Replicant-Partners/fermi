@@ -73,6 +73,35 @@ pub mod rollup_trust;
 // catches it.
 pub mod grounding_trust;
 
+// The one implementation of `ProvenanceOracle`, which carries the grounding
+// verdict across the crate boundary into the memory layer.
+//
+// Semantic rules are extracted from episodes during dream cycles and then
+// injected into other agents' prompts — they become things the platform tells
+// its own agents are true. Without a floor, a rule extracted from prose is
+// stored and retrieved identically to one extracted from tool output, and the
+// citation makes it worse than a bare hallucination: `source_episode_cluster`
+// genuinely points at episodes that genuinely said that. The laundering runs
+// outward, into the whole ecology.
+//
+// The oracle lives in `fermi` because the field contracts do, and the memory
+// crate declares a trait instead of copying the arithmetic — a second copy of
+// a trust calculation is a second answer to the same question, and the one
+// that disagrees is the one nearest the writer.
+pub mod provenance_oracle;
+
+// HUD contract — the display-layer sibling of `grounding_trust`, for agents
+// whose output is read on glass in half a second rather than parsed.
+//
+// `grounding_trust` nulls what nothing could supply and stamps
+// `<block>_provenance`, which is enough for a consumer that reads the tag. A
+// heads-up display is not that consumer: a correctly-tagged guess rendered as
+// identical text to a verified retrieval reproduces the `genome_profiler` harm
+// through the presentation layer. So this module derives a visible treatment
+// per line, conditions every lookup on the provenance of the subject it was
+// keyed on, and computes `confidence_display` rather than accepting it.
+pub mod hud_contract;
+
 // Port trust contract — whether the caller is sending what the agent said it
 // takes. `negotiate::bind_input` in the console answered this correctly and
 // was wired only into the desktop client, so every HTTP execute path went

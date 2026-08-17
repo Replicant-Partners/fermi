@@ -678,7 +678,37 @@ pub async fn genome_profiler_handler(
             // prey_locator, dream) and is a parser with a fallback, not a
             // validator. Mixing the two would make the grounding rules
             // invisible to anyone reading either call site.
-            let grounding = crate::grounding_trust::enforce("genome_profiler", &mut parsed);
+            let mut grounding = crate::grounding_trust::enforce("genome_profiler", &mut parsed);
+
+            // Reconcile against the creature's own GBIF-verified taxonomy.
+            //
+            // `Sourced` asserts a tool COULD supply a field, not that this
+            // value came from it. `Antaxius beieri` — a bush-cricket
+            // (Orthoptera / Tettigoniidae) — was profiled as a cerambycid
+            // beetle (Coleoptera / Cerambycidae) while the verified answer sat
+            // on the creature row all along, and enforcement passed it because
+            // the field was present, typed and declared sourced.
+            //
+            // So the profile no longer gets to re-derive what the record
+            // already knows: canonical wins, the contradiction is overwritten
+            // rather than merely flagged, and the discarded value is retained
+            // on the violation so the fabrication stays auditable.
+            if let Some(canon_tax) = taxonomy.as_ref() {
+                let canonical = json!({ "taxonomy": canon_tax });
+                let corrections =
+                    crate::grounding_trust::reconcile("genome_profiler", &mut parsed, &canonical);
+                if !corrections.is_empty() {
+                    tracing::warn!(
+                        creature_id = %creature_id,
+                        scientific_name = %scientific_name,
+                        corrections = corrections.len(),
+                        paths = ?corrections.iter().map(|c| c.path.as_str()).collect::<Vec<_>>(),
+                        "genome_profiler contradicted the creature's canonical taxonomy; corrected"
+                    );
+                }
+                grounding.violations.extend(corrections);
+            }
+
             if !grounding.is_clean() {
                 // WARN not ERROR: the run itself succeeded and the taxonomy
                 // is real. What failed is the prompt's ability to stop the
@@ -1657,7 +1687,17 @@ pub async fn creature_dream_handler(
                             spawn_state.embedder.clone(),
                             format!("dream-{}", creature_id),
                         ),
-                    };
+                    }
+                    // Migration 203. Creature dreams are the highest-volume
+                    // rule writer on the platform, and their rules go straight
+                    // back into the creature's own prompt via `kg_context` —
+                    // so an ungrounded rule here becomes a premise the creature
+                    // reasons from on its next tick. Wiring the HTTP handler
+                    // and not this one would have covered the path used by
+                    // hand and missed the path that runs by itself.
+                    .with_provenance_oracle(Some(Arc::new(
+                        fermi::provenance_oracle::DbProvenanceOracle::new(pool_bg.clone()),
+                    )));
 
                     match worker.consolidate_agent(agent_uuid, 0.5, 2).await {
                         Ok(result) => {

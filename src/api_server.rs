@@ -1146,6 +1146,20 @@ async fn run_migrations(db: &PgPool) {
         // could not be credited for a single rule it had ever written, so Loop 1
         // for the extractor had no signal to run on.
         "migrations/201_extraction_provenance.sql",
+        // Fixes migration 200's legacy tag, which keyed on shape ("has a
+        // genome key") rather than history ("has provenance keys") and so
+        // mislabelled correctly-grounded profiles as legacy on every reboot.
+        // Harmless until PRE_CONTRACT_MARKER began trusting the tag. Also
+        // clears the genuine legacy rows so they regenerate under the full
+        // contract, retaining the superseded document verbatim.
+        "migrations/202_fix_legacy_tag_and_force_regeneration.sql",
+        // `semantic_rules.provenance_floor` — how well-grounded the episodes a
+        // rule was extracted from actually were, capped at `model_inference`
+        // because extraction is judgement. Rules are injected into other
+        // agents' prompts, so without a floor a rule extracted from prose is
+        // indistinguishable from one extracted from tool output, and the
+        // laundering runs outward into the whole ecology.
+        "migrations/203_semantic_rule_provenance_floor.sql",
     ];
 
     for file in &migration_files {
