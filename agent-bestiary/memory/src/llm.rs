@@ -107,15 +107,42 @@ pub async fn generate_structured<T>(
 where
     T: serde::de::DeserializeOwned,
 {
-    // Call generate_raw and parse JSON
-    let response = provider.generate_raw(messages, config).await?;
+    generate_structured_with_usage(provider, messages, config)
+        .await
+        .map(|(value, _usage)| value)
+}
 
-    serde_json::from_str::<T>(&response.content).map_err(|e| {
+/// [`generate_structured`], but hands back what the call cost.
+///
+/// `generate_structured` throws `GenerationResponse.usage` away. That was
+/// invisible until the dreaming pipeline needed it: consolidation drives the
+/// ontologist through this function several times per cycle, and because the
+/// token counts were discarded at exactly this line, the platform's most
+/// frequently-invoked system agent had no measurable cost anywhere. The
+/// spending was real; only the record was missing.
+///
+/// Kept as a separate function rather than changing the return type of
+/// `generate_structured`, so callers that genuinely do not care about usage
+/// are untouched.
+pub async fn generate_structured_with_usage<T>(
+    provider: &dyn LLMProvider,
+    messages: Vec<Message>,
+    config: &GenerationConfig,
+) -> Result<(T, TokenUsage)>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let response = provider.generate_raw(messages, config).await?;
+    let usage = response.usage.clone();
+
+    let parsed = serde_json::from_str::<T>(&response.content).map_err(|e| {
         crate::error::MemoryError::ExternalError(format!(
             "Failed to parse structured output: {}. Response was: {}",
             e, response.content
         ))
-    })
+    })?;
+
+    Ok((parsed, usage))
 }
 
 /// Factory for creating LLM providers

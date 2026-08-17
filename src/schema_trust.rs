@@ -146,9 +146,16 @@ pub const SCHEMA_TABLES: &[&str] = &[
     "eval_test_cases",
     "agent_timeline_entries",
     "dyad_state",
+    // mig-133. The observatory's social graph names dyads from here and
+    // upserts on rename, so a drift makes "Save name" 503 rather than fail loud.
+    "dyad_profiles",
     "anomaly_events",
     "agent_observability_state",
     "hitl_actions",
+    // mig-016. Read by the Loop 3a row on the loop-health panel.
+    // (`workspace_agents`, which Loops 3a and 4 join against, is already
+    // declared above with the workspace relations.)
+    "coherence_evaluations",
     // Harness / benchmark
     "harness_snapshots",
     // v0.11.2 — orchestra registry
@@ -251,6 +258,87 @@ pub const SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("anomaly_events", "resolved_at"),
     ("anomaly_events", "kind"),
     ("anomaly_events", "severity"),
+    // ── Loop health panel (GET /api/observatory/agents/:id/loops) ───────
+    //
+    // The `detected_at` incident above was not specific to Loop 2 — that row
+    // just happened to be the one that got a column wrong. All six loop rows
+    // degrade to "unmeasured" on a bad column, and "unmeasured" is designed to
+    // read as "nothing here yet", so every one of them can fail silently in the
+    // same way. Declaring what each row reads makes that class of failure a CI
+    // error rather than a plausible-looking dashboard.
+    //
+    // Loop 1a — the two halves of individual learning.
+    ("eval_runs", "agent_id"),
+    ("eval_signals", "agent_id"),
+    ("eval_signals", "dimension"),
+    ("eval_signals", "score"),
+    ("eval_signals", "rationale"),
+    ("eval_signals", "evaluator_name"),
+    ("consolidation_jobs", "agent_id"),
+    ("consolidation_jobs", "status"),
+    ("entities", "agent_id"),
+    ("facts", "agent_id"),
+    ("semantic_rules", "agent_id"),
+    // ── Extractor read-back (`extractor_self_knowledge`) ────────────────────
+    //
+    // The query that hands the extractor its own learned rules ends in `.ok()?`
+    // — a column error returns `None`, which is indistinguishable from "this
+    // agent has learned nothing yet". A rename would therefore switch Loop 1's
+    // read-back off in silence, and the only symptom would be the extractor
+    // quietly ceasing to improve. Declared so that fails in CI instead.
+    ("semantic_rules", "rule_content"),
+    ("semantic_rules", "rule_description"),
+    ("semantic_rules", "confidence_score"),
+    ("semantic_rules", "verification_status"),
+    ("semantic_rules", "is_active"),
+    ("semantic_rules", "invalidated_at"),
+    // ── Extraction-utility signal ─────────────────────────────────────
+    //
+    // `extracted_by` (mig-201) is who WROTE a rule, as against `agent_id` who it
+    // is FOR. `application_count` / `last_validated_at` are the retrieval
+    // counters — present since mig-010 and, until now, never written by anything.
+    // Together they are the extractor's only quality signal, so a drift in any of
+    // the three silently returns Loop 1 for the ontologist to having no signal at
+    // all, which is the state this work exists to leave behind.
+    ("semantic_rules", "extracted_by"),
+    ("semantic_rules", "application_count"),
+    ("semantic_rules", "last_validated_at"),
+    // The signal's destination. `confidence` in particular: it is what stops a
+    // 6-rule score being read with the authority of a 600-rule one.
+    ("eval_signals", "confidence"),
+    ("eval_signals", "evaluator_version"),
+    ("eval_signals", "evaluator_tier"),
+    ("eval_signals", "created_at"),
+    ("episodes", "agent_id"),
+    ("episodes", "consolidated"),
+    // Loop 3a — workspace coherence, scoped to the agent's workspaces via
+    // `workspace_agents` (already declared below with the workspace columns).
+    ("coherence_evaluations", "eval_id"),
+    ("coherence_evaluations", "workspace_id"),
+    ("coherence_evaluations", "global_score"),
+    ("coherence_evaluations", "created_at"),
+    // Loop 4 — composition evolution. `proposed_by`/`accepted_by` are what
+    // separate a strategist proposal that a human accepted (the loop closing)
+    // from a human editing a team (not the loop at all).
+    ("composition_versions", "proposed_by"),
+    ("composition_versions", "accepted_by"),
+    // ── Social graph (GET /api/observatory/agents/:id/relationships) ────
+    //
+    // The dyad cards resolve the human half through `users` and upsert the
+    // operator's label into `dyad_profiles`. A drift here does not error — the
+    // lookup just returns nothing and every card falls back to "unknown user",
+    // which looks like missing data rather than a broken join.
+    ("users", "github_username"),
+    ("dyad_profiles", "dyad_id"),
+    ("dyad_profiles", "agent_id"),
+    ("dyad_profiles", "human_id"),
+    ("dyad_profiles", "display_name"),
+    ("dyad_profiles", "notes"),
+    ("dyad_profiles", "auto_formed"),
+    ("dyad_profiles", "formed_at"),
+    ("dyad_profiles", "total_interactions"),
+    ("dyad_profiles", "first_interaction_at"),
+    ("dyad_profiles", "last_interaction_at"),
     // ── agents ─────────────────────────────────────────────────────
     // Every one of these has been referenced in a bug in the last
     // month. The trust contract exists to keep them present.

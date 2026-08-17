@@ -864,6 +864,8 @@ function renderAgentView(fa) {
 
   // Dreaming tab badge = episodes waiting to be consolidated. This is the
   // actionable number: a backlog is material the agent has not learned from yet.
+  // Dream-pipeline members write pre-consolidated ledger rows, so their badge
+  // stays at zero rather than accumulating bookkeeping they can never dream.
   const backlog = _dream?.backlog?.unconsolidated_episodes || 0;
   document.getElementById("tab-dreaming").innerHTML =
     "Dreaming" + (backlog > 0 ? `<span class="tab-badge" style="background:var(--purple,var(--aqua))">${backlog}</span>` : "");
@@ -896,7 +898,20 @@ function renderOverviewTab(fa) {
     { label:"Eval runs", value: runs.length, sub: runs[0]?`Last: ${timeSince(runs[0].started_at)}`:"Never run", color:"var(--fg2)" },
     { label:"Open flags", value: (_anoms?.anomalies||[]).filter(a=>!a.resolved_at&&a.requires_review).length, sub:"Pending HITL review", color:(_anoms?.anomalies||[]).filter(a=>!a.resolved_at&&a.requires_review).length>0?"var(--yellow)":"var(--green)" },
     { label:"Relationships", value: _rels?.relationship_count||0, sub:"Active dyads", color:"var(--fg2)" },
-    { label:"Calibration", value: _calib?.calibration_score!=null?`${pct(_calib.calibration_score)}%`:"—", sub: _calib?.trend||"No data", color:_calib?.calibration_score!=null?colorFor(_calib.calibration_score):"var(--fg4)" },
+    // Same number as the Brier card and carrying the same two caveats: it is
+    // team-scoped and it is not skill-adjusted. `trend` on its own was a
+    // direction on a quantity that may hold no signal, so the evidence class
+    // rides alongside it and the colour is withheld when that class says the
+    // number is uninformative.
+    (() => {
+      const cs = _calib?.calibration_score;
+      const ec = _calib?.evidence_class;
+      const dead = ["none","undiscriminating","no_skill"].includes(ec);
+      return { label:"Calibration",
+        value: cs!=null?`${pct(cs)}%`:"—",
+        sub: _calib ? `team · ${(ec||"—").replace(/_/g," ")} · ${_calib.trend||"no trend"}` : "No data",
+        color: (cs==null||dead) ? "var(--fg4)" : colorFor(cs) };
+    })(),
     { label:"Persona version", value: `v${fa.persona_version||1}`, sub:`${fa.total_executions||0} total runs`, color:"var(--fg2)" },
     // Eval scores measure how the agent performed; this measures whether any of
     // that performance was retained. An agent can hold a healthy score forever
@@ -953,6 +968,8 @@ function renderEvalCards() {
   });
 
   const activeCards = Object.entries(byEval).map(([name,data]) => {
+    // Brier is not a per-test-case dimension and never was. See renderBrierCard.
+    if (name.toLowerCase().replace(/[_-]/g,"").includes("brier")) return renderBrierCard(name,data,runSeries);
     const tierCls = data.tier==="prefilter"?"":"dimensional";
     const rows = data.dims.map(s => {
       const c = colorFor(s.score);
@@ -1000,6 +1017,135 @@ function renderEvalCards() {
        results — no scores, no failures, no inactive evaluators. The run row exists
        but its aggregated signal is empty. Click ▶ Eval to re-run.
      </div>`;
+}
+
+// ── Brier card ────────────────────────────────────────────────────────
+//
+// Every other evaluator scores the test case it was handed. `BrierEvaluator`
+// does not: it calls `latest_for_agent(bundle.agent_id)` and returns the
+// agent's rolling mean over resolved forecasts, ignoring the bundle entirely.
+// Run through the generic row renderer it produced one identical bar per test
+// case — five bars reading as five agreeing measurements, sitting in a grid
+// whose neighbouring columns genuinely vary per case, when they are one lookup
+// echoed five times.
+//
+// Two further things the generic row cannot say, both already computed by
+// GET /api/agents/:id/calibration and simply not read here:
+//
+//   scope   `1 - brier` covers forecasts that CITE this agent in `agents_used`,
+//           not its own contribution. On a composition that cites every member
+//           on every forecast it is identical across members and cannot rank
+//           them. calibration.rs stamps it `score_scope: "team"` and points at
+//           `contribution.mean_shapley` for per-agent credit.
+//
+//   skill   On a skewed outcome set the base-rate baseline b(1-b) is itself
+//           ~0.02, so a "98%" display is what an uninformative flat prior
+//           scores — see the `uniform_prior_on_skewed_set_has_zero_skill` test
+//           in src/calibration.rs, which computes exactly that. `evidence_class`
+//           and `brier_skill_score` say whether the raw number carries any
+//           information; while they said "no", this card showed a green 99%.
+//
+// So: one row rather than one per case, skill as the headline, raw kept but
+// demoted and labelled with its scope and n, and the uninformative evidence
+// classes rendered inactive — which is what an evaluator that cannot currently
+// discriminate is.
+function renderBrierCard(name, data, runSeries) {
+  const head = (badge,cls) =>
+    `<div class="ec-name">${escHtml(name)}<span class="ec-tier ${cls||""}">${badge}</span></div>`;
+  const note = (t,color) =>
+    `<div style="font-size:0.68rem;color:${color||"var(--fg4)"};margin-top:4px;line-height:1.4">${t}</div>`;
+  const bar = (label,score,val,color) => `<div class="dim-bar-row">
+      <span class="dim-bar-label">${label}</span>
+      <div class="dim-bar-bg"><div class="dim-bar-fill" style="width:${Math.max(0,Math.min(100,pct(score)))}%;background:${color}"></div></div>
+      <span class="dim-bar-val" style="color:${color}">${val}</span>
+    </div>`;
+
+  // Collapse the per-case repeats. If they ever disagree the premise above is
+  // wrong, so say so rather than silently pick the first.
+  const scores = data.dims.filter(d=>d.dimension==="forecast_calibration").map(d=>d.score);
+  const distinct = [...new Set(scores.map(s=>Math.round(s*1e6)))];
+  const raw = scores.length ? scores[0] : null;
+  const rawLabel = raw!=null ? `${pct(raw)}%` : "—";
+
+  // A failed /calibration fetch is reported, not filled in. Same stance as the
+  // Loops tab: no verdict beats a guessed one.
+  if (!_calib || _calib._error) {
+    return `<div class="eval-card ec-inapplicable">${head("unread")}
+      ${note(`Raw <span style="color:var(--fg2)">${rawLabel}</span> from the eval run, but
+        <code>/calibration</code> could not be read, so its scope and skill are unknown.
+        Not shown as a score.`)}</div>`;
+  }
+
+  const c  = _calib;
+  const ec = c.evidence_class || null;
+  const n  = c.n_resolved_forecasts ?? 0;
+  const sk = c.brier_skill_score;
+  const ct = c.contribution || {};
+
+  const ecHint = {
+    none:             "No resolved forecasts cite this agent in agents_used yet.",
+    undiscriminating: "Every outcome resolved the same way — there is no reference to score against, however large n gets.",
+    no_skill:         "Does not beat a forecaster that predicts the base rate on every question.",
+    provisional:      "Fewer than 5 resolved forecasts.",
+    thin:             "Sound wiring, little data — fewer than 20 resolved forecasts.",
+    usable:           "",
+  }[ec] || "";
+
+  // Per-agent credit is the number this card is a proxy for. Show it whenever
+  // attribution has produced one, including when the interval is undefined —
+  // `ci_note` explains why, and "one tournament is one observation" is more
+  // useful than an absent row.
+  const shap = ct.mean_shapley;
+  const contribRow = shap != null
+    ? note(`Per-agent credit φ <span style="color:${shap>0?"var(--green)":"var(--red)"}">${shap.toFixed(3)}</span>
+        over ${ct.n_forecasts||0} forecast(s), ${ct.n_clusters||0} cluster(s)`
+        + (ct.ci_low!=null ? ` · 90% CI [${ct.ci_low.toFixed(3)}, ${ct.ci_high.toFixed(3)}]`
+                           : ` · interval undefined`)
+        + (ct.how_to_unblock ? `<br><span style="color:var(--fg4)">${escHtml(ct.how_to_unblock)}</span>` : ""))
+    : note(`Per-agent credit: ${escHtml(ct.ci_note || "not computed")}`);
+
+  // Raw rolling mean across eval runs, with the base-rate baseline drawn on it.
+  // Deliberately NOT a skill series: `brier_skill_score` is a single current
+  // scalar and no skill history exists anywhere in the system, so plotting one
+  // would mean deriving it from the current baseline and backdating it —
+  // inventing the exact kind of number this card exists to stop showing. What
+  // the baseline overlay does give is the part that matters: whether the raw
+  // line is moving above the level at which it starts to mean anything.
+  const hist = (runSeries||{})["forecast_calibration"] || [];
+  const refDisplay = (c.brier_baseline!=null && c.brier_baseline>1e-9) ? 1-c.brier_baseline : null;
+  const spark = hist.length>=2
+    ? `<div style="margin-top:6px">${MicroChart.sparkline(hist,{width:200,height:24,
+        color:"var(--fg3)",refLine:refDisplay,refColor:"var(--orange,var(--yellow))"})}</div>`
+      + note(refDisplay!=null
+          ? `Raw 1−brier across ${hist.length} run(s). Dashed line — ${pct(refDisplay)}% — is what a
+             forecaster that predicts the base rate every time scores on this outcome set.`
+          : `Raw 1−brier across ${hist.length} run(s). No baseline to draw against: outcomes are one-sided.`)
+    : "";
+
+  const disagree = distinct.length > 1
+    ? note(`⚠ ${distinct.length} distinct values across ${scores.length} test cases — this
+        evaluator is supposed to return one agent-level lookup regardless of case.`, "var(--orange,var(--yellow))")
+    : "";
+
+  // none | undiscriminating | no_skill — the number exists and means nothing.
+  if (["none","undiscriminating","no_skill"].includes(ec)) {
+    return `<div class="eval-card ec-inapplicable">${head(ec.replace(/_/g," "))}
+      ${note(escHtml(ecHint))}
+      ${note(`Raw 1−brier is <span style="color:var(--fg2)">${rawLabel}</span> over ${n} team-scoped
+        forecast(s). Not shown as a score: on this outcome set an uninformative prior scores
+        about the same.`)}
+      ${spark}${contribRow}${disagree}</div>`;
+  }
+
+  const skColor = sk==null ? "var(--fg4)" : sk>0 ? colorFor(Math.min(1,sk)) : "var(--red)";
+  return `<div class="eval-card">${head(ec||"dim","dimensional")}
+    ${sk!=null
+      ? bar("skill vs base rate", sk, `${pct(sk)}%`, skColor)
+      : note("Skill undefined — no base-rate reference on this outcome set.")}
+    ${note(`Raw 1−brier ${rawLabel} · <strong>team</strong> scope, n=${n}. Describes forecasts that
+      cite this agent, not its own contribution.`)}
+    ${ecHint ? note(escHtml(ecHint)) : ""}
+    ${spark}${contribRow}${disagree}</div>`;
 }
 
 // ── History ───────────────────────────────────────────────────────────
@@ -1347,6 +1493,21 @@ function renderDreamingTab() {
   bandEl.className = `dream-band db-${band}`;
   diagEl.textContent = _dream.diagnosis || "";
   diagEl.style.borderLeftColor = dreamColor();
+
+  // A dreaming-pipeline member is the machinery, not a subject of it. Saying so
+  // stops "dormant / never dreamt" reading as neglect for the agent that runs
+  // everyone else's cycles. The flag comes from the loops endpoint, which
+  // resolves it from dream_coordinator's declared members.
+  const svc = (_loops?.loops||[]).find(l=>l.id==="1a")?.evidence?.off_ledger_service;
+  if (svc) {
+    diagEl.innerHTML =
+      `<div style="color:var(--purple,var(--aqua));margin-bottom:6px;"><strong>Dreaming-pipeline service.</strong> `
+      + `This agent runs other agents' consolidation cycles — everything it extracts is filed `
+      + `under the agent being dreamt, not here. The figures below are about it as a <em>subject</em> `
+      + `of dreaming, which it has never been. Its work appears under Sessions, tagged `
+      + `<code>dream_pipeline</code>.</div>`
+      + `<div>${escHtml(_dream.diagnosis || "")}</div>`;
+  }
 
   const bg = _dream.backlog || {}, bu = _dream.budget || {}, cy = _dream.cycles || {};
   const y = _dream.yield || {}, o = _dream.ontology || {};

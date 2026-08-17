@@ -227,6 +227,39 @@ async fn main() -> Result<()> {
     let pool = Arc::new(store.pool().clone());
     let lock = Arc::new(ConsolidationLock::new(pool, args.worker_id.clone()));
 
+    // Loop 1 read-back for the extractor itself.
+    //
+    // The API path does this too. Both must, or the extractor consults its own
+    // learned rules or not depending on which entry point ran it, and nothing
+    // anywhere would say which happened.
+    //
+    // Resolved by name because this binary has no agent registry: the extractor
+    // is the `ontologist` by convention here, whereas the API resolves it
+    // declaratively from `dream_coordinator`'s members. A rename that the card
+    // follows and this does not shows up as guidance silently going absent, so
+    // the miss is logged rather than swallowed.
+    let (extractor_identity, extractor_guidance) = match store.get_agent_by_name("ontologist").await
+    {
+        Ok(e) => {
+            let g =
+                agent_bestiary_memory::extractor_self_knowledge(store.pool(), e.agent_id, 20).await;
+            if g.is_some() {
+                info!("Extractor is consulting its own learned rules");
+            } else {
+                info!("Extractor has no learned rules yet — running without self-guidance");
+            }
+            (Some(e.agent_id), g)
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                "Could not resolve the `ontologist` agent; consolidation will run without \
+                 extractor self-guidance, and its rules will be unattributed"
+            );
+            (None, None)
+        }
+    };
+
     // Initialize consolidation worker
     let worker = ConsolidationWorker::with_llm(
         store.clone(),
@@ -234,7 +267,9 @@ async fn main() -> Result<()> {
         embedder,
         llm.clone(),
         args.worker_id.clone(),
-    );
+    )
+    .with_extractor_guidance(extractor_guidance)
+    .with_extractor_identity(extractor_identity);
     info!("Initialized consolidation worker");
 
     // Initialize ontology components

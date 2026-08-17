@@ -1688,7 +1688,7 @@ impl MemoryStore {
                 "INSERT INTO semantic_rules \
                  (rule_id, agent_id, rule_content, rule_description, confidence_score, \
                   verification_status, verification_method, source_episode_cluster, \
-                  episode_count, embedding, is_active) ",
+                  episode_count, embedding, is_active, extracted_by) ",
             );
             qb.push_values(chunk.iter(), |mut b, r| {
                 b.push_bind(r.rule_id)
@@ -1705,7 +1705,12 @@ impl MemoryStore {
                             .as_ref()
                             .map(|e| pgvector::Vector::from(e.clone())),
                     )
-                    .push_bind(r.is_active);
+                    .push_bind(r.is_active)
+                    // Migration 201 — the author, distinct from `agent_id`
+                    // (the subject). Both inserts stamp it; a path that
+                    // silently dropped it would leave rules unattributable
+                    // and the extractor unscoreable.
+                    .push_bind(r.extracted_by);
             });
             qb.push(" ON CONFLICT (rule_id) DO NOTHING");
             total += qb.build().execute(&self.pool).await?.rows_affected() as usize;
@@ -1785,11 +1790,11 @@ impl MemoryStore {
             "INSERT INTO semantic_rules
              (rule_id, agent_id, rule_content, rule_description, confidence_score,
               verification_status, verification_method, source_episode_cluster,
-              episode_count, embedding, is_active,
+              episode_count, embedding, is_active, extracted_by,
               embedding_model_id, embedding_model_version, embedding_dim,
               source_text, source_ref, provenance_trusted)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                     $12, $13, $14, $15, $16, $17)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+                     $13, $14, $15, $16, $17, $18)",
         )
         .bind(rule.rule_id)
         .bind(rule.agent_id)
@@ -1806,6 +1811,7 @@ impl MemoryStore {
                 .map(|e| pgvector::Vector::from(e.clone())),
         )
         .bind(rule.is_active)
+        .bind(rule.extracted_by)
         .bind(provenance.map(|p| p.model_id.as_str()))
         .bind(provenance.map(|p| p.model_version.as_str()))
         .bind(provenance.map(|p| p.dim))
@@ -1839,7 +1845,7 @@ impl MemoryStore {
         let row = sqlx::query(
             "SELECT rule_id, agent_id, rule_content, rule_description, confidence_score,
                     verification_status, verification_method, source_episode_cluster,
-                    episode_count, embedding, is_active, created_at
+                    episode_count, embedding, is_active, created_at, extracted_by
              FROM semantic_rules
              WHERE rule_id = $1",
         )
@@ -1866,7 +1872,7 @@ impl MemoryStore {
         let rows = sqlx::query(
             r#"SELECT rule_id, agent_id, rule_content, rule_description, confidence_score,
                       verification_status, verification_method, source_episode_cluster,
-                      episode_count, embedding, is_active, created_at
+                      episode_count, embedding, is_active, created_at, extracted_by
                FROM semantic_rules
                WHERE agent_id = $2
                  AND is_active = true
@@ -1951,7 +1957,7 @@ impl MemoryStore {
         let rows = sqlx::query(
             "SELECT rule_id, agent_id, rule_content, rule_description, confidence_score,
                     verification_status, verification_method, source_episode_cluster,
-                    episode_count, embedding, is_active, created_at
+                    episode_count, embedding, is_active, created_at, extracted_by
              FROM semantic_rules
              WHERE agent_id = $1 AND is_active = true
              ORDER BY confidence_score DESC",
@@ -1987,6 +1993,11 @@ impl MemoryStore {
             embedding: embedding.map(|v| v.to_vec()),
             is_active: row.try_get("is_active")?,
             created_at: row.try_get("created_at")?,
+            // `try_get` rather than `?`: several SELECTs in this file list
+            // columns explicitly and predate migration 201. A reader that does
+            // not ask for the column should get `None` (author unknown to this
+            // query) rather than an error that fails the whole read.
+            extracted_by: row.try_get("extracted_by").ok().flatten(),
         })
     }
 
@@ -5253,6 +5264,7 @@ mod tests {
             embedding: None,
             is_active: true,
             created_at: Utc::now(),
+            extracted_by: None,
         };
 
         // Store rule

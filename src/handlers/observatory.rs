@@ -2258,6 +2258,16 @@ pub struct Loop1aInputs {
     /// Context, so "nothing happened" can be told from "nothing could happen".
     pub episodes: i64,
     pub backlog: i64,
+    /// This agent is invoked as a service rather than executed as an agent, so
+    /// an empty `episodes` count does not mean it has never run.
+    ///
+    /// The ontologist is the case that forced this. It is handed to the
+    /// consolidation worker as a bare `LLMProvider` — its card supplies a
+    /// model and a credential, and no agent execution ever happens — while
+    /// everything it extracts is stamped with the SUBJECT agent's id. So it
+    /// powered Loop 1 for the entire fleet and reported, correctly from the
+    /// tables and absurdly in substance, "no episodes — execute it first".
+    pub off_ledger_service: bool,
 }
 
 impl Loop1aInputs {
@@ -2323,6 +2333,18 @@ pub fn classify_loop1a(i: Loop1aInputs) -> (&'static str, String) {
                  row(s), but no eval run has ever scored this agent — it is consolidating \
                  without any measure of whether it improved."
             ),
+        ),
+        // An off-ledger service with no episodes is not idle — the ledger is
+        // incomplete. `unmeasured`, not `open`: `open` asserts the loop is not
+        // turning, and here we simply cannot see whether it is.
+        (false, false) if i.episodes == 0 && i.off_ledger_service => (
+            "unmeasured",
+            "This agent runs as a dreaming-pipeline service, not as an ordinary agent — the \
+             consolidation worker calls it directly and files everything it produces under \
+             the agent being dreamt. Its work before the dream ledger was never recorded, so \
+             its learning cannot be read from these tables. Episodes accumulate from its next \
+             cycle onward."
+                .to_string(),
         ),
         (false, false) if i.episodes == 0 => (
             "open",
@@ -2422,6 +2444,10 @@ pub async fn agent_loops_handler(
                 rules: n("rules"),
                 episodes: n("episodes"),
                 backlog: n("backlog"),
+                off_ledger_service: crate::handlers::consolidation::is_dream_pipeline_member(
+                    &state,
+                    &db_agent.agent_name,
+                ),
             };
             let (status, detail) = classify_loop1a(i);
 
@@ -2441,6 +2467,7 @@ pub async fn agent_loops_handler(
                     "episodes": i.episodes, "unconsolidated_episodes": i.backlog,
                     "has_signal_half": i.has_signal(),
                     "has_correction_half": i.has_correction(),
+                    "off_ledger_service": i.off_ledger_service,
                 }),
             ));
         }
@@ -3074,6 +3101,74 @@ mod loop_health_tests {
         let (status, detail) = classify_loop1a(Loop1aInputs::default());
         assert_eq!(status, "open");
         assert!(detail.contains("execute it first"), "got: {detail}");
+    }
+
+    /// The ontologist case.
+    ///
+    /// It is handed to the consolidation worker as a bare `LLMProvider`, so it
+    /// produces no episodes while doing the extraction work for the whole
+    /// fleet. Reporting that as `open` — "execute it first" — is derived
+    /// correctly from the tables and wrong about the world, and it is wrong in
+    /// the most misleading direction: it tells you to start something that has
+    /// been running all along.
+    #[test]
+    fn an_off_ledger_service_is_unmeasured_not_idle() {
+        let i = Loop1aInputs {
+            off_ledger_service: true,
+            ..Default::default()
+        };
+        let (status, detail) = classify_loop1a(i);
+
+        assert_eq!(
+            status, "unmeasured",
+            "an empty ledger for a service agent means we cannot see its learning, \
+             not that it has none"
+        );
+        assert_ne!(status, "open");
+        assert!(
+            !detail.contains("execute it first"),
+            "must not tell the operator to start an agent that already runs: {detail}"
+        );
+        assert!(detail.contains("dreaming-pipeline service"), "{detail}");
+    }
+
+    /// The flag must not leak into ordinary agents: a normal agent with no
+    /// episodes really has never run, and should still be told so.
+    #[test]
+    fn an_ordinary_idle_agent_is_still_open() {
+        let (status, detail) = classify_loop1a(Loop1aInputs {
+            off_ledger_service: false,
+            ..Default::default()
+        });
+        assert_eq!(status, "open");
+        assert!(detail.contains("execute it first"), "{detail}");
+    }
+
+    /// Once the dream ledger gives a service agent episodes, it should be read
+    /// like any other agent — the exemption is for an empty ledger, not a
+    /// permanent excuse.
+    #[test]
+    fn a_service_agent_with_episodes_is_judged_normally() {
+        let (status, _) = classify_loop1a(Loop1aInputs {
+            off_ledger_service: true,
+            eval_runs: 2,
+            episodes: 40,
+            completed_cycles: 1,
+            entities: 12,
+            rules: 3,
+            ..Default::default()
+        });
+        assert_eq!(status, "closed");
+
+        // And with episodes but neither half turning, it is genuinely open.
+        let (status, detail) = classify_loop1a(Loop1aInputs {
+            off_ledger_service: true,
+            episodes: 40,
+            backlog: 40,
+            ..Default::default()
+        });
+        assert_eq!(status, "open");
+        assert!(detail.contains("40 episode(s) exist"), "{detail}");
     }
 
     #[test]

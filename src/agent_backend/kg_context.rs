@@ -176,6 +176,10 @@ pub async fn enrich_with_kg_context(
                 if !kg_block.is_empty() {
                     let base = card.system_prompt.unwrap_or_default();
                     card.system_prompt = Some(format!("{}{}", base, kg_block));
+                    record_rule_retrievals(
+                        memory_store,
+                        scored_rules.iter().map(|(_, r)| r.rule_id).collect(),
+                    );
                 }
                 tracing::info!(
                     elapsed_ms = t_total.elapsed().as_millis() as u64,
@@ -206,6 +210,7 @@ pub async fn enrich_with_kg_context(
     let injected = !kg_block.is_empty();
     if injected {
         card.system_prompt = Some(append_kg_block(card.system_prompt.take(), &kg_block));
+        record_rule_retrievals(memory_store, top_rules.iter().map(|r| r.rule_id).collect());
     }
 
     // Record what actually reached the prompt, not merely that we tried.
@@ -227,6 +232,74 @@ pub async fn enrich_with_kg_context(
     );
 
     (card, Some(query_embedding))
+}
+
+/// Mark rules as having actually reached a prompt.
+///
+/// ## Why retrieval is the resolution event
+///
+/// A rule's value is not whether it looked plausible when it was written — that
+/// is the judgement of the same model that wrote it — but whether it later
+/// turned out to be worth recalling. Retrieval is the first moment that becomes
+/// observable, and it is exactly analogous to a forecast resolving: delayed,
+/// outcome-based, and not available at write time.
+///
+/// This is what gives the extractor a signal. `semantic_rules.extracted_by`
+/// (migration 201) says who wrote a rule; `application_count` says whether the
+/// platform ever wanted it back. Together they answer "how good is the
+/// ontologist at extraction?", which nothing could answer before.
+///
+/// ## Why the counters were already there
+///
+/// `application_count` and `last_validated_at` have existed since migration 010
+/// and had **zero** non-test references in the codebase — declared, never
+/// written, never read. The schema anticipated this signal and nothing ever
+/// populated it. This is the missing write.
+///
+/// ## Off the hot path, deliberately
+///
+/// `enrich_with_kg_context` runs on every execution and its latency is already
+/// dominated by an embedding call. Bookkeeping must not add to that, and must
+/// never fail a run: the update is spawned and its result logged, not awaited
+/// and not propagated. A lost increment slightly understates a rule's utility;
+/// a blocked execution is a user-visible outage.
+fn record_rule_retrievals(memory_store: &Arc<MemoryStore>, rule_ids: Vec<Uuid>) {
+    if rule_ids.is_empty() {
+        return;
+    }
+    let store = memory_store.clone();
+    tokio::spawn(async move {
+        // `last_validated_at` doubles as "first seen useful": a rule never
+        // retrieved keeps NULL, which is how the utility query tells "unused"
+        // from "used once, long ago".
+        let res = sqlx::query(
+            "UPDATE semantic_rules
+                SET application_count = application_count + 1,
+                    last_validated_at = NOW()
+              WHERE rule_id = ANY($1)",
+        )
+        .bind(&rule_ids)
+        .execute(store.pool())
+        .await;
+
+        match res {
+            Ok(r) if r.rows_affected() as usize != rule_ids.len() => {
+                // Retrieved a rule that no longer exists. Worth a line: it
+                // means a reader served knowledge that has since been deleted.
+                tracing::warn!(
+                    retrieved = rule_ids.len(),
+                    updated = r.rows_affected(),
+                    "kg_retrieval_credit_partial"
+                );
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!(
+                error = %e,
+                rules = rule_ids.len(),
+                "kg_retrieval_credit_failed — extraction utility will understate these rules"
+            ),
+        }
+    });
 }
 
 /// Try pgvector ANN retrieval. Returns None if HNSW indices aren't ready yet.
@@ -378,6 +451,7 @@ mod gate_tests {
             embedding: None,
             is_active: true,
             created_at: Utc::now(),
+            extracted_by: None,
         }
     }
 

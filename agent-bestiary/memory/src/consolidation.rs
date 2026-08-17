@@ -11,14 +11,122 @@
 //! 8. Update job statistics
 
 use crate::{
-    generate_structured, Cardinality, ConsolidationLock, DBSCANClustering, EmbeddingGenerator,
-    Entity, Episode, EpisodeCluster, ExecutionStatus, Fact, GenerationConfig, LLMProvider,
-    MemoryError, MemoryStore, Message, MessageRole, ProvenancedEmbedding, Result, SemanticRule,
-    VerificationStatus,
+    generate_structured_with_usage, Cardinality, ConsolidationLock, DBSCANClustering,
+    EmbeddingGenerator, Entity, Episode, EpisodeCluster, ExecutionStatus, Fact, GenerationConfig,
+    LLMProvider, MemoryError, MemoryStore, Message, MessageRole, ProvenancedEmbedding, Result,
+    SemanticRule, VerificationStatus,
 };
 use chrono::Utc;
 use std::sync::Arc;
 use uuid::Uuid;
+
+/// Append the extractor's learned rules to an extraction system prompt.
+///
+/// A free function so the composition can be tested without a database, a
+/// worker, or a model. The precedence line is load-bearing: these rules are the
+/// extractor's own generalisations about its past behaviour, and without an
+/// explicit ordering a stale self-derived rule could quietly override the
+/// task instructions it was supposed to refine.
+fn compose_system_prompt(base: &str, guidance: Option<&str>) -> String {
+    match guidance.map(str::trim).filter(|g| !g.is_empty()) {
+        Some(g) => format!(
+            "{base}\n\n\
+             ## What you have learned about extraction\n\n\
+             These are rules you derived from your own past extraction cycles and that \
+             survived into your knowledge graph. Apply them. If one conflicts with the \
+             instructions above, the instructions above win.\n\n{g}"
+        ),
+        None => base.to_string(),
+    }
+}
+
+/// The extractor's own learned rules, rendered for injection into its system
+/// prompt. `None` when it has learned nothing yet.
+///
+/// Lives here rather than in a handler because it has two callers on opposite
+/// sides of the crate split — the API consolidation handler and the batch
+/// `consolidate` CLI — and a read-back that one path performs and the other
+/// skips is worse than none: the extractor would behave differently depending
+/// on which entry point happened to invoke it, and nothing would say so.
+///
+/// SELECTION
+///
+/// Verified rules first, then by confidence. Verification does not run yet
+/// (`rules_verified`/`rules_rejected` are hardcoded 0 below, and
+/// `update_semantic_rule_verification` has no production caller), so today this
+/// is effectively "highest-confidence active rules". The ordering is written to
+/// prefer verified ones the moment that changes.
+///
+/// Capped at `limit`. This text rides on EVERY extraction call in a cycle — one
+/// per cluster plus entity and fact batches — so an uncapped preamble would
+/// grow the per-cycle bill linearly in everything the extractor has ever
+/// learned.
+pub async fn extractor_self_knowledge(
+    pool: &sqlx::PgPool,
+    extractor_id: Uuid,
+    limit: i64,
+) -> Option<String> {
+    use sqlx::Row as _;
+
+    let rows = sqlx::query(
+        "SELECT rule_content, rule_description, confidence_score, verification_status
+           FROM semantic_rules
+          WHERE agent_id = $1 AND is_active AND invalidated_at IS NULL
+          ORDER BY (verification_status = 'verified') DESC, confidence_score DESC
+          LIMIT $2",
+    )
+    .bind(extractor_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .ok()?;
+
+    let mut out = String::new();
+    for r in &rows {
+        let content: String = r.try_get("rule_content").unwrap_or_default();
+        if content.trim().is_empty() {
+            continue;
+        }
+        let status: String = r.try_get("verification_status").unwrap_or_default();
+        let conf: f64 = r.try_get("confidence_score").unwrap_or(0.0);
+        // The model is told what each rule is worth. An unverified rule is the
+        // extractor's own untested hypothesis about its own behaviour, and
+        // presenting that with the same authority as a verified one is how a
+        // guess gets laundered into a constraint.
+        out.push_str(&format!("- [{status}, confidence {conf:.2}] {content}\n"));
+        if let Ok(Some(d)) = r.try_get::<Option<String>, _>("rule_description") {
+            if !d.trim().is_empty() {
+                out.push_str(&format!("    ({})\n", d.trim()));
+            }
+        }
+    }
+
+    (!out.trim().is_empty()).then_some(out)
+}
+
+/// What the extraction model was asked to do during one cycle.
+///
+/// Accumulated across every `generate_structured_with_usage` call the worker
+/// makes, so the cycle can report what the extractor actually cost. Before
+/// this existed the ontologist ran several times per cycle and left no trace
+/// of any of it.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ExtractorUsage {
+    /// Number of completed LLM round-trips (successful or parse-failed).
+    pub calls: u32,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+}
+
+impl ExtractorUsage {
+    fn record(&mut self, u: &crate::TokenUsage) {
+        self.calls += 1;
+        self.prompt_tokens += u.prompt_tokens as u64;
+        self.completion_tokens += u.completion_tokens as u64;
+        self.total_tokens += u.total_tokens as u64;
+    }
+}
 
 /// Consolidation workflow orchestrator
 pub struct ConsolidationWorker {
@@ -28,6 +136,16 @@ pub struct ConsolidationWorker {
     llm: Option<Arc<dyn LLMProvider>>,
     #[allow(dead_code)]
     worker_id: String,
+    /// Extraction cost for the cycle in flight. `Mutex` rather than threading a
+    /// counter through five private methods; contention is nil because a worker
+    /// runs one cycle at a time under `ConsolidationLock`.
+    usage: std::sync::Mutex<ExtractorUsage>,
+    /// What the extractor has learned about extracting, injected into every
+    /// system prompt this cycle. See [`ConsolidationWorker::with_extractor_guidance`].
+    extractor_guidance: Option<String>,
+    /// Who to credit for rules produced this cycle.
+    /// See [`ConsolidationWorker::with_extractor_identity`].
+    extractor_identity: Option<Uuid>,
 }
 
 impl ConsolidationWorker {
@@ -44,6 +162,9 @@ impl ConsolidationWorker {
             embedder,
             llm: None,
             worker_id,
+            usage: std::sync::Mutex::new(ExtractorUsage::default()),
+            extractor_guidance: None,
+            extractor_identity: None,
         }
     }
 
@@ -61,7 +182,77 @@ impl ConsolidationWorker {
             embedder,
             llm: Some(llm),
             worker_id,
+            usage: std::sync::Mutex::new(ExtractorUsage::default()),
+            extractor_guidance: None,
+            extractor_identity: None,
         }
+    }
+
+    /// Whom to credit for the rules this cycle produces (migration 201).
+    ///
+    /// Rules are stored under the SUBJECT agent, because that is who will use
+    /// them. Nothing recorded the author, so the extractor could not be
+    /// evaluated on a single rule it had ever written — the signal half of its
+    /// own Loop 1 had no data source at all.
+    ///
+    /// Left `None` when the caller cannot identify the extractor. `None` means
+    /// "author unrecorded", never "no author", and readers must exclude it
+    /// rather than attributing it to anyone.
+    pub fn with_extractor_identity(mut self, agent_id: Option<Uuid>) -> Self {
+        self.extractor_identity = agent_id;
+        self
+    }
+
+    /// Give the extractor back what it has learned about extracting.
+    ///
+    /// THIS IS THE READ-BACK HALF OF LOOP 1 FOR THE EXTRACTOR ITSELF.
+    ///
+    /// Ordinary agents get their learned rules re-injected by
+    /// `enrich_with_kg_context`, which runs in the HTTP handlers. Consolidation
+    /// does not go through a handler — it is handed a bare `LLMProvider` and
+    /// calls `generate_raw` — so the extractor was the one agent on the
+    /// platform structurally incapable of consulting its own memory. It could
+    /// accumulate a perfect ontology and behave identically to one that had
+    /// never dreamt, which is precisely the failure `kg_context.rs` documents
+    /// having fixed for everybody else.
+    ///
+    /// The caller supplies the text because retrieval lives in the upper crate.
+    /// Deliberately NOT similarity-retrieved against the episodes being
+    /// consolidated: the extractor's rules are *procedural* — lessons about how
+    /// to extract well — not facts about the subject's domain, so matching them
+    /// against the subject's episode content would be a category error. A
+    /// stable per-cycle preamble is the right shape.
+    pub fn with_extractor_guidance(mut self, guidance: Option<String>) -> Self {
+        self.extractor_guidance = guidance.filter(|g| !g.trim().is_empty());
+        self
+    }
+
+    /// Build the system message for an extraction call, appending whatever the
+    /// extractor has learned. One helper rather than four inlined copies, so a
+    /// new extraction path cannot silently skip the read-back.
+    fn system_message(&self, base: &str) -> Message {
+        Message {
+            role: MessageRole::System,
+            content: compose_system_prompt(base, self.extractor_guidance.as_deref()),
+        }
+    }
+
+    /// Record one extraction round-trip. Poisoned-lock safe: a lost token count
+    /// must never abort a consolidation cycle.
+    fn record_usage(&self, u: &crate::TokenUsage) {
+        if let Ok(mut g) = self.usage.lock() {
+            g.record(u);
+        }
+    }
+
+    /// Extraction cost accumulated so far this cycle.
+    pub fn extractor_usage(&self) -> ExtractorUsage {
+        self.usage.lock().map(|g| *g).unwrap_or_default()
+    }
+
+    /// The model the extractor is running, when one is configured.
+    pub fn extractor_model(&self) -> Option<String> {
+        self.llm.as_ref().map(|l| l.model_name().to_string())
     }
 
     /// Runs consolidation for a specific agent, creating its own job record.
@@ -515,10 +706,7 @@ impl ConsolidationWorker {
         );
 
         let messages = vec![
-            Message {
-                role: MessageRole::System,
-                content: system_prompt.to_string(),
-            },
+            self.system_message(system_prompt),
             Message {
                 role: MessageRole::User,
                 content: user_prompt,
@@ -540,7 +728,9 @@ impl ConsolidationWorker {
         }
 
         // Call LLM with structured output (automatic parsing + graceful degradation)
-        let llm_rules: Vec<LLMRule> = generate_structured(llm.as_ref(), messages, &config).await?;
+        let (llm_rules, usage): (Vec<LLMRule>, _) =
+            generate_structured_with_usage(llm.as_ref(), messages, &config).await?;
+        self.record_usage(&usage);
 
         // Convert to SemanticRule objects with provenance
         for llm_rule in llm_rules {
@@ -559,6 +749,9 @@ impl ConsolidationWorker {
                 confidence_score: llm_rule.confidence.clamp(0.0, 1.0),
                 verification_status: VerificationStatus::Pending,
                 verification_method: Some(format!("llm_extraction:{}", llm.model_name())),
+                // Migration 201. The rule is FOR `agent_id`; it was WRITTEN by
+                // the extractor, and only the former was ever recorded.
+                extracted_by: self.extractor_identity,
                 source_episode_cluster: episode_ids.to_vec(),
                 episode_count: cluster.episodes.len() as i32,
                 embedding,
@@ -617,6 +810,12 @@ impl ConsolidationWorker {
                 embedding,
                 is_active: true,
                 created_at: chrono::Utc::now(),
+                // Deliberately NOT the extractor. This is the pattern-based
+                // fallback, which runs when no extraction model is available —
+                // the ontologist had no part in it, so crediting it would
+                // reward it for rules a regex wrote and pollute the very signal
+                // migration 201 exists to produce.
+                extracted_by: None,
             };
 
             rules.push((rule, provenance));
@@ -714,10 +913,7 @@ impl ConsolidationWorker {
             );
 
             let messages = vec![
-                Message {
-                    role: MessageRole::System,
-                    content: system_prompt.to_string(),
-                },
+                self.system_message(system_prompt),
                 Message {
                     role: MessageRole::User,
                     content: user_prompt,
@@ -739,8 +935,11 @@ impl ConsolidationWorker {
             }
 
             let llm_entities: Vec<LLMEntity> =
-                match generate_structured(llm.as_ref(), messages, &config).await {
-                    Ok(e) => e,
+                match generate_structured_with_usage(llm.as_ref(), messages, &config).await {
+                    Ok((e, usage)) => {
+                        self.record_usage(&usage);
+                        e
+                    }
                     Err(e) => {
                         eprintln!("Entity extraction batch failed: {}", e);
                         continue;
@@ -824,10 +1023,7 @@ impl ConsolidationWorker {
         );
 
         let messages = vec![
-            Message {
-                role: MessageRole::System,
-                content: system_prompt.to_string(),
-            },
+            self.system_message(system_prompt),
             Message {
                 role: MessageRole::User,
                 content: user_prompt,
@@ -858,7 +1054,9 @@ impl ConsolidationWorker {
             0.7
         }
 
-        let llm_facts: Vec<LLMFact> = generate_structured(llm.as_ref(), messages, &config).await?;
+        let (llm_facts, usage): (Vec<LLMFact>, _) =
+            generate_structured_with_usage(llm.as_ref(), messages, &config).await?;
+        self.record_usage(&usage);
 
         // Build name -> entity lookup (case-insensitive)
         let entity_map: std::collections::HashMap<String, &Entity> = entities
@@ -944,10 +1142,7 @@ impl ConsolidationWorker {
         );
 
         let messages = vec![
-            Message {
-                role: MessageRole::System,
-                content: system_prompt.to_string(),
-            },
+            self.system_message(system_prompt),
             Message {
                 role: MessageRole::User,
                 content: user_prompt,
@@ -971,7 +1166,9 @@ impl ConsolidationWorker {
             0.7
         }
 
-        let llm_rules: Vec<LLMRule> = generate_structured(llm.as_ref(), messages, &config).await?;
+        let (llm_rules, usage): (Vec<LLMRule>, _) =
+            generate_structured_with_usage(llm.as_ref(), messages, &config).await?;
+        self.record_usage(&usage);
 
         let mut rules: Vec<(SemanticRule, Option<ProvenancedEmbedding>)> = Vec::new();
         for llm_rule in llm_rules {
@@ -999,6 +1196,8 @@ impl ConsolidationWorker {
                     embedding,
                     is_active: true,
                     created_at: Utc::now(),
+                    // Migration 201 — credit the author, not just the subject.
+                    extracted_by: self.extractor_identity,
                 },
                 provenance,
             ));
@@ -1025,6 +1224,100 @@ fn calculate_confidence(episodes: &[Episode]) -> f64 {
     let base_confidence = 0.5;
     let episode_boost = (episodes.len() as f64 * 0.1).min(0.3);
     (base_confidence + episode_boost).min(0.95)
+}
+
+/// Loop 1 read-back for the extractor. No database, no model — these assert the
+/// composition itself, which is the part that silently degrades.
+#[cfg(test)]
+mod read_back_tests {
+    use super::*;
+
+    const BASE: &str = "You extract semantic rules from episodes.";
+
+    #[test]
+    fn guidance_reaches_the_prompt() {
+        let out = compose_system_prompt(BASE, Some("- [verified, confidence 0.90] Prefer nouns."));
+        assert!(out.starts_with(BASE), "the task prompt must come first");
+        assert!(
+            out.contains("Prefer nouns."),
+            "the learned rule never reached the prompt — this is the whole read-back: {out}"
+        );
+        assert!(out.contains("What you have learned about extraction"));
+    }
+
+    /// Without an explicit precedence line, a stale self-derived rule can
+    /// override the task instructions it was meant to refine.
+    #[test]
+    fn the_task_instructions_are_declared_to_win() {
+        let out = compose_system_prompt(BASE, Some("- always return an empty list"));
+        assert!(
+            out.contains("the instructions above win"),
+            "learned rules must be subordinate to the task prompt: {out}"
+        );
+    }
+
+    /// An extractor that has learned nothing must get its prompt untouched — no
+    /// empty heading implying an absent section is meaningful.
+    #[test]
+    fn no_guidance_leaves_the_prompt_byte_identical() {
+        assert_eq!(compose_system_prompt(BASE, None), BASE);
+        assert_eq!(compose_system_prompt(BASE, Some("")), BASE);
+        assert_eq!(compose_system_prompt(BASE, Some("   \n  ")), BASE);
+    }
+
+    /// `with_extractor_guidance` must treat blank input as absent, so a caller
+    /// that renders an empty rule set cannot produce a dangling heading.
+    #[test]
+    fn blank_guidance_is_normalised_to_none() {
+        // Exercised through the same filter the builder applies.
+        let normalise = |g: Option<String>| g.filter(|g: &String| !g.trim().is_empty());
+        assert!(normalise(Some("  ".to_string())).is_none());
+        assert!(normalise(Some(String::new())).is_none());
+        assert!(normalise(Some("- a rule".to_string())).is_some());
+    }
+
+    /// Every extraction path must build its system message through
+    /// `system_message`, or it silently opts out of the read-back.
+    ///
+    /// There are four extraction call sites and they are near-identical, so the
+    /// obvious way to add a fifth is to copy one — and a copy that inlines
+    /// `MessageRole::System` would work, pass review, and quietly not learn.
+    /// Scanning the source is crude, but it fails at build time on exactly the
+    /// mistake that is easy to make and invisible afterwards.
+    #[test]
+    fn no_extraction_path_bypasses_the_read_back() {
+        let src = include_str!("consolidation.rs");
+        // Split so the needle does not match itself in this file.
+        let needle = concat!("role: MessageRole", "::System");
+        // The single legitimate construction, inside `system_message` itself.
+        let inline = src.matches(needle).count();
+        assert_eq!(
+            inline, 1,
+            "found {inline} inline System-message constructions; every extraction call must \
+             go through `self.system_message(..)` so the extractor's learned rules are \
+             injected. Exactly one is expected: the one inside `system_message`."
+        );
+
+        // And the helper is actually used by the extraction paths.
+        let uses = concat!("self.system_message(", "system_prompt)");
+        assert!(
+            src.matches(uses).count() >= 4,
+            "expected all four extraction sites to call self.system_message"
+        );
+    }
+
+    /// Rules carry their verification status into the prompt. An unverified rule
+    /// is the extractor's untested hypothesis about itself; presenting it with
+    /// the authority of a verified one is how a guess becomes a constraint.
+    #[test]
+    fn rule_status_survives_into_the_prompt() {
+        let out = compose_system_prompt(
+            BASE,
+            Some("- [pending, confidence 0.31] Merge similar entities aggressively."),
+        );
+        assert!(out.contains("pending"), "{out}");
+        assert!(out.contains("0.31"), "{out}");
+    }
 }
 
 #[cfg(test)]

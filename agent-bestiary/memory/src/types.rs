@@ -363,6 +363,7 @@ impl std::str::FromStr for ExecutionStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SemanticRule {
     pub rule_id: Uuid,
+    /// The agent this rule is FOR — whose reasoning it will enrich.
     pub agent_id: Uuid,
     pub rule_content: String,
     pub rule_description: Option<String>,
@@ -374,6 +375,18 @@ pub struct SemanticRule {
     pub embedding: Option<Vec<f32>>,
     pub is_active: bool,
     pub created_at: DateTime<Utc>,
+    /// The agent that PRODUCED this rule — normally the `ontologist`.
+    ///
+    /// Distinct from `agent_id`, and the distinction is the whole point: the
+    /// knowledge belongs to the subject, the authorship belongs to the
+    /// extractor, and until migration 201 only the former was recorded. That is
+    /// why "how good is the ontologist at extraction?" was unanswerable — not
+    /// hard to answer, unanswerable, because no rule pointed back at it.
+    ///
+    /// `None` for every rule written before migration 201, and for any path that
+    /// does not know its extractor. Readers must exclude `None` rather than
+    /// attribute it to anyone.
+    pub extracted_by: Option<Uuid>,
 }
 
 /// Shopping preference profile (consumer side of embedding marketplace)

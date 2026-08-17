@@ -30,6 +30,20 @@ const MicroChart = {
 
     let svg = `<svg width="${w}" height="${h}" style="display:block">`;
     svg += `<path d="${areaD}" fill="${color}" opacity="0.1" />`;
+
+    // Optional reference line: a level the series must be read against rather
+    // than in isolation — e.g. the base-rate baseline below which a Brier
+    // score carries no information however high it looks. Drawn beneath the
+    // series so it can never hide a data point, and clipped out silently when
+    // it falls outside the plotted range.
+    if (opts.refLine != null) {
+      const ry = pad + ih - ((opts.refLine - min) / range) * ih;
+      if (ry >= 0 && ry <= h) {
+        svg += `<line x1="0" y1="${ry.toFixed(1)}" x2="${w}" y2="${ry.toFixed(1)}" `
+             + `stroke="${opts.refColor || 'var(--fg4)'}" stroke-width="1" stroke-dasharray="2,2" />`;
+      }
+    }
+
     svg += `<path d="${pathD}" fill="none" stroke="${color}" stroke-width="1.5" />`;
 
     // Highlight dots (e.g. regression flags)

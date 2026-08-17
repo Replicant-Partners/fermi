@@ -592,6 +592,11 @@ impl SeedData {
                     },
                     is_active,
                     created_at: base_time + Duration::days(10 + i as i64 * 3),
+                    // Seed fixtures have no extractor: nothing produced these,
+                    // they were written directly. `None` keeps them out of any
+                    // extractor's utility score, which is what we want — a
+                    // fixture must not flatter or damn a real agent.
+                    extracted_by: None,
                 }
             })
             .collect()

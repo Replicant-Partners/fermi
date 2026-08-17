@@ -1141,6 +1141,11 @@ async fn run_migrations(db: &PgPool) {
         // already strips them and the guesses are a calibration signal once
         // real tools land.
         "migrations/200_grounding_anomalies_and_backfill.sql",
+        // `semantic_rules.extracted_by` — which agent authored a rule, as
+        // opposed to which agent the rule is FOR. Without it the ontologist
+        // could not be credited for a single rule it had ever written, so Loop 1
+        // for the extractor had no signal to run on.
+        "migrations/201_extraction_provenance.sql",
     ];
 
     for file in &migration_files {
