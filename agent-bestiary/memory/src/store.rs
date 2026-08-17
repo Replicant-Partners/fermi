@@ -222,11 +222,11 @@ impl MemoryStore {
                 embedding_model_id, embedding_model_version, embedding_dim,
                 source_text, source_ref, provenance_trusted,
                 input_tokens, output_tokens, cost_basis, cost_rate_key,
-                parent_episode_id, response_text
+                parent_episode_id, response_text, assertions
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
                     $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25,
-                    $26, $27, $28, $29, $30, $31)
+                    $26, $27, $28, $29, $30, $31, $32)
             RETURNING episode_id
             "#,
         )
@@ -264,6 +264,11 @@ impl MemoryStore {
         .bind(episode.parent_episode_id)
         // mig-199: the answer itself, not the digest of it.
         .bind(&episode.response_text)
+        // mig-205: what the agent quantified. Written here unconditionally,
+        // which is the whole point — `forecast_agent_claims` could only record
+        // a judgement bound to a workspace, so standalone evaluation (how
+        // agents are mostly exercised) lost every one of them.
+        .bind(&episode.assertions)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -299,7 +304,7 @@ impl MemoryStore {
                 provenance, authority_weight, dyad_id, persona_version_at_write,
                 provider_used, model_used,
                 input_tokens, output_tokens, cost_basis, cost_rate_key,
-                parent_episode_id, response_text
+                parent_episode_id, response_text, assertions
             FROM episodes
             WHERE episode_id = $1
             "#,
@@ -316,6 +321,11 @@ impl MemoryStore {
                 .try_get::<Option<String>, _>("response_text")
                 .ok()
                 .flatten(),
+            // mig-205. `try_get` and not `?`: several SELECTs in this file
+            // list columns explicitly and predate the column. `None` from a
+            // query that did not ask is "unknown to this reader", which must
+            // stay distinct from `[]` meaning "quantified nothing".
+            assertions: row.try_get("assertions").ok().flatten(),
             episode_id: row.try_get("episode_id")?,
             agent_id: row.try_get("agent_id")?,
             timestamp_ref: row.try_get("timestamp_ref")?,
@@ -382,7 +392,7 @@ impl MemoryStore {
                 provenance, authority_weight, dyad_id, persona_version_at_write,
                 provider_used, model_used,
                 input_tokens, output_tokens, cost_basis, cost_rate_key,
-                parent_episode_id, response_text
+                parent_episode_id, response_text, assertions
             FROM episodes
             WHERE agent_id = $1 AND NOT consolidated
             ORDER BY timestamp_ref DESC
@@ -401,6 +411,11 @@ impl MemoryStore {
                     .try_get::<Option<String>, _>("response_text")
                     .ok()
                     .flatten(),
+                // mig-205. `try_get` and not `?`: several SELECTs in this file
+                // list columns explicitly and predate the column. `None` from a
+                // query that did not ask is "unknown to this reader", which must
+                // stay distinct from `[]` meaning "quantified nothing".
+                assertions: row.try_get("assertions").ok().flatten(),
                 episode_id: row.try_get("episode_id")?,
                 agent_id: row.try_get("agent_id")?,
                 timestamp_ref: row.try_get("timestamp_ref")?,
@@ -1232,6 +1247,11 @@ impl MemoryStore {
                     .try_get::<Option<String>, _>("response_text")
                     .ok()
                     .flatten(),
+                // mig-205. `try_get` and not `?`: several SELECTs in this file
+                // list columns explicitly and predate the column. `None` from a
+                // query that did not ask is "unknown to this reader", which must
+                // stay distinct from `[]` meaning "quantified nothing".
+                assertions: row.try_get("assertions").ok().flatten(),
                 episode_id: row.try_get("episode_id")?,
                 agent_id: row.try_get("agent_id")?,
                 timestamp_ref: row.try_get("timestamp_ref")?,
@@ -1339,6 +1359,11 @@ impl MemoryStore {
                     .try_get::<Option<String>, _>("response_text")
                     .ok()
                     .flatten(),
+                // mig-205. `try_get` and not `?`: several SELECTs in this file
+                // list columns explicitly and predate the column. `None` from a
+                // query that did not ask is "unknown to this reader", which must
+                // stay distinct from `[]` meaning "quantified nothing".
+                assertions: row.try_get("assertions").ok().flatten(),
                 episode_id: row.try_get("episode_id")?,
                 agent_id: row.try_get("agent_id")?,
                 timestamp_ref: row.try_get("timestamp_ref")?,
@@ -1413,7 +1438,7 @@ impl MemoryStore {
                 provenance, authority_weight, dyad_id, persona_version_at_write,
                 provider_used, model_used,
                 input_tokens, output_tokens, cost_basis, cost_rate_key,
-                parent_episode_id, response_text
+                parent_episode_id, response_text, assertions
             FROM episodes
             WHERE agent_id = $1
               AND execution_status = 'failure'
@@ -1435,6 +1460,11 @@ impl MemoryStore {
                     .try_get::<Option<String>, _>("response_text")
                     .ok()
                     .flatten(),
+                // mig-205. `try_get` and not `?`: several SELECTs in this file
+                // list columns explicitly and predate the column. `None` from a
+                // query that did not ask is "unknown to this reader", which must
+                // stay distinct from `[]` meaning "quantified nothing".
+                assertions: row.try_get("assertions").ok().flatten(),
                 episode_id: row.try_get("episode_id")?,
                 agent_id: row.try_get("agent_id")?,
                 timestamp_ref: row.try_get("timestamp_ref")?,
@@ -2403,7 +2433,7 @@ impl MemoryStore {
                 provenance, authority_weight, dyad_id, persona_version_at_write,
                 provider_used, model_used,
                 input_tokens, output_tokens, cost_basis, cost_rate_key,
-                parent_episode_id, response_text
+                parent_episode_id, response_text, assertions
             FROM episodes
             WHERE agent_id = $1
             ORDER BY timestamp_ref DESC
@@ -2423,6 +2453,11 @@ impl MemoryStore {
                     .try_get::<Option<String>, _>("response_text")
                     .ok()
                     .flatten(),
+                // mig-205. `try_get` and not `?`: several SELECTs in this file
+                // list columns explicitly and predate the column. `None` from a
+                // query that did not ask is "unknown to this reader", which must
+                // stay distinct from `[]` meaning "quantified nothing".
+                assertions: row.try_get("assertions").ok().flatten(),
                 episode_id: row.try_get("episode_id")?,
                 agent_id: row.try_get("agent_id")?,
                 timestamp_ref: row.try_get("timestamp_ref")?,
@@ -2494,7 +2529,7 @@ impl MemoryStore {
                 provenance, authority_weight, dyad_id, persona_version_at_write,
                 provider_used, model_used,
                 input_tokens, output_tokens, cost_basis, cost_rate_key,
-                parent_episode_id, response_text
+                parent_episode_id, response_text, assertions
             FROM episodes
             WHERE agent_id = $1 AND embedding IS NOT NULL
             ORDER BY timestamp_ref ASC
@@ -2512,6 +2547,11 @@ impl MemoryStore {
                     .try_get::<Option<String>, _>("response_text")
                     .ok()
                     .flatten(),
+                // mig-205. `try_get` and not `?`: several SELECTs in this file
+                // list columns explicitly and predate the column. `None` from a
+                // query that did not ask is "unknown to this reader", which must
+                // stay distinct from `[]` meaning "quantified nothing".
+                assertions: row.try_get("assertions").ok().flatten(),
                 episode_id: row.try_get("episode_id")?,
                 agent_id: row.try_get("agent_id")?,
                 timestamp_ref: row.try_get("timestamp_ref")?,
@@ -5017,6 +5057,7 @@ mod tests {
         // Now create an episode for that agent
         let episode = Episode {
             response_text: None,
+            assertions: None,
             episode_id: Uuid::new_v4(),
             agent_id,
             timestamp_ref: Utc::now(),
@@ -5082,6 +5123,7 @@ mod tests {
             let prov = embedder.generate_provenanced(query).await.unwrap();
             let episode = Episode {
                 response_text: None,
+                assertions: None,
                 episode_id: Uuid::new_v4(),
                 agent_id,
                 timestamp_ref: Utc::now(),
@@ -5148,6 +5190,7 @@ mod tests {
         for i in 0..3 {
             let episode = Episode {
                 response_text: None,
+                assertions: None,
                 episode_id: Uuid::new_v4(),
                 agent_id: agent.agent_id,
                 timestamp_ref: Utc::now(),

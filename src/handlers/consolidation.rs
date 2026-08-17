@@ -263,6 +263,7 @@ async fn record_dream_member_episode(
         provider_used: provider,
         model_used: model,
         response_text: None,
+        assertions: None,
     };
 
     let source_ref = json!({

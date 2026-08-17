@@ -50,12 +50,6 @@ use sqlx::PgPool;
 use std::sync::LazyLock;
 use uuid::Uuid;
 
-// Matches: Suggested p50: 1.15 (p5: 1.05, p95: 1.28)
-static MULTIPLIER_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)Suggested\s+p50:\s+([\d.]+)\s*\(p5:\s+([\d.]+),\s+p95:\s+([\d.]+)\)")
-        .expect("invalid MULTIPLIER_RE")
-});
-
 /// Whole-word containment: `needle` must be delimited by non-alphanumerics.
 ///
 /// `"weather_market_analyst"` contains the *word* `analyst`, so this alone
@@ -208,13 +202,22 @@ async fn load_declared_driver_refs(
     Some(refs)
 }
 
-/// Try to extract a (p5, p50, p95) multiplier from an evidence summary.
+/// Try to extract a `(p5, p50, p95)` multiplier from an evidence summary.
+///
+/// Delegates to [`fermi::assertions::extract_from_prose`], which owns the only
+/// pattern in the codebase. It used to own a second one — narrower, unable to
+/// read the markdown emphasis the model actually writes, and therefore
+/// disagreeing with the extractor about whether a line contained a claim at all.
+/// Two readers of one format is two answers to the same question, and the one
+/// that disagrees is whichever the caller happens to reach first.
+///
+/// Retained as a function because it is the shape callers want and because its
+/// tests are worth keeping; it is no longer a second implementation.
 pub fn extract_multiplier(summary: &str) -> Option<(f64, f64, f64)> {
-    let caps = MULTIPLIER_RE.captures(summary)?;
-    let p50 = caps.get(1)?.as_str().parse::<f64>().ok()?;
-    let p5 = caps.get(2)?.as_str().parse::<f64>().ok()?;
-    let p95 = caps.get(3)?.as_str().parse::<f64>().ok()?;
-    Some((p5, p50, p95))
+    let (found, _rejected) = fermi::assertions::extract_from_prose(summary);
+    found
+        .first()
+        .map(|a| (a.value.p5, a.value.p50, a.value.p95))
 }
 
 /// Write an agent's multiplier evidence into the workspace's params output.
@@ -239,28 +242,53 @@ pub async fn apply_agent_multipliers(
         return Ok(false);
     }
 
-    // Scan evidence for the first MULTIPLIER match. `EvidenceStmt.summary`
-    // is `Option<String>` — skip rows without a summary (they can't
-    // carry a multiplier match anyway).
-    let mut multiplier: Option<(f64, f64, f64)> = None;
+    // Recover the agent's quantified judgements through the shared extractor
+    // (mig-205), so the claim written here and the assertion recorded on the
+    // episode are the same object seen twice rather than two regex results that
+    // can disagree.
+    //
+    // The old code matched on `EvidenceStmt.summary` with a pattern that could
+    // not read markdown emphasis: 12 of 22 lines this platform produced were
+    // unreadable, every one because the model wrote `**1.15**`. It also took the
+    // FIRST match and `break`, then stamped that single triple onto every driver
+    // the agent covered — so `football_analyst`, asked for three distinct
+    // factors, recorded three claims of one number and the comment said so
+    // outright. Both are fixed here: every match is recovered, and each claim
+    // carries the `assertion_id` of the judgement it came from, so three
+    // bindings of one judgement stay distinguishable from three judgements.
+    let mut assertions: Vec<fermi::assertions::Assertion> = Vec::new();
     for ev in evidence {
-        let Some(summary) = ev.summary.as_deref() else {
-            continue;
-        };
-        if let Some(m) = extract_multiplier(summary) {
-            // The macro_data_agent and fixture_context_agent each cover ONE
-            // driver, so the first match is the right one.
-            // The football_analyst covers three drivers — same multiplier
-            // applies to all three (dynamic, squad, tactical).
-            multiplier = Some(m);
-            break;
+        if let Some(summary) = ev.summary.as_deref() {
+            let (found, _rejected) = fermi::assertions::extract_from_prose(summary);
+            assertions.extend(found);
+        }
+        for finding in &ev.key_findings {
+            // The `[MULTIPLIER]` line is a key finding, not a summary, on the
+            // executors that split them. Reading only `summary` is how a
+            // correctly-formatted claim could still be missed.
+            let (found, _rejected) = fermi::assertions::extract_from_prose(finding);
+            assertions.extend(found);
         }
     }
 
-    let (p5, p50, p95) = match multiplier {
-        Some(m) => m,
-        None => return Ok(false),
+    // Still a single triple applied to the agent's drivers, because that is what
+    // the output format can carry. What changed is that the platform now records
+    // WHICH judgement it was, so the day an agent emits one assertion per factor
+    // this binds them separately without a schema change.
+    let Some(primary) = assertions.first().cloned() else {
+        return Ok(false);
     };
+    let (p5, p50, p95) = (primary.value.p5, primary.value.p50, primary.value.p95);
+    let assertion_id = primary.assertion_id;
+    if assertions.len() > 1 {
+        tracing::info!(
+            agent = %agent_name,
+            recovered = assertions.len(),
+            bound = 1,
+            "multiple assertions recovered; the format carries one, so the rest \
+             are recorded on the episode and not bound to a driver"
+        );
+    }
 
     // ── Retain the claim itself (mig-187) ─────────────────────────────────
     //
@@ -296,8 +324,10 @@ pub async fn apply_agent_multipliers(
         let res = sqlx::query(
             "INSERT INTO forecast_agent_claims
                  (workspace_id, agent_id, agent_name, driver,
-                  p5, p50, p95, neutral_value, source, raw_evidence, episode_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 1.0, 'multiplier_hook', $8, $9)",
+                  p5, p50, p95, neutral_value, source, raw_evidence, episode_id,
+                  assertion_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 1.0, 'multiplier_hook', $8, $9,
+                     $10)",
         )
         .bind(workspace_id)
         .bind(claim_agent_id)
@@ -312,6 +342,10 @@ pub async fn apply_agent_multipliers(
         // same agent on the same driver — the case that matters most, since
         // a re-run after a correction is exactly when attribution is asked for.
         .bind(episode_id)
+        // mig-205: which judgement this binding applies. A claim is an assertion
+        // bound to a driver, so the same assertion appearing on three drivers is
+        // now visibly one judgement rather than three.
+        .bind(assertion_id)
         .execute(pool)
         .await;
 
@@ -518,10 +552,30 @@ simulate 10000 iterations
         assert_eq!(extract_multiplier(summary), None);
     }
 
+    /// Whitespace is no longer required, and the old expectation was wrong.
+    ///
+    /// This test previously asserted `None` with the comment "space required
+    /// after colon". `p50:1.15(p5:1.05,p95:1.28)` is completely unambiguous, and
+    /// discarding it was the same brittleness that lost 12 of 22 real claims to
+    /// markdown emphasis: a format quibble throwing away a judgement the agent
+    /// clearly made. Since the reader is now shared with
+    /// `assertions::extract_from_prose`, the tolerance is deliberate and lives in
+    /// one place.
     #[test]
-    fn test_extract_multiplier_different_spacing() {
+    fn spacing_no_longer_decides_whether_a_claim_counts() {
         let summary = "[MULTIPLIER] Suggested p50:1.15(p5:1.05,p95:1.28)";
-        let result = extract_multiplier(summary);
-        assert_eq!(result, None); // space required after colon
+        assert_eq!(extract_multiplier(summary), Some((1.05, 1.15, 1.28)));
+    }
+
+    /// Tolerance must not become credulity: a sentence with no spread in it
+    /// still has to yield nothing.
+    #[test]
+    fn tolerance_does_not_invent_a_multiplier() {
+        assert_eq!(extract_multiplier("Suggested p50: probably higher"), None);
+        assert_eq!(extract_multiplier("p50 1.15 p5 1.05 p95 1.28"), None);
+        assert_eq!(
+            extract_multiplier("Arsenal are 4W-1D-0L with xGD +2.1"),
+            None
+        );
     }
 }

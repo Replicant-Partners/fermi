@@ -180,6 +180,7 @@ mod tests {
     fn dummy_episode() -> Episode {
         Episode {
             response_text: None,
+            assertions: None,
             episode_id: Uuid::new_v4(),
             agent_id: Uuid::new_v4(),
             timestamp_ref: Utc::now(),

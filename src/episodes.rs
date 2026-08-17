@@ -149,8 +149,49 @@ pub fn agent_output_to_episode(
         tags.push("degraded:true".to_string());
     }
 
+    // Recover the agent's quantified judgements from its own output. Prose for
+    // now, which is why the recovered assertions are capped at
+    // `model_inference`: `ExtractionPath::Prose` records that the number came
+    // out of a sentence rather than a typed field, and that gap is the only
+    // standing reason for an agent to emit structured output.
+    //
+    // A malformed spread is dropped rather than repaired — reordering p5 and p95
+    // to make them fit would put a number into a forecast no agent asserted —
+    // and the rejection is logged, because a silently discarded claim is what
+    // this whole change exists to stop.
+    let (recovered, rejected) = match output.raw_response.as_deref() {
+        Some(text) => crate::assertions::extract_from_prose(text),
+        None => (Vec::new(), Vec::new()),
+    };
+    if !rejected.is_empty() {
+        tracing::warn!(
+            agent_id = %agent_db_id,
+            rejected = ?rejected,
+            "assertion_rejected — an agent stated a quantity that is not a \
+             coherent spread; dropped rather than repaired"
+        );
+    }
+    let assertions_json = serde_json::to_value(&recovered).unwrap_or_else(|_| json!([]));
+
     Episode {
         response_text: output.raw_response.clone(),
+        // mig-205 — what the agent quantified, captured unconditionally.
+        //
+        // This is the fix for the loss `forecast_agent_claims` could not avoid:
+        // that table needs a workspace and a driver, so `execution.rs` gated the
+        // write on having one, and a standalone evaluation — which is how agents
+        // are mostly exercised — threw the judgement away. Measured before this
+        // landed: 22 quantified judgements, 22 discarded, 0 claims.
+        //
+        // Captured HERE rather than in the hook because this constructor is the
+        // one place every episode passes through, so a new execution path cannot
+        // silently skip it. A claim remains an assertion bound to a driver, and
+        // binding stays the hook's job.
+        //
+        // `Some([])` when nothing was quantified, never `None`: `None` means
+        // "this writer does not extract", and an agent that ran and asserted
+        // nothing is a different fact from one nobody looked at.
+        assertions: Some(assertions_json),
         episode_id: uuid::Uuid::new_v4(),
         agent_id: agent_db_id,
         // Defaults to a root execution. `record_delegated_episode`

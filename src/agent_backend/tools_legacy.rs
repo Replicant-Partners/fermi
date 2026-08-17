@@ -2831,6 +2831,7 @@ async fn execute_record_coordination_observation(
         cost_rate_key: None,
         parent_episode_id: None,
         response_text: Some(body),
+        assertions: None,
         embedding: None, // set from `provenance` by the storing call below
         consolidated: false,
         tags: vec![

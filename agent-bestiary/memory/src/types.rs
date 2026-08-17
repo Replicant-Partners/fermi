@@ -56,6 +56,20 @@ pub struct Episode {
     /// the reading changes retroactively whenever the parser does.
     #[serde(default)]
     pub response_text: Option<String>,
+    /// What the agent quantified during this run (migration 205).
+    ///
+    /// Extracted by the CALLER, not here: the vocabulary and the patterns live
+    /// in `fermi::assertions`, and `fermi` depends on this crate, so persisting
+    /// a value the upper crate computed is the only direction available. That is
+    /// also the right division — extraction is a judgement about output,
+    /// persistence is not.
+    ///
+    /// `None` means the episode predates migration 205 or the caller does not
+    /// extract; `Some(json!([]))` means the agent ran and quantified nothing.
+    /// Those must not collapse: counting `None` as "asserted nothing" would show
+    /// agents getting quieter as coverage improved.
+    #[serde(default)]
+    pub assertions: Option<serde_json::Value>,
     pub embedding: Option<Vec<f32>>,
     pub consolidated: bool,
     #[serde(default)]

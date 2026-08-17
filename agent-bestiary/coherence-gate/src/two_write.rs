@@ -228,6 +228,10 @@ impl TwoWriteMemory {
         // Build the synthetic episode by copying the original where possible.
         Ok(Episode {
             response_text: None,
+            // mig-205: the gate reconstructs an episode for a two-write
+            // comparison and does not extract. `None` is "unknown to this
+            // writer", never "asserted nothing".
+            assertions: None,
             episode_id: Uuid::new_v4(),
             agent_id: intervention.agent_id,
             timestamp_ref: Utc::now(),

@@ -232,6 +232,7 @@ mod tests {
     fn dynamics_bundle(projection_id: Option<&str>, predicted: f64) -> EpisodeBundle {
         let ep = Episode {
             response_text: None,
+            assertions: None,
             episode_id: Uuid::new_v4(),
             agent_id: Uuid::new_v4(),
             timestamp_ref: Utc::now(),

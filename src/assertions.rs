@@ -318,6 +318,92 @@ impl Route {
     }
 }
 
+// ─── recovering assertions from prose ──────────────────────────────────
+
+/// Name of the prose pattern, recorded in [`ExtractionPath::Prose`].
+///
+/// Versioned because the pattern is part of the provenance: a v2 that recovers
+/// more is a different act of extraction, and assertions recorded under v1
+/// should stay attributable to what v1 could actually see.
+pub const MULTIPLIER_PATTERN: &str = "multiplier_v2";
+
+/// The `[MULTIPLIER]` line, as agents actually write it.
+///
+/// v1 was `p50:\s+([\d.]+)\s*\(p5:` — correct against the format the card
+/// specifies and unable to read the format the model emits. Measured against
+/// production: **12 of 22 lines unrecoverable**, every one of them because the
+/// model wrapped the number in markdown emphasis (`**1.15**`, or the
+/// asymmetric `1.15**`) since the surrounding response is markdown and this is
+/// the sentence it most wants to stress.
+///
+/// The card calls the format MANDATORY and machine-parsed. It is neither, and
+/// the instruction cannot make it so: asking a model to suppress emphasis on
+/// the one line it considers the conclusion is asking it to be less like
+/// itself. So the reader tolerates the emphasis instead.
+///
+/// Replayed against every `Suggested p50` line in production: v1 recovered 10 of
+/// 22, v2 recovers **22 of 22 with nothing rejected**. Tolerating markdown is not
+/// the fix, though — it moves the loss from 55% to whatever the next
+/// unanticipated flourish costs. The fix is a typed field,
+/// and this pattern's ceiling is [`PROV_INFERRED`] precisely so that emitting
+/// one is worth more than writing a good sentence.
+static MULTIPLIER_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(
+        r"(?i)Suggested\s+p50:\s*\**\s*([0-9]*\.?[0-9]+)\s*\**\s*\(\s*p5:\s*\**\s*([0-9]*\.?[0-9]+)\s*\**\s*,\s*p95:\s*\**\s*([0-9]*\.?[0-9]+)\s*\**\s*\)",
+    )
+    .expect("MULTIPLIER_RE")
+});
+
+/// Every multiplier an agent stated in prose.
+///
+/// Returns **all** matches rather than the first. `agent_params_hook` took the
+/// first and `break`, then applied that one triple to every driver the agent
+/// covered — so `football_analyst`, asked for three separate factors, had one
+/// number stamped onto `dynamic`, `squad` and `tactical` alike. Recording each
+/// match separately is what lets three bindings of one judgement be told apart
+/// from three judgements.
+///
+/// A malformed spread is **dropped, and the reason returned**, because an
+/// unordered or out-of-range multiplier is not a wide estimate — it is a broken
+/// one, and silently repairing it would put a number into a forecast that no
+/// agent asserted.
+pub fn extract_from_prose(text: &str) -> (Vec<Assertion>, Vec<String>) {
+    let mut out = Vec::new();
+    let mut rejected = Vec::new();
+
+    for caps in MULTIPLIER_RE.captures_iter(text) {
+        let parse = |i: usize| caps.get(i).and_then(|m| m.as_str().parse::<f64>().ok());
+        let (Some(p50), Some(p5), Some(p95)) = (parse(1), parse(2), parse(3)) else {
+            continue;
+        };
+        let value = Spread { p5, p50, p95 };
+        if let Err(why) = value.validate(AssertionKind::Multiplier) {
+            rejected.push(format!(
+                "{why} (from {:?})",
+                caps.get(0).map(|m| m.as_str())
+            ));
+            continue;
+        }
+        out.push(Assertion {
+            assertion_id: Uuid::new_v4(),
+            kind: AssertionKind::Multiplier,
+            value,
+            // Prose names no typed source, so there is nothing to inherit. An
+            // uncited judgement is worth less than one reasoned from verified
+            // inputs, and that gap is the gradient: cite structurally, or score
+            // as ungrounded.
+            basis: Vec::new(),
+            extraction: ExtractionPath::Prose {
+                pattern: MULTIPLIER_PATTERN.to_string(),
+            },
+            target_hint: None,
+            raw: caps.get(0).map(|m| m.as_str().to_string()),
+        });
+    }
+
+    (out, rejected)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,6 +576,101 @@ mod tests {
         assert!(AssertionKind::Quantity.is_verifiable());
         assert!(!AssertionKind::Multiplier.is_verifiable());
         assert!(!AssertionKind::Probability.is_verifiable());
+    }
+
+    /// The exact `[MULTIPLIER]` lines this platform has actually produced.
+    ///
+    /// Copied verbatim out of `episodes.response_text`, not invented. The first
+    /// five are the ones v1 could not read, and they are the majority.
+    const OBSERVED: &[&str] = &[
+        "[MULTIPLIER] Suggested p50: **1.40** (p5: **1.20**, p95: **1.65**) — Argentina's institutional depth",
+        "[MULTIPLIER] Suggested p50: **0.85** (p5: 0.60, p95: 1.15) — Saliba's absence and City's full-strength squad",
+        "[MULTIPLIER] Suggested p50: 1.15** (p5: 0.75, p95: 1.65) — Man City playoff victory + Ancelotti",
+        "[MULTIPLIER] Suggested p50: **1.00** (p5: 1.00, p95: 1.00) — **Season complete: Liverpool won",
+        "[MULTIPLIER] Suggested p50: **0.70** (p5: 0.60, p95: 0.82) — Haaland's absence reduces",
+        "[MULTIPLIER] Suggested p50: 1.85 (p5: 1.40, p95: 2.30) — Bayern's home fortress",
+        "[MULTIPLIER] Suggested p50: 1.15 (p5: 1.05, p95: 1.28) — the format the card specifies",
+    ];
+
+    #[test]
+    fn every_multiplier_line_this_platform_has_emitted_is_recoverable() {
+        // The regression that matters. v1 read 10 of 22 in production; the
+        // twelve it missed were all markdown emphasis. Fixtures are verbatim
+        // rather than constructed, because a pattern tested only against the
+        // format the card specifies is exactly how the 55% loss went unnoticed.
+        for line in OBSERVED {
+            let (found, rejected) = extract_from_prose(line);
+            assert_eq!(
+                found.len(),
+                1,
+                "could not recover a multiplier from an line this platform \
+                 really produced: {line}\nrejected: {rejected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_recovered_numbers_are_the_ones_that_were_written() {
+        // Tolerating markdown must not mean absorbing a digit from it. `**1.15`
+        // has to read as 1.15, never as 115 or 1.
+        let (a, _) = extract_from_prose(OBSERVED[0]);
+        assert_eq!(a[0].value.p50, 1.40);
+        assert_eq!(a[0].value.p5, 1.20);
+        assert_eq!(a[0].value.p95, 1.65);
+    }
+
+    #[test]
+    fn three_factor_findings_yield_three_assertions_not_one() {
+        // `agent_params_hook` took the FIRST match and `break`, then applied it
+        // to every driver the agent covered — so football_analyst's three
+        // factors became one number stamped on three drivers. Every match is
+        // returned so three bindings of one judgement stay distinguishable from
+        // three judgements.
+        let text = format!("{}\n\n{}\n\n{}", OBSERVED[1], OBSERVED[5], OBSERVED[6]);
+        let (found, _) = extract_from_prose(&text);
+        assert_eq!(found.len(), 3);
+        assert_ne!(found[0].assertion_id, found[1].assertion_id);
+    }
+
+    #[test]
+    fn a_prose_multiplier_is_ungrounded_and_that_is_the_gradient() {
+        // Uncited judgement scores below a judgement reasoned from verified
+        // inputs. Without that gap there is no reason for any agent to ever
+        // emit a typed field, and the retrofit has no incentive behind it.
+        let (found, _) = extract_from_prose(OBSERVED[0]);
+        assert_eq!(found[0].entitled_provenance(), PROV_UNAVAILABLE);
+        assert_eq!(found[0].route(true), Route::InheritFromBasis);
+    }
+
+    #[test]
+    fn a_broken_spread_is_dropped_and_says_why() {
+        // Not repaired. Reordering p5 and p95 to make them fit would put a
+        // number into a forecast that no agent asserted.
+        let (found, rejected) =
+            extract_from_prose("[MULTIPLIER] Suggested p50: 1.00 (p5: 2.00, p95: 0.50)");
+        assert!(found.is_empty());
+        assert_eq!(rejected.len(), 1);
+        assert!(rejected[0].contains("not ordered"), "{:?}", rejected);
+    }
+
+    #[test]
+    fn an_out_of_range_multiplier_is_dropped_rather_than_clamped() {
+        let (found, rejected) =
+            extract_from_prose("[MULTIPLIER] Suggested p50: 8.00 (p5: 5.00, p95: 12.00)");
+        assert!(found.is_empty());
+        assert!(rejected[0].contains("declared range"), "{:?}", rejected);
+    }
+
+    #[test]
+    fn prose_with_no_multiplier_yields_nothing_rather_than_a_default() {
+        let (found, rejected) = extract_from_prose(
+            "Arsenal are 4W-1D-0L in their last 5 with an xGD of +2.1 over that run.",
+        );
+        assert!(found.is_empty());
+        assert!(
+            rejected.is_empty(),
+            "a sentence with no claim is not a rejection"
+        );
     }
 
     #[test]

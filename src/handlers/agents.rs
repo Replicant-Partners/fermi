@@ -1390,6 +1390,7 @@ pub async fn import_embeddings_handler(
     for ep in &req.episodes {
         let episode = Episode {
             response_text: None,
+            assertions: None,
             episode_id: uuid::Uuid::new_v4(),
             agent_id,
             timestamp_ref: chrono::Utc::now(),

@@ -205,6 +205,7 @@ mod tests {
             let embedding = embedder.generate(query).await.unwrap();
             episodes.push(Episode {
                 response_text: None,
+                assertions: None,
                 episode_id: Uuid::new_v4(),
                 agent_id,
                 timestamp_ref: Utc::now(),
@@ -243,6 +244,7 @@ mod tests {
             let embedding = embedder.generate(query).await.unwrap();
             episodes.push(Episode {
                 response_text: None,
+                assertions: None,
                 episode_id: Uuid::new_v4(),
                 agent_id,
                 timestamp_ref: Utc::now(),

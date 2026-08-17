@@ -458,6 +458,11 @@ impl SeedData {
 
             episodes.push(Episode {
                 response_text: None,
+                // Seed fixtures quantify nothing, and `None` says so honestly:
+                // no real run happened, so there is nothing to have asserted.
+                // `[]` would claim an agent ran and stayed silent, which would
+                // put fabricated coverage into the liveness report.
+                assertions: None,
                 episode_id,
                 agent_id,
                 timestamp_ref: timestamp,

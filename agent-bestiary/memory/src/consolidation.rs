@@ -1506,6 +1506,7 @@ mod tests {
             };
             let episode = Episode {
                 response_text: None,
+                assertions: None,
                 episode_id: Uuid::new_v4(),
                 agent_id: agent.agent_id,
                 timestamp_ref: Utc::now(),
@@ -1621,6 +1622,7 @@ mod authority_tests {
             cost_rate_key: None,
             parent_episode_id: None,
             response_text: None,
+            assertions: None,
             embedding: None,
             consolidated: false,
             tags: vec![],

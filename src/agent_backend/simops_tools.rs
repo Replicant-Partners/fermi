@@ -1275,6 +1275,7 @@ pub async fn execute_simops_write_actuation_plan(
 
         let episode = agent_bestiary_memory::Episode {
             response_text: None,
+            assertions: None,
             episode_id: plan_id,
             agent_id,
             timestamp_ref: now,
