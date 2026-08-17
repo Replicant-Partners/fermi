@@ -1421,6 +1421,14 @@ fn builtin_tools_core() -> Vec<BuiltinToolDef> {
                         "type": "integer",
                         "description": "Max results (default: 5)",
                         "default": 5
+                    },
+                    "scope": {
+                        "type": "string",
+                        "description": "Named taxonomic scope to search within. One of: insecta (default), plantae, fungi, animalia, aves, lepidoptera, hymenoptera, magnoliopsida. Omit to keep the historical insect-only behaviour. An unrecognised name is an error, not a fallback."
+                    },
+                    "higher_taxon_key": {
+                        "type": "integer",
+                        "description": "GBIF backbone key to scope the search to, for a taxon `scope` does not name. Takes precedence over `scope`. Defaults to 216 (Insecta)."
                     }
                 },
                 "required": []
@@ -4270,6 +4278,147 @@ async fn execute_save_grid_map(
 
 // ─── Rabble.world creature tools ───────────────────────────────────
 
+/// GBIF backbone keys for the scopes `gbif_species_search` can be pointed at.
+///
+/// **Every key below was verified against the live GBIF API on 2026-08-17** via
+/// `GET /v1/species/match?name=<name>`, which returned `matchType: EXACT` and
+/// the stated rank for each. `Animalia` matched `HIGHERRANK`, so it was
+/// confirmed a second way with `GET /v1/species/1`. They are recorded here
+/// rather than resolved at runtime because a name lookup per search would add a
+/// round trip to answer a question whose answer does not change.
+///
+/// The verification is noted because a plausible-looking key table written from
+/// memory is indistinguishable from a correct one until a search silently
+/// returns nothing — the failure would present as "GBIF has no record of this",
+/// which is a claim about the world rather than about a wrong constant.
+///
+/// `(name, key, rank)` — rank is carried only so a reader can see that `insecta`
+/// is a CLASS while `plantae` is a KINGDOM, which is why this is not called
+/// `kingdom`.
+pub const GBIF_SCOPES: &[(&str, i64, &str)] = &[
+    ("insecta", 216, "CLASS"),
+    ("plantae", 6, "KINGDOM"),
+    ("fungi", 5, "KINGDOM"),
+    ("animalia", 1, "KINGDOM"),
+    ("aves", 212, "CLASS"),
+    ("lepidoptera", 797, "ORDER"),
+    ("hymenoptera", 1457, "ORDER"),
+    ("magnoliopsida", 220, "CLASS"),
+];
+
+/// The default scope: Insecta.
+///
+/// This tool was written for the Rabble insect ecosystem and hard-coded
+/// `highertaxonKey=216` into the name search. Six agents depend on that
+/// behaviour (`naturalist`, `species_resolver`, `swarm_host`, `enemy_sensor`,
+/// `genome_profiler`, `prey_locator`), so the default stays exactly what it was
+/// and the scope is opt-in. Changing the default would silently widen every
+/// existing caller's search, which is how an insect agent starts confidently
+/// describing a plant that happens to share a genus name.
+pub const GBIF_DEFAULT_SCOPE_KEY: i64 = 216;
+
+/// Resolve the `highertaxonKey` filter for a GBIF name search.
+///
+/// Precedence: explicit `higher_taxon_key`, then named `scope`, then the
+/// historical Insecta default.
+///
+/// An unrecognised `scope` is an **error, not a fallback**. Silently defaulting
+/// a typo like `"plantea"` to Insecta would return zero results for a real
+/// plant, and the caller would read that as "GBIF has nothing for this" — a
+/// `tool_no_match` verdict manufactured by a spelling mistake. That confusion
+/// between "asked and empty" and "asked the wrong question" is precisely what
+/// the provenance vocabulary exists to keep apart, so it must not be created
+/// here.
+pub fn gbif_higher_taxon_key(input: &serde_json::Value) -> Result<i64, String> {
+    if let Some(k) = input.get("higher_taxon_key").and_then(|v| v.as_i64()) {
+        return Ok(k);
+    }
+    match input.get("scope").and_then(|v| v.as_str()) {
+        None => Ok(GBIF_DEFAULT_SCOPE_KEY),
+        Some(name) => {
+            let wanted = name.trim().to_ascii_lowercase();
+            GBIF_SCOPES
+                .iter()
+                .find(|(n, _, _)| *n == wanted)
+                .map(|(_, k, _)| *k)
+                .ok_or_else(|| {
+                    let known: Vec<&str> = GBIF_SCOPES.iter().map(|(n, _, _)| *n).collect();
+                    format!(
+                        "unknown scope `{name}`. Known scopes: {}. Or pass \
+                         `higher_taxon_key` with a GBIF backbone key directly. \
+                         Refusing to fall back to the default: a mis-spelled \
+                         scope would return zero results for a real species, \
+                         and the caller would read that as GBIF having no \
+                         record rather than as a bad argument.",
+                        known.join(", ")
+                    )
+                })
+        }
+    }
+}
+
+/// Pick the vernacular name to show, from a GBIF search result's
+/// `vernacularNames` array, ranked by how many independent sources list it.
+///
+/// ## Why this function exists
+///
+/// The extraction here previously read `vernacularName` (singular). **That key
+/// does not exist in the `/species/search` response** — the field is
+/// `vernacularNames`, an array of `{vernacularName, language}`. So the tool
+/// emitted `vernacularName: null` on every call, while its own description
+/// promised "common names", and `species_resolver`'s prompt asks for a
+/// `common_name` it was therefore never given. Filled from the model instead,
+/// unlabelled. Often correct — *Vanessa atalanta* really is the Red Admiral —
+/// but unverifiable, which is the `genome_profiler` shape rather than a wrong
+/// answer.
+///
+/// ## Why frequency rather than the first entry
+///
+/// Measured against the live API on 2026-08-17, first-in-array is a poor
+/// choice. *Danaus plexippus* has 40 English names and the first is
+/// `"Milkweed"`; `"Monarch"` appears 13 times across independent checklists
+/// while `"Milkweed"` appears 4. Counting sources picked the expected name for
+/// all five species checked (monarch, southern live oak, chanterelle, death
+/// cap, buff-tailed bumblebee).
+///
+/// GBIF's `preferred` flag would be the principled answer and is unpopulated on
+/// every record inspected, so it is not used.
+///
+/// Deterministic: counts are taken on a trimmed, lowercased key, ties keep the
+/// earliest-seen variant, and the returned string is the first original casing
+/// of the winning form. Same input always yields the same name, which is what
+/// lets the caller treat it as sourced rather than chosen.
+pub fn gbif_preferred_vernacular(species: &serde_json::Value, language: &str) -> Option<String> {
+    let list = species.get("vernacularNames")?.as_array()?;
+    // (lowercased key, count, first original casing seen)
+    let mut tally: Vec<(String, usize, String)> = Vec::new();
+    for entry in list {
+        if entry.get("language").and_then(|v| v.as_str()) != Some(language) {
+            continue;
+        }
+        let Some(raw) = entry.get("vernacularName").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let name = raw.trim();
+        if name.is_empty() {
+            continue;
+        }
+        let key = name.to_lowercase();
+        match tally.iter_mut().find(|(k, _, _)| *k == key) {
+            Some(slot) => slot.1 += 1,
+            None => tally.push((key, 1, name.to_string())),
+        }
+    }
+    // `>` not `>=`, so the earliest variant wins a tie.
+    let mut best: Option<&(String, usize, String)> = None;
+    for row in &tally {
+        if best.is_none_or(|b| row.1 > b.1) {
+            best = Some(row);
+        }
+    }
+    best.map(|(_, _, original)| original.clone())
+}
+
 async fn execute_gbif_species_search(input: &serde_json::Value) -> Result<String, String> {
     // Direct key lookup
     if let Some(key) = input.get("gbif_key").and_then(|v| v.as_i64()) {
@@ -4322,6 +4471,8 @@ async fn execute_gbif_species_search(input: &serde_json::Value) -> Result<String
     let limit = input.get("limit").and_then(|v| v.as_u64()).unwrap_or(5);
 
     let limit_str = limit.to_string();
+    // Insecta unless the caller asks otherwise. See `gbif_higher_taxon_key`.
+    let higher_taxon = gbif_higher_taxon_key(input)?.to_string();
     let client = reqwest::Client::new();
     let resp = client
         .get("https://api.gbif.org/v1/species/search")
@@ -4329,7 +4480,7 @@ async fn execute_gbif_species_search(input: &serde_json::Value) -> Result<String
             ("q", query),
             ("rank", rank),
             ("limit", limit_str.as_str()),
-            ("highertaxonKey", "216"), // Insecta
+            ("highertaxonKey", higher_taxon.as_str()),
         ])
         .header("User-Agent", "AgentBestiaryWorld/1.0 (rabble.world)")
         .send()
@@ -4355,7 +4506,32 @@ async fn execute_gbif_species_search(input: &serde_json::Value) -> Result<String
                 "key": s.get("key"),
                 "scientificName": s.get("scientificName"),
                 "canonicalName": s.get("canonicalName"),
-                "vernacularName": s.get("vernacularName"),
+                // Same key as before, and now actually populated. It read
+                // `s.get("vernacularName")` — a field the search response does
+                // not have — so it was null on every call since the tool was
+                // written. See `gbif_preferred_vernacular`.
+                "vernacularName": gbif_preferred_vernacular(&s, "eng"),
+                "vernacularNameLanguage": "eng",
+                "vernacularNamesEnglish": s
+                    .get("vernacularNames")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        let mut seen: Vec<String> = Vec::new();
+                        for e in a {
+                            if e.get("language").and_then(|v| v.as_str()) != Some("eng") {
+                                continue;
+                            }
+                            if let Some(n) = e.get("vernacularName").and_then(|v| v.as_str()) {
+                                let n = n.trim().to_string();
+                                if !n.is_empty() && !seen.iter().any(|x| x.eq_ignore_ascii_case(&n))
+                                {
+                                    seen.push(n);
+                                }
+                            }
+                        }
+                        seen.truncate(8);
+                        seen
+                    }),
                 "kingdom": s.get("kingdom"),
                 "phylum": s.get("phylum"),
                 "class": s.get("class"),
@@ -7833,4 +8009,264 @@ async fn execute_openweather_forecast(input: &serde_json::Value) -> Result<Strin
         }
     }))
     .map_err(|e| format!("Serialization error: {}", e))
+}
+
+#[cfg(test)]
+mod gbif_scope_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The whole point of the change: every existing caller keeps the exact
+    /// behaviour it had, because none of them pass a scope.
+    ///
+    /// Six agents depend on the insect filter — naturalist, species_resolver,
+    /// swarm_host, enemy_sensor, genome_profiler, prey_locator. If this test
+    /// ever fails, an insect agent has quietly been given the whole tree of
+    /// life to confuse itself with.
+    #[test]
+    fn omitting_the_scope_keeps_the_historical_insect_filter() {
+        for input in [
+            json!({ "query": "Danaus plexippus" }),
+            json!({ "query": "Bombus", "rank": "GENUS" }),
+            json!({ "query": "x", "limit": 10 }),
+        ] {
+            assert_eq!(
+                gbif_higher_taxon_key(&input),
+                Ok(216),
+                "default scope changed for {input}"
+            );
+        }
+        assert_eq!(GBIF_DEFAULT_SCOPE_KEY, 216);
+    }
+
+    #[test]
+    fn a_named_scope_widens_the_search() {
+        let cases = [
+            ("plantae", 6),
+            ("fungi", 5),
+            ("aves", 212),
+            ("lepidoptera", 797),
+            ("insecta", 216),
+        ];
+        for (name, key) in cases {
+            assert_eq!(
+                gbif_higher_taxon_key(&json!({ "query": "q", "scope": name })),
+                Ok(key),
+                "scope `{name}` resolved wrongly"
+            );
+        }
+    }
+
+    #[test]
+    fn scope_names_are_case_and_whitespace_insensitive() {
+        for spelling in ["Plantae", "PLANTAE", "  plantae  "] {
+            assert_eq!(
+                gbif_higher_taxon_key(&json!({ "scope": spelling })),
+                Ok(6),
+                "`{spelling}` did not resolve"
+            );
+        }
+    }
+
+    /// An explicit key wins, so a taxon the named table does not cover is
+    /// still reachable without editing this file.
+    #[test]
+    fn an_explicit_key_takes_precedence() {
+        assert_eq!(
+            gbif_higher_taxon_key(&json!({ "higher_taxon_key": 220, "scope": "plantae" })),
+            Ok(220)
+        );
+        assert_eq!(
+            gbif_higher_taxon_key(&json!({ "higher_taxon_key": 1 })),
+            Ok(1)
+        );
+    }
+
+    /// **A typo must not silently become the default.**
+    ///
+    /// If `"plantea"` fell back to Insecta, a search for a real plant would
+    /// return zero results and the caller would record `tool_no_match` — "GBIF
+    /// has no record of this" — when the truth is "you asked the wrong
+    /// question". That is a false claim about the world manufactured by a
+    /// spelling mistake, and the provenance vocabulary exists to keep those two
+    /// cases apart.
+    #[test]
+    fn an_unknown_scope_is_an_error_not_a_silent_fallback() {
+        let err = gbif_higher_taxon_key(&json!({ "query": "Quercus", "scope": "plantea" }))
+            .expect_err("a mis-spelled scope was accepted");
+        assert!(
+            err.contains("plantea"),
+            "error does not quote the input: {err}"
+        );
+        assert!(
+            err.contains("plantae"),
+            "error does not list valid scopes: {err}"
+        );
+    }
+
+    /// The recorded keys must match what was verified against GBIF, and the
+    /// table must stay unique — two names for one key is harmless, but one name
+    /// mapping twice is a silent shadowing bug.
+    #[test]
+    fn the_scope_table_matches_what_was_verified_against_gbif() {
+        // Verified 2026-08-17 via GET /v1/species/match?name=<name>, matchType
+        // EXACT for all but Animalia, which was confirmed via /v1/species/1.
+        let verified = [
+            ("insecta", 216, "CLASS"),
+            ("plantae", 6, "KINGDOM"),
+            ("fungi", 5, "KINGDOM"),
+            ("animalia", 1, "KINGDOM"),
+            ("aves", 212, "CLASS"),
+            ("lepidoptera", 797, "ORDER"),
+            ("hymenoptera", 1457, "ORDER"),
+            ("magnoliopsida", 220, "CLASS"),
+        ];
+        assert_eq!(
+            GBIF_SCOPES.len(),
+            verified.len(),
+            "a scope was added or removed without recording its verification"
+        );
+        for (name, key, rank) in verified {
+            let found = GBIF_SCOPES
+                .iter()
+                .find(|(n, _, _)| *n == name)
+                .unwrap_or_else(|| panic!("scope `{name}` is missing"));
+            assert_eq!(found.1, key, "`{name}` key drifted");
+            assert_eq!(found.2, rank, "`{name}` rank drifted");
+        }
+        let mut names: Vec<&str> = GBIF_SCOPES.iter().map(|(n, _, _)| *n).collect();
+        names.sort_unstable();
+        let before = names.len();
+        names.dedup();
+        assert_eq!(before, names.len(), "duplicate scope name shadows another");
+    }
+
+    /// Scope names must be lowercase, since lookup lowercases the input.
+    #[test]
+    fn scope_names_are_stored_lowercase() {
+        for (name, _, _) in GBIF_SCOPES {
+            assert_eq!(
+                *name,
+                name.to_ascii_lowercase(),
+                "`{name}` can never be matched"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod gbif_vernacular_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Shape taken from the live `/species/search` response, trimmed.
+    fn monarch() -> serde_json::Value {
+        // Real proportions from GBIF on 2026-08-17: "Milkweed" is first in the
+        // array, "Monarch" is listed by more independent sources.
+        json!({ "vernacularNames": [
+            { "vernacularName": "Milkweed",           "language": "eng" },
+            { "vernacularName": "Milkweed Butterfly", "language": "eng" },
+            { "vernacularName": "Milkweed",           "language": "eng" },
+            { "vernacularName": "Monarch",            "language": "eng" },
+            { "vernacularName": "Monarch",            "language": "eng" },
+            { "vernacularName": "monarch",            "language": "eng" },
+            { "vernacularName": "Monarque",           "language": "fra" },
+            { "vernacularName": "Monarchfalter",      "language": "deu" }
+        ]})
+    }
+
+    /// The reason this is frequency-ranked and not `[0]`.
+    #[test]
+    fn the_most_widely_listed_name_wins_not_the_first_one() {
+        assert_eq!(
+            gbif_preferred_vernacular(&monarch(), "eng").as_deref(),
+            Some("Monarch"),
+            "picked the first array entry instead of the best-attested name"
+        );
+    }
+
+    /// Counting is case-insensitive, but the returned string keeps the casing
+    /// GBIF used — a HUD line reading "monarch" looks like a typo.
+    #[test]
+    fn casing_is_normalised_for_counting_and_preserved_for_display() {
+        let v = gbif_preferred_vernacular(&monarch(), "eng").unwrap();
+        assert_eq!(v, "Monarch");
+        assert!(v.starts_with('M'), "display casing was lost");
+    }
+
+    #[test]
+    fn the_language_filter_is_respected() {
+        assert_eq!(
+            gbif_preferred_vernacular(&monarch(), "fra").as_deref(),
+            Some("Monarque")
+        );
+        assert_eq!(
+            gbif_preferred_vernacular(&monarch(), "deu").as_deref(),
+            Some("Monarchfalter")
+        );
+        assert_eq!(gbif_preferred_vernacular(&monarch(), "swe"), None);
+    }
+
+    /// Obscure taxa genuinely have none — measured: `Clastoptera querci` and
+    /// `Glyptotus cribratus` both return an empty array. `None` must mean "GBIF
+    /// listed none", never an empty string that renders as a blank line.
+    #[test]
+    fn no_vernacular_name_is_none_rather_than_empty() {
+        assert_eq!(
+            gbif_preferred_vernacular(&json!({ "vernacularNames": [] }), "eng"),
+            None
+        );
+        assert_eq!(gbif_preferred_vernacular(&json!({}), "eng"), None);
+        assert_eq!(
+            gbif_preferred_vernacular(&json!({ "vernacularNames": "not an array" }), "eng"),
+            None
+        );
+        // Whitespace-only entries are an absence, not a name.
+        assert_eq!(
+            gbif_preferred_vernacular(
+                &json!({ "vernacularNames": [{ "vernacularName": "   ", "language": "eng" }] }),
+                "eng"
+            ),
+            None
+        );
+    }
+
+    /// Same input, same answer — the property that lets the caller label this
+    /// sourced rather than chosen.
+    #[test]
+    fn selection_is_deterministic_including_on_ties() {
+        let tied = json!({ "vernacularNames": [
+            { "vernacularName": "Beta",  "language": "eng" },
+            { "vernacularName": "Alpha", "language": "eng" }
+        ]});
+        // One each: the earliest-seen variant wins, every time.
+        for _ in 0..25 {
+            assert_eq!(
+                gbif_preferred_vernacular(&tied, "eng").as_deref(),
+                Some("Beta")
+            );
+        }
+        for _ in 0..25 {
+            assert_eq!(
+                gbif_preferred_vernacular(&monarch(), "eng").as_deref(),
+                Some("Monarch")
+            );
+        }
+    }
+
+    /// A malformed entry must not take the lookup down or shift the winner.
+    #[test]
+    fn malformed_entries_are_skipped() {
+        let messy = json!({ "vernacularNames": [
+            { "language": "eng" },
+            { "vernacularName": 42, "language": "eng" },
+            "a bare string",
+            { "vernacularName": "Chanterelle", "language": "eng" },
+            { "vernacularName": "Chanterelle", "language": "eng" }
+        ]});
+        assert_eq!(
+            gbif_preferred_vernacular(&messy, "eng").as_deref(),
+            Some("Chanterelle")
+        );
+    }
 }
