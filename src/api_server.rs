@@ -1160,6 +1160,15 @@ async fn run_migrations(db: &PgPool) {
         // indistinguishable from one extracted from tool output, and the
         // laundering runs outward into the whole ecology.
         "migrations/203_semantic_rule_provenance_floor.sql",
+        // Restores `credit_ledger_tx_type_check`, declared by SEVENTEEN
+        // migrations and present in none of them: each early attempt ran
+        // DROP+ADD as two top-level statements, PgBouncer gave them separate
+        // implicit transactions, the ADD failed against existing rows, the DROP
+        // stayed committed, and this function logged it and carried on. The net
+        // effect of every repair was to delete the constraint. `tx_type` is a
+        // bare `&str` at every call site, so this CHECK is the only closed set
+        // in the system.
+        "migrations/204_restore_credit_ledger_tx_type_check.sql",
     ];
 
     for file in &migration_files {

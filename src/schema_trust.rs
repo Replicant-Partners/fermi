@@ -530,6 +530,57 @@ pub const SCHEMA_FUNCTIONS: &[(&str, &str, &str)] = &[
     ("refresh_fermi_leaderboard", "", "void"),
 ];
 
+/// CHECK and FK constraints the platform's correctness depends on.
+///
+/// # Why constraints need their own list
+///
+/// `SCHEMA_COLUMNS` asks whether a column exists. A constraint is the other
+/// half of the same question and nothing was asking it, which allowed the
+/// following to be true for the entire life of the project:
+///
+/// `credit_ledger_tx_type_check` is declared by **seventeen** migrations — 027,
+/// 030, 032, 035, 042, 045, 049, 050, 051, 052, 057, 059, 061, 063, 064, 075
+/// and 099 — and **does not exist in production**. Three of those migrations
+/// exist for no other purpose than to fix it
+/// (`*_fix_tx_type_constraint.sql`), which is what repeatedly repairing
+/// something without ever checking the repair looks like from the outside.
+///
+/// The mechanism is specific and worth keeping. Each early migration ran
+/// `DROP CONSTRAINT IF EXISTS` and `ADD CONSTRAINT` as two top-level
+/// statements. Through PgBouncer in transaction-pooling mode those are two
+/// separate implicit transactions, so when the `ADD` failed — and it failed,
+/// because rows already violated the new list — the `DROP` stayed committed.
+/// `run_migrations` logs a migration failure with `eprintln!` and continues, so
+/// **the net effect of each attempted fix was to delete the constraint.**
+/// Migration 075 finally wrapped the pair in a DO block, making it atomic and
+/// therefore correct; by then 22 of the 43 live `tx_type` values were absent
+/// from its list, so its `ADD` can never succeed. It is now permanently a
+/// no-op that logs a warning nobody reads.
+///
+/// `tx_type` is a bare `&str` parameter at every call site in
+/// `fermi-auth/src/credits.rs` — there is no enum and no closed set in Rust —
+/// so this constraint was the *only* thing standing between a typo and a
+/// silently mis-categorised row on the credit ledger.
+///
+/// # Why an explicit list rather than parsing the migrations
+///
+/// "Every constraint any migration ever declared must exist" is wrong: a later
+/// migration may legitimately drop one, and `ADD CONSTRAINT IF NOT EXISTS`
+/// makes the name hard to extract without false positives (a first pass
+/// "found" constraints named `if` and `validates`). Same reasoning as
+/// `SCHEMA_COLUMNS`, and the same rule of thumb: list a constraint when its
+/// absence would let bad data in unnoticed. Not exhaustive; extend when a
+/// constraint becomes load-bearing.
+pub const SCHEMA_CONSTRAINTS: &[(&str, &str, &str)] = &[(
+    "credit_ledger",
+    "credit_ledger_tx_type_check",
+    "The only closed set of transaction types anywhere in the system. \
+     `credit_charge` and friends take `tx_type: &str`, so without this a \
+     misspelled type is accepted, lands on the ledger, and is invisible to \
+     every report that groups by it — the money still moves, it is just filed \
+     under a category nobody queries.",
+)];
+
 // ═══════════════════════════════════════════════════════════════════
 // Verdict
 // ═══════════════════════════════════════════════════════════════════
