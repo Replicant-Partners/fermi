@@ -286,6 +286,12 @@
       "quantity_found"
     ]
   },
+  "hud_field_scout": {
+    "binding": "declared",
+    "labels": [
+      "query"
+    ]
+  },
   "instagram_publisher": {
     "binding": "no_text_input",
     "labels": [

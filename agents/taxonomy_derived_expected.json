@@ -237,6 +237,11 @@
     "phylum": "Instrumenta",
     "species": "harvest_advisor"
   },
+  "hud_field_scout": {
+    "class": "Researchia",
+    "phylum": "Instrumenta",
+    "species": "hud_field_scout"
+  },
   "instagram_publisher": {
     "class": "Creativia",
     "order": "Imaginales",
