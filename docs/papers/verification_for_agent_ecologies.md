@@ -2,10 +2,16 @@
 
 ### Why a declared contract is not a contract, and what to do about it
 
-**Status:** working paper · **Date:** 2026-08-15 · **Level:** logical architecture
+**Status:** working paper · **Date:** 2026-08-18 · **Level:** logical architecture
 **Implements:** `docs/ABW_VERIFICATION_RECONCILIATION.md`
 **Situates against:** Trooskens et al., *Compiled AI: Deterministic Code Generation for
 LLM-Based Workflow Automation*, arXiv:2604.05150v2
+
+> **On the figures.** Every count here is a read-only snapshot of one live production
+> deployment, taken on the paper's date. The corpus grows continuously, so exact totals drift
+> upward between drafts; ratios and directions do not. Where a number carries an argument it is
+> given precisely; where it is merely scale it is given approximately — a habit adopted after a
+> comment in our own code cited a figure that had already moved by the time anyone read it.
 
 ---
 
@@ -20,14 +26,30 @@ parses, the types check, and the content is fabricated.
 We argue that this class is not addressable by the dominant answer in the literature —
 removing the model from the control plane and validating a compiled artifact once — because
 an ecology has no artifact and no compile step. We propose instead a **verification
-ladder**: four contracts asking four progressively harder questions about the same
+ladder**: five contracts asking five progressively harder questions about the same
 declaration, each cheap enough to run continuously, each required to demonstrate its own
 ability to fail.
 
-We describe the logical architecture, the invocation lifecycle it induces, and five design
+Two results were forced on us by building it. First, the rung that went missing longest was
+not the most sophisticated but the **cheapest**: whether the code that writes a record ever
+runs at all. Reading the source cannot answer it — in every instance we found, the writer was
+present, correctly wired, and sometimes the most carefully documented code in the file.
+Second, **provenance is not transitive upward.** A claim distilled from well-sourced evidence
+does not inherit that sourcing, and an ecology which lets it manufactures verified facts out
+of nothing but its own reading. Both results concern composition rather than any individual
+agent, which is why neither appears in the single-agent literature.
+
+A third finding changed what enforcement means. Nulling a value no tool could supply is
+data destruction dressed as rigour: for a research agent the unsourced claim *is* the
+product. Unverified evidence should therefore be **routed, not removed** — automatically
+where a contract already names a tool, to a person otherwise — which turns a verdict into a
+work item and produces the first per-agent quality signal that is not self-reported.
+
+We describe the logical architecture, the invocation lifecycle it induces, and eight design
 rules derived from getting it wrong. The organising claim is small and, we think, general:
-**a check that reasons about shape will pass while content is wrong, and shape is what
-almost every check reasons about.**
+**a check that reasons about shape will pass while content is wrong; and a check that
+examines data cannot see data that was never written.** Almost every check does one or the
+other.
 
 ---
 
@@ -65,6 +87,31 @@ has no field for and whose prompt never mentions rendering.
 
 Each is the same failure: **a spec-shaped artifact that is not spec-enforcing**, sitting
 where a reader — human or machine — will take it for the real thing.
+
+The most instructive members of the class arrived last, and they are all the same shape as
+each other:
+
+| Declared thing | State when found |
+|---|---|
+| a `CHECK` constraint on the ledger's transaction types | declared by **seventeen** successive migrations, present after none of them |
+| a provenance resolver for extracted knowledge | three call sites, one wired |
+| a per-agent claims ledger, the substrate for attribution | coded, wired, exhaustively commented, **zero rows** |
+| an anomaly event stream | its vocabulary extended for a new kind, never once written |
+| three rule-utility counters | declared in an early migration, never incremented |
+
+None of these is a fabrication. Each is a **write path that has never executed**, and the
+list is the answer to a question we had been asking wrongly. We had assumed the hard cases
+would be the subtle ones. They were the cheapest ones: `SELECT count(*)`.
+
+Two properties make this class worse than fabrication. It is invisible to every check that
+examines data, because there is no data to examine. And **reading the code does not detect
+it** — in all five cases the writer was present and correct-looking, and the claims ledger
+carried the most thorough comments in the repository while holding nothing. The constraint
+case is the sharpest: each of the seventeen dropped the constraint and then failed to
+re-add it, because the two statements ran in separate implicit transactions through a
+connection pooler and the migration runner logged the failure and continued. **The net
+effect of every attempted repair was to delete the thing being repaired**, and three
+migrations exist for no purpose other than that repair.
 
 ### 1.1 Why declarations rot specifically in an ecology
 
@@ -162,7 +209,7 @@ sample.
 
 ## 3. The verification ladder
 
-The organising insight is that "is this correct?" is not one question. It is at least four,
+The organising insight is that "is this correct?" is not one question. It is at least five,
 they are ordered by difficulty, and **a check answering an easier one will pass while a
 harder one fails.** Naming them separately is what stops a presence check being mistaken
 for a truth check.
@@ -170,15 +217,17 @@ for a truth check.
 ```mermaid
 graph TD
     Q1["<b>1. Presence</b><br/>Does the declared thing exist?"]
-    Q2["<b>2. Truth</b><br/>Does it hold the value it claims?"]
-    Q3["<b>3. Grounding</b><br/>Could that value have come from anywhere?"]
-    Q4["<b>4. Binding</b><br/>Is the caller sending what was declared?"]
+    Q2["<b>2. Liveness</b><br/>Does anything ever write it?"]
+    Q3["<b>3. Truth</b><br/>Does it hold the value it claims?"]
+    Q4["<b>4. Grounding</b><br/>Could that value have come from anywhere?"]
+    Q5["<b>5. Binding</b><br/>Is the caller sending what was declared?"]
 
-    Q1 --> Q2 --> Q3 --> Q4
+    Q1 --> Q2 --> Q3 --> Q4 --> Q5
 
-    Q1 -.->|"passes while"| F1["column exists and is<br/>permanently zero"]
-    Q2 -.->|"passes while"| F2["field is well-typed<br/>and invented"]
-    Q3 -.->|"passes while"| F3["output is grounded but<br/>the request never matched<br/>the interface"]
+    Q1 -.->|"passes while"| F1["table exists and is<br/>permanently empty"]
+    Q2 -.->|"passes while"| F2["rows accumulate and<br/>disagree with their source"]
+    Q3 -.->|"passes while"| F3["field is well-typed<br/>and invented"]
+    Q4 -.->|"passes while"| F4["output is grounded but<br/>the request never matched<br/>the interface"]
 ```
 
 Each rung is a **contract**: a hand-declared manifest in code, paired with a check that
@@ -187,9 +236,53 @@ enforces it. The manifest is the design commitment; the check is the proof it is
 | Rung | Question | Substrate | Catches |
 |---|---|---|---|
 | **Presence** | Does the declared object exist? | live schema catalogue, at boot | a renamed column, a dropped view |
-| **Truth** | Does the stored value equal its source of truth? | aggregate query against real rows | a counter nothing writes |
+| **Liveness** | Does the writer ever run? | sink count vs. **opportunity count** | a ledger nothing has ever written |
+| **Truth** | Does the stored value equal its source of truth? | aggregate query against real rows | a counter that disagrees with reality |
 | **Grounding** | Could this value have come from any available tool? | field → tool map, per agent | a fabricated measurement |
 | **Binding** | Does the invocation match the declared interface? | declared ports vs. actual request | prose sent to a structured-only port |
+
+### 3.1 Why liveness is not a special case of truth
+
+We originally believed Truth covered this, and said so in an earlier draft: a counter nothing
+writes is exactly what a rollup contract catches. That is true **only for a derived value**,
+and the reason is worth stating precisely, because it is what makes liveness a separate rung
+rather than a corollary.
+
+A rollup contract works by recomputing the value from its source and comparing. It needs a
+source of truth to compare against. A cached execution count has one — the rows it summarises
+— so its being zero is detectable as a disagreement.
+
+An **original record has no source of truth by definition.** A claims ledger is not a cache
+of anything; it is the only place its facts exist. There is nothing to recompute it from, so
+no aggregate query can find it wanting. Its emptiness is not a disagreement, and Truth is
+structurally unable to ask about it.
+
+**Why nobody writes this check.** Because `count(*) = 0` is ambiguous: *unused* and *broken*
+are indistinguishable, so the check appears unactionable and gets skipped. The disambiguator
+is the **opportunity count** — how many times the writer should have fired. Zero claims
+beside twenty-two episodes that each stated a claim is broken. Zero beside zero is merely
+unused. Same number, opposite meanings, and only the second is acceptable.
+
+That distinction forces a three-valued verdict, and each value has a different owner:
+
+| Verdict | Meaning | Why it is not the others |
+|---|---|---|
+| `Ok` | opportunities exist, the sink has rows | the path demonstrably runs |
+| `Silent` | opportunities exist, the sink is empty | *not* `Broken`: the writer may be buggy or merely undeployed. Different remedies, identical consequence — the signal does not exist — so the verdict does not guess |
+| `Inert` | no opportunities yet | **not a pass.** A contract watching a feature nobody has exercised, reporting healthy, is the original defect wearing the machinery built to prevent it |
+
+Liveness is also deliberately **binary**. Once a sink holds one row the path works; whether
+it fires *often enough* is a calibration question with a different remedy and a different
+owner. Keeping that out is what stops the rung becoming a vague "does this number look
+plausible" check — the shape of check that gets ignored, then deleted.
+
+One further requirement, learned immediately: a liveness suite needs **positive controls**.
+Our first run declared three contracts and reported **zero live**, and `0 live` cannot
+distinguish "every path is broken" from "the runner is broken". Two contracts on paths known
+to work resolve that, and one of them turned a worry into a diagnosis: the observability
+scanner
+demonstrably writes some 1,300 entries, and the anomaly detector immediately downstream of it
+demonstrably never fires. One number cannot tell you that. Two can.
 
 Two properties make this a ladder rather than a list.
 
@@ -198,15 +291,16 @@ Two properties make this a ladder rather than a list.
 layer" — a single layer inevitably reasons at one level of abstraction and silently
 declines to ask the others.
 
-**Each rung costs more and runs less often.** Presence is a catalogue read at boot. Truth
-is a `GROUP BY` against production, run in CI and on demand. Grounding is a pure function
-over a JSON document, run per invocation. Binding is a string comparison, run per request.
-The ladder is ordered by cost as well as by difficulty, which is what makes running all
-four affordable.
+**Each rung costs more and runs less often.** Presence is a catalogue read at boot. Liveness
+is two `count(*)` queries. Truth is a `GROUP BY` against production, run in CI and on
+demand. Grounding is a pure function over a JSON document, run per invocation. Binding is a
+string comparison, run per request. The ladder is ordered by cost as well as by difficulty,
+which is what makes running all five affordable — and the cheapest rung was the one missing
+longest.
 
-### 3.1 The typing layer beneath the ladder
+### 3.2 The typing layer beneath the ladder
 
-Rungs 3 and 4 both need to know what a port *means*, and today a port is a free string.
+Grounding and binding — rungs 4 and 5 — both need to know what a port *means*, and today a port is a free string.
 That is the missing substrate, and it is where the compiled-AI notion of a compile-time
 schema re-enters.
 
@@ -248,6 +342,80 @@ The third is the one that keeps the campaign honest. Without it, an ecology can 
 typed and still fully fabricated — every port resolving, every schema validating, every
 value invented. **Typing is necessary and nowhere near sufficient**; a schema makes a wrong
 field *more* credible, not less.
+
+### 3.3 Provenance is not transitive upward
+
+Everything above governs one agent's output on one invocation. It says nothing about what
+happens to that output next, and in an ecology what happens next is the point.
+
+In ours, a consolidation agent reads another agent's episodes on a timer, distils semantic
+rules from them, and those rules are retrieved later and appended to an agent's system prompt
+under a heading like *Learned Knowledge*. At that moment a stored sentence stops being data
+and becomes a **premise another agent reasons from**.
+
+Nothing on that path recorded how well-grounded the episodes were. A rule distilled from ten
+tool-verified lookups and a rule distilled from ten paragraphs of prose were stored in the
+same table, retrieved by the same query, and rendered in the same line of the same prompt.
+The second is worse than a bare hallucination, because **its citation is real**: the source
+list genuinely points at episodes that genuinely said that.
+
+The prompt line read:
+
+```
+- (72% match, 90% confidence) <rule>
+```
+
+Both numbers are real and neither is a measurement. The "confidence" is the extraction
+model's self-report about a generalisation it had just written; the "match" is cosine
+similarity. Side by side and labelled *confidence*, they read as calibration — and to a
+model, `90% confidence` is licence to assert the content downstream.
+
+Two rules fix this, and they are independent:
+
+| Rule | Statement | Why |
+|---|---|---|
+| **floor** | a derived claim is as good as its **weakest** source | nine sourced episodes and one guess is a guess; averaging lets volume launder a fabrication |
+| **ceiling** | extraction can never exceed *inference* | reading well-sourced inputs and generalising over them is judgement, and **judgement does not inherit retrieval** |
+
+The ceiling is the load-bearing half and the counter-intuitive one. It means the best value
+any extracted rule can hold is "model inference" — permanently, not pending better tooling.
+That is not a defect to engineer away; it is the honest ceiling for the class of operation.
+Without it, a consolidation agent manufactures tool-verified facts out of nothing but its own
+reading, and the knowledge graph fills with claims no tool ever made.
+
+The same rule applies one layer out, to the quantities agents assert. A *multiplier on a
+base rate* cannot be tool-verified because no database contains "the multiplier for this
+driver" — the agent is commissioned to produce one. Which settles a question that otherwise
+has no answer: **you cannot verify a judgement.** "Is 0.85 correct?" is not a checkable
+proposition. Verification routes to the judgement's *basis* — the ratings, the roster, the
+statistics — and the judgement's standing is the floor over those. Verify the inputs;
+inherit the verdict.
+
+**Unknown is not a rung on the ladder.** The subtlety that took two attempts. Verdicts are
+ordered, but *unknown* is the absence of information about an order and cannot participate in
+a minimum. Nine verified sources plus one that cannot be graded does **not** floor at
+verified — the tenth could be anything. Nor at ungrounded: the tenth is not known to be bad
+either. The honest answer is unknown. But nine verified, one *known* bad, and one ungradeable
+floors at bad, and the unknown changes nothing, because no verdict it could hold would lower
+a floor already resting on the bottom. **An unknown source poisons a result only when it
+could still move it.** Get this wrong in the lenient direction and a single ungradeable
+episode in a cluster of ten manufactures a clean verdict for the other nine.
+
+### 3.4 An implementation note that is really a design rule
+
+The rules above live with the field contracts. The consolidation layer that needs them sits
+*below* that in the dependency graph, so it cannot call them.
+
+Copying the arithmetic across was the obvious alternative and would have been a mistake.
+There would then be two implementations of one trust calculation — and when they disagree,
+the one that gets believed is **the one nearest the writer**. We had already had that bug in
+miniature: agent cards named a provenance value the runtime never emitted, and nothing
+noticed until a guard was written for it.
+
+So the lower layer declares an interface and the layer that owns the contracts implements it.
+This is unremarkable engineering, but it generalises into a rule worth stating: **a trust
+calculation must have exactly one implementation, and the layer that owns the vocabulary
+must own the arithmetic.** Every duplicate is a second answer to the same question.
 
 ---
 
@@ -335,10 +503,12 @@ graph TD
         BIND --> DISP["dispatch"]
         DISP --> GR["grounding enforcement"]
         GR --> AUD["audit + anomaly"]
+        AUD --> QU["queue: pending tool / pending human"]
     end
 
     subgraph LEDGER["Slow feedback"]
-        AUD --> AGG["aggregate: which contracts fail, how often"]
+        QU --> VER["verified / rejected"]
+        VER --> AGG["aggregate: which contracts fail, how often"]
         AGG --> RATCH["burn-down ratchet"]
         RATCH -.->|"tightens"| ADM
     end
@@ -353,9 +523,15 @@ The ledger closes the loop, and it is the piece most systems omit. Without it yo
 answer "is this getting better?", and a verification system that cannot report its own
 trend gets quietly disabled.
 
+The queue between them is what makes the loop more than reporting. An enforcement step that
+only strips produces a cleaner document and no new knowledge; one that routes produces work
+whose outcome — verified, or rejected — is the first per-agent quality signal that is not
+self-reported. Note also what the ledger's own liveness says about it: this diagram was
+accurate as a *design* while the anomaly stream it depends on had never once been written.
+
 ---
 
-## 5. Five design rules
+## 5. Eight design rules
 
 These are not principles we started with. Each is the residue of getting it wrong, usually
 within an hour of writing the check.
@@ -365,7 +541,18 @@ within an hour of writing the check.
 Every contract in this architecture has been deliberately broken to confirm it goes red.
 When we removed a clause from the port-binding rule, the parity test named all eight
 affected agents. When we falsified the burn-down baseline, the ratchet named both
-regressions and their required directions.
+regressions and their required directions. When we inverted the provenance floor's empty
+case — the single most likely way that calculation breaks, and it breaks in the direction
+that manufactures trust — the named test failed on exactly that. When we unwired the
+provenance resolver from the highest-volume writer, the coverage scan named the file.
+
+Two of those deserve emphasis because the check caught its own author. A guard requiring
+every provenance verdict to have a *deliberately assigned* strength fired the moment we
+widened the vocabulary, refusing five new values until someone decided where each sat. And the
+liveness suite's own final assertion fired on its first run, when nothing yet had a positive
+control: *"nothing has been demonstrated to work, and this assertion is the only thing
+standing between that state and a green tick."* A suite that can say that about itself is
+the only kind worth trusting.
 
 This is not ceremony. A verification layer is subject to the identical trap as the thing it
 verifies: it looks done. A green check and an inert check are indistinguishable from the
@@ -386,11 +573,18 @@ precise, report the ambiguity as its own category instead of guessing.
 ### 5.3 Silence is not a verdict
 
 An agent that declares no inputs has not contradicted anything. An agent with no grounding
-contract has not been found compliant. Both must be distinguishable from a pass.
+contract has not been found compliant. A write path with no opportunities has not been shown
+to work. A column that is `NULL` because the feature postdates the row is not clean. All four
+must be distinguishable from a pass.
 
 Systems that collapse absence into success accumulate a population of unexamined things
 that look examined — which is the original defect, reintroduced by the machinery built to
 prevent it.
+
+The tell is directional, and it is worth keeping as a diagnostic: **if a metric improves when
+coverage gets worse, absence is being counted as success somewhere.** A report treating an
+ungraded rule as grounded shows a corpus getting cleaner as retention degrades. A liveness
+suite treating *inert* as *ok* reports healthiest when nothing has run at all.
 
 ### 5.4 The scoreboard must not reward deletion
 
@@ -420,10 +614,83 @@ The resulting vocabulary is four-valued, and the middle two are what make it usa
 | `Sourced` | a named tool returned it | keep, mark verified |
 | `Inferred` | judgement over sourced inputs, by design | keep, mark as inference |
 | `Narrative` | prose | keep, scan for claims it cannot support |
-| `Unsourced` | no tool could supply it | **null it, record what was removed** |
+| `Unsourced` | no tool could supply it | **route it — see 5.6** |
 
-Retaining the removed value matters: when a real source is eventually integrated, the
-model's prior guess becomes free calibration data. Tag, do not delete.
+### 5.6 Unverified is a work item, not a verdict
+
+The disposition above used to read *"null it, record what was removed"*. That was wrong, and
+the paper's own next sentence had already noticed why: the removed value is calibration data,
+so *tag, do not delete*. We tagged. Nothing ever read the quarantine, so the practical effect
+was deletion with extra steps.
+
+The error was treating "nobody has checked this" and "nothing could check this" as one state.
+The first is work waiting to be done. The second is an honest absence. Collapsing them
+discards the only actionable thing in the system — and it discards *research*, which for a
+research agent is the product.
+
+So the vocabulary gains a **pending tier**, and the route falls out of the contract with no
+new declarations. A field declared `Sourced` already names its tool and response field, so a
+value that arrived without a recorded tool call has an automated check available *and the
+contract already says which one*. A field that is `Unsourced` has no tool at all, so it
+routes to a person — and the same gap is a tool-integration request, which is the identical
+fact seen from the other side.
+
+| State | Meaning | Route |
+|---|---|---|
+| verified | a tool returned it | none |
+| **pending (tool)** | `Sourced`, unconfirmed | **automated**; the contract names the tool |
+| **pending (human)** | no tool exists; someone must source it | **human, citation required** |
+| unavailable | no tool, and nothing claimed | the honest null |
+| **rejected** | checked, and found wrong | retract, and count it |
+
+Three consequences we did not anticipate:
+
+**Pending must rank below inference.** A judgement the agent was *asked* to make is
+legitimate output; a retrieval claim with no retrieval behind it is not yet anything. If
+pending outranked inference, an agent could improve its standing by asserting an unsourced
+fact instead of reasoning — rewarding precisely the behaviour the contract exists to
+discourage.
+
+**A human verdict without a citation is endorsement, not verification.** If a reviewer can
+produce "verified" with a click, the queue is a laundering interface: the cheapest path from
+a guess to a fact, with a person's name attached. A cited check ranks with a tool call
+*because* someone else can follow the citation to the same source — reproducibility is the
+only property the ladder measures — so the citation is enforced by constraint rather than
+encouraged by convention. An uncited human verdict remains available and ranks with a model's
+inference, because requiring a citation for every judgement would push reviewers to paste a
+plausible URL, which is worse than an admitted opinion.
+
+**`rejected` is the first honest per-agent quality signal.** Everything else the platform
+knew about an agent was self-reported. A rejection rate is not.
+
+And the presentation rule that makes the tier worth having: **presented always, used but
+marked.** Hiding unverified research loses the work; letting it move a number silently is the
+laundering. Each forecast therefore carries the fraction of its evidence that is unverified —
+which is itself testable later, against whether those forecasts were worse.
+
+### 5.7 A verdict must name a mechanism that was actually used
+
+Our floor calculation returned the *representative of a strength tier* rather than the verdict
+it had actually seen. Two values scoring equally are not the same claim: a value settled by a
+human citing a source came back asserting that a **tool** had run, and "the tool answered and
+had nothing" came back as "no tool exists".
+
+Both are misattributions of mechanism, both were invisible because the *strength* was right,
+and the second is a false statement about our own tooling. The invariant is now asserted
+directly: the floor must return a verdict that actually occurred among its inputs. It is
+worth stating as a rule because the bug is attractive — collapsing to tiers makes the code
+shorter and the arithmetic identical, and only the *explanation* is wrong.
+
+### 5.8 Reading the code proves nothing
+
+The five write paths in §1 were all present, wired, and plausible on inspection; one carried
+the most careful comments in the repository and had never written a row. Code review, type
+checking and unit tests all operate on the writer in isolation, and all five writers were
+correct in isolation.
+
+This is the same epistemic error as the rest of the paper, applied to ourselves. We inspected
+a declaration — the source — and concluded something about behaviour. The remedy is the same
+too: ask the database, and bring an opportunity count so the answer can be interpreted.
 
 ---
 
@@ -450,6 +717,22 @@ misses real declarations. It exists only because 510 uncontrolled strings exist.
 deletion is the success condition for the typing layer, and we have said so in the code so
 that its removal reads as completion rather than regression.
 
+**Liveness cannot tell broken from undeployed.** A silent write path may be a bug or may be
+code that has not shipped. The consequence is identical — the signal does not exist — so the
+verdict does not guess, but the remedy differs and a human has to decide which it is.
+
+**A verification queue can rot, and rotting looks like success.** The pending tier converts
+unverified data from a deletion into a work item, which only helps if the work is done. A
+year-old pending value behind a mild badge is functionally trusted. That needs an owner and a
+decay, and neither is a property of the architecture — we assign the queue to whoever owns the
+forecast, and an unowned queue would quietly reintroduce the original defect.
+
+**The floor is only as good as the coverage beneath it.** Ours currently grades 5 of roughly 170
+active rules; the rest predate response retention and are permanently ungradeable. That figure
+is a finding, not a failure, but it must be read as *missing coverage* rather than as clean —
+a report counting unknown as grounded would show a corpus getting cleaner as coverage got
+worse.
+
 **Determinism is not on offer.** Compiled AI can promise zero control-plane entropy because
 it removes the model. We cannot. We are trading that for the thing an ecology buys —
 open-ended composition — and paying for it with per-invocation verification.
@@ -472,11 +755,12 @@ What we take from their work is the **discipline**, decoupled from the mechanism
 | Compiled AI | Ecology equivalent |
 |---|---|
 | schema fixed at compile time | type registry, referenced by ports |
-| four-stage validation before deploy | four-rung ladder, at admission and per invocation |
+| four-stage validation before deploy | five-rung ladder, at admission and per invocation |
 | bounded tool call | typed agent invocation |
 | Safety Sandwich | bind → dispatch → ground → audit |
 | deterministic control plane | *not available* — replaced by per-invocation verification |
-| regenerate on validation failure | strip-and-flag, with the removed value retained |
+| regenerate on validation failure | route-and-mark: retained, presented, and queued for a tool or a person |
+| compile-time artifact is verified once | provenance floor: no derived claim outranks its weakest source |
 
 The synthesis is that the two architectures are the same design in different regimes.
 Compiled AI moves verification **earlier** until the runtime needs none. An ecology cannot
@@ -495,16 +779,34 @@ the state we found ours in and the state most declarative agent frameworks curre
 
 - The defect class is **spec-shaped but not spec-enforcing**: declarations that are
   well-formed, well-typed, and false.
-- Shape-based checks cannot see it, and almost all checks are shape-based.
+- Shape-based checks cannot see it, and almost all checks are shape-based. Checks that
+  examine data cannot see data that was never written, and that blind spot is cheaper to
+  close than any other on the ladder.
 - In an ecology there is no artifact and no compile step, so the compiled-AI remedy does not
   transfer — but its *discipline* does.
-- The remedy is a **ladder of four contracts** — presence, truth, grounding, binding — each
-  invisible to the one below, each ordered by cost, each required to demonstrate it can
-  fail.
+- The remedy is a **ladder of five contracts** — presence, liveness, truth, grounding,
+  binding — each invisible to the one below, each ordered by cost, each required to
+  demonstrate it can fail.
+- The cheapest rung was missing longest. **Liveness** — does the writer ever run? — is not a
+  special case of truth, because an original record has no source of truth to be compared
+  against. `count(*) = 0` is only interpretable beside an **opportunity count**, and *inert*
+  must never be spelled *pass*.
+- **Provenance is not transitive upward.** A derived claim is bounded by its weakest source
+  (floor) and can never exceed inference (ceiling), so extraction cannot manufacture verified
+  facts. *Unknown* is not a rung on that ladder: it poisons a result only when it could still
+  move it.
+- **Unverified is a work item, not a verdict.** Ungrounded research is routed — automatically
+  where a contract names a tool, to a person otherwise — presented always, used but marked,
+  and a human verdict without a citation is endorsement rather than verification.
 - Beneath the ladder sits a **typing layer** that converts ports from labels into type
   references, making composition checkable and output validatable with one artifact.
 - Typing is necessary and insufficient. Grounding is what stops a fully-typed ecology from
   being a fully-fabricated one.
+- A trust calculation must have **exactly one implementation**, owned by the layer that owns
+  the vocabulary. When two disagree, the one believed is the one nearest the writer.
+- A verdict must name a **mechanism that was actually used**. Two values of equal strength are
+  not the same claim, and collapsing them to a tier is a misattribution that no strength check
+  can see.
 - Verification runs on two clocks: an admission gate that is the real meaning of
   "enforcement by default", and a per-invocation gate that catches what admission cannot
   know.
@@ -534,3 +836,18 @@ the state we found ours in and the state most declarative agent frameworks curre
   generalises from, including measured corpus figures.
 - `docs/SCHEMA_AND_RULE_INTEGRITY_RECONCILIATION.md` — the prior audit at the database and
   business-rule layers, where the presence/truth distinction originated.
+
+The five rungs, as implemented, for anyone checking the claims against the code:
+
+| Rung | Contract | Live tier |
+|---|---|---|
+| Presence | `src/schema_trust.rs` (+ `SCHEMA_CONSTRAINTS`) | `tests/constraint_trust.rs` |
+| Liveness | `src/liveness_trust.rs` | `tests/liveness_contract.rs`, `scripts/liveness_contract_live.sh` |
+| Truth | `src/rollup_trust.rs` | `scripts/rollup_contract_live.sh` |
+| Grounding | `src/grounding_trust.rs`, `src/card_contract.rs` | `tests/grounding_contract.rs`, `scripts/grounding_contract_live.sh` |
+| Binding | `src/port_trust.rs` | `tests/port_binding_parity.rs`, `scripts/port_census.py` |
+
+The composition machinery §3.3 and §5.6 describe: `src/assertions.rs` (assertion kinds, the
+extraction ceiling, routing), `src/provenance_oracle.rs` (the floor over source episodes, and
+the reason *unknown* is not a rung), `src/agent_backend/kg_context.rs` (the prompt boundary
+where a stored claim becomes another agent's premise), and migrations 203–205.
