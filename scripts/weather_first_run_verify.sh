@@ -163,6 +163,49 @@ else
   else
     say OK "3b. claim recorded" "$CLAIMS claim(s)"
   fi
+
+  # ── 3c. Did the judgement survive validation? ──────────────────────
+  #
+  # A multiplier line can be present, correctly formatted, and still discarded:
+  # `assertions.rs` drops any spread whose p5 is below the declared floor, whose
+  # p95 is above the ceiling, or that is not ordered. Six of this agent's first
+  # ten lines went that way, because a bucket on an eleven-way ladder honestly
+  # needs an adjustment near 0.03 against a floor of 0.1.
+  #
+  # This was invisible before the `assertion:rejected` tag: the drop was a
+  # `tracing::warn!` and nothing else, so the episode looked identical to one
+  # from an agent that quantified nothing. `status = success`, empty
+  # `assertions`, no finding.
+  #
+  # Note which way the statuses run here, because it is the opposite of every
+  # other check in this file: a REJECTION is the bad outcome, so finding the tag
+  # is a FAIL rather than a pass.
+  #
+  # And the check RECONCILES rather than just looking for the tag, which is the
+  # difference between this passing honestly and passing falsely. The first draft
+  # asked "any rejections? no — any assertions? yes — OK" and reported green on a
+  # corpus where 10 lines produced 4 assertions. The other six were dropped
+  # before the tag existed, so they carry no tag, and a check that only looks for
+  # the tag cannot see them: the exact false-green this file exists to prevent,
+  # written into the file that exists to prevent it.
+  #
+  # Every parsed line must end up EITHER recorded or tagged. A shortfall means
+  # judgements left no trace at all, which is a finding about the platform's
+  # bookkeeping and not a pending state.
+  RECORDED=$(q "SELECT count(*) FROM episodes e JOIN agents a ON a.agent_id=e.agent_id
+                WHERE a.agent_name='$AGENT' AND e.created_at >= '$SINCE'
+                  AND jsonb_array_length(coalesce(e.assertions,'[]'::jsonb)) > 0")
+  REJECTED=$(q "SELECT count(*) FROM episodes e JOIN agents a ON a.agent_id=e.agent_id
+                WHERE a.agent_name='$AGENT' AND e.created_at >= '$SINCE'
+                  AND 'assertion:rejected' = ANY(e.tags)")
+  UNACCOUNTED=$(( HAS_LINE - ${RECORDED:-0} - ${REJECTED:-0} ))
+  if [[ "${REJECTED:-0}" != "0" ]]; then
+    say FAIL "3c. judgement survived validation" "$REJECTED run(s) had a multiplier DROPPED — out of the card's declared range, or an unordered spread. The claim is gone and the run still reported success"
+  elif (( UNACCOUNTED > 0 )); then
+    say SILENT "3c. judgement survived validation" "$HAS_LINE line(s) parsed, $RECORDED recorded, $REJECTED tagged — $UNACCOUNTED left NO trace. Runs predating the assertion:rejected tag: the judgement was dropped and nothing recorded that it had been"
+  else
+    say OK "3c. judgement survived validation" "$HAS_LINE line(s), all $RECORDED recorded, 0 dropped"
+  fi
 fi
 
 # ── 4. Did the composition actually compose? ─────────────────────────

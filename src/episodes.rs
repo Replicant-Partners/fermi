@@ -170,6 +170,31 @@ pub fn agent_output_to_episode(
             "assertion_rejected — an agent stated a quantity that is not a \
              coherent spread; dropped rather than repaired"
         );
+        // ── Why a log line was not enough ────────────────────────────────
+        //
+        // A `tracing::warn!` satisfies whoever is tailing the process and
+        // nobody else. It is not queryable, not retained, and not countable,
+        // so "how many quantified judgements has this platform thrown away?"
+        // had no answer — which is the same shape as the defect the comment
+        // above says this code exists to stop, one level up.
+        //
+        // Measured the moment it became askable: of 507 `[MULTIPLIER]` lines
+        // in `episodes`, 23 fall outside the range their own card declares and
+        // were dropped here. `weather_oracle` is 6 of its 10 — the worst rate
+        // on the platform, because a bucket on an 11-way ladder honestly needs
+        // an adjustment near 0.03 and its card's floor is 0.1. Every one of
+        // those runs recorded `execution_status = success` with an empty
+        // `assertions` array, which reads identically to an agent that
+        // quantified nothing.
+        //
+        // A tag rather than a column because `tags` is already the queryable
+        // surface every episode carries and the verification scripts already
+        // read it with `= ANY(e.tags)`; a column would need a migration to say
+        // something a tag says today. The count goes in the tag because the
+        // difference between one malformed line and eleven is the difference
+        // between a typo and a format the agent has not understood.
+        tags.push("assertion:rejected".to_string());
+        tags.push(format!("assertion_rejected:{}", rejected.len()));
     }
     let assertions_json = serde_json::to_value(&recovered).unwrap_or_else(|_| json!([]));
 
@@ -535,5 +560,81 @@ mod failure_provenance_tests {
         out.raw_response = Some(String::new());
         let ep = agent_output_to_episode(uuid::Uuid::new_v4(), "q", &out);
         assert_eq!(ep.response_text.as_deref(), Some(""));
+    }
+
+    /// A dropped judgement is countable, not just logged.
+    ///
+    /// The fixtures are the exact lines `weather_oracle` emitted and the
+    /// platform threw away, copied out of `episodes.response_text` rather than
+    /// invented — because a test written against the malformed line I imagined
+    /// would not have caught either of the shapes it actually produces.
+    ///
+    /// They fail for two independent reasons and both must be caught:
+    /// the first is below the declared multiplier floor of 0.1, and the second
+    /// is *unordered* — a p50 of 0.035 sitting above its own p95 of 0.025, which
+    /// is not a wide estimate but a broken one.
+    #[test]
+    fn a_rejected_multiplier_is_countable_on_the_episode() {
+        let mut out = output(AgentStatus::Success, None, Some("end_turn"));
+        out.raw_response = Some(
+            "[MULTIPLIER] Suggested p50: 0.01 (p5: 0.005, p95: 0.02) — EGLC bucket\n\
+             [MULTIPLIER] Suggested p50: 0.035 (p5: 0.003, p95: 0.025) — base-rate skew"
+                .into(),
+        );
+        let ep = agent_output_to_episode(uuid::Uuid::new_v4(), "q", &out);
+
+        // Nothing was recorded as an assertion — which is the correct call, and
+        // exactly why the drop has to leave a trace. Without one this episode is
+        // indistinguishable from an agent that quantified nothing at all.
+        assert_eq!(
+            ep.assertions
+                .as_ref()
+                .and_then(|a| a.as_array())
+                .map(Vec::len),
+            Some(0),
+            "a malformed spread must be dropped rather than repaired"
+        );
+        assert!(
+            ep.tags.iter().any(|t| t == "assertion:rejected"),
+            "a silently dropped claim is the defect; tags were {:?}",
+            ep.tags
+        );
+        // The count, not just the fact. One malformed line is a typo; two is a
+        // format the agent has not understood, and the remedies differ.
+        assert!(
+            ep.tags.iter().any(|t| t == "assertion_rejected:2"),
+            "both rejections should be counted; tags were {:?}",
+            ep.tags
+        );
+    }
+
+    /// The tag is absent when nothing was rejected.
+    ///
+    /// Without this the assertion above passes for an implementation that tags
+    /// unconditionally, which would make the count useless the moment anyone
+    /// queried it — the same false-green shape as a cross-check that compares
+    /// nothing and reports zero mismatches.
+    #[test]
+    fn a_well_formed_multiplier_leaves_no_rejection_tag() {
+        let mut out = output(AgentStatus::Success, None, Some("end_turn"));
+        out.raw_response =
+            Some("[MULTIPLIER] Suggested p50: 1.15 (p5: 1.05, p95: 1.28) — fine".into());
+        let ep = agent_output_to_episode(uuid::Uuid::new_v4(), "q", &out);
+
+        assert_eq!(
+            ep.assertions
+                .as_ref()
+                .and_then(|a| a.as_array())
+                .map(Vec::len),
+            Some(1),
+            "an in-range ordered spread should be recovered"
+        );
+        assert!(
+            !ep.tags.iter().any(
+                |t| t.starts_with("assertion:rejected") || t.starts_with("assertion_rejected:")
+            ),
+            "tagged a rejection that did not happen; tags were {:?}",
+            ep.tags
+        );
     }
 }
