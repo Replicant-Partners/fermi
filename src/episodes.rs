@@ -242,6 +242,30 @@ pub fn agent_output_to_episode(
             "provider": output.metadata.provider,
             "funding_principal": output.metadata.funding_principal,
             "credential_source": output.metadata.credential_source,
+            // Which prompt produced this row (SHA-256 of the card's declared
+            // `system_prompt`, hex). Set by the executor from the card it
+            // resolved, so it records the prompt that ran rather than a caller's
+            // claim about it.
+            //
+            // ── Why this is here and not in a column ──────────────────────
+            //
+            // Ten files construct `Episode` literals, `Episode` cannot derive
+            // `Default` (`DateTime<Utc>` does not implement it), and several of
+            // those files are under concurrent edit. A column would mean a
+            // migration plus ten mechanical edits for a value that is already
+            // queryable here — `context->>'card_prompt_hash'` — and `context` is
+            // where the platform already keeps invocation provenance of exactly
+            // this kind (`provider`, `funding_principal`, `route_reason`).
+            //
+            // ── Why in this function ──────────────────────────────────────
+            //
+            // `agent_output_to_episode` is the single constructor every
+            // execution passes through, which is measurable rather than
+            // asserted: the four weather runs carry this function's tags
+            // (`status:`, `tool:`, `stop:`) and carry NO `ibind:`/`qsrc:` tags,
+            // so they never reach `stamp_input_binding` in `handlers/execution`.
+            // Stamping there would have looked correct and covered nothing.
+            "card_prompt_hash": output.metadata.card_prompt_hash,
             "reasoning": output.metadata.reasoning,
             // Failure provenance. Persisted in context (not only folded into
             // `error_details`) so the raw executor verdict survives

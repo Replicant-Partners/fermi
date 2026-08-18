@@ -351,6 +351,80 @@ pub fn cross_checks() -> impl Iterator<Item = (&'static str, &'static str, &'sta
         .filter_map(|c| c.cross_check_sql.map(|sql| (c.agent_id, c.path, sql)))
 }
 
+// ─── which prompt produced the row ─────────────────────────────────
+//
+// ## The problem this solves
+//
+// A cross-check reads all of history, so a defect found once is found forever.
+// Measured on the weather suite: after the card was corrected, four consecutive
+// runs emitted no `n_members: 0`, a real `recommendation.action` enum, and a
+// multiplier matching its own `[MULTIPLIER]` line — a clean cohort by every
+// predicate here. The suite still reported nine failures, every one of them a
+// row written by the superseded prompt.
+//
+// That is not a cosmetic complaint. A suite that cannot go green after a fix
+// gets ignored, and an ignored suite is worth less than no suite, because the
+// next real regression arrives as one more line in a list that was already red.
+// "Detects a defect" and "can confirm a fix" are different capabilities and
+// this tier only had the first.
+//
+// ## Why a content hash rather than a date or a version
+//
+// A date means hand-maintained cohort bookkeeping in the check, which goes stale
+// silently. `agent_versions` is the designed answer and is dead at both ends:
+// 3,391 episodes carry no version, and `weather_oracle` — edited repeatedly —
+// has zero version rows. A hash of the prompt cannot drift out of sync with the
+// prompt, and needs no policy about who bumps what.
+//
+// So the cohort is defined by the card's OWN CURRENT CONTENT: rows whose
+// recorded prompt hash equals the hash of the prompt this agent has right now.
+// Edit a card and its cohort empties itself, which is the correct behaviour —
+// nothing is yet known about the new prompt.
+//
+// ## Why every episode-based check must carry the placeholder
+//
+// Because both readings are needed and they answer different questions. Scoped
+// says "is the agent fabricating NOW", and only that may fail the suite.
+// Unscoped says "has it ever", which stays visible as history rather than being
+// deleted. A check that hard-coded either one would silently lose the other.
+
+/// Token every episode-based `cross_check_sql` must contain exactly once.
+pub const COHORT_PLACEHOLDER: &str = "{{COHORT}}";
+
+/// Restrict to rows produced by the prompt the agent currently has.
+///
+/// `convert_to(..., 'UTF8')` because `sha256` takes `bytea`; letting the server
+/// choose an encoding would make the hash depend on database settings rather
+/// than on the prompt. Must stay byte-identical in meaning to
+/// `ExecutionContext::card_prompt_hash`, which is the Rust half of the same
+/// comparison.
+pub const COHORT_PREDICATE: &str = "AND e.context->>'card_prompt_hash' \
+     = encode(sha256(convert_to(a.system_prompt, 'UTF8')), 'hex')";
+
+/// The check as it must be read to fail the suite: current prompt only.
+pub fn cohort_scoped(sql: &str) -> String {
+    sql.replace(COHORT_PLACEHOLDER, COHORT_PREDICATE)
+}
+
+/// The check as it must be read to report history: every prompt, ever.
+pub fn cohort_unscoped(sql: &str) -> String {
+    sql.replace(COHORT_PLACEHOLDER, "")
+}
+
+/// How many rows this agent has under its current prompt.
+///
+/// The disambiguator, and the whole reason `liveness_trust` exists: zero
+/// mismatches over zero rows is not clean, it is unknown. Without this the
+/// scoped reading would report every agent perfect the instant its card changed.
+pub fn cohort_size_sql() -> &'static str {
+    "SELECT count(*)::bigint AS mismatches \
+       FROM episodes e \
+       JOIN agents a ON a.agent_id = e.agent_id \
+      WHERE a.agent_name = $1 \
+        AND e.context->>'card_prompt_hash' \
+            = encode(sha256(convert_to(a.system_prompt, 'UTF8')), 'hex')"
+}
+
 /// Marker written by migration 200 onto profiles produced **before** any
 /// grounding contract existed.
 ///
@@ -830,6 +904,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
                LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
                                     THEN e.response_text::jsonb END AS doc) j \
               WHERE a.agent_name = 'football_analyst' \
+                {{COHORT}} \
                 AND jsonb_typeof(j.doc #> '{advanced_metrics,xgd}') = 'number' \
                 AND jsonb_typeof(j.doc #> '{advanced_metrics,xg}')  = 'number' \
                 AND jsonb_typeof(j.doc #> '{advanced_metrics,xga}') = 'number' \
@@ -1005,6 +1080,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
                LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
                                     THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
               WHERE a.agent_name = 'weather_oracle' \
+                {{COHORT}} \
                 AND j.doc #>> '{settlement_target,station}' IS NOT NULL \
                 AND upper(j.doc #>> '{settlement_target,station}') \
                     NOT IN ('CYYZ','EDDM','EFHK','EGLC','EHAM','EPWA','FACT','HKO', \
@@ -1037,6 +1113,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
                LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
                                     THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
               WHERE a.agent_name = 'weather_oracle' \
+                {{COHORT}} \
                 AND jsonb_typeof(j.doc #> '{stages,forecast,n_members}') = 'number' \
                 AND ( (j.doc #>> '{stages,forecast,n_members}')::numeric < 1 \
                    OR (jsonb_typeof(j.doc #> '{stages,forecast,ensemble_sd}') = 'number' \
@@ -1067,6 +1144,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
                LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
                                     THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
               WHERE a.agent_name = 'weather_oracle' \
+                {{COHORT}} \
                 AND ( (jsonb_typeof(j.doc #> '{stages,calibration,predictive_sd}') = 'number' \
                        AND (j.doc #>> '{stages,calibration,predictive_sd}')::numeric <= 0) \
                    OR (jsonb_typeof(j.doc #> '{stages,calibration,calibrated_probability}') = 'number' \
@@ -1106,6 +1184,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
                LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
                                     THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
               WHERE a.agent_name = 'weather_oracle' \
+                {{COHORT}} \
                 AND jsonb_typeof(j.doc #> '{stages,pricing,implied_probability}') = 'number' \
                 AND ( (j.doc #>> '{stages,pricing,implied_probability}')::numeric < 0 \
                    OR (j.doc #>> '{stages,pricing,implied_probability}')::numeric > 1 \
@@ -1133,6 +1212,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
                LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
                                     THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
               WHERE a.agent_name = 'weather_oracle' \
+                {{COHORT}} \
                 AND jsonb_typeof(j.doc #> '{stages,calibration,climatology_base_rate}') = 'number' \
                 AND ( (j.doc #>> '{stages,calibration,climatology_base_rate}')::numeric < 0 \
                    OR (j.doc #>> '{stages,calibration,climatology_base_rate}')::numeric > 1 )",
@@ -1168,6 +1248,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
                LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
                                     THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
               WHERE a.agent_name = 'weather_oracle' \
+                {{COHORT}} \
                 AND jsonb_typeof(j.doc -> 'final_probability') = 'number' \
                 AND ( (j.doc ->> 'final_probability')::numeric < 0 \
                    OR (j.doc ->> 'final_probability')::numeric > 1 )",
@@ -1198,6 +1279,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
                LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
                                     THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
               WHERE a.agent_name = 'weather_oracle' \
+                {{COHORT}} \
                 AND jsonb_typeof(j.doc -> 'multiplier') = 'number' \
                 AND ( (j.doc ->> 'multiplier')::numeric < 0.1 \
                    OR (j.doc ->> 'multiplier')::numeric > 10.0 )",
@@ -1271,6 +1353,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
                LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
                                     THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
               WHERE a.agent_name = 'weather_oracle' \
+                {{COHORT}} \
                 AND jsonb_typeof(j.doc #> '{stages,calibration,calibrated_probability}') = 'number' \
                 AND jsonb_typeof(j.doc #> '{stages,pricing,implied_probability}') = 'number' \
                 AND ( ( j.doc #> '{challenge,centre_gap_within_predictive_sd}' = 'true'::jsonb \
@@ -1510,6 +1593,7 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
                  SELECT jsonb_array_elements(e.response_text::jsonb->'threats') AS t \
                    FROM episodes e JOIN agents a ON a.agent_id = e.agent_id \
                   WHERE a.agent_name = 'enemy_sensor' \
+                    {{COHORT}} \
                     AND e.response_text ~ '^\\s*\\{' \
                ) x \
               WHERE x.t->>'creature_id' IS NOT NULL \
@@ -2512,6 +2596,58 @@ mod tests {
                 lower.contains("as mismatches"),
                 "{agent}.{path}: must alias its count as `mismatches`"
             );
+
+            // An episode-based check MUST be readable both ways — scoped to the
+            // current prompt, and across all history. Forgetting the placeholder
+            // is silent: the check still runs, still returns a number, and
+            // quietly reports history as though it were the present, which is
+            // the exact failure the cohort split exists to fix.
+            //
+            // Keyed on referencing `episodes` rather than on a list of agent
+            // ids, so a new episode-based contract is caught by construction
+            // instead of by whoever remembers to extend a table. Checks that
+            // read elsewhere — `genome_profiler.taxonomy` compares cached
+            // profiles against creature rows — have no episode to attribute and
+            // are correctly exempt.
+            if lower.contains("from episodes") {
+                assert_eq!(
+                    sql.matches(COHORT_PLACEHOLDER).count(),
+                    1,
+                    "{agent}.{path}: an episode-based cross-check must contain \
+                     {COHORT_PLACEHOLDER} exactly once, so it can be read both \
+                     scoped to the current prompt and across all history"
+                );
+                assert!(
+                    lower.contains("join agents a"),
+                    "{agent}.{path}: the cohort predicate compares against \
+                     `a.system_prompt`, so the query must join `agents a`"
+                );
+            } else {
+                assert!(
+                    !sql.contains(COHORT_PLACEHOLDER),
+                    "{agent}.{path}: declares {COHORT_PLACEHOLDER} but does not \
+                     read `episodes`, so there is no prompt to scope to"
+                );
+            }
+
+            // Both readings must survive substitution as bare SELECTs. Checking
+            // only the raw string would pass a template that expands into
+            // something unrunnable, and an unrunnable check reports healthy
+            // forever.
+            for (label, expanded) in [
+                ("scoped", cohort_scoped(sql)),
+                ("unscoped", cohort_unscoped(sql)),
+            ] {
+                assert!(
+                    !expanded.contains(COHORT_PLACEHOLDER),
+                    "{agent}.{path}: {label} expansion still contains the \
+                     placeholder"
+                );
+                assert!(
+                    expanded.to_lowercase().trim_start().starts_with("select"),
+                    "{agent}.{path}: {label} expansion is not a bare SELECT"
+                );
+            }
             for forbidden in [
                 "insert ",
                 "update ",

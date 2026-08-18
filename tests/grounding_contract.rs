@@ -37,7 +37,10 @@
 //! `#[ignore]` because it needs `DATABASE_URL`. Read-only: every query is a
 //! bare SELECT and the offline tier asserts that at the unit level.
 
-use fermi::grounding_trust::{cross_check_exempt, cross_checks, FIELD_CONTRACTS};
+use fermi::grounding_trust::{
+    cohort_scoped, cohort_size_sql, cohort_unscoped, cross_check_exempt, cross_checks,
+    COHORT_PLACEHOLDER, FIELD_CONTRACTS,
+};
 use sqlx::Row;
 
 /// Offline: the completeness claim, restated at the integration level so it
@@ -157,10 +160,24 @@ async fn agent_output_agrees_with_independently_held_truth() {
 
     let mut failures: Vec<String> = Vec::new();
     let mut ran = 0usize;
+    let (mut ok, mut inert, mut superseded) = (0usize, 0usize, 0usize);
+
+    // Cohort size per agent, fetched once. Zero means nothing is known about the
+    // prompt this agent currently has, which is the difference between a clean
+    // check and an unasked one.
+    let mut cohort: std::collections::HashMap<&str, i64> = std::collections::HashMap::new();
 
     for (agent, path, sql) in cross_checks() {
         ran += 1;
-        let mismatches: i64 = match sqlx::query_scalar(sql).fetch_one(&pool).await {
+        let episode_based = sql.contains(COHORT_PLACEHOLDER);
+
+        // Only the CURRENT reading may fail the suite. Running the historical
+        // reading too, and reporting it separately, is what keeps a fixed defect
+        // visible without letting it veto every future green.
+        let current: i64 = match sqlx::query_scalar(&cohort_scoped(sql))
+            .fetch_one(&pool)
+            .await
+        {
             Ok(n) => n,
             Err(e) => {
                 // A query that cannot run is not a pass. It is the same
@@ -172,15 +189,90 @@ async fn agent_output_agrees_with_independently_held_truth() {
                 continue;
             }
         };
-        if mismatches > 0 {
-            failures.push(format!(
-                "{agent}.{path}: {mismatches} row(s) disagree with the \
-                 independently-held source of truth. The field is declared \
-                 Sourced, so every value should have come from its tool."
-            ));
-        } else {
-            println!("  ok   {agent}.{path}");
+
+        if !episode_based {
+            if current > 0 {
+                failures.push(format!(
+                    "{agent}.{path}: {current} row(s) disagree with the \
+                     independently-held source of truth. The field is declared \
+                     Sourced, so every value should have come from its tool."
+                ));
+            } else {
+                ok += 1;
+                println!("  ok         {agent}.{path}");
+            }
+            continue;
         }
+
+        let historical: i64 = sqlx::query_scalar(&cohort_unscoped(sql))
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(-1);
+
+        if !cohort.contains_key(agent) {
+            let n: i64 = sqlx::query_scalar(cohort_size_sql())
+                .bind(agent)
+                .fetch_one(&pool)
+                .await
+                .unwrap_or(0);
+            cohort.insert(agent, n);
+        }
+        let rows = cohort[agent];
+        let older = (historical - current).max(0);
+
+        if current > 0 {
+            failures.push(format!(
+                "{agent}.{path}: {current} row(s) under the CURRENT prompt \
+                 disagree with the independently-held source of truth. The \
+                 field is declared Sourced, so every value should have come \
+                 from its tool. ({older} more under superseded prompts.)"
+            ));
+        } else if rows == 0 {
+            // Not clean. Unasked. The card has changed, or the agent has never
+            // run under it, so the predicate compared nothing.
+            inert += 1;
+            if historical > 0 {
+                superseded += 1;
+                println!(
+                    "  INERT      {agent}.{path} — 0 rows under the current prompt; \
+                     {historical} historical mismatch(es) under superseded \
+                     prompts. Re-run the agent to learn anything about the \
+                     prompt it has now."
+                );
+            } else {
+                println!(
+                    "  INERT      {agent}.{path} — 0 rows under the current prompt. \
+                     Zero mismatches here means nothing was compared."
+                );
+            }
+        } else if older > 0 {
+            superseded += 1;
+            ok += 1;
+            println!(
+                "  ok         {agent}.{path} — clean over {rows} row(s) under the \
+                 current prompt; {older} mismatch(es) remain under superseded \
+                 prompts (history, not a regression)"
+            );
+        } else {
+            ok += 1;
+            println!("  ok         {agent}.{path} — clean over {rows} row(s)");
+        }
+    }
+
+    println!(
+        "\n  {ok} ok · {inert} inert · {} failing · {superseded} carrying superseded history",
+        failures.len()
+    );
+    if inert > 0 {
+        // Deliberately not a failure, matching `weather_first_run_verify.sh`:
+        // an INERT check is honest about not knowing, and making it red would
+        // mean every card edit breaks the build until someone re-runs the agent.
+        // It is counted and named instead, so a tier that has proven nothing
+        // cannot be mistaken for one that has proven something.
+        println!(
+            "  INERT is not a pass. {inert} check(s) compared nothing because the \
+             agent has not run under its current prompt."
+        );
     }
 
     assert!(ran > 0, "no cross-checks declared — this tier is inert");
@@ -189,6 +281,76 @@ async fn agent_output_agrees_with_independently_held_truth() {
         "\n{} cross-check(s) failed:\n  {}\n",
         failures.len(),
         failures.join("\n  ")
+    );
+}
+
+/// The two halves of the cohort comparison must produce the same hash.
+///
+/// `ExecutionContext::card_prompt_hash` computes SHA-256 in Rust; the cohort
+/// predicate computes it in SQL. If they disagree by so much as an encoding, the
+/// predicate matches zero rows **forever** — and it fails silently, because zero
+/// matched rows renders as INERT, which is a legitimate state. A permanent INERT
+/// caused by a broken join is indistinguishable from an agent that has not run,
+/// so nothing would ever say the mechanism was dead. That is the exact shape of
+/// `forecast_agent_claims` and of the `kg_entities` count: a mechanism that looks
+/// like it is waiting rather than broken.
+///
+/// Compares over every agent that declares a prompt, not a fixture, because the
+/// risk here is a real prompt containing something a fixture would not — the
+/// weather card carries em dashes and degree signs, which is precisely where a
+/// UTF-8 mismatch would surface.
+#[tokio::test]
+#[ignore = "needs DATABASE_URL; run via scripts/grounding_contract_live.sh"]
+async fn the_prompt_hash_means_the_same_thing_in_rust_and_in_sql() {
+    use sha2::{Digest, Sha256};
+
+    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect");
+
+    let rows = sqlx::query(
+        "SELECT agent_name, system_prompt, \
+                encode(sha256(convert_to(system_prompt, 'UTF8')), 'hex') AS sql_hash \
+           FROM agents \
+          WHERE system_prompt IS NOT NULL AND system_prompt <> ''",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("read prompts");
+
+    assert!(
+        !rows.is_empty(),
+        "no agent has a system_prompt — this test would pass by comparing nothing"
+    );
+
+    let mut disagreed = Vec::new();
+    for r in &rows {
+        let name: String = r.get("agent_name");
+        let prompt: String = r.get("system_prompt");
+        let sql_hash: String = r.get("sql_hash");
+
+        let mut h = Sha256::new();
+        h.update(prompt.as_bytes());
+        let rust_hash = format!("{:x}", h.finalize());
+
+        if rust_hash != sql_hash {
+            disagreed.push(format!("{name}: rust={rust_hash} sql={sql_hash}"));
+        }
+    }
+
+    println!(
+        "  prompt hash agrees across Rust and SQL for {} of {} agent prompt(s)",
+        rows.len() - disagreed.len(),
+        rows.len()
+    );
+    assert!(
+        disagreed.is_empty(),
+        "the cohort predicate would match nothing for {} agent(s):\n  {}",
+        disagreed.len(),
+        disagreed.join("\n  ")
     );
 }
 
@@ -671,4 +833,31 @@ async fn the_weather_checks_are_live_or_say_they_are_inert() {
          station. The station is the single largest error source in these \
          markets, so a corpus that never records it cannot be checked at all."
     );
+
+    // ── 4. LIVE on the corpus is not the same as LIVE on the CURRENT card ──
+    //
+    // Reported here because otherwise this test and the cross-check run read as
+    // a contradiction: "LIVE — 14 structured documents" beside "INERT — 0 rows
+    // under the current prompt". Both are true and they answer different
+    // questions. This test asks whether the predicates have anything to bite on;
+    // the cohort asks whether any of it was produced by the prompt in force now.
+    // A reader who sees only the first will trust a green that has not been
+    // earned yet.
+    let cohort: i64 = sqlx::query_scalar(fermi::grounding_trust::cohort_size_sql())
+        .bind("weather_oracle")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0);
+    if cohort == 0 {
+        println!(
+            "       …but 0 of them were produced by the prompt this card carries \
+             NOW, so every cross-check is INERT until the agent runs again. \
+             Documents written before the hash was recorded cannot join a cohort \
+             retroactively: which prompt produced them is not a fact this \
+             platform holds, and inferring it from a deploy time would be the \
+             fabrication the whole contract exists to prevent."
+        );
+    } else {
+        println!("       {cohort} of them produced by the current prompt");
+    }
 }

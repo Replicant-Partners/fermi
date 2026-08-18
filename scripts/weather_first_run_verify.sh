@@ -249,6 +249,37 @@ else
   echo "                 → confirm with: bash scripts/grounding_contract_live.sh"
 fi
 
+# ── 5b. Was this run produced by the card the agent has NOW? ─────────
+#
+# The cross-checks read all of history, so a defect found once was found
+# forever: after the card was corrected, four consecutive clean runs still sat
+# beside nine failures written by the superseded prompt. A suite that cannot go
+# green after a fix gets ignored, and an ignored suite is worse than none —
+# the next real regression arrives as one more line in a list already red.
+#
+# So each episode records the SHA-256 of the card's declared system_prompt, and
+# a check can scope itself to rows whose hash matches the prompt in force now.
+# Edit a card and its cohort empties itself, which is correct: nothing is yet
+# known about the new prompt.
+#
+# No backfill. Which prompt produced an older episode is not a fact this
+# platform holds, and inferring it from a deploy time is exactly the
+# fabrication the contract exists to catch.
+STAMPED=$(q "SELECT count(*) FROM episodes e JOIN agents a ON a.agent_id=e.agent_id
+              WHERE a.agent_name='$AGENT' AND e.created_at >= '$SINCE'
+                AND e.context ? 'card_prompt_hash'")
+COHORT=$(q "SELECT count(*) FROM episodes e JOIN agents a ON a.agent_id=e.agent_id
+             WHERE a.agent_name='$AGENT' AND e.created_at >= '$SINCE'
+               AND e.context->>'card_prompt_hash'
+                   = encode(sha256(convert_to(a.system_prompt,'UTF8')),'hex')")
+if [[ "${STAMPED:-0}" == "0" ]]; then
+  say SILENT "5b. prompt hash recorded" "$EPISODES run(s), none carrying card_prompt_hash — the binary predates the stamp, or this path does not build episodes through agent_output_to_episode"
+elif [[ "${COHORT:-0}" == "0" ]]; then
+  say FAIL "5b. run matches current card" "$STAMPED run(s) stamped, 0 matching the prompt the card carries now — the card changed after these ran, or the Rust and SQL hashes disagree (see the_prompt_hash_means_the_same_thing_in_rust_and_in_sql)"
+else
+  say OK "5b. run matches current card" "$COHORT of $STAMPED stamped run(s) produced by the current prompt — cross-checks on them are LIVE, not inert"
+fi
+
 # ── 6. Did routing reach the weather agent? ──────────────────────────
 # `domain_specialist` is a match over four domains and climate is not one, so
 # every driver fell to macro_forecaster. The DeclaredSpecialist rung fixes it;

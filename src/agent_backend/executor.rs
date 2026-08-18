@@ -72,6 +72,45 @@ impl ExecutionContext {
             Some(self.credentials.source_for(provider).as_str().to_string()),
         )
     }
+
+    /// `md5` of the card's declared system prompt, for stamping onto
+    /// `AgentMetadata` so a cross-check can tell which prompt produced a row.
+    ///
+    /// Hashes `agent_card.system_prompt` — the card's own value as RESOLVED
+    /// server-side for this run — and deliberately not the fully assembled
+    /// system message. `LlmExecutor::build_system_prompt` appends to the card's
+    /// text, so hashing the assembled string would produce a value that could
+    /// never equal `md5(agents.system_prompt)` and the cohort comparison would
+    /// match nothing while looking like it worked.
+    ///
+    /// Resolved rather than caller-supplied is the load-bearing part: it is the
+    /// card the executor actually ran, not a claim about it. That distinction is
+    /// exactly what `stamp_invocation` got wrong when it filed the caller's
+    /// assertion about input binding as fact.
+    ///
+    /// `None` when the card declares no prompt, which is honest — such a run is
+    /// steered by an executor default, so there is no card text to attribute it
+    /// to, and it must not join any card's cohort.
+    ///
+    /// SHA-256, hex, lowercase. `sha2` is already a direct dependency and
+    /// Postgres has `sha256()` natively, so the comparison needs no new crate on
+    /// either side. The SQL counterpart is exactly:
+    ///
+    /// ```sql
+    /// encode(sha256(convert_to(a.system_prompt, 'UTF8')), 'hex')
+    /// ```
+    ///
+    /// `convert_to(..., 'UTF8')` matters: `sha256` takes `bytea`, and letting
+    /// the server pick an encoding would make the hash depend on database
+    /// settings rather than on the prompt.
+    pub fn card_prompt_hash(&self) -> Option<String> {
+        use sha2::{Digest, Sha256};
+        self.agent_card.system_prompt.as_deref().map(|p| {
+            let mut h = Sha256::new();
+            h.update(p.as_bytes());
+            format!("{:x}", h.finalize())
+        })
+    }
 }
 
 /// A record of a single tool invocation during agentic execution
@@ -208,6 +247,34 @@ pub struct AgentMetadata {
     /// as `None`.
     pub agent_version_id: Option<uuid::Uuid>,
     pub agent_version_number: Option<i32>,
+    /// `md5` of the card's declared system prompt, as resolved for this run.
+    ///
+    /// ── Why a content hash and not `agent_version_id` ──────────────────
+    ///
+    /// `agent_versions` already exists, holds `system_prompt`, and has 46
+    /// rows, and the two fields above were added to carry its id here. Both
+    /// paths are dead: **3,391 episodes, 0 carrying either field**, and
+    /// `weather_oracle` — whose prompt has been edited repeatedly — has **0
+    /// version rows**. `calibration.rs` already notes that per-version Brier
+    /// needs `agent_version_id` and cannot have it. So versioning would have to
+    /// be revived at both ends *and* given a policy about who cuts a version
+    /// when a card file changes, before it could answer one question.
+    ///
+    /// A hash needs no policy and cannot drift, because it is derived from the
+    /// content rather than maintained alongside it. Nobody has to remember to
+    /// bump it.
+    ///
+    /// ── Why the executor sets it ───────────────────────────────────────
+    ///
+    /// This is the hash of the prompt that was **sent**, taken where it is
+    /// sent. Hashing the card at the handler would record what a caller
+    /// believed the card said — the same defect `stamp_invocation` had when it
+    /// filed the caller's claim about input binding as fact.
+    ///
+    /// It exists so a cross-check can ask "was this row produced by the prompt
+    /// this agent has now?", which is the difference between a suite that detects
+    /// a defect and one that can also confirm a fix.
+    pub card_prompt_hash: Option<String>,
 }
 
 /// Execution error

@@ -421,6 +421,7 @@ impl AgentExecutor for LLMExecutor {
                 failure_reason,
                 funding_principal: funding.0,
                 credential_source: funding.1,
+                card_prompt_hash: context.card_prompt_hash(),
                 ..Default::default()
             },
             tool_invocations: vec![],
