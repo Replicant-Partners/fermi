@@ -180,6 +180,7 @@ pub mod pipeline;
 // and duplicates silently diverge on cost basis, provider attribution and
 // failure provenance.
 pub mod calibration;
+pub mod intentions;
 pub mod episodes;
 
 // Re-export main types

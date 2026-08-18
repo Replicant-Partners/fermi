@@ -1209,6 +1209,9 @@ async fn run_migrations(db: &PgPool) {
         // `fermi::attribution::roster`, which now runs on the write path so
         // this cannot re-accumulate.
         "migrations/209_resolve_agents_used_prefixes.sql",
+        // 210 — Loop 3 Stage 0. `intention_coordinator`'s six tools were all
+        // phantom, so prospective coordination has never run.
+        "migrations/210_workspace_intentions.sql",
     ];
 
     // Bootstrap the ledger before anything is recorded into it.

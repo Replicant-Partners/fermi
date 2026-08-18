@@ -1201,7 +1201,48 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               judgement about the chain: did the station stay consistent, does \
               the edge exceed the calibration uncertainty, were the corrections \
               measured or assumed, does it survive a 40% wider spread.",
-        cross_check_sql: None,
+        // The flags are judgements, but two of them are judgements the document
+        // CONTRADICTS on its own numbers, and that is checkable without any
+        // external truth.
+        //
+        // `centre_gap_within_predictive_sd` is the guard for the failure class
+        // both production forecasts fell into. If the ensemble centre and the
+        // market-implied centre differ by more than the measured predictive sd,
+        // every bucket in the ladder is one bet on the centre rather than
+        // independent evidence about a bucket — London 2026-08-15 had a 0.95C
+        // gap against a 0.908C sd. The agent is asked to notice; this fires when
+        // it claims to have noticed and its own numbers say otherwise. The
+        // market-implied centre is not in the document, so the proxy is the
+        // probability disagreement it produces: a calibrated probability more
+        // than 25 points from the market's implied probability cannot be a
+        // bucket-level edge, and asserting centre consistency alongside it is
+        // self-contradictory.
+        //
+        // `edge_exceeds_calibration_uncertainty` is the arithmetic one: an edge
+        // smaller than the stated uncertainty is not an edge, and claiming both
+        // is a contradiction inside one document. `uncertainty_pp` is in
+        // percentage points and the probabilities are fractions, hence the /100.
+        //
+        // Both guarded by `jsonb_typeof`, so an absent field drops the row
+        // rather than raising — the same discipline as every check above.
+        cross_check_sql: Some(
+            "SELECT count(*)::bigint AS mismatches \
+               FROM episodes e \
+               JOIN agents a ON a.agent_id = e.agent_id, \
+               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
+                                    THEN e.response_text::jsonb END AS doc) j \
+              WHERE a.agent_name = 'weather_oracle' \
+                AND jsonb_typeof(j.doc #> '{stages,calibration,calibrated_probability}') = 'number' \
+                AND jsonb_typeof(j.doc #> '{stages,pricing,implied_probability}') = 'number' \
+                AND ( ( j.doc #> '{challenge,centre_gap_within_predictive_sd}' = 'true'::jsonb \
+                        AND abs( (j.doc #>> '{stages,calibration,calibrated_probability}')::numeric \
+                               - (j.doc #>> '{stages,pricing,implied_probability}')::numeric ) > 0.25 ) \
+                   OR ( j.doc #> '{challenge,edge_exceeds_calibration_uncertainty}' = 'true'::jsonb \
+                        AND jsonb_typeof(j.doc #> '{final_probability_uncertainty_pp}') = 'number' \
+                        AND abs( (j.doc #>> '{stages,calibration,calibrated_probability}')::numeric \
+                               - (j.doc #>> '{stages,pricing,implied_probability}')::numeric ) \
+                            < (j.doc #>> '{final_probability_uncertainty_pp}')::numeric / 100.0 ) )",
+        ),
     },
     FieldContract {
         agent_id: "weather_oracle",

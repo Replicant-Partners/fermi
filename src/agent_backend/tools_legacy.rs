@@ -273,6 +273,165 @@ fn builtin_tools() -> Vec<BuiltinToolDef> {
 
 fn builtin_tools_core() -> Vec<BuiltinToolDef> {
     vec![
+        // ── Loop 3 Stage 0 — prospective coordination (mig-210) ──
+        //
+        // All six were declared on `intention_coordinator`'s card with full
+        // schemas and no dispatch arm, so the agent has never functioned.
+        // Descriptions and schemas below are the card's own, kept verbatim so
+        // the two cannot disagree.
+        BuiltinToolDef {
+            name: "declare_intention",
+            description: "Register an agent's planned next action in the workspace intention map. Accepts agent_id, action_type, tool (optional), description, and expected_output.",
+            input_schema: json!({
+                            "type": "object",
+                            "properties": {
+                                            "agent_id": {
+                                                            "type": "string"
+                                            },
+                                            "action_type": {
+                                                            "type": "string",
+                                                            "enum": [
+                                                                            "tool_call",
+                                                                            "research",
+                                                                            "synthesis",
+                                                                            "writing",
+                                                                            "review",
+                                                                            "idle"
+                                                            ]
+                                            },
+                                            "tool": {
+                                                            "type": "string"
+                                            },
+                                            "description": {
+                                                            "type": "string"
+                                            },
+                                            "expected_output": {
+                                                            "type": "string"
+                                            },
+                                            "ttl_seconds": {
+                                                            "type": "integer",
+                                                            "default": 300
+                                            }
+                            },
+                            "required": [
+                                            "agent_id",
+                                            "action_type",
+                                            "description"
+                            ]
+            }),
+            requires_workspace: true,
+            ..Default::default()
+        },
+        BuiltinToolDef {
+            name: "check_conflicts",
+            description: "Check all active intentions for conflicts. Returns a list of conflict signals (CLEAR, OVERLAP_WARNING, CONFLICT_ALERT, DEPENDENCY_WAIT, BUDGET_GATE) with explanations.",
+            input_schema: json!({
+                            "type": "object",
+                            "properties": {
+                                            "agent_id": {
+                                                            "type": "string",
+                                                            "description": "Optional: check conflicts for a specific agent only"
+                                            }
+                            }
+            }),
+            requires_workspace: true,
+            ..Default::default()
+        },
+        BuiltinToolDef {
+            name: "get_intention_map",
+            description: "Get the current intention map showing all active agent intentions, their statuses, and any flagged conflicts.",
+            input_schema: json!({
+                            "type": "object",
+                            "properties": {}
+            }),
+            requires_workspace: true,
+            ..Default::default()
+        },
+        BuiltinToolDef {
+            name: "clear_intention",
+            description: "Mark an agent's intention as completed or cancelled. Removes it from active conflict checking.",
+            input_schema: json!({
+                            "type": "object",
+                            "properties": {
+                                            "agent_id": {
+                                                            "type": "string"
+                                            },
+                                            "status": {
+                                                            "type": "string",
+                                                            "enum": [
+                                                                            "completed",
+                                                                            "cancelled",
+                                                                            "superseded"
+                                                            ]
+                                            }
+                            },
+                            "required": [
+                                            "agent_id",
+                                            "status"
+                            ]
+            }),
+            requires_workspace: true,
+            ..Default::default()
+        },
+        BuiltinToolDef {
+            name: "suggest_differentiation",
+            description: "When an overlap is detected, suggest how two agents can differentiate their work to avoid duplication. Uses context from both intentions.",
+            input_schema: json!({
+                            "type": "object",
+                            "properties": {
+                                            "agent_a": {
+                                                            "type": "string"
+                                            },
+                                            "agent_b": {
+                                                            "type": "string"
+                                            }
+                            },
+                            "required": [
+                                            "agent_a",
+                                            "agent_b"
+                            ]
+            }),
+            requires_workspace: true,
+            ..Default::default()
+        },
+        BuiltinToolDef {
+            name: "emit_coherence_signal",
+            description: "Push an IntentionAligns or IntentionConflicts relation to the coherence system for incorporation into TEC evaluation.",
+            input_schema: json!({
+                            "type": "object",
+                            "properties": {
+                                            "relation_type": {
+                                                            "type": "string",
+                                                            "enum": [
+                                                                            "IntentionAligns",
+                                                                            "IntentionConflicts"
+                                                            ]
+                                            },
+                                            "agent_a": {
+                                                            "type": "string"
+                                            },
+                                            "agent_b": {
+                                                            "type": "string"
+                                            },
+                                            "strength": {
+                                                            "type": "number",
+                                                            "minimum": 0,
+                                                            "maximum": 1
+                                            },
+                                            "justification": {
+                                                            "type": "string"
+                                            }
+                            },
+                            "required": [
+                                            "relation_type",
+                                            "agent_a",
+                                            "agent_b",
+                                            "strength"
+                            ]
+            }),
+            requires_workspace: true,
+            ..Default::default()
+        },
         // ── FPL simulation (in-process; also exposed over MCP) ──
         BuiltinToolDef {
             name: "fermi_execute_fpl",
@@ -2560,6 +2719,12 @@ impl ToolRegistry {
             }
             "fermi_execute_fpl" => execute_fermi_execute_fpl(input).await,
             "fermi_sensitivity_analysis" => execute_fermi_sensitivity_analysis(input).await,
+            "declare_intention" => execute_declare_intention(input, ctx).await,
+            "check_conflicts" => execute_check_conflicts(input, ctx).await,
+            "get_intention_map" => execute_get_intention_map(ctx).await,
+            "clear_intention" => execute_clear_intention(input, ctx).await,
+            "suggest_differentiation" => execute_suggest_differentiation(input, ctx).await,
+            "emit_coherence_signal" => execute_emit_coherence_signal(input, ctx).await,
 
             // Fallthrough: a name no builtin claims may be a remote MCP
             // tool this agent's card authorised. Checked last on purpose
@@ -3000,6 +3165,445 @@ async fn execute_fermi_sensitivity_analysis(input: &serde_json::Value) -> Result
         },
         "drivers": drivers,
         "top_driver": analysis.ranked_drivers.first(),
+    }))
+    .map_err(|e| format!("Serialization error: {e}"))
+}
+
+
+// ─── Loop 3 Stage 0 — prospective coordination ─────────────────────
+//
+// All six tools below were declared on `intention_coordinator`'s card and had
+// no dispatch arm, so the agent has never functioned and Loop 3's Stage 0 has
+// never run. Detection logic is in `fermi::intentions`, unit-tested; these are
+// the load/store halves.
+//
+// State lives in `workspace_intentions` (mig-210) rather than the
+// `_coordination/intention_map.json` the card described, because several
+// agents declare at once and a git file has no concurrency story.
+
+/// Load the workspace's active intention map, joined to agent names.
+async fn load_intentions(
+    db: &sqlx::PgPool,
+    workspace_id: Uuid,
+) -> Result<Vec<crate::intentions::Intention>, String> {
+    let rows = sqlx::query(
+        "SELECT i.intention_id, i.agent_id, a.agent_name, i.action_type, i.tool,
+                i.description, i.targets, i.depends_on, i.embedding
+           FROM workspace_intentions i
+           JOIN agents a ON a.agent_id = i.agent_id
+          WHERE i.workspace_id = $1 AND i.status = 'active'
+          ORDER BY i.declared_at",
+    )
+    .bind(workspace_id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| format!("Failed to load intentions: {e}"))?;
+
+    Ok(rows
+        .iter()
+        .map(|r| crate::intentions::Intention {
+            intention_id: r
+                .try_get::<Uuid, _>("intention_id")
+                .map(|u| u.to_string())
+                .unwrap_or_default(),
+            agent_id: r
+                .try_get::<Uuid, _>("agent_id")
+                .map(|u| u.to_string())
+                .unwrap_or_default(),
+            agent_name: r.try_get("agent_name").unwrap_or_default(),
+            action_type: r.try_get("action_type").unwrap_or_default(),
+            tool: r.try_get("tool").ok(),
+            description: r.try_get("description").unwrap_or_default(),
+            targets: r.try_get("targets").unwrap_or_default(),
+            depends_on: r.try_get("depends_on").unwrap_or_default(),
+            embedding: r
+                .try_get::<Option<pgvector::Vector>, _>("embedding")
+                .ok()
+                .flatten()
+                .map(|v| v.to_vec()),
+        })
+        .collect())
+}
+
+/// Output names already completed in this workspace, so a `depends_on` entry
+/// can be judged satisfied.
+async fn produced_outputs(db: &sqlx::PgPool, workspace_id: Uuid) -> Vec<String> {
+    sqlx::query_scalar::<_, Vec<String>>(
+        "SELECT targets FROM workspace_intentions
+          WHERE workspace_id = $1 AND status = 'completed'",
+    )
+    .bind(workspace_id)
+    .fetch_all(db)
+    .await
+    .map(|rows| rows.into_iter().flatten().collect())
+    .unwrap_or_default()
+}
+
+fn intention_ctx(ctx: &ToolContext) -> Result<(Uuid, &sqlx::PgPool), String> {
+    let ws = ctx
+        .workspace_id
+        .ok_or_else(|| "intention tools must be called inside a workspace".to_string())?;
+    let db = ctx
+        .db
+        .as_ref()
+        .ok_or_else(|| "intention tools require a database context".to_string())?;
+    Ok((ws, db))
+}
+
+async fn execute_declare_intention(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let (workspace_id, db) = intention_ctx(ctx)?;
+    let agent_id = resolve_agent_id(input, "agent_id", ctx).await?;
+
+    let action_type = input
+        .get("action_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("research");
+    if !matches!(
+        action_type,
+        "tool_call" | "research" | "synthesis" | "writing" | "review" | "idle"
+    ) {
+        return Err(format!("unknown action_type: {action_type}"));
+    }
+    let description = input
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "description is required".to_string())?;
+    let tool = input.get("tool").and_then(|v| v.as_str());
+    let str_list = |key: &str| -> Vec<String> {
+        input
+            .get(key)
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let targets = str_list("targets");
+    let depends_on = str_list("depends_on");
+
+    // Embed the description so duplication detection is semantic. Populated
+    // here, on the write path — not deferred to a worker that will not do it.
+    let embedding = ctx
+        .embedder
+        .generate(description)
+        .await
+        .ok()
+        .map(pgvector::Vector::from);
+    if embedding.is_none() {
+        tracing::warn!(
+            %agent_id,
+            "could not embed intention; duplication detection degrades to \
+             resource and dependency signals for this declaration"
+        );
+    }
+
+    // One live intention per agent: supersede the previous rather than
+    // accumulating stale rows that generate phantom conflicts forever.
+    sqlx::query(
+        "UPDATE workspace_intentions
+            SET status = 'superseded', resolved_at = NOW()
+          WHERE workspace_id = $1 AND agent_id = $2 AND status = 'active'",
+    )
+    .bind(workspace_id)
+    .bind(agent_id)
+    .execute(db)
+    .await
+    .map_err(|e| format!("Failed to supersede prior intention: {e}"))?;
+
+    let intention_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO workspace_intentions
+           (workspace_id, agent_id, action_type, tool, description,
+            targets, depends_on, embedding)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         RETURNING intention_id",
+    )
+    .bind(workspace_id)
+    .bind(agent_id)
+    .bind(action_type)
+    .bind(tool)
+    .bind(description)
+    .bind(&targets)
+    .bind(&depends_on)
+    .bind(embedding)
+    .fetch_one(db)
+    .await
+    .map_err(|e| format!("Failed to declare intention: {e}"))?;
+
+    // Check immediately: an intention declared and not checked is the same as
+    // no intention at all.
+    let intentions = load_intentions(db, workspace_id).await?;
+    let produced = produced_outputs(db, workspace_id).await;
+    let conflicts = crate::intentions::detect_conflicts(
+        &intentions,
+        &produced,
+        Some(
+            &intentions
+                .iter()
+                .find(|i| i.intention_id == intention_id.to_string())
+                .map(|i| i.agent_name.clone())
+                .unwrap_or_default(),
+        ),
+    );
+
+    serde_json::to_string_pretty(&json!({
+        "intention_id": intention_id,
+        "signal": crate::intentions::overall_signal(&conflicts),
+        "conflicts": conflicts,
+        "active_intentions": intentions.len(),
+    }))
+    .map_err(|e| format!("Serialization error: {e}"))
+}
+
+async fn execute_check_conflicts(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let (workspace_id, db) = intention_ctx(ctx)?;
+    let intentions = load_intentions(db, workspace_id).await?;
+    let produced = produced_outputs(db, workspace_id).await;
+
+    // Optional filter, accepted as an agent name or id.
+    let only = match input.get("agent_id").and_then(|v| v.as_str()) {
+        Some(_) => resolve_agent_id(input, "agent_id", ctx)
+            .await
+            .ok()
+            .and_then(|id| {
+                intentions
+                    .iter()
+                    .find(|i| i.agent_id == id.to_string())
+                    .map(|i| i.agent_name.clone())
+            }),
+        None => None,
+    };
+
+    let conflicts = crate::intentions::detect_conflicts(&intentions, &produced, only.as_deref());
+    serde_json::to_string_pretty(&json!({
+        "signal": crate::intentions::overall_signal(&conflicts),
+        "conflicts": conflicts,
+        "checked": intentions.len(),
+        "note": if intentions.iter().any(|i| i.embedding.is_none()) {
+            Some("Some intentions carry no embedding; duplication detection is \
+                  incomplete for those. Resource and dependency signals are unaffected.")
+        } else { None },
+    }))
+    .map_err(|e| format!("Serialization error: {e}"))
+}
+
+async fn execute_get_intention_map(ctx: &ToolContext) -> Result<String, String> {
+    let (workspace_id, db) = intention_ctx(ctx)?;
+    let intentions = load_intentions(db, workspace_id).await?;
+    let entries: Vec<serde_json::Value> = intentions
+        .iter()
+        .map(|i| {
+            json!({
+                "agent": i.agent_name,
+                "action_type": i.action_type,
+                "tool": i.tool,
+                "description": i.description,
+                "targets": i.targets,
+                "depends_on": i.depends_on,
+                "has_embedding": i.embedding.is_some(),
+            })
+        })
+        .collect();
+    serde_json::to_string_pretty(&json!({
+        "workspace_id": workspace_id,
+        "active": entries.len(),
+        "intentions": entries,
+    }))
+    .map_err(|e| format!("Serialization error: {e}"))
+}
+
+async fn execute_clear_intention(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let (workspace_id, db) = intention_ctx(ctx)?;
+    let agent_id = resolve_agent_id(input, "agent_id", ctx).await?;
+    let status = input
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("completed");
+    if !matches!(status, "completed" | "cancelled" | "superseded") {
+        return Err(format!("unknown status: {status}"));
+    }
+
+    let n = sqlx::query(
+        "UPDATE workspace_intentions
+            SET status = $3, resolved_at = NOW()
+          WHERE workspace_id = $1 AND agent_id = $2 AND status = 'active'",
+    )
+    .bind(workspace_id)
+    .bind(agent_id)
+    .bind(status)
+    .execute(db)
+    .await
+    .map_err(|e| format!("Failed to clear intention: {e}"))?
+    .rows_affected();
+
+    serde_json::to_string_pretty(&json!({
+        "cleared": n,
+        "status": status,
+        // `completed` intentions' targets become satisfied dependencies for
+        // everyone else, so clearing is what unblocks a DEPENDENCY_WAIT.
+        "note": if status == "completed" {
+            "Targets of this intention now count as produced outputs."
+        } else {
+            "Removed from conflict checks without marking its targets produced."
+        },
+    }))
+    .map_err(|e| format!("Serialization error: {e}"))
+}
+
+async fn execute_suggest_differentiation(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let (workspace_id, db) = intention_ctx(ctx)?;
+    let a_name = input
+        .get("agent_a")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "agent_a is required".to_string())?;
+    let b_name = input
+        .get("agent_b")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "agent_b is required".to_string())?;
+
+    let intentions = load_intentions(db, workspace_id).await?;
+    let find = |n: &str| intentions.iter().find(|i| i.agent_name == n);
+    let (Some(a), Some(b)) = (find(a_name), find(b_name)) else {
+        return Err(format!(
+            "both agents must have an active intention; have: {}",
+            intentions
+                .iter()
+                .map(|i| i.agent_name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    };
+
+    // Report the overlap; do not prescribe the split.
+    //
+    // The card's own constraint is "structural, not prescriptive: name the
+    // pattern, do not prescribe the fix", and it is right for a reason beyond
+    // style — this tool has the two descriptions and nothing about the
+    // workspace's goal, so any concrete division of labour it invented would be
+    // a guess dressed as advice. The agents have the context; give them the
+    // facts.
+    let shared_targets: Vec<&String> = a
+        .targets
+        .iter()
+        .filter(|t| b.targets.contains(t))
+        .collect();
+    let similarity = match (&a.embedding, &b.embedding) {
+        (Some(_), Some(_)) => crate::intentions::detect_conflicts(
+            &[a.clone(), b.clone()],
+            &[],
+            None,
+        )
+        .into_iter()
+        .find_map(|c| match c {
+            crate::intentions::Conflict::Duplication { similarity, .. } => Some(similarity),
+            _ => None,
+        }),
+        _ => None,
+    };
+
+    serde_json::to_string_pretty(&json!({
+        "agent_a": {"name": a.agent_name, "intent": a.description, "targets": a.targets},
+        "agent_b": {"name": b.agent_name, "intent": b.description, "targets": b.targets},
+        "shared_targets": shared_targets,
+        "description_similarity": similarity,
+        "guidance": "These two intentions overlap on the axes above. Decide the                      split yourselves — you have the workspace goal and this tool                      does not. State the division explicitly in the conversation                      so the other agent can rely on it.",
+    }))
+    .map_err(|e| format!("Serialization error: {e}"))
+}
+
+async fn execute_emit_coherence_signal(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let (workspace_id, db) = intention_ctx(ctx)?;
+    let relation_type = input
+        .get("relation_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if !matches!(relation_type, "IntentionAligns" | "IntentionConflicts") {
+        return Err(
+            "relation_type must be IntentionAligns or IntentionConflicts".to_string(),
+        );
+    }
+    let strength = input
+        .get("strength")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.5)
+        .clamp(0.0, 1.0);
+    let rationale = input.get("rationale").and_then(|v| v.as_str());
+
+    let resolve = |key: &'static str| async move {
+        let v = input.get(key).and_then(|x| x.as_str()).unwrap_or("");
+        sqlx::query_scalar::<_, Uuid>("SELECT agent_id FROM agents WHERE agent_name = $1")
+            .bind(v)
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten()
+            .ok_or_else(|| format!("{key} does not name a known agent: {v}"))
+    };
+    let agent_a = resolve("agent_a").await?;
+    let agent_b = resolve("agent_b").await?;
+
+    sqlx::query(
+        "INSERT INTO workspace_intention_signals
+           (workspace_id, relation_type, agent_a, agent_b, strength, rationale)
+         VALUES ($1,$2,$3,$4,$5,$6)",
+    )
+    .bind(workspace_id)
+    .bind(relation_type)
+    .bind(agent_a)
+    .bind(agent_b)
+    .bind(strength)
+    .bind(rationale)
+    .execute(db)
+    .await
+    .map_err(|e| format!("Failed to record signal: {e}"))?;
+
+    // Post it into the conversation as well, because that is what actually
+    // reaches coherence: `ConversationObserver::observe` builds the TEC graph
+    // from workspace messages. A row in a table nothing reads would be the
+    // deferred-work pattern again.
+    let a_name = input.get("agent_a").and_then(|v| v.as_str()).unwrap_or("?");
+    let b_name = input.get("agent_b").and_then(|v| v.as_str()).unwrap_or("?");
+    let body = match rationale {
+        Some(r) => format!("**{relation_type}** — {a_name} ↔ {b_name} (strength {strength:.2}): {r}"),
+        None => format!("**{relation_type}** — {a_name} ↔ {b_name} (strength {strength:.2})"),
+    };
+    let posted = sqlx::query(
+        "INSERT INTO workspace_messages
+           (message_id, workspace_id, sender_type, sender_id, sender_name, content, message_type)
+         VALUES (gen_random_uuid(), $1, 'system', 'intention_coordinator',
+                 'Intention Coordinator', $2, 'intention_signal')",
+    )
+    .bind(workspace_id)
+    .bind(&body)
+    .execute(db)
+    .await;
+    if let Err(e) = &posted {
+        tracing::warn!(error = %e, "intention signal recorded but not posted to the conversation");
+    }
+
+    serde_json::to_string_pretty(&json!({
+        "relation_type": relation_type,
+        "strength": strength,
+        "recorded": true,
+        "posted_to_conversation": posted.is_ok(),
     }))
     .map_err(|e| format!("Serialization error: {e}"))
 }

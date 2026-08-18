@@ -435,6 +435,39 @@ mod tests {
         assert_eq!(result, Some((1.10, 1.25, 1.45)));
     }
 
+    // ── the other half of the weather claim chain ────────────────────────
+    //
+    // `agent_backend::llm_executor` proves the weather document yields a summary
+    // carrying the multiplier line. This proves that summary yields a triple.
+    // The literal is byte-identical to `WEATHER_MULTIPLIER_LINE` there, on
+    // purpose: the seam between the two halves is where a format fix silently
+    // fails, and each half passing its own test proves nothing about the join.
+    #[test]
+    fn the_weather_summary_yields_a_multiplier_triple() {
+        let summary = "EGLC bucket 32 on 2026-08-14, lead 1. Measured predictive sd 0.909C, \
+                       no significant station bias. [MULTIPLIER] Suggested p50: 1.15 \
+                       (p5: 1.05, p95: 1.28) \u{2014} ensemble centred 1.9C above the bucket floor";
+        assert_eq!(
+            extract_multiplier(summary),
+            Some((1.05, 1.15, 1.28)),
+            "the summary weather_oracle now emits must parse, or the claim path \
+             stays dark exactly as it did for its first 12 runs"
+        );
+    }
+
+    #[test]
+    fn a_bare_json_multiplier_field_is_not_a_claim() {
+        // What the card declared before, and why zero claims were recorded: a
+        // JSON number is invisible to a regex over prose. Kept as a test so the
+        // next person does not "simplify" the card back to it.
+        let structured_only = r#"{"multiplier": 1.15, "final_probability": 0.152}"#;
+        assert_eq!(
+            extract_multiplier(structured_only),
+            None,
+            "a `\"multiplier\": 1.15` field is not the orchestra's wire format"
+        );
+    }
+
     /// The regression this module's rewrite exists to prevent.
     ///
     /// `weather_market_analyst` contains the word `analyst`, so the old

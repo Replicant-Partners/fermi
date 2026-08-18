@@ -693,6 +693,140 @@ struct EvidenceData {
 
 #[cfg(test)]
 mod tests {
+    // ── the weather_oracle output contract ───────────────────────────────
+    //
+    // `weather_oracle` ran 12 times and every episode digest came back
+    // `summary: null, key_findings: []`. Not truncation — this function reads a
+    // fixed vocabulary, and the card's declared output matched none of it:
+    // no `summary` key at all, and `key_findings` as objects of
+    // `{label, value, evidence}` where the extractor reads strings or objects
+    // keyed on species/name/relationship. Both were silently dropped, so
+    // `agent_params_hook` had no string to scan and no claim could ever be
+    // recorded for the agent.
+    //
+    // The literal below is the shape the card now specifies. If this test fails,
+    // the claim path is broken again and the failure is silent in production.
+
+    /// The exact multiplier line the Fermi orchestra parses. Shared with the
+    /// `extract_multiplier` test in `handlers::workspace::agent_params_hook` so
+    /// the two halves of the chain are asserted against the same bytes.
+    const WEATHER_MULTIPLIER_LINE: &str =
+        "[MULTIPLIER] Suggested p50: 1.15 (p5: 1.05, p95: 1.28) \u{2014} ensemble centred 1.9C above the bucket floor";
+
+    fn weather_oracle_document() -> String {
+        serde_json::json!({
+            "summary": format!(
+                "EGLC bucket 32 on 2026-08-14, lead 1. Measured predictive sd 0.909C, \
+                 no significant station bias. {WEATHER_MULTIPLIER_LINE}"
+            ),
+            "proposition": "The published integer high at London City Airport on 2026-08-14 is 32",
+            "settlement_target": {
+                "station": "EGLC", "station_name": "London City Airport",
+                "variable": "high_temp", "local_date": "2026-08-14",
+                "timezone": "Europe/London", "unit": "celsius",
+                "bucket_lo": 31.5, "bucket_hi": 32.5,
+                "resolution_source": "weather_underground"
+            },
+            "stages": {
+                "forecast": { "agent": "weather_ensemble_forecaster", "n_members": 143,
+                              "lead_days": 1, "ensemble_mean": 33.4, "ensemble_sd": 1.167,
+                              "raw_probability": 0.133, "summary": "4 of 5 models returned" },
+                "calibration": { "agent": "weather_calibrator", "predictive_sd": 0.909,
+                                 "station_bias": 0.0, "calibrated_probability": 0.152,
+                                 "uncertainty_pp": 2.1, "climatology_base_rate": 0.03,
+                                 "brier_skill_score": 0.41, "sd_was_measured": true,
+                                 "summary": "121 verifying days" },
+                "pricing": { "agent": "weather_market_analyst", "implied_probability": 0.135,
+                             "ev_per_share_maker": 0.004, "ev_per_share_taker": -0.013,
+                             "book_tradeable": true, "summary": "edge does not survive taker fee" }
+            },
+            "challenge": {
+                "station_consistent_across_stages": true,
+                "edge_exceeds_calibration_uncertainty": false,
+                "corrections_were_measured_not_assumed": true,
+                "robust_to_40pct_wider_spread": true,
+                "centre_gap_within_predictive_sd": true,
+                "dominant_uncertainty": "meteorology", "issues_found": []
+            },
+            "edge_type": "calibration",
+            "final_probability": 0.152,
+            "final_probability_uncertainty_pp": 2.1,
+            "recommendation": { "action": "no_trade", "limit_price": 0.0, "stake_usd": 0.0,
+                                "reasoning": "1.7pp edge does not clear the 2.5% taker fee" },
+            "key_findings": [
+                "[BASE RATE] 3.0% trend-adjusted, ERA5 30-year window, n=330",
+                "[ENSEMBLE] 143 members across 4 models, mean 33.4C, sd 1.167C",
+                "[CALIBRATION] predictive sd 0.909C, MEASURED over 121 verifying days",
+                "[SETTLEMENT RISK] EGLC not Heathrow; WU Daily Observations table is primary",
+                WEATHER_MULTIPLIER_LINE
+            ],
+            "multiplier": 1.15,
+            "falsifiers": ["a settled value of 33 or above falsifies the bucket"],
+            "member_failures": [],
+            "confidence": "medium"
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn the_weather_document_yields_a_summary_and_readable_findings() {
+        let (summary, findings) = extract_summary_from_json_contract(&weather_oracle_document());
+
+        // 1. A summary at all. This was `None` for all 12 production runs.
+        let summary = summary.expect(
+            "no summary extracted — the card must declare a top-level `summary` \
+             key or the episode digest is empty and no claim can be recorded",
+        );
+
+        // 2. Carrying the multiplier line, because that is the only channel
+        //    `agent_params_hook::extract_multiplier` reads.
+        assert!(
+            summary.contains("[MULTIPLIER] Suggested p50:"),
+            "summary must carry the multiplier line; got: {summary}"
+        );
+
+        // 3. Findings as STRINGS. Objects of {label, value, evidence} produced
+        //    an empty vec, which is what happened before.
+        assert_eq!(
+            findings.len(),
+            5,
+            "expected the five labelled findings as strings, got {findings:?}"
+        );
+        for label in [
+            "[BASE RATE]",
+            "[ENSEMBLE]",
+            "[CALIBRATION]",
+            "[SETTLEMENT RISK]",
+            "[MULTIPLIER]",
+        ] {
+            assert!(
+                findings.iter().any(|f| f.starts_with(label)),
+                "no finding opens with {label}: {findings:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_old_object_shaped_findings_would_still_be_dropped() {
+        // The regression guard. Proves the previous shape genuinely produced
+        // nothing, so the fix above is load-bearing rather than cosmetic.
+        let old_shape = serde_json::json!({
+            "final_probability": 0.152,
+            "multiplier": 1.15,
+            "key_findings": [
+                { "label": "MULTIPLIER", "value": "1.15", "evidence": "ensemble" }
+            ]
+        })
+        .to_string();
+        let (summary, findings) = extract_summary_from_json_contract(&old_shape);
+        assert!(summary.is_none(), "no `summary` key means no summary");
+        assert!(
+            findings.is_empty(),
+            "objects keyed label/value/evidence are unreadable here, which is \
+             why 12 episodes recorded nothing: {findings:?}"
+        );
+    }
+
     use super::*;
 
     fn mk_response(text: &str) -> ClaudeResponse {

@@ -258,6 +258,15 @@ pub const SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("anomaly_events", "resolved_at"),
     ("anomaly_events", "kind"),
     ("anomaly_events", "severity"),
+    // ── Loop 3 Stage 0 (mig-210) ───────────────────────────────────
+    ("workspace_intentions", "workspace_id"),
+    ("workspace_intentions", "agent_id"),
+    ("workspace_intentions", "status"),
+    ("workspace_intentions", "targets"),
+    ("workspace_intentions", "depends_on"),
+    ("workspace_intentions", "embedding"),
+    ("workspace_intention_signals", "workspace_id"),
+    ("workspace_intention_signals", "relation_type"),
     // ── Loop health panel (GET /api/observatory/agents/:id/loops) ───────
     //
     // The `detected_at` incident above was not specific to Loop 2 — that row

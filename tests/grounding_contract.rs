@@ -547,7 +547,14 @@ async fn the_weather_checks_are_live_or_say_they_are_inert() {
                              "climatology_base_rate": -0.2 },
             "pricing":     { "implied_probability": 2.0, "book_tradeable": false }
         },
+        // 1.4 vs 2.0 is a 60-point disagreement, so asserting centre
+        // consistency contradicts the document; and 60 points of edge is not
+        // below 5pp of uncertainty, so that predicate needs its own violator —
+        // supplied by the large uncertainty below.
+        "challenge": { "centre_gap_within_predictive_sd": true,
+                       "edge_exceeds_calibration_uncertainty": true },
         "final_probability": 1.9,
+        "final_probability_uncertainty_pp": 250.0,
         "multiplier": 42.0,
         "recommendation": { "action": "buy_yes" }
     })
@@ -588,6 +595,25 @@ async fn the_weather_checks_are_live_or_say_they_are_inert() {
         (
             "multiplier",
             "(doc ->> 'multiplier')::numeric < 0.1 OR (doc ->> 'multiplier')::numeric > 10.0",
+        ),
+        // The centre guard. Claiming centre consistency while the calibrated and
+        // implied probabilities are 44 points apart is a contradiction inside one
+        // document — the London 2026-08-15 shape, where a 0.95C centre gap
+        // against a 0.908C measured sd made every bucket one bet on the centre.
+        (
+            "challenge.centre_gap",
+            "doc #> '{challenge,centre_gap_within_predictive_sd}' = 'true'::jsonb \
+             AND abs( (doc #>> '{stages,calibration,calibrated_probability}')::numeric \
+                    - (doc #>> '{stages,pricing,implied_probability}')::numeric ) > 0.25",
+        ),
+        // The arithmetic one: an edge smaller than the stated uncertainty is not
+        // an edge, and asserting both in one document is self-contradictory.
+        (
+            "challenge.edge_vs_uncertainty",
+            "doc #> '{challenge,edge_exceeds_calibration_uncertainty}' = 'true'::jsonb \
+             AND abs( (doc #>> '{stages,calibration,calibrated_probability}')::numeric \
+                    - (doc #>> '{stages,pricing,implied_probability}')::numeric ) \
+                 < (doc ->> 'final_probability_uncertainty_pp')::numeric / 100.0",
         ),
     ];
 
