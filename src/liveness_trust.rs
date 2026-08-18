@@ -128,9 +128,36 @@ pub enum Status {
 /// shrink**. The live tier additionally asserts that every entry is *still*
 /// silent, so a stale one is flagged rather than becoming a standing excuse
 /// nobody re-examines.
-pub const KNOWN_SILENT: &[(&str, &str)] = &[(
-    "semantic_rules.application_count",
-    "The write (`kg_context::record_rule_retrievals`) is new, spawned off the \
+pub const KNOWN_SILENT: &[(&str, &str)] = &[
+    (
+        "episodes.assertions",
+        "Migration 205 has deployed and the capture code is present, but NOTHING \
+         HAS RUN SINCE. The newest episode on this deployment predates the deploy \
+         by minutes, and the corroborating signal agrees: zero semantic rules \
+         carry a provenance floor either, though 203 landed in the same boot. So \
+         the 22 historical opportunities this contract counts are all older than \
+         the writer that was supposed to take them, and `Silent` is the wrong \
+         verdict — the honest one is `Inert`.\n\n\
+         That is a flaw in the opportunity predicate rather than a bug in the \
+         writer, and it is systematic: an all-time opportunity count will \
+         false-`Silent` EVERY newly deployed write path, because history is \
+         always full of chances it could not have taken. A check that fires on \
+         correct behaviour is the one that gets deleted, and the diff reads as \
+         cleanup.\n\n\
+         It cannot be fixed automatically here, and the reason is worth naming: \
+         `run_migrations` replays files on every boot and records nothing, so the \
+         platform has NO IDEA when a migration was applied. Without that, \
+         `broken` and `not yet deployed` are genuinely indistinguishable from \
+         inside the database, which is why `Silent` refuses to guess between \
+         them. A migration ledger would let the opportunity window start at the \
+         deploy and make this entry unnecessary.\n\n\
+         Remove this entry the first time any episode records an assertion — the \
+         runner asserts it is still silent, so a stale exemption is flagged \
+         rather than quietly kept.",
+    ),
+    (
+        "semantic_rules.application_count",
+        "The write (`kg_context::record_rule_retrievals`) is new, spawned off the \
      hot path, and has not yet been observed firing against this database. \
      Well over a thousand episodes belong to agents holding retrievable \
      rules — the runner prints the current figure — so the opportunity is \
@@ -139,7 +166,8 @@ pub const KNOWN_SILENT: &[(&str, &str)] = &[(
      from one nobody ever retrieved, which is the entire signal the \
      ontologist's own Loop 1 runs on. Remove this entry the first time any \
      rule reaches application_count > 0.",
-)];
+    ),
+];
 
 /// Is this sink a documented exception?
 pub fn known_silent(sink: &str) -> Option<&'static str> {
