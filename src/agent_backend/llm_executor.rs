@@ -505,6 +505,66 @@ pub(crate) enum MessageBlock {
         tool_use_id: String,
         content: String,
     },
+    /// An image travelling with a user message.
+    ///
+    /// Shape is Anthropic's: `{"type":"image","source":{"type":"base64",
+    /// "media_type":"image/jpeg","data":"..."}}`. Only this executor can carry
+    /// it — `multi_model_executor`'s OpenAI-compatible path holds `content` as a
+    /// plain `Option<String>` and would drop it, which is why
+    /// [`crate::attachments::provider_can_carry`] refuses that route rather than
+    /// letting the frame go missing.
+    #[serde(rename = "image")]
+    Image { source: ImageSource },
+}
+
+/// Base64 image payload, in the shape the Messages API expects.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ImageSource {
+    /// Always `base64`. A URL source is not used: fetching it server-side would
+    /// make the frame's availability depend on a third party at request time.
+    #[serde(rename = "type")]
+    pub source_type: String,
+    pub media_type: String,
+    pub data: String,
+}
+
+impl From<&crate::attachments::ImageAttachment> for MessageBlock {
+    fn from(a: &crate::attachments::ImageAttachment) -> Self {
+        MessageBlock::Image {
+            source: ImageSource {
+                source_type: "base64".to_string(),
+                media_type: a.media_type.clone(),
+                data: a.data_base64.clone(),
+            },
+        }
+    }
+}
+
+/// Build the user message for a prompt plus any attachments.
+///
+/// With no attachments this returns [`MessageContent::Text`], which serialises
+/// to a bare JSON string exactly as before — so every existing text-only agent
+/// produces a byte-identical request body. That is deliberate: this change
+/// touches the path every agent on the platform executes through, and the
+/// text-only case must be provably untouched.
+///
+/// The image blocks precede the text. Anthropic's guidance is that a question
+/// about an image reads better with the image first, and more importantly it
+/// means a truncated block list loses the question rather than the evidence,
+/// which fails toward an obviously-broken request instead of a confident answer
+/// about nothing.
+pub(crate) fn user_content(
+    prompt: &str,
+    attachments: &[crate::attachments::ImageAttachment],
+) -> MessageContent {
+    if attachments.is_empty() {
+        return MessageContent::Text(prompt.to_string());
+    }
+    let mut blocks: Vec<MessageBlock> = attachments.iter().map(MessageBlock::from).collect();
+    blocks.push(MessageBlock::Text {
+        text: prompt.to_string(),
+    });
+    MessageContent::Blocks(blocks)
 }
 
 /// Claude API response structure
@@ -690,6 +750,103 @@ struct EvidenceData {
 }
 
 // ─── Tests ─────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod attachment_wire_tests {
+    use super::*;
+    use crate::attachments::ImageAttachment;
+
+    fn img() -> ImageAttachment {
+        ImageAttachment::new("image/jpeg", "AAAAAAAAAAAA", Some("glasses".into()))
+    }
+
+    /// **The safety property for this change.**
+    ///
+    /// This edits the message-building path every agent on the platform runs
+    /// through. A text-only request must serialise to exactly what it did
+    /// before: a bare JSON string, not a one-element block array. If this ever
+    /// fails, every existing agent's request body changed shape.
+    #[test]
+    fn a_text_only_message_serialises_as_a_bare_string() {
+        let content = user_content("what is this?", &[]);
+        let json = serde_json::to_value(&content).expect("serialise");
+        assert_eq!(json, serde_json::json!("what is this?"));
+        assert!(json.is_string(), "text-only content became {json}");
+    }
+
+    #[test]
+    fn a_text_only_message_matches_the_previous_construction_exactly() {
+        let before = serde_json::to_value(MessageContent::Text("hello".into())).unwrap();
+        let after = serde_json::to_value(user_content("hello", &[])).unwrap();
+        assert_eq!(before, after);
+    }
+
+    /// The wire shape the Messages API documents.
+    #[test]
+    fn an_attached_frame_serialises_in_anthropics_image_shape() {
+        let content = user_content("what is this?", &[img()]);
+        let json = serde_json::to_value(&content).expect("serialise");
+        let blocks = json.as_array().expect("blocks array");
+        assert_eq!(blocks.len(), 2, "expected image + text, got {json}");
+        assert_eq!(
+            blocks[0],
+            serde_json::json!({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": "AAAAAAAAAAAA"
+                }
+            })
+        );
+        assert_eq!(
+            blocks[1],
+            serde_json::json!({ "type": "text", "text": "what is this?" })
+        );
+    }
+
+    /// Image before text, so a truncated block list loses the question rather
+    /// than the evidence — an obviously-broken request instead of a confident
+    /// answer about nothing.
+    #[test]
+    fn the_frame_precedes_the_question() {
+        let json = serde_json::to_value(user_content("q", &[img()])).unwrap();
+        let blocks = json.as_array().unwrap();
+        assert_eq!(blocks[0].get("type").unwrap(), "image");
+        assert_eq!(blocks.last().unwrap().get("type").unwrap(), "text");
+    }
+
+    #[test]
+    fn several_frames_all_survive() {
+        let two = vec![img(), ImageAttachment::new("image/png", "BBBBBBBB", None)];
+        let json = serde_json::to_value(user_content("q", &two)).unwrap();
+        let blocks = json.as_array().unwrap();
+        assert_eq!(blocks.len(), 3);
+        let types: Vec<&str> = blocks
+            .iter()
+            .map(|b| b.get("type").unwrap().as_str().unwrap())
+            .collect();
+        assert_eq!(types, vec!["image", "image", "text"]);
+        // The second frame kept its own media type rather than inheriting.
+        assert_eq!(
+            blocks[1].pointer("/source/media_type").unwrap(),
+            "image/png"
+        );
+    }
+
+    /// The block carries the payload verbatim. A silent re-encode here would be
+    /// the drop-the-frame failure wearing a different hat.
+    #[test]
+    fn the_payload_is_carried_verbatim() {
+        let a = ImageAttachment::new("image/webp", "data:image/webp;base64,QUJDRA==", None);
+        let json = serde_json::to_value(user_content("q", &[a.clone()])).unwrap();
+        assert_eq!(
+            json.pointer("/0/source/data").unwrap(),
+            &serde_json::json!(a.data_base64)
+        );
+        assert_eq!(json.pointer("/0/source/data").unwrap(), "QUJDRA==");
+    }
+}
 
 #[cfg(test)]
 mod tests {

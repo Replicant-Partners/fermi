@@ -90,6 +90,18 @@ pub mod grounding_trust;
 // that disagrees is the one nearest the writer.
 pub mod provenance_oracle;
 
+// Image attachments — what may travel with a request, and the rule that an
+// undeliverable frame is an error rather than a silent omission.
+//
+// A camera agent has a failure mode the text-only platform does not: the
+// picture goes missing and the answer still arrives. "What is this?" with no
+// image attached still gets a species name, correctly labelled
+// `model_inference` by a boundary that cannot tell an inference-from-a-photo
+// from an inference-from-nothing. Worse than genome_profiler rather than equal
+// to it: there the gap was permanent and nameable, here the same field is
+// well-sourced or evidence-free depending on whether a blob survived the trip.
+pub mod attachments;
+
 // HUD contract — the display-layer sibling of `grounding_trust`, for agents
 // whose output is read on glass in half a second rather than parsed.
 //
@@ -180,8 +192,8 @@ pub mod pipeline;
 // and duplicates silently diverge on cost basis, provider attribution and
 // failure provenance.
 pub mod calibration;
-pub mod intentions;
 pub mod episodes;
+pub mod intentions;
 
 // Re-export main types
 pub use ast::*;
