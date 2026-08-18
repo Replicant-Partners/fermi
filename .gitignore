@@ -105,3 +105,15 @@ forecasts/*.evidence.md
 
 # UI review screenshots — local visual-diff artefacts, not source.
 .ui-review/
+
+# Scratch commit-message files.
+#
+# One of these (.git-msg-3.txt) reached origin, and how it got there is worth
+# knowing: two agents were committing in this working tree at once, one ran
+# `git add` between the other's `git add` and its `git commit`, and the commit
+# took the whole index rather than the paths that were staged for it.
+#
+# Ignoring the pattern removes the sharp edge. The durable fix is to commit
+# with `git commit --only <paths>`, which commits the named paths regardless of
+# what else the index has picked up.
+.git-msg-*.txt
