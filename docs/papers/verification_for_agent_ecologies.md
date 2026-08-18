@@ -107,11 +107,30 @@ Two properties make this class worse than fabrication. It is invisible to every 
 examines data, because there is no data to examine. And **reading the code does not detect
 it** — in all five cases the writer was present and correct-looking, and the claims ledger
 carried the most thorough comments in the repository while holding nothing. The constraint
-case is the sharpest: each of the seventeen dropped the constraint and then failed to
-re-add it, because the two statements ran in separate implicit transactions through a
-connection pooler and the migration runner logged the failure and continued. **The net
-effect of every attempted repair was to delete the thing being repaired**, and three
-migrations exist for no purpose other than that repair.
+case is the sharpest, and it is also where we got the *explanation* wrong — which is
+worth more than the finding. Each of the seventeen drops the constraint and then fails to
+re-add it, and the migration runner logs the failure and continues. We wrote that the two
+statements therefore ran in separate transactions through a connection pooler, so the DROP
+committed, the ADD did not, and **the net effect of every attempted repair was to delete
+the thing being repaired.** Three migrations exist for no purpose other than that repair,
+which fitted the story neatly.
+
+The story was false, and we had not tested it. The runner hands each file *whole* to a
+single `raw_sql` call; Postgres wraps a multi-statement simple query in one implicit
+transaction; the pooler never gets the chance to split it. A failure anywhere rolls the
+entire file back, so the replay path **cannot** have deleted anything. We measured that
+only after building on the assumption for a day. The correct statement of the finding is
+narrower: the constraint was absent, seventeen migrations declared it, and **why it went
+missing is unknown.**
+
+We leave the error in rather than tidying it, because it is this paper's own thesis turned
+on its authors. A plausible mechanism, consistent with every symptom, written down
+confidently, never checked against the running system — that is the defect class of §1,
+and the reason §5.8 says reading the code proves nothing. It applies to reading one's own
+reasoning too. The lint rule that encoded the false mechanism survives with its
+justification corrected, because two narrower hazards are real: statement-at-a-time
+application via `psql -f`, which is how migrations get validated by hand, and one function
+that deliberately runs each statement as its own query.
 
 ### 1.1 Why declarations rot specifically in an ecology
 

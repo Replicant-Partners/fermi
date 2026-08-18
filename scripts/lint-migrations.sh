@@ -32,6 +32,25 @@ lint_file() {
     local content
     content=$(cat "$file")
 
+    # NOTE ON RULE 2 (2026-08-18). This rule used to say a DROP+ADD pair "will
+    # silently fail through PgBouncer". That was wrong, and it was wrong in the
+    # direction that invents a mechanism. `run_migrations` hands each file WHOLE to
+    # `sqlx::raw_sql`, which sends it as one simple query, and Postgres wraps a
+    # multi-statement simple query in a single implicit transaction — so a failure
+    # anywhere rolls the whole file back and the pooler never gets to split it.
+    # Measured, through the production pooler, in tests/migration_atomicity.rs.
+    #
+    # The rule is kept because two real hazards remain:
+    #
+    #   1. `psql -f file.sql` runs each statement in its own transaction, and that
+    #      is how migrations are validated by hand. A DROP+ADD pair really can
+    #      half-apply there.
+    #   2. `ensure_critical_schema` in src/api_server.rs runs each statement as its
+    #      own query on purpose. That path IS one transaction per statement, and it
+    #      is guarded by its own test.
+    #
+    # So: still an error, for a reason that is true.
+
     # Rule 1: BEGIN/COMMIT (explicit transactions)
     if echo "$content" | grep -qiE '^\s*(BEGIN|COMMIT)\s*;'; then
         echo -e "${RED}ERROR${NC} [$basename]: Contains BEGIN/COMMIT — PgBouncer manages transactions"
@@ -55,7 +74,7 @@ lint_file() {
     if [ "$stmt_count" -gt 1 ]; then
         # Check if it's a DROP+ADD constraint pattern
         if echo "$stripped" | grep -qi 'DROP CONSTRAINT' && echo "$stripped" | grep -qi 'ADD CONSTRAINT'; then
-            echo -e "${RED}ERROR${NC} [$basename]: DROP+ADD CONSTRAINT outside DO block — will silently fail through PgBouncer"
+            echo -e "${RED}ERROR${NC} [$basename]: DROP+ADD CONSTRAINT outside DO block — half-applies if the file is run statement-at-a-time"
             echo -e "       Wrap in: DO \$\$ BEGIN ... END \$\$;"
             ((errors++))
         else

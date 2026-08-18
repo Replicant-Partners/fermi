@@ -93,23 +93,31 @@ END $$;
 
 -- Add new tx_types
 --
--- Wrapped in a DO block 2026-08-18, and the reason is the whole
--- `credit_ledger_tx_type_check` story in miniature. As two top-level statements
--- through PgBouncer these run in separate implicit transactions with no rollback
--- between them: the DROP commits, the ADD fails against rows this list does not
--- cover, and the net effect of the migration is to DELETE the constraint. Twelve
--- migrations share that shape, which is how a CHECK declared seventeen times
--- came to exist zero times.
+-- Wrapped in a DO block 2026-08-18. The commit that did so claimed this pair
+-- half-applied through PgBouncer — DROP committing, ADD failing, constraint
+-- deleted — and offered that as the reason `credit_ledger_tx_type_check` was
+-- absent. **That claim was wrong and had not been tested.**
 --
--- Atomic, the failure becomes harmless: the ADD still fails on an established
--- database — this list predates a dozen tx_types the code now emits — but the
--- DROP rolls back with it, so the constraint migration 204 installed survives
--- instead of disappearing for the rest of the boot. The migration still reports
--- as failing, which is honest. It just no longer does damage while doing so.
+-- `run_migrations` hands each file WHOLE to `sqlx::raw_sql`, which sends it as one
+-- simple query, and Postgres wraps a multi-statement simple query in a single
+-- implicit transaction. A failure anywhere rolls the whole file back; the pooler
+-- never gets the chance to split it. Measured through the production pooler in
+-- `tests/migration_atomicity.rs`, which exists because that belief was repeated
+-- in a lint rule, in migration headers and in a paper without anyone checking it.
 --
--- The remaining eleven droppers (027, 030, 032, 035, 050, 057, 059, 061, 063,
--- 064, 075, 099) have the same defect and the same fix. This one is done because
--- the lint refuses a commit that touches the file without it.
+-- Why the DO block stays: `psql -f` runs each statement in its own transaction,
+-- and that is how these files are validated by hand. The pair genuinely can
+-- half-apply there. So the wrapping is still correct — for a smaller and true
+-- reason.
+--
+-- Why this migration still fails: its list predates a dozen tx_types the code now
+-- emits, so the ADD cannot succeed on an established database. It reports as
+-- failing, honestly, and changes nothing. Migration 204 holds the authoritative
+-- list.
+--
+-- And why `credit_ledger_tx_type_check` was missing: **still unknown.** The
+-- replay path could not have deleted it, and it was never managed by
+-- `ensure_critical_schema`. An admitted gap beats an invented mechanism.
 DO $$
 BEGIN
 ALTER TABLE credit_ledger DROP CONSTRAINT IF EXISTS credit_ledger_tx_type_check;

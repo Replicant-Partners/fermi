@@ -1134,6 +1134,7 @@ async fn run_migrations(db: &PgPool) {
         // start. See docs/ABW_VERIFICATION_RECONCILIATION.md §7.7.
         "migrations/199_episode_response_retention.sql",
         "migrations/200_coordinator_observation_provenance.sql",
+        "migrations/201_resolve_agents_used_prefixes.sql",
         // `anomaly_events.kind` gains 'grounding', so a field the agent could
         // not have sourced becomes a reportable event rather than a stderr
         // line. Also tags the 13 cached genome profiles written before the
@@ -1428,20 +1429,32 @@ async fn ensure_critical_schema(db: &PgPool) {
               created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
               revision_trigger TEXT \
           )"),
-        // Migration 150 adds 'cascade' to the legal revision_trigger
-        // values. Drop+recreate (PG can't ALTER CHECK in place).
-        ("fermi_forecast_updates.drop_old_check",
-         "ALTER TABLE public.fermi_forecast_updates \
-          DROP CONSTRAINT IF EXISTS fermi_forecast_updates_revision_trigger_check"),
-        ("fermi_forecast_updates.add_check",
-         "ALTER TABLE public.fermi_forecast_updates \
-          ADD CONSTRAINT fermi_forecast_updates_revision_trigger_check \
-          CHECK ( \
-              revision_trigger IS NULL OR revision_trigger IN ( \
-                  'initial', 'evidence_update', 'agent_correction', \
-                   'schedule_rerun', 'manual', 'bayesops_refit', 'cascade', 'cascade_undo' \
-              ) \
-          )"),
+        // Migration 150 adds 'cascade' to the legal revision_trigger values.
+        // Drop+recreate, because PG cannot ALTER a CHECK in place.
+        //
+        // ONE statement, not two. This function runs each entry as its own
+        // `sqlx::query`, which is its whole purpose — and that makes it the one
+        // place in this codebase where a DROP and an ADD really do land in
+        // separate transactions. As two entries, a failing ADD left the DROP
+        // committed and the constraint simply gone, with nothing later to restore
+        // it. The migration files do NOT have this problem: `run_migrations` hands
+        // each file to `raw_sql` as a single simple query, which Postgres wraps in
+        // one implicit transaction — measured in
+        // `tests/migration_atomicity.rs`, after the opposite was believed and
+        // written down for some time.
+        ("fermi_forecast_updates.recheck_revision_trigger",
+         "DO $$ BEGIN \
+            ALTER TABLE public.fermi_forecast_updates \
+              DROP CONSTRAINT IF EXISTS fermi_forecast_updates_revision_trigger_check; \
+            ALTER TABLE public.fermi_forecast_updates \
+              ADD CONSTRAINT fermi_forecast_updates_revision_trigger_check \
+              CHECK ( \
+                  revision_trigger IS NULL OR revision_trigger IN ( \
+                      'initial', 'evidence_update', 'agent_correction', \
+                      'schedule_rerun', 'manual', 'bayesops_refit', 'cascade', 'cascade_undo' \
+                  ) \
+              ); \
+          END $$"),
         ("fermi_forecast_updates.idx_forecast",
          "CREATE INDEX IF NOT EXISTS idx_forecast_updates_forecast \
           ON public.fermi_forecast_updates(forecast_id)"),
@@ -1508,13 +1521,15 @@ async fn ensure_critical_schema(db: &PgPool) {
         ("pending_cascades.idx_relationship",
          "CREATE INDEX IF NOT EXISTS idx_pending_cascades_relationship \
           ON public.pending_cascades(relationship_id)"),
-        ("pending_cascades.drop_old_check",
-         "ALTER TABLE public.pending_cascades \
-          DROP CONSTRAINT IF EXISTS pending_cascades_status_check"),
-        ("pending_cascades.add_check",
-         "ALTER TABLE public.pending_cascades \
-          ADD CONSTRAINT pending_cascades_status_check \
-          CHECK (status IN ('pending', 'applied', 'dismissed', 'superseded'))"),
+        // One statement, for the reason given above the revision_trigger pair.
+        ("pending_cascades.recheck_status",
+         "DO $$ BEGIN \
+            ALTER TABLE public.pending_cascades \
+              DROP CONSTRAINT IF EXISTS pending_cascades_status_check; \
+            ALTER TABLE public.pending_cascades \
+              ADD CONSTRAINT pending_cascades_status_check \
+              CHECK (status IN ('pending', 'applied', 'dismissed', 'superseded')); \
+          END $$"),
 
         ("forecast_commitments.table",
          "CREATE TABLE IF NOT EXISTS public.forecast_commitments ( \
