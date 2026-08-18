@@ -431,6 +431,38 @@ pub async fn create_forecast_handler(
         .as_ref()
         .and_then(|s| Uuid::parse_str(s).ok());
 
+    // Resolve `agents_used` to real agent identities before storing.
+    //
+    // Entries arrive carrying the FPL *statement* name, and every calibration
+    // reader joins on it as though it were an agent name. When an author names
+    // a statement after what it computes — `weather_oracle_synoptic_pattern_
+    // august_2025` — the whole forecast silently detaches from attribution.
+    // One such forecast cost five agents their credit and is why the Loop 5
+    // mechanism probe reports WIRING BROKEN.
+    //
+    // mig-170 backfilled `agent_id` into existing rows and asked for exactly
+    // this: "the forecast write path should emit agent_id into agents_used at
+    // creation time so this backfill never needs to run again."
+    let known_agents: Vec<(String, String)> =
+        sqlx::query_as("SELECT agent_name, agent_id::text FROM agents")
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
+    let incoming = req.agents_used.clone().unwrap_or_else(|| json!([]));
+    let (agents_used, resolution_log) =
+        fermi::attribution::roster::resolve_agents_used(&incoming, &known_agents);
+
+    // Say so at creation, not months later when the probe counts it.
+    let unresolved = fermi::attribution::roster::unresolved_names(&resolution_log);
+    if !unresolved.is_empty() {
+        tracing::warn!(
+            forecast_id = %forecast_id,
+            ?unresolved,
+            "agents_used entries resolve to no agent — their Brier score will \
+             never reach an agent's calibration"
+        );
+    }
+
     sqlx::query(
         // v0.10.13: dropped `$2::uuid` cast on owner_id. Post-mig-165 the
         // column is TEXT (was UUID pre-drift), so binding a text
@@ -465,7 +497,7 @@ pub async fn create_forecast_handler(
     .bind(req.iterations.unwrap_or(10000))
     .bind(req.drivers.as_ref().unwrap_or(&json!([])))
     .bind(req.evidence.as_ref().unwrap_or(&json!([])))
-    .bind(req.agents_used.as_ref().unwrap_or(&json!([])))
+    .bind(&agents_used)
     .bind(status)
     .bind(visibility)
     .bind(team_id)

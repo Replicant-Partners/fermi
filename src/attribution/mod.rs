@@ -79,6 +79,7 @@
 use std::collections::HashMap;
 
 pub mod counterfactual;
+pub mod roster;
 
 /// Exact attribution for one cooperative game (in practice: one resolved
 /// forecast).

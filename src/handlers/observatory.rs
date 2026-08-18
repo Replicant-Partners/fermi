@@ -1552,9 +1552,21 @@ const LOOP5_MECHANISM_CHECKS: &[(&str, &str, &str, &str)] = &[
     (
         "L5-M03",
         "HIGH",
-        "Scored forecasts attributable to no agent at all — the Brier exists but no agent's calibration can ever include it.",
+        "Scored forecasts whose FPL declared agents but which resolve to no agent at all — the Brier exists but no agent's calibration can ever include it. Forecasts built only from static drivers are excluded: they invoked no agent, so an empty roster is correct rather than a lost signal.",
         "SELECT count(*) FROM fermi_forecasts f
           WHERE f.status='resolved' AND f.brier_score IS NOT NULL
+            -- Only forecasts whose FPL actually declared agents. A program made
+            -- only of drivers with static distributions invoked no agent, so an
+            -- empty roster is the correct state, not a lost signal. Evidence for
+            -- the split, measured 2026-08-16: of 48 resolved+scored forecasts
+            -- whose fpl_source declares an `agent` statement, ZERO have an empty
+            -- roster; of the 7 that declare none, 5 do. The correlation is
+            -- total, so this narrowing removes false positives without hiding a
+            -- single real fault.
+            AND EXISTS (
+              SELECT 1 FROM regexp_matches(
+                       COALESCE(f.fpl_source, ''),
+                       '(^|\\n)\\s*agent\\s+[A-Za-z0-9_]+', 'g'))
             AND NOT EXISTS (
               SELECT 1 FROM jsonb_array_elements(
                        CASE WHEN jsonb_typeof(f.agents_used)='array'

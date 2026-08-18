@@ -1134,7 +1134,6 @@ async fn run_migrations(db: &PgPool) {
         // start. See docs/ABW_VERIFICATION_RECONCILIATION.md §7.7.
         "migrations/199_episode_response_retention.sql",
         "migrations/200_coordinator_observation_provenance.sql",
-        "migrations/201_resolve_agents_used_prefixes.sql",
         // `anomaly_events.kind` gains 'grounding', so a field the agent could
         // not have sourced becomes a reportable event rather than a stderr
         // line. Also tags the 13 cached genome profiles written before the
@@ -1204,6 +1203,12 @@ async fn run_migrations(db: &PgPool) {
         // Self-limiting: the body is guarded on there being a dropped column, so
         // it is a no-op forever after it succeeds once.
         "migrations/208_rebuild_creatures_reclaim_attnums.sql",
+        // 209 — repairs the agents_used elements mig-170 could not reach: FPL
+        // statement names like `weather_oracle_synoptic_pattern_august_2025`
+        // that no exact agent_name match resolves. Mirrors
+        // `fermi::attribution::roster`, which now runs on the write path so
+        // this cannot re-accumulate.
+        "migrations/209_resolve_agents_used_prefixes.sql",
     ];
 
     // Bootstrap the ledger before anything is recorded into it.

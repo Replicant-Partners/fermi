@@ -253,6 +253,22 @@ SELECT pg_temp.chk(
   $q$
     SELECT count(*) FROM fermi_forecasts f
      WHERE f.status='resolved' AND f.brier_score IS NOT NULL
+       -- Narrowed 2026-08-16. Only forecasts whose FPL actually declared an
+       -- agent. A program made only of drivers with static distributions
+       -- invoked no agent, so an empty roster is the correct state rather than
+       -- a signal with nowhere to go.
+       --
+       -- Evidence for the split: of 48 resolved+scored forecasts whose
+       -- fpl_source declares an `agent` statement, ZERO have an empty roster;
+       -- of the 7 declaring none, 5 do. The correlation is total, so this
+       -- removes false positives without hiding a real fault. Before the
+       -- narrowing this check failed the whole fleet verdict on 5 forecasts
+       -- that were behaving correctly — including one literally titled
+       -- "v0.10.12 sanity check".
+       AND EXISTS (
+         SELECT 1 FROM regexp_matches(
+                  COALESCE(f.fpl_source, ''),
+                  '(^|\n)\s*agent\s+[A-Za-z0-9_]+', 'g'))
        AND NOT EXISTS (
          SELECT 1
            FROM jsonb_array_elements(
@@ -280,7 +296,7 @@ SELECT pg_temp.chk(
        ORDER BY f.resolved_at DESC NULLS LAST LIMIT 10
     ) s
   $q$,
-  'A scored forecast that resolves to no agent is a signal with nowhere to go: the Brier exists but no agent calibration can ever include it. Usually an empty agents_used, or a roster naming agents that no longer exist under that name.'
+  'A forecast whose FPL declared agents but which resolves to no agent is a signal with nowhere to go: the Brier exists but no agent calibration can ever include it. Forecasts built only from static drivers are excluded — they invoked no agent, so an empty roster is correct. A count here means the roster was lost between composition and storage.'
 );
 
 SELECT pg_temp.chk(
