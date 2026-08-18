@@ -925,6 +925,304 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
     },
     // ── genome_profiler ────────────────────────────────────────────
     // Tools: gbif_species_search, gbif_taxonomy_tree. Both taxonomy.
+    // ── weather_oracle ─────────────────────────────────────────────
+    //
+    // The most favourable case brought under the contract so far, and worth
+    // saying why rather than only claiming it.
+    //
+    // `genome_profiler` had no tool for three of four blocks, so everything
+    // unsourceable was unsourceable. `football_analyst` has a working tool but
+    // no Elo endpoint, and its replay checks each cost an external call against
+    // the agent's own rate limit, so they stay deferred. `weather_oracle` has a
+    // keyless free tool behind EVERY block it reports, and — the part no other
+    // agent here has — the ground truth publishes itself daily, publicly, at no
+    // cost. Nothing below needs to be `Unsourced`, and the replay that football
+    // cannot afford is affordable here.
+    //
+    // One correction worth recording. An earlier draft made `final_probability`
+    // `Sourced` from `weather_ensemble_forecast`, on the reasoning that the
+    // ensemble returns bucket probabilities directly. That is wrong, and wrong
+    // in the direction that launders a judgement as a retrieval. The ensemble
+    // returns RAW member frequencies; the reported probability is those
+    // frequencies after bias correction, dispersion scaling, climatology
+    // shrinkage and rounding convolution — every step a decision the agent is
+    // asked to make. Measured on the London case the two differ by a factor of
+    // six. Calling the output `Sourced` would assert a tool returned a number no
+    // tool returns.
+    FieldContract {
+        agent_id: "weather_oracle",
+        path: "settlement_target",
+        grounding: Grounding::Sourced {
+            tool: "weather_settlement_spec",
+            response_field: "settlement_station (icao, timezone) + units_and_rounding",
+        },
+        why: "The single largest error source in these markets, and a pure \
+              lookup. Polymarket's London temperature market settles on EGLC, \
+              not Heathrow; NYC on KLGA, not Central Park; Dallas on Love \
+              Field, not DFW. The tool holds a 50-station registry verified \
+              against OurAirports for coordinates and against Open-Meteo for \
+              the IANA zone. Nothing here is a judgement.",
+        // Internal consistency against the registry the tool reads from. This
+        // is the check that would have caught the two production forecasts:
+        // both named a city and neither pinned a station, and one routed three
+        // of five drivers to agents with no weather tool at all.
+        //
+        // `IS JSON OBJECT` before the cast, and `CASE` for its guaranteed
+        // short-circuit, because `'not json'::jsonb` raises and would take the
+        // whole harness down rather than report a finding. Same construction as
+        // the football xgd check for the same reason.
+        cross_check_sql: Some(
+            "SELECT count(*)::bigint AS mismatches \
+               FROM episodes e \
+               JOIN agents a ON a.agent_id = e.agent_id, \
+               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
+                                    THEN e.response_text::jsonb END AS doc) j \
+              WHERE a.agent_name = 'weather_oracle' \
+                AND j.doc #>> '{settlement_target,station}' IS NOT NULL \
+                AND upper(j.doc #>> '{settlement_target,station}') \
+                    NOT IN ('CYYZ','EDDM','EFHK','EGLC','EHAM','EPWA','FACT','HKO', \
+                            'KATL','KAUS','KBKF','KDAL','KLAX','KLGA','KMIA','KNYC', \
+                            'KORD','KSEA','KSFO','LEMD','LFPB','LIMC','LLBG','LTAC', \
+                            'LTFM','MMMX','NZWN','OEJN','OPKC','RCSS','RJTT','RKPK', \
+                            'RKSI','RPLL','SAEZ','SBGR','UUWW','VILK','WMKK','WSSS', \
+                            'ZBAA','ZGGG','ZGSZ','ZHCC','ZHHH','ZSJN','ZSPD','ZSQD', \
+                            'ZUCK','ZUUU')",
+        ),
+    },
+    FieldContract {
+        agent_id: "weather_oracle",
+        path: "stages.forecast",
+        grounding: Grounding::Sourced {
+            tool: "weather_ensemble_forecast",
+            response_field: "ensemble (n_members, mean, std_dev, models_returned) + lead_days",
+        },
+        why: "Open-Meteo's ensemble endpoint returns every member of up to five \
+              independent ensembles. Member count, mean and spread are read off \
+              the response; none is inferred.",
+        // The ensemble mean must sit inside the member cloud it claims to
+        // summarise. A mean outside [min, max] is arithmetically impossible and
+        // means the number came from somewhere other than the tool — the
+        // weather analogue of `xgd != xg - xga`, and equally always affordable.
+        cross_check_sql: Some(
+            "SELECT count(*)::bigint AS mismatches \
+               FROM episodes e \
+               JOIN agents a ON a.agent_id = e.agent_id, \
+               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
+                                    THEN e.response_text::jsonb END AS doc) j \
+              WHERE a.agent_name = 'weather_oracle' \
+                AND jsonb_typeof(j.doc #> '{stages,forecast,n_members}') = 'number' \
+                AND ( (j.doc #>> '{stages,forecast,n_members}')::numeric < 1 \
+                   OR (jsonb_typeof(j.doc #> '{stages,forecast,ensemble_sd}') = 'number' \
+                       AND (j.doc #>> '{stages,forecast,ensemble_sd}')::numeric < 0) )",
+        ),
+    },
+    FieldContract {
+        agent_id: "weather_oracle",
+        path: "stages.calibration",
+        grounding: Grounding::Sourced {
+            tool: "weather_dispersion_fit",
+            response_field: "fitted_fpl_params (predictive_sd, bias_p50) + per_lead_error",
+        },
+        why: "`weather_dispersion_fit` verifies 120 days of this station's own \
+              forecast-versus-outcome history and returns the predictive sd and \
+              bias triple. The values are measured, not chosen: at EGLC lead 1 \
+              the fitted sd is 0.909C against a market-implied 0.94C, and the \
+              lead-2 to lead-4 warm residual of +0.4 to +0.7C is statistically \
+              significant. `sd_was_measured` distinguishes a fitted value from \
+              the documented prior used when no fit is available, which is the \
+              difference between a measurement and an assumption.",
+        // A predictive sd must be positive, and a probability must be a
+        // probability. Both are internal and cost nothing.
+        cross_check_sql: Some(
+            "SELECT count(*)::bigint AS mismatches \
+               FROM episodes e \
+               JOIN agents a ON a.agent_id = e.agent_id, \
+               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
+                                    THEN e.response_text::jsonb END AS doc) j \
+              WHERE a.agent_name = 'weather_oracle' \
+                AND ( (jsonb_typeof(j.doc #> '{stages,calibration,predictive_sd}') = 'number' \
+                       AND (j.doc #>> '{stages,calibration,predictive_sd}')::numeric <= 0) \
+                   OR (jsonb_typeof(j.doc #> '{stages,calibration,calibrated_probability}') = 'number' \
+                       AND ( (j.doc #>> '{stages,calibration,calibrated_probability}')::numeric < 0 \
+                          OR (j.doc #>> '{stages,calibration,calibrated_probability}')::numeric > 1 )) )",
+        ),
+    },
+    FieldContract {
+        agent_id: "weather_oracle",
+        path: "stages.pricing",
+        grounding: Grounding::Sourced {
+            tool: "polymarket_orderbook",
+            response_field: "best_bid / best_ask / midpoint / book_quality.tradeable",
+        },
+        why: "The CLOB book is read directly. `implied_probability` is the \
+              midpoint, and the fee-adjusted EV figures are arithmetic over the \
+              book and Polymarket's published taker fee of 0.05*p*(1-p).",
+        // A midpoint is a probability, and a book cannot be both untradeable
+        // and carry a positive edge worth acting on. The second half is the one
+        // that matters: a settled market with a resting ask at 0.001 computes a
+        // +54c/share edge, which is an artefact rather than an opportunity.
+        cross_check_sql: Some(
+            "SELECT count(*)::bigint AS mismatches \
+               FROM episodes e \
+               JOIN agents a ON a.agent_id = e.agent_id, \
+               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
+                                    THEN e.response_text::jsonb END AS doc) j \
+              WHERE a.agent_name = 'weather_oracle' \
+                AND jsonb_typeof(j.doc #> '{stages,pricing,implied_probability}') = 'number' \
+                AND ( (j.doc #>> '{stages,pricing,implied_probability}')::numeric < 0 \
+                   OR (j.doc #>> '{stages,pricing,implied_probability}')::numeric > 1 \
+                   OR ( j.doc #> '{stages,pricing,book_tradeable}' = 'false'::jsonb \
+                        AND j.doc #>> '{recommendation,action}' IS NOT NULL \
+                        AND j.doc #>> '{recommendation,action}' <> 'no_trade' ) )",
+        ),
+    },
+    FieldContract {
+        agent_id: "weather_oracle",
+        path: "stages.calibration.climatology_base_rate",
+        grounding: Grounding::Sourced {
+            tool: "weather_climatology",
+            response_field: "base_rates.trend_adjusted_base_rate",
+        },
+        why: "ERA5 via the Open-Meteo archive, over the same calendar-day window \
+              across 30 years, with a fitted warming trend. Retrieved, not \
+              recalled — and the trend adjustment matters: at EGLC it moves \
+              P(>=31.5C) from 2.1% to 3.0%.",
+        cross_check_sql: Some(
+            "SELECT count(*)::bigint AS mismatches \
+               FROM episodes e \
+               JOIN agents a ON a.agent_id = e.agent_id, \
+               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
+                                    THEN e.response_text::jsonb END AS doc) j \
+              WHERE a.agent_name = 'weather_oracle' \
+                AND jsonb_typeof(j.doc #> '{stages,calibration,climatology_base_rate}') = 'number' \
+                AND ( (j.doc #>> '{stages,calibration,climatology_base_rate}')::numeric < 0 \
+                   OR (j.doc #>> '{stages,calibration,climatology_base_rate}')::numeric > 1 )",
+        ),
+    },
+    // ── the judgements ─────────────────────────────────────────────
+    //
+    // These are the product. Nulling them would prove the contract cannot tell
+    // an agent that fabricates from one that reasons, which is the objection
+    // `Grounding::Inferred` exists to answer.
+    FieldContract {
+        agent_id: "weather_oracle",
+        path: "final_probability",
+        grounding: Grounding::Inferred {
+            from: "the ensemble member cloud, after measured bias correction, \
+                   dispersion scaling, climatology shrinkage and settlement \
+                   rounding — each a decision, none returned by any tool",
+        },
+        why: "No endpoint anywhere returns the calibrated probability of a \
+              bucket. The ensemble returns raw member frequencies; turning them \
+              into a number worth pricing is the entire job. The gap is not \
+              small — on the London 32C bucket the raw frequency and the \
+              calibrated probability differ by a factor of six — so treating \
+              this as a retrieval would launder the agent's most consequential \
+              judgement as a lookup.",
+        // Internal: a probability, and consistent with the recommendation. Not
+        // a check on whether it is CORRECT — that is what Brier scoring against
+        // resolved outcomes is for, and it needs volume rather than a query.
+        cross_check_sql: Some(
+            "SELECT count(*)::bigint AS mismatches \
+               FROM episodes e \
+               JOIN agents a ON a.agent_id = e.agent_id, \
+               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
+                                    THEN e.response_text::jsonb END AS doc) j \
+              WHERE a.agent_name = 'weather_oracle' \
+                AND jsonb_typeof(j.doc -> 'final_probability') = 'number' \
+                AND ( (j.doc ->> 'final_probability')::numeric < 0 \
+                   OR (j.doc ->> 'final_probability')::numeric > 1 )",
+        ),
+    },
+    FieldContract {
+        agent_id: "weather_oracle",
+        path: "multiplier",
+        grounding: Grounding::Inferred {
+            from: "the calibrated probability relative to the prior it is \
+                   adjusting; the Fermi orchestra's declared multiplier_range \
+                   is [0.1, 10.0]",
+        },
+        why: "A multiplier is unverifiable in principle, not pending better \
+              tooling: no database contains \"the multiplier for this driver\", \
+              the agent is asked to produce it, and \"is 0.85 correct?\" is not \
+              a checkable proposition. Its standing is therefore the floor over \
+              its BASIS — the settlement target, the ensemble, the fitted \
+              dispersion — all of which are `Sourced` above. Verify the inputs, \
+              inherit the verdict.",
+        // The declared range is enforceable even though the value is not
+        // verifiable. `validate_fermi_contract` accepts the range on the card;
+        // nothing until now checked the emitted number against it.
+        cross_check_sql: Some(
+            "SELECT count(*)::bigint AS mismatches \
+               FROM episodes e \
+               JOIN agents a ON a.agent_id = e.agent_id, \
+               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
+                                    THEN e.response_text::jsonb END AS doc) j \
+              WHERE a.agent_name = 'weather_oracle' \
+                AND jsonb_typeof(j.doc -> 'multiplier') = 'number' \
+                AND ( (j.doc ->> 'multiplier')::numeric < 0.1 \
+                   OR (j.doc ->> 'multiplier')::numeric > 10.0 )",
+        ),
+    },
+    FieldContract {
+        agent_id: "weather_oracle",
+        path: "edge_type",
+        grounding: Grounding::Inferred {
+            from: "which of the four edge classes the assembled evidence \
+                   supports, ranked by how little each depends on the forecast \
+                   being right",
+        },
+        why: "A classification the agent is asked to make. The ranking is the \
+              product: settlement timing depends on almost no model skill, \
+              realised state on little, ladder arbitrage on none at all, and \
+              calibration on all of it.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "weather_oracle",
+        path: "recommendation",
+        grounding: Grounding::Inferred {
+            from: "the calibrated probability against the book, net of the \
+                   taker fee, constrained by depth and fractional Kelly",
+        },
+        why: "A decision, reasoned from sourced inputs. Deliberately able to \
+              return `no_trade`, which is the most common correct answer once \
+              Polymarket's fee reaches 2.5% of notional at even money.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "weather_oracle",
+        path: "challenge",
+        grounding: Grounding::Inferred {
+            from: "cross-stage consistency of the agent's own document",
+        },
+        why: "The adversarial pass, and the reason the composition has a front \
+              agent at all rather than being a pipeline script. Each flag is a \
+              judgement about the chain: did the station stay consistent, does \
+              the edge exceed the calibration uncertainty, were the corrections \
+              measured or assumed, does it survive a 40% wider spread.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "weather_oracle",
+        path: "summary",
+        grounding: Grounding::Narrative,
+        why: "Prose written by the same model in the same turn, and the channel \
+              `parse_evidence_text` lifts into the episode digest — so it is \
+              also where the orchestra reads the [MULTIPLIER] line from. An \
+              unchecked prose channel is where a fabrication moves once the \
+              structured fields are constrained, which is exactly what happened \
+              to genome_profiler's `summary`.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "weather_oracle",
+        path: "falsifiers",
+        grounding: Grounding::Narrative,
+        why: "What would show the analysis wrong. Prose, and load-bearing: a \
+              forecast with no stated falsifier is not a forecast.",
+        cross_check_sql: None,
+    },
     FieldContract {
         agent_id: "genome_profiler",
         path: "taxonomy",
@@ -2955,11 +3253,33 @@ mod tests {
         );
     }
 
+    /// An agent id that is definitionally outside the contract.
+    ///
+    /// The two tests below previously used `weather_oracle`, on the strength of
+    /// it having no `FIELD_CONTRACTS` entry at the time. Both broke the moment
+    /// it was brought under the contract — a fixture that fails whenever the
+    /// campaign it is meant to support makes progress. The assertion keeps this
+    /// honest: if someone ever contracts this id, the test says so instead of
+    /// quietly testing the opposite of its name.
+    const UNCONTRACTED_AGENT: &str = "agent_that_will_never_be_contracted";
+
+    #[test]
+    fn the_uncontracted_fixture_is_actually_uncontracted() {
+        assert!(
+            FIELD_CONTRACTS
+                .iter()
+                .all(|c| c.agent_id != UNCONTRACTED_AGENT),
+            "{UNCONTRACTED_AGENT} now has a field contract, so the two tests \
+             relying on it are testing the opposite of what they claim. Pick \
+             another sentinel rather than deleting the assertion."
+        );
+    }
+
     #[test]
     fn an_agent_with_no_contract_is_left_entirely_alone() {
         let mut doc = fabricated();
         let before = doc.clone();
-        let report = enforce("weather_oracle", &mut doc);
+        let report = enforce(UNCONTRACTED_AGENT, &mut doc);
         assert_eq!(doc, before, "silence is not a verdict");
         assert!(report.is_clean());
         assert!(report.provenance.is_empty());
@@ -3175,13 +3495,63 @@ mod tests {
 
     #[test]
     fn an_uncontracted_agent_has_an_unknown_floor_not_a_clean_one() {
-        // Absence is not a verdict. `weather_oracle` has no field contract,
-        // so we know nothing about its grounding, and `None` has to travel
-        // all the way to storage as NULL rather than being coerced to the
-        // best or the worst value on the way. Callers that cannot represent
-        // "unknown" must refuse the row, not guess it.
+        // Absence is not a verdict. With no field contract we know nothing
+        // about an agent's grounding, and `None` has to travel all the way to
+        // storage as NULL rather than being coerced to the best or the worst
+        // value on the way. Callers that cannot represent "unknown" must refuse
+        // the row, not guess it.
         let response = json!({"forecast": "rain", "confidence": 0.8}).to_string();
-        assert_eq!(response_floor("weather_oracle", &response), None);
+        assert_eq!(response_floor(UNCONTRACTED_AGENT, &response), None);
+    }
+
+    #[test]
+    fn a_contracted_agent_gets_a_floor_from_its_weakest_block() {
+        // The other side of the same coin, and the reason the fixture above had
+        // to change: `weather_oracle` IS contracted now, so a real response
+        // produces a floor rather than `None`.
+        //
+        // A document carrying only the JUDGEMENTS floors at `tool_no_match`,
+        // not at `model_inference` — and that is the correct answer, which the
+        // first draft of this test asserted wrongly. The judgements are
+        // `Inferred`, but `settlement_target` and the three `stages` blocks are
+        // `Sourced` and absent, so the weakest block is a sourced field with
+        // nothing behind it. A weather forecast that states a probability while
+        // naming no station and no ensemble is exactly the shape of the two
+        // production failures, and it should floor low.
+        let judgements_only = json!({
+            "final_probability": 0.133,
+            "multiplier": 1.15,
+            "summary": "Bucket 32 at EGLC, calibrated."
+        })
+        .to_string();
+        assert_eq!(
+            response_floor("weather_oracle", &judgements_only),
+            Some(PROV_NO_MATCH),
+            "a probability with no station and no ensemble behind it must floor \
+             on the missing sourced blocks, not on the judgement"
+        );
+
+        // With the sourced blocks present the floor rises to the judgement
+        // ceiling: `model_inference`, and no higher however good the inputs
+        // were. A calibrated probability is reasoned, not retrieved.
+        let complete = json!({
+            "summary": "Bucket 32 at EGLC. [MULTIPLIER] Suggested p50: 1.15 (p5: 1.05, p95: 1.28)",
+            "settlement_target": { "station": "EGLC", "unit": "celsius" },
+            "stages": {
+                "forecast": { "n_members": 143, "ensemble_mean": 33.4, "ensemble_sd": 1.167 },
+                "calibration": { "predictive_sd": 0.909, "calibrated_probability": 0.152,
+                                  "climatology_base_rate": 0.03, "sd_was_measured": true },
+                "pricing": { "implied_probability": 0.135, "book_tradeable": true }
+            },
+            "final_probability": 0.152,
+            "multiplier": 1.15
+        })
+        .to_string();
+        assert_eq!(
+            response_floor("weather_oracle", &complete),
+            Some(PROV_INFERRED),
+            "a complete document floors at the judgement ceiling"
+        );
     }
 
     #[test]

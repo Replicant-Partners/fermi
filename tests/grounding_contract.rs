@@ -477,3 +477,168 @@ async fn the_football_consistency_check_is_live_or_says_it_is_inert() {
          and a check that can only fail is as useless as one that can only pass."
     );
 }
+
+/// Are the weather checks watching anything, and can they go red?
+///
+/// The seven `weather_oracle` cross-checks all report zero mismatches, and until
+/// there is a structured document in the corpus that means *nothing to look at*
+/// rather than *clean*. This is the same inertness the football probe reports,
+/// with one addition football does not have: a **falsifiability probe** per
+/// check, confirming the predicate fires on a document that violates it.
+///
+/// That addition exists because six of the seven weather checks are range
+/// assertions — a probability in `[0,1]`, a positive sd, a multiplier inside the
+/// declared `[0.1, 10.0]`. A range check on an absent field is exactly the shape
+/// that passes forever: `jsonb_typeof(NULL)` is NULL, the row drops, the count
+/// is zero, and the report is green. Proving each predicate can return a row
+/// against a synthetic violation is the only way to distinguish "no violations"
+/// from "no query".
+#[tokio::test]
+#[ignore = "needs DATABASE_URL; run via scripts/grounding_contract_live.sh"]
+async fn the_weather_checks_are_live_or_say_they_are_inert() {
+    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect");
+
+    // ── 1. Is there anything to look at? ────────────────────────────────
+    let row = sqlx::query(
+        "SELECT count(*)::bigint AS episodes, \
+                count(*) FILTER (WHERE e.response_text IS NOT NULL)::bigint AS retained, \
+                count(*) FILTER (WHERE e.response_text IS JSON OBJECT)::bigint AS structured, \
+                count(*) FILTER (WHERE j.doc #>> '{settlement_target,station}' IS NOT NULL \
+                                )::bigint AS with_station \
+           FROM episodes e \
+           JOIN agents a ON a.agent_id = e.agent_id, \
+           LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
+                                THEN e.response_text::jsonb END AS doc) j \
+          WHERE a.agent_name = 'weather_oracle'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("population probe");
+
+    let episodes: i64 = row.get("episodes");
+    let retained: i64 = row.get("retained");
+    let structured: i64 = row.get("structured");
+    let with_station: i64 = row.get("with_station");
+
+    println!(
+        "\n  weather_oracle: {episodes} episode(s), {retained} with retained text, \
+         {structured} structured, {with_station} naming a settlement station"
+    );
+
+    // ── 2. Can each predicate actually return a row? ────────────────────
+    //
+    // Run every check's WHERE clause against a synthetic violating document
+    // rather than against the corpus. If a predicate cannot match a document
+    // built to violate it, the check is decorative and its zero is meaningless.
+    //
+    // A station of 'XXXX' is not in the 50-entry registry; the sd is negative;
+    // the probabilities are out of range; the multiplier is outside [0.1, 10];
+    // and the book is untradeable while the recommendation says to buy.
+    let violating = serde_json::json!({
+        "settlement_target": { "station": "XXXX" },
+        "stages": {
+            "forecast":    { "n_members": 0, "ensemble_sd": -1.0 },
+            "calibration": { "predictive_sd": -0.5, "calibrated_probability": 1.4,
+                             "climatology_base_rate": -0.2 },
+            "pricing":     { "implied_probability": 2.0, "book_tradeable": false }
+        },
+        "final_probability": 1.9,
+        "multiplier": 42.0,
+        "recommendation": { "action": "buy_yes" }
+    })
+    .to_string();
+
+    // Each entry: (label, the check's discriminating predicate).
+    // Written against a `doc` CTE so the same SQL shape as the real check runs
+    // over one synthetic row instead of the episodes table.
+    let probes: &[(&str, &str)] = &[
+        (
+            "settlement_target",
+            "upper(doc #>> '{settlement_target,station}') NOT IN ('EGLC','KLGA','KORD')",
+        ),
+        (
+            "stages.forecast",
+            "(doc #>> '{stages,forecast,n_members}')::numeric < 1 \
+             OR (doc #>> '{stages,forecast,ensemble_sd}')::numeric < 0",
+        ),
+        (
+            "stages.calibration",
+            "(doc #>> '{stages,calibration,predictive_sd}')::numeric <= 0 \
+             OR (doc #>> '{stages,calibration,calibrated_probability}')::numeric > 1",
+        ),
+        (
+            "stages.pricing",
+            "(doc #>> '{stages,pricing,implied_probability}')::numeric > 1 \
+             OR (doc #> '{stages,pricing,book_tradeable}' = 'false'::jsonb \
+                 AND doc #>> '{recommendation,action}' <> 'no_trade')",
+        ),
+        (
+            "climatology_base_rate",
+            "(doc #>> '{stages,calibration,climatology_base_rate}')::numeric < 0",
+        ),
+        (
+            "final_probability",
+            "(doc ->> 'final_probability')::numeric > 1",
+        ),
+        (
+            "multiplier",
+            "(doc ->> 'multiplier')::numeric < 0.1 OR (doc ->> 'multiplier')::numeric > 10.0",
+        ),
+    ];
+
+    let mut inert_predicates = Vec::new();
+    for (label, predicate) in probes {
+        let sql = format!(
+            "SELECT count(*)::bigint FROM (SELECT $1::jsonb AS doc) t WHERE {predicate}"
+        );
+        let fires: i64 = sqlx::query_scalar(&sql)
+            .bind(&violating)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("falsifiability probe for {label} did not run: {e}"));
+        if fires == 1 {
+            println!("    can fail   {label}");
+        } else {
+            println!("    INERT      {label}  <-- predicate did not match a violating document");
+            inert_predicates.push(*label);
+        }
+    }
+
+    assert!(
+        inert_predicates.is_empty(),
+        "{} weather check(s) cannot match a document built to violate them, so \
+         their zero mismatch counts mean nothing: {}. A check that can only \
+         pass is worse than no check, because it occupies the place where a \
+         real one would go.",
+        inert_predicates.len(),
+        inert_predicates.join(", ")
+    );
+
+    // ── 3. State the corpus honestly ────────────────────────────────────
+    if structured == 0 {
+        println!(
+            "  INERT ON CORPUS — all seven predicates can fail, and none has been \
+             applied to anything. {episodes} episode(s) exist and {retained} carry \
+             retained text; every one predates migration 199 or is prose, so the \
+             zero mismatches mean 'nothing to look at', NOT 'clean'. Goes live on \
+             the first run that emits the JSON document the card now specifies."
+        );
+        return;
+    }
+
+    println!(
+        "  LIVE — {structured} structured document(s), {with_station} carrying a \
+         settlement station"
+    );
+    assert!(
+        with_station > 0,
+        "{structured} structured document(s) and not one names a settlement \
+         station. The station is the single largest error source in these \
+         markets, so a corpus that never records it cannot be checked at all."
+    );
+}
