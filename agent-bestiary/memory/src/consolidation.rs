@@ -150,6 +150,81 @@ pub struct ConsolidationWorker {
     provenance_oracle: Option<Arc<dyn ProvenanceOracle>>,
 }
 
+
+/// Chars of an episode's response to include when summarising it for an
+/// extraction prompt.
+///
+/// Responses average ~3.6k chars and reach 5k+, so 20 of them unabridged would
+/// be ~25k tokens of prompt against a 2,048-token completion budget. 1,200 is
+/// enough to carry the claims and named entities in a typical answer while
+/// keeping a 20-episode batch inside a sane envelope.
+const RESPONSE_DIGEST_CHARS: usize = 1_200;
+
+/// Chars of an episode's `context` JSON to include.
+///
+/// Deliberately smaller than the response budget. `context` is execution
+/// telemetry — stop reason, token counts, evidence ids — and is mostly noise
+/// for extraction; it earns a preview, not a share.
+const CONTEXT_DIGEST_CHARS: usize = 200;
+
+/// Truncate on a character boundary.
+///
+/// Not `&s[..n]`: byte slicing panics when the boundary lands inside a
+/// multi-byte char, which is exactly what killed the consolidation worker on a
+/// macro-econ episode containing '\u{2248}'. Both extractors had their own copy of
+/// this comment; now they share the code.
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let head: String = s.chars().take(max).collect();
+        format!("{head}...")
+    }
+}
+
+/// One episode, rendered for an extraction prompt.
+///
+/// ## Why the response is included
+///
+/// Both extractors used to summarise an episode as `Query` + a `Context`
+/// preview, and never read `response_text` at all — the column appeared in
+/// `consolidation.rs` only in test fixtures. So the knowledge extractors saw
+/// what the agent was *asked* and never what it *answered*.
+///
+/// That is backwards for entity extraction in particular. A question names few
+/// entities; the answer is where they are. Measured on this deployment: queries
+/// average 487 chars, responses 3,645. One `football_analyst` episode asked
+/// "Will Arsenal beat Manchester City in their next Premier League match?" and
+/// answered with "Arsenal won the 2024-25 Premier League title with 85 points"
+/// — an entity and a fact, in the half the extractor discarded. That agent's
+/// dreaming cycle reported 12 episodes → 0 entities, 0 facts, 5 rules.
+///
+/// mig-199 added `response_text` precisely so this would be available. Nothing
+/// then read it.
+pub(crate) fn episode_digest(episode: &Episode) -> String {
+    let ctx = serde_json::to_string(&episode.context).unwrap_or_default();
+    let mut out = format!(
+        "- Query: {}\n  Context: {}",
+        episode.query,
+        truncate_chars(&ctx, CONTEXT_DIGEST_CHARS)
+    );
+    // Absent on older episodes; retention began with mig-199. Omit the label
+    // entirely rather than emitting "Response: " and inviting the model to
+    // invent one.
+    if let Some(resp) = episode
+        .response_text
+        .as_deref()
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+    {
+        out.push_str(&format!(
+            "\n  Response: {}",
+            truncate_chars(resp, RESPONSE_DIGEST_CHARS)
+        ));
+    }
+    out
+}
+
 impl ConsolidationWorker {
     /// Creates a new consolidation worker
     pub fn new(
@@ -960,29 +1035,23 @@ impl ConsolidationWorker {
 
         // Batch episodes into groups of 20 for LLM calls
         for chunk in episodes.chunks(20) {
-            let episode_summaries: Vec<String> = chunk
-                .iter()
-                .map(|e| {
-                    let ctx = serde_json::to_string(&e.context).unwrap_or_default();
-                    // Char-safe truncation: `&ctx[..200]` panics when byte 200
-                    // lands inside a multi-byte UTF-8 char (e.g. '≈' in a
-                    // macro-econ episode), which killed the whole consolidation
-                    // worker task. Take by chars, not bytes.
-                    let ctx_preview = if ctx.len() > 200 {
-                        let head: String = ctx.chars().take(200).collect();
-                        format!("{}...", head)
-                    } else {
-                        ctx
-                    };
-                    format!("- Query: {}\n  Context: {}", e.query, ctx_preview)
-                })
-                .collect();
+            let episode_summaries: Vec<String> =
+                chunk.iter().map(episode_digest).collect();
 
+            // The Response line is where the entities are. The prompt says so
+            // explicitly because the earlier version described the input as
+            // "execution logs" and the digest carried only the query — so the
+            // model was being asked to find named entities in questions, which
+            // mostly do not contain any.
             let system_prompt = "You are an expert knowledge graph constructor. \
-                Extract named entities from AI agent execution logs. \
+                Extract named entities from AI agent execution episodes. Each episode has a \
+                Query (what the agent was asked) and usually a Response (what it concluded). \
+                **The Response is the primary source — that is where findings, figures and \
+                named things appear.** Use the Query for context about why they matter. \
                 Identify specific people, organizations, concepts, technologies, locations, \
                 events, metrics, and domain-specific terms that represent distinct knowledge nodes. \
-                Return ONLY a JSON array. Do not extract generic words — focus on proper nouns and domain concepts.";
+                Return ONLY a JSON array. Do not extract generic words — focus on proper nouns and domain concepts. \
+                Return an empty array if the episodes genuinely contain no named entities.";
 
             let user_prompt = format!(
                 "Extract named entities from these {} agent execution episodes:\n\n{}\n\n\
@@ -1186,21 +1255,8 @@ impl ConsolidationWorker {
         episodes: &[&Episode],
         llm: &Arc<dyn LLMProvider>,
     ) -> Result<Vec<(SemanticRule, Option<ProvenancedEmbedding>)>> {
-        let episode_summaries: Vec<String> = episodes
-            .iter()
-            .map(|e| {
-                let ctx = serde_json::to_string(&e.context).unwrap_or_default();
-                // Char-safe truncation (see extract_entities_with_llm): byte
-                // slicing panics on a multi-byte boundary.
-                let ctx_preview = if ctx.len() > 300 {
-                    let head: String = ctx.chars().take(300).collect();
-                    format!("{}...", head)
-                } else {
-                    ctx
-                };
-                format!("- Query: {}\n  Context: {}", e.query, ctx_preview)
-            })
-            .collect();
+        let episode_summaries: Vec<String> =
+            episodes.iter().map(|e| episode_digest(e)).collect();
 
         let episode_ids: Vec<Uuid> = episodes.iter().map(|e| e.episode_id).collect();
 
@@ -1682,5 +1738,101 @@ mod authority_tests {
         let ranked = ConsolidationWorker::rank_success_episodes_by_authority(&episodes, 5);
         let order: Vec<&str> = ranked.iter().map(|e| e.query.as_str()).collect();
         assert_eq!(order, vec!["e0", "e1", "e2", "e3", "e4"]);
+    }
+}
+
+#[cfg(test)]
+mod digest_tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn ep(query: &str, response: Option<&str>) -> Episode {
+        Episode {
+            episode_id: Uuid::new_v4(),
+            agent_id: Uuid::nil(),
+            timestamp_ref: Utc::now(),
+            query: query.to_string(),
+            context: serde_json::json!({"stop_reason": "end_turn"}),
+            execution_status: ExecutionStatus::Success,
+            error_details: None,
+            execution_time_ms: 0,
+            tokens_used: None,
+            cost_usd: None,
+            input_tokens: None,
+            output_tokens: None,
+            cost_basis: None,
+            cost_rate_key: None,
+            parent_episode_id: None,
+            response_text: response.map(str::to_string),
+            assertions: None,
+            embedding: None,
+            consolidated: false,
+            tags: vec![],
+            provenance: crate::Provenance::AutoPass,
+            authority_weight: 0.5,
+            dyad_id: None,
+            persona_version_at_write: None,
+            provider_used: None,
+            model_used: None,
+        }
+    }
+
+    /// The defect. Extraction prompts were built from query + context only, so
+    /// the half of the episode containing the findings was discarded — and
+    /// entity extraction, which needs named things, returned nothing.
+    #[test]
+    fn the_response_reaches_the_prompt() {
+        let d = episode_digest(&ep(
+            "Will Arsenal beat Manchester City?",
+            Some("Arsenal won the 2024-25 Premier League title with 85 points."),
+        ));
+        assert!(d.contains("Will Arsenal beat Manchester City?"), "{d}");
+        assert!(
+            d.contains("Arsenal won the 2024-25 Premier League title with 85 points."),
+            "the response must reach the extractor, got: {d}"
+        );
+    }
+
+    /// Older episodes predate mig-199. Omit the label rather than emitting an
+    /// empty "Response:" and inviting the model to fill it in.
+    #[test]
+    fn absent_response_omits_the_label() {
+        let d = episode_digest(&ep("q", None));
+        assert!(!d.contains("Response:"), "{d}");
+        let blank = episode_digest(&ep("q", Some("   ")));
+        assert!(!blank.contains("Response:"), "{blank}");
+    }
+
+    /// Budget: 20 episodes of unabridged 5k-char responses would be ~25k
+    /// tokens of prompt against a 2,048-token completion.
+    #[test]
+    fn long_responses_are_truncated() {
+        let long = "x".repeat(10_000);
+        let d = episode_digest(&ep("q", Some(&long)));
+        assert!(d.contains("..."), "should be elided");
+        assert!(
+            d.chars().count() < RESPONSE_DIGEST_CHARS + CONTEXT_DIGEST_CHARS + 200,
+            "digest is {} chars, budget blown",
+            d.chars().count()
+        );
+    }
+
+    /// Byte slicing panics when the boundary lands mid-char. This is the bug
+    /// that killed the whole consolidation worker on an episode containing
+    /// '≈', and both extractors carried their own copy of the workaround.
+    #[test]
+    fn truncation_is_char_safe() {
+        let multibyte = "≈".repeat(5_000);
+        let d = episode_digest(&ep("q", Some(&multibyte)));
+        assert!(d.contains('≈'));
+        // Would have panicked before reaching here.
+        assert!(d.chars().count() < 2_000);
+    }
+
+    #[test]
+    fn truncate_chars_leaves_short_input_alone() {
+        assert_eq!(truncate_chars("short", 100), "short");
+        assert_eq!(truncate_chars("exact", 5), "exact");
+        assert_eq!(truncate_chars("toolong", 4), "tool...");
     }
 }
