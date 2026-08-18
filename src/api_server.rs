@@ -1195,6 +1195,14 @@ async fn run_migrations(db: &PgPool) {
         // the first version of this work for referencing a table no migration
         // declared.
         "migrations/207_migration_ledger.sql",
+        // Rebuilds `creatures` to reclaim 1,575 dropped column slots. Postgres
+        // never releases a dropped column's attnum and the hard 1600 ceiling
+        // counts them, so the table could no longer accept any column at all.
+        // MUST run after 052/058/065 are guarded — they are, in the same release
+        // — or the reclaimed space starts draining again at five slots per boot.
+        // Self-limiting: the body is guarded on there being a dropped column, so
+        // it is a no-op forever after it succeeds once.
+        "migrations/208_rebuild_creatures_reclaim_attnums.sql",
     ];
 
     // Bootstrap the ledger before anything is recorded into it.

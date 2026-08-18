@@ -316,3 +316,82 @@ async fn report_deploy_times_that_liveness_windows_could_use() {
          explaining why it could not."
     );
 }
+
+/// No table may be leaking column slots.
+///
+/// Postgres assigns every column a permanent `attnum`, holds it forever once the
+/// column is dropped, and counts dropped and live alike against a hard ceiling of
+/// 1600. So a migration pair that adds a column on one boot and drops it on the
+/// next is a slow, silent, unrecoverable leak — and `run_migrations` replays every
+/// file on every boot, which turns any add-then-drop pair into exactly that.
+///
+/// `creatures` reached 1600 of 1600 — 1,575 dropped, 25 live — and could no longer
+/// accept a column at all. Five slots per boot for roughly 315 boots, from three
+/// migrations staging columns that a fourth dropped. Nothing noticed, because the
+/// eventual failure was one line in a boot log.
+///
+/// Migrations 052/058/065 stopped the leak and 208 reclaimed the slots. This is
+/// the check that would have caught it in the first fortnight, and the number to
+/// watch is not the total but **whether it grows**: a dropped column is normal
+/// once, and a table that gains them steadily is a table with a replayed
+/// add-then-drop pair in its history.
+#[tokio::test]
+#[ignore = "needs DATABASE_URL"]
+async fn no_table_is_leaking_column_slots() {
+    let pool = pool().await;
+
+    let rows = sqlx::query(
+        "SELECT c.relname AS tbl, \
+                count(*) FILTER (WHERE a.attisdropped)::bigint AS dropped, \
+                count(*) FILTER (WHERE NOT a.attisdropped)::bigint AS live, \
+                count(*)::bigint AS attnums \
+           FROM pg_attribute a \
+           JOIN pg_class c ON c.oid = a.attrelid \
+           JOIN pg_namespace n ON n.oid = c.relnamespace \
+          WHERE n.nspname = 'public' AND c.relkind = 'r' AND a.attnum > 0 \
+          GROUP BY c.relname \
+         HAVING count(*) FILTER (WHERE a.attisdropped) > 0 \
+          ORDER BY 2 DESC",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("attnum census");
+
+    if rows.is_empty() {
+        println!("  no table holds a dropped column");
+        return;
+    }
+
+    // 1600 is the hard limit. 400 is a quarter of the budget spent on columns
+    // that no longer exist, which no honest schema history reaches by accident.
+    const ALARM: i64 = 400;
+    let mut leaking: Vec<String> = Vec::new();
+
+    println!("\n  tables holding dropped column slots:");
+    for r in &rows {
+        let t: String = r.get("tbl");
+        let dropped: i64 = r.get("dropped");
+        let live: i64 = r.get("live");
+        let total: i64 = r.get("attnums");
+        println!("    {t:<28} {dropped:>5} dropped, {live:>4} live, {total:>5} of 1600 used");
+        if dropped >= ALARM {
+            leaking.push(format!(
+                "{t}: {dropped} dropped slots, {total} of 1600 consumed"
+            ));
+        }
+    }
+
+    assert!(
+        leaking.is_empty(),
+        "\n{} table(s) have burned {ALARM}+ column slots on columns that no longer \
+         exist:\n  {}\n\n\
+         Postgres never reclaims a dropped column's attnum, and the 1600 ceiling \
+         counts them. Look for a migration that ADDs a column which a later \
+         migration DROPs: `run_migrations` replays both on every boot, so the pair \
+         leaks slots for the life of the deployment. The fix is to guard the ADD on \
+         its destination not existing yet (migrations 058, 065) and to rebuild the \
+         table to reclaim what was lost (migration 208).\n",
+        leaking.len(),
+        leaking.join("\n  ")
+    );
+}
