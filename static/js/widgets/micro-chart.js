@@ -8,7 +8,17 @@ const MicroChart = {
     const dotColor = opts.dotColor || null;
     const dots = opts.dots || []; // indices to highlight as dots
 
-    if (!values || values.length < 2) return `<svg width="${w}" height="${h}"></svg>`;
+    // `viewBox` + `preserveAspectRatio="none"` so CSS can set a width and the
+    // path scales with it. Without a viewBox the width/height attributes are the
+    // coordinate system, so `width:100%` scaled the viewport and left the path
+    // drawn at its original size — a 200px sparkline in a 150px grid cell was
+    // clipped at the tile border rather than fitted to it.
+    //
+    // The attributes stay as intrinsic defaults, so every existing caller that
+    // does not override width in CSS renders exactly as before.
+    const box = `viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"`;
+
+    if (!values || values.length < 2) return `<svg width="${w}" height="${h}" ${box}></svg>`;
 
     const max = Math.max(...values, 1);
     const min = Math.min(...values, 0);
@@ -28,7 +38,7 @@ const MicroChart = {
     // Area fill
     const areaD = pathD + ` L${points[points.length-1].x.toFixed(1)},${h} L0,${h} Z`;
 
-    let svg = `<svg width="${w}" height="${h}" style="display:block">`;
+    let svg = `<svg width="${w}" height="${h}" ${box} style="display:block">`;
     svg += `<path d="${areaD}" fill="${color}" opacity="0.1" />`;
 
     // Optional reference line: a level the series must be read against rather

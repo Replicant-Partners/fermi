@@ -111,9 +111,31 @@
   .care-plan.urgent{border-color:var(--yellow);color:var(--yellow);}
 
   /* ── Dim tiles (history) ── */
-  .dim-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;}
-  .dim-tile{background:var(--bg1);border:1px solid var(--bg2);padding:10px 12px;}
+  .dim-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;align-items:start;}
+  /* `min-width:0` so a grid item can actually shrink to its track. Without it a
+     long dimension name sets a min-content floor, the tile grows past its
+     column, and neighbours get squeezed. */
+  .dim-tile{background:var(--bg1);border:1px solid var(--bg2);padding:10px 12px;min-width:0;}
+  /* An open explanation takes the whole row.
+
+     The prose is several sentences of definition per dimension; there is no
+     column width in an eight-across grid that can hold it. Rather than shrink
+     the text or truncate the content, the tile leaves the grid for as long as it
+     is open and returns when closed — so the panel stays scannable when nothing
+     is expanded and readable when something is. */
+  .dim-tile:has(.metric-help.open),
+  .dim-tile.wide{grid-column:1/-1;}
+  .dim-tile:has(.metric-help.open) .metric-help,
+  .dim-tile.wide .metric-help{max-width:90ch;}
+  /* Sparklines are emitted at a fixed 200px; let them fit whatever track they
+     land in instead of overflowing the tile border. */
+  .dim-tile svg{width:100%;max-width:100%;}
   .dt-name{font-size:0.68rem;color:var(--fg3);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:2px;}
+  /* Dimension names are single unbreakable tokens (`persona_consistency`). Left
+     alone they overflowed their flex item and the mechanism badge painted on top
+     of the tail of the word — `FORECAST_CAL` + `LOOKUP` + `ION`. Breaking the
+     name is the only option that keeps both legible at every width. */
+  .dt-name > span:first-child{overflow-wrap:anywhere;}
   .dt-value{font-size:1.4rem;font-weight:600;margin-bottom:2px;}
   .dt-meta{font-size:0.65rem;color:var(--fg4);margin-bottom:6px;}
 
@@ -124,14 +146,25 @@
   .run-status-running{color:var(--yellow);}
 
   /* ── Evaluator cards ── */
-  .eval-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;}
-  .eval-card{background:var(--bg1);border:1px solid var(--bg2);padding:10px 12px;}
-  .ec-name{font-size:0.68rem;color:var(--fg3);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px;display:flex;align-items:center;gap:6px;}
-  .ec-tier{font-size:0.6rem;padding:1px 5px;border:1px solid var(--bg3);color:var(--fg4);}
+  .eval-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px;align-items:start;}
+  .eval-card{background:var(--bg1);border:1px solid var(--bg2);padding:10px 12px;min-width:0;}
+  /* Same reasoning as `.dim-tile`: the explanation is prose and needs a row, not
+     a column. */
+  .eval-card:has(.metric-help.open),
+  .eval-card.wide{grid-column:1/-1;}
+  .eval-card:has(.metric-help.open) .metric-help,
+  .eval-card.wide .metric-help{max-width:90ch;}
+  .eval-card svg{max-width:100%;}
+  .ec-name{font-size:0.68rem;color:var(--fg3);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  .ec-name > span:first-child{overflow-wrap:anywhere;}
+  .ec-tier{font-size:0.6rem;padding:1px 5px;border:1px solid var(--bg3);color:var(--fg4);flex-shrink:0;}
   .ec-tier.dimensional{border-color:var(--aqua);color:var(--aqua);}
   .ec-inapplicable{opacity:0.4;}
   .dim-bar-row{display:flex;align-items:center;gap:6px;margin-bottom:3px;}
-  .dim-bar-label{font-size:0.68rem;color:var(--fg4);min-width:90px;}
+  /* `min-width` on a flex item is a floor, not a width: a long dimension name
+     still overflowed it and shoved the bar and value off the card. Cap it too,
+     and let the name break. */
+  .dim-bar-label{font-size:0.68rem;color:var(--fg4);min-width:90px;max-width:45%;overflow-wrap:anywhere;}
   .dim-bar-bg{flex:1;height:4px;background:var(--bg3);}
   .dim-bar-fill{height:4px;}
   .dim-bar-val{font-size:0.68rem;color:var(--fg3);min-width:28px;text-align:right;}
@@ -153,7 +186,17 @@
   .mh-btn.open{color:var(--yellow);border-color:var(--yellow);}
   .metric-help{display:none;font-size:0.68rem;line-height:1.5;color:var(--fg3);background:var(--bg0);border-left:2px solid var(--bg3);padding:7px 9px;margin:4px 0 8px;}
   .metric-help.open{display:block;}
-  .mh-row{display:grid;grid-template-columns:62px 1fr;gap:7px;margin-bottom:4px;}
+  /* `minmax(0,1fr)`, not `1fr`.
+
+     `1fr` is `minmax(auto,1fr)`, and `auto` floors at min-content — so a single
+     long token in the prose (a table name, `persona_consistency`) forced the
+     column wider than its container. Inside a ~150px grid cell that pushed the
+     usable text width down to a couple of words, and the explanation rendered as
+     a vertical ribbon of one-word lines. The content was right; the column could
+     not admit it. */
+  .mh-row{display:grid;grid-template-columns:62px minmax(0,1fr);gap:7px;margin-bottom:4px;}
+  /* Long identifiers must break rather than widen their column. */
+  .mh-row > span:last-child{overflow-wrap:anywhere;}
   .mh-k{color:var(--fg4);font-size:0.62rem;text-transform:uppercase;letter-spacing:0.05em;padding-top:1px;}
   .mh-row.act{border-top:1px dashed var(--bg2);padding-top:5px;margin-top:6px;}
   .mh-row.act .mh-k{color:var(--aqua);}
@@ -1162,6 +1205,16 @@ function toggleMetricHelp(id, btn) {
   if (!el) return;
   const open = el.classList.toggle("open");
   if (btn) btn.classList.toggle("open", open);
+  // Widen the enclosing grid item so the prose gets a row instead of a column.
+  // The CSS `:has()` rule does this on its own in current browsers; this class
+  // is the same effect without depending on `:has()` being supported, since the
+  // panel is unreadable rather than merely plainer when it is not.
+  //
+  // Derived from the host's actual contents, not from `open`: an eval card holds
+  // one help block per dimension, so toggling one closed must not narrow the card
+  // while a sibling is still expanded.
+  const host = el.closest(".dim-tile, .eval-card");
+  if (host) host.classList.toggle("wide", !!host.querySelector(".metric-help.open"));
 }
 
 // The explanation block. `sig` is optional — the History tab has aggregates
