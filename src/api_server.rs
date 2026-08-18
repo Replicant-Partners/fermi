@@ -1187,22 +1187,150 @@ async fn run_migrations(db: &PgPool) {
         // `enforce` passed it: the field was present, typed, and declared
         // Sourced. Canonical wins in place, superseded value retained.
         "migrations/206_reconcile_stale_post_contract_taxonomy.sql",
+        // Declares `schema_migrations`, the ledger this loop writes to. Also
+        // created inline by `ensure_migration_ledger` above, because a migration
+        // that records migrations cannot record itself — that copy is the
+        // bootstrap and this file is the declaration. Having it here is what lets
+        // the schema-consistency lint see these columns; it correctly rejected
+        // the first version of this work for referencing a table no migration
+        // declared.
+        "migrations/207_migration_ledger.sql",
     ];
 
+    // Bootstrap the ledger before anything is recorded into it.
+    //
+    // Inline rather than a migration file, and the reason is unavoidable: a
+    // migration that records migrations cannot record itself. Everything else
+    // in this project lives in `migrations/`, and this is the one exception the
+    // ordering forces. `IF NOT EXISTS` throughout, so it is as replay-safe as
+    // the files it tracks.
+    ensure_migration_ledger(db).await;
+
     for file in &migration_files {
+        let started = std::time::Instant::now();
         match std::fs::read_to_string(file) {
             Ok(sql) => {
                 println!("Running migration: {}", file);
+                let digest = {
+                    use sha2::{Digest, Sha256};
+                    format!("{:x}", Sha256::digest(sql.as_bytes()))
+                };
                 match sqlx::raw_sql(&sql).execute(db).await {
-                    Ok(_) => println!("Migration {} completed", file),
+                    Ok(_) => {
+                        println!("Migration {} completed", file);
+                        record_migration_attempt(
+                            db,
+                            file,
+                            &digest,
+                            "ok",
+                            None,
+                            started.elapsed().as_millis() as i32,
+                        )
+                        .await;
+                    }
                     Err(e) => {
-                        // Don't panic — tables may already exist
+                        // Still does not panic. A migration that cannot apply
+                        // must not be able to take the service down, because
+                        // most failures here are genuinely benign replays of
+                        // already-applied DDL.
+                        //
+                        // What changed is that the failure is now WRITTEN DOWN.
+                        // `credit_ledger_tx_type_check` was declared by
+                        // seventeen migrations and applied by none: each one
+                        // dropped the constraint, failed to re-add it, and left
+                        // exactly this line in a boot log nobody reads. A
+                        // failure that is only ever printed is a failure nobody
+                        // can be asked about.
                         eprintln!("Migration {} warning: {}", file, e);
+                        record_migration_attempt(
+                            db,
+                            file,
+                            &digest,
+                            "failed",
+                            Some(&e.to_string()),
+                            started.elapsed().as_millis() as i32,
+                        )
+                        .await;
                     }
                 }
             }
-            Err(e) => eprintln!("Could not read migration {}: {}", file, e),
+            Err(e) => {
+                eprintln!("Could not read migration {}: {}", file, e);
+                // A registered file that is missing from the image is a
+                // different fault from SQL that failed, and worth its own
+                // status: the deploy is not carrying what the code believes it
+                // is carrying.
+                record_migration_attempt(
+                    db,
+                    file,
+                    "",
+                    "unreadable",
+                    Some(&e.to_string()),
+                    started.elapsed().as_millis() as i32,
+                )
+                .await;
+            }
         }
+    }
+}
+
+/// Create the migration ledger, so there is somewhere to record the very first
+/// run of the migration that declares it.
+///
+/// `migrations/207_migration_ledger.sql` is the authoritative declaration and
+/// carries the reasoning; this is the bootstrap. Both are `IF NOT EXISTS`, so
+/// whichever runs first wins and the other is a no-op. If they ever disagree,
+/// 207 is right and this is the bug.
+async fn ensure_migration_ledger(db: &PgPool) {
+    let ddl = "CREATE TABLE IF NOT EXISTS public.schema_migrations (                    filename          TEXT PRIMARY KEY,                    content_sha256    TEXT NOT NULL,                    attempts          INTEGER NOT NULL DEFAULT 0,                    successes         INTEGER NOT NULL DEFAULT 0,                    failures          INTEGER NOT NULL DEFAULT 0,                    consecutive_failures INTEGER NOT NULL DEFAULT 0,                    first_succeeded_at   TIMESTAMPTZ,                    last_attempt_at   TIMESTAMPTZ NOT NULL DEFAULT now(),                    last_status       TEXT NOT NULL,                    last_error        TEXT,                    last_duration_ms  INTEGER                )";
+    if let Err(e) = sqlx::raw_sql(ddl).execute(db).await {
+        // Recording is best-effort by construction: a ledger that could fail
+        // the boot would be a worse problem than the blindness it fixes.
+        eprintln!("Could not ensure schema_migrations ledger: {}", e);
+    }
+}
+
+/// Record one attempt, success or failure.
+///
+/// Upsert keyed on filename rather than append-per-boot. Migrations replay on
+/// every start, so an append-only log would grow without bound and answer no
+/// question the counters do not. What the counters do answer, and a print
+/// cannot:
+///
+/// * has this migration EVER succeeded (`first_succeeded_at`)
+/// * is it failing RIGHT NOW (`consecutive_failures`)
+/// * has the file changed since it last applied (`content_sha256`)
+///
+/// `first_succeeded_at` is the field the rest of the verification work has been
+/// missing. Without a record of when a migration landed, `liveness_trust` cannot
+/// tell a write path that is broken from one whose sink was created five minutes
+/// ago, and it currently carries a documented exemption saying exactly that.
+async fn record_migration_attempt(
+    db: &PgPool,
+    filename: &str,
+    sha: &str,
+    status: &str,
+    error: Option<&str>,
+    duration_ms: i32,
+) {
+    let ok = status == "ok";
+    let res = sqlx::query(
+        "INSERT INTO public.schema_migrations              (filename, content_sha256, attempts, successes, failures,               consecutive_failures, first_succeeded_at, last_attempt_at,               last_status, last_error, last_duration_ms)          VALUES ($1, $2, 1, $3, $4, $5,                  CASE WHEN $6 THEN now() END, now(), $7, $8, $9)          ON CONFLICT (filename) DO UPDATE SET              content_sha256 = EXCLUDED.content_sha256,              attempts  = schema_migrations.attempts + 1,              successes = schema_migrations.successes + EXCLUDED.successes,              failures  = schema_migrations.failures + EXCLUDED.failures,              consecutive_failures = CASE WHEN $6 THEN 0                                          ELSE schema_migrations.consecutive_failures + 1 END,              first_succeeded_at = COALESCE(schema_migrations.first_succeeded_at,                                            EXCLUDED.first_succeeded_at),              last_attempt_at = now(),              last_status = EXCLUDED.last_status,              last_error = EXCLUDED.last_error,              last_duration_ms = EXCLUDED.last_duration_ms",
+    )
+    .bind(filename)
+    .bind(sha)
+    .bind(if ok { 1i32 } else { 0i32 })
+    .bind(if ok { 0i32 } else { 1i32 })
+    .bind(if ok { 0i32 } else { 1i32 })
+    .bind(ok)
+    .bind(status)
+    .bind(error)
+    .bind(duration_ms)
+    .execute(db)
+    .await;
+
+    if let Err(e) = res {
+        eprintln!("Could not record migration attempt for {}: {}", filename, e);
     }
 }
 

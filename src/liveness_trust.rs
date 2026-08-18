@@ -298,6 +298,28 @@ pub const LIVENESS_CONTRACTS: &[LivenessContract] = &[
                       new declarations. Only what no tool can settle should reach \
                       a person.",
     },
+    LivenessContract {
+        sink: "schema_migrations",
+        writer: "api_server::record_migration_attempt (called from run_migrations)",
+        sink_sql: "SELECT count(*)::bigint AS writes FROM schema_migrations",
+        // If the platform has served anything at all, it has booted, and
+        // `run_migrations` runs on every boot. So any episode is evidence that
+        // the recorder had its chance. Crude, and correct in the direction that
+        // matters: it cannot claim an opportunity that did not happen.
+        opportunity_sql: "SELECT count(*)::bigint AS opportunities FROM episodes",
+        expectation: Expectation::EveryOpportunity,
+        requires: Some(("schema_migrations", "filename")),
+        why: "The ledger is what makes a failing migration answerable. Without it \
+              `run_migrations` prints the failure and continues, which is how a \
+              CHECK constraint was declared by seventeen migrations and applied by \
+              none — the repair was performed, believed and repeated for the life \
+              of the project. An empty ledger means that blindness is back, and \
+              the irony is available: the check that watches the recorder is \
+              itself a write path that could silently never run.",
+        remediation: "Confirm the deployed binary includes `record_migration_attempt` \
+                      and that `ensure_migration_ledger` is not erroring at boot — \
+                      both log to stderr and neither can fail the boot, by design.",
+    },
     // ── positive controls ───────────────────────────────────────────
     //
     // Two paths known to work, declared for a reason beyond completeness: a
