@@ -1,8 +1,13 @@
 # Feedback Loops in the Agent Bestiary
 
-**Date:** 2026-05-15, revised 2026-06-03, **verified and revised 2026-08-15**
-**Status:** Reference — describes the five adaptive feedback loops, their verified implementation state, and BayesOps Loop A (now shipped through Phase 3).
-**Verified against:** `main` @ `67066e4a`, migrations through `199`.
+**Date:** 2026-05-15, revised 2026-06-03, **verified and revised 2026-08-15**, **operational evidence added 2026-08-16**
+**Status:** Reference — describes the five adaptive feedback loops, their verified implementation state, what the first deploy actually demonstrated, and BayesOps Loop A (shipped through Phase 3).
+**Verified against:** `main` @ `a7e38f38`, migrations through `200`.
+
+> **Read §5 first if you want the short version.** Every loop is wired, and
+> §5 records which ones have been *observed turning* on real data versus which
+> are still waiting for traffic. Those are different claims and this document
+> keeps them apart.
 
 ---
 
@@ -23,8 +28,10 @@ kinds of correction were needed, and the third is the one worth internalising:
    has no dispatch arm in `ToolRegistry::execute`
    (`src/agent_backend/tools_legacy.rs`); the name is advertised to the model,
    the model calls it, and it returns `Unknown tool: X`. The codebase now names
-   this defect class a **phantom tool**. Two loops were documented as closed
-   through a phantom tool. They are not closed.
+   this defect class a **phantom tool**. Two loops — 4 and 5 — were documented
+   as closed through a phantom tool and were not. Both are now genuinely
+   dispatched; see §7 for the corpus-wide ratchet that replaced the ad-hoc
+   check, and for the 79 declarations still outstanding.
 4. **Written ≠ readable.** A loop can complete every write correctly and still
    report nothing, because the surface that displays it queries a different
    table than the one the loop writes. Loop 1 was in this state: consolidation
@@ -34,9 +41,19 @@ kinds of correction were needed, and the third is the one worth internalising:
    presents as a *quiet* failure of the loop itself rather than as an error —
    the natural response is to go looking for a bug in the learning, which is
    working.
+5. **Closed ≠ turning.** Added 2026-08-16, after the first deploy. Every hop
+   having an executing call site does not mean the loop has moved. Loop 1's
+   observation leg is closed and, at the moment of writing, has produced zero
+   anomalies — not because it is broken but because **1,170 of 1,245 timeline
+   entries sit at `persona_version = 1`**, which the drift monitor skips by
+   design. Those are historical eval-run entries written before the stamping
+   fix. The loop is correct, the corpus is not yet eligible. Reporting that as
+   "closed" without the caveat would be the same overclaim this document was
+   rewritten to remove. §5 separates the two.
 
 A loop is only called closed here when every hop has an executing call site and
-the surface that reports it reads the tables the loop writes.
+the surface that reports it reads the tables the loop writes. It is only called
+*turning* when it has been observed to move on real data — see §5.
 
 ### The deferred-work comment
 
@@ -57,26 +74,61 @@ handoff. **A deferred-work comment is a claim about another component's
 behaviour, and should be treated as an untested assertion until a test pins
 it.**
 
-The two structural remedies, both cheap and both already in the codebase:
+The structural remedies, all cheap and all now in the codebase:
 
 - `invalid_tool_declarations` (`src/agent_backend/tools_legacy.rs`) diffs
-  declared tool names against dispatch arms. Extending its test to all of
-  `agents/curated` makes phantom tools impossible to reintroduce silently.
+  declared tool names against dispatch arms.
+  `no_curated_card_declares_a_phantom_tool` extends it to all of
+  `agents/curated` as a ratchet — see §7.
 - Payload assembly split into a pure function with count-vs-content assertions
   (`handlers::ontology::build_ontology_payload` and its tests) makes a severed
   read path fail in CI rather than in the UI. **Any handler that reports what a
   loop produced should be testable this way.** The invariant is one line: what
   the tables hold is what the payload reports.
+- **`src/schema_trust.rs` is the remedy for the whole class.** Every defect in
+  the tables above is ultimately a query naming a column or table that does not
+  exist, with the error swallowed. `SCHEMA_COLUMNS` turns that into a CI
+  failure. It works only for columns actually declared, which is why declaring
+  the ones a loop depends on is part of closing it, not an afterthought — see
+  the `detected_at` incident in §6.
+
+### Three smaller lessons from the same work
+
+Worth recording because each cost real time and none is obvious:
+
+1. **A dispatch arm is not enough to declare a tool.** Cards validate against
+   `builtin_tools()`, a *separate* declarative list. A tool with an arm but no
+   `BuiltinToolDef` runs correctly when called and yet cannot be saved through
+   the API. `equity_analyst`'s nine `fmp_*` tools were in exactly that state
+   since the agent shipped. Both halves are required, and they answer different
+   questions — `dispatchable_tool_names()` for "will this call succeed",
+   `platform_tool_names()` for "can this card be saved".
+2. **The crate split is load-bearing.** `tools_legacy.rs` is in the `fermi`
+   lib; `handlers/` is bin-only. **A tool cannot call a handler.** Anything both
+   a route and a tool need must live in the library, which is why
+   `compute_agent_calibration` moved to `fermi::calibration` rather than being
+   duplicated.
+3. **A warning nobody can action gets ignored, and then so does the linter.**
+   `scripts/lint-migrations.sh` flagged mig-200 for statements outside a DO
+   block. Wrapping them did not silence it: the linter's strip regex only
+   recognises the literal `$$` tag, and the migration used a named `$mig200$`
+   tag. The fix was to use `$$` outside and named tags inside — not to dismiss
+   the warning. Leaving a spurious warning in place is how a control earns the
+   right to be ignored.
 
 **Status markers used below:**
 
 | Marker | Meaning |
 |---|---|
-| ✅ Closed | Every hop verified with an executing call site |
+| ✅ Wiring closed | Every hop verified with an executing call site |
+| ✅ Turning | Observed to move on production data — see §5 |
+| — Not yet turning | Wiring closed, waiting on traffic or data. Not a defect |
 | ◐ Partial | Closed on one path, broken or absent on another; the break is named |
-| ⚡ Nascent | Mechanism verified, insufficient data for it to do anything yet |
-| 🔧 Structural | Mechanism exists; no signal reaches it |
 | ✖ Broken | Documented as working, verified as not working |
+
+The first three are the ones that matter. A loop can be wiring-closed and not
+turning for entirely legitimate reasons, and saying so is more useful than a
+single verdict that hides which.
 
 ---
 
@@ -402,7 +454,7 @@ as the *oldest* of 41 episodes and asserts it is extracted first.
 
 **Timescale:** human-initiated, but the effect propagates in the next dreaming cycle.
 
-**Status: ◐ Partial — upgraded 2026-08-15.** The HITL mechanism (queue, encoder,
+**Status: ✅ Wiring closed — 2026-08-15. Not yet turning.** The HITL mechanism (queue, encoder,
 gate, two-write, consensus, audit trail) was already closed and verified. The
 *propagation* path — correction → embedded episode → clustered → semantic rule
 → injected into the agent → changed behaviour — is now closed for the first
@@ -575,31 +627,37 @@ current model*, so a negative φ can mean a weak agent, a mis-specified driver
 exponent, or a genuinely predictive driver that is currently mis-weighted.
 Automatic pruning would let a modelling error silently strip the roster.
 
-**Status: ◐ Partial — generation ✅, accept path ✖ Broken.**
+**Status: ✅ Wiring closed — 2026-08-15. Not yet turning.**
 
-Two defects, both verified:
+Two defects, both fixed:
 
-1. **`propose_composition_change` is a phantom tool.** It is declared *with a
-   full `input_schema`* in `agents/curated/cohere_and_coordinate/agent_card.json`,
-   and the composition-dreaming prompt instructs the agent to call it
-   (`handlers/composition.rs`). There is no dispatch arm in
-   `ToolRegistry::execute` and it is not in `builtin_tools()`. Card tools
-   carrying a schema are advertised verbatim to the model, so the model *will*
-   call it and receive `Unknown tool: propose_composition_change`. This is why
-   the old path produced zero proposals. The Shapley path above bypasses the
-   tool entirely and uses HTTP routes — which is why it works.
-2. **The accept path writes to a column that does not exist.**
-   `agent-bestiary/memory/src/store.rs` runs
-   `UPDATE teams SET member_weights = $1 WHERE id = $2` **twice** — once bound
-   to the roster array, once to the weights. `teams` has neither
-   `member_agent_ids` nor `member_weights`; only `composition_versions` does
-   (mig-113). The authoritative column list is `src/schema_trust.rs`. As
-   written, accepting any version that carries members or weights will error,
-   and the previous revision's claim that accept updates
-   `teams.member_agent_ids` was never true.
+1. **`propose_composition_change` was a phantom tool.** Declared *with a full
+   `input_schema`* in `agents/curated/cohere_and_coordinate/agent_card.json`,
+   with the composition-dreaming prompt instructing the agent to call it
+   (`handlers/composition.rs`) — and no dispatch arm. Card tools carrying a
+   schema are advertised verbatim, so the model *did* call it and received
+   `Unknown tool: propose_composition_change`. **This is why the strategist path
+   produced zero proposals for its entire existence.** It now has both a
+   dispatch arm and a `BuiltinToolDef`, and writes a pending
+   `composition_versions` row. It deliberately does not accept
+   `member_agent_ids` — the card is explicit that naming the replacement is the
+   owner's decision.
+2. **The accept path wrote to a column that does not exist.**
+   `agent-bestiary/memory/src/store.rs` ran
+   `UPDATE teams SET member_weights = $1` **twice** — once bound to the roster
+   array, once to the weights. `teams` has neither `member_agent_ids` nor
+   `member_weights`; only `composition_versions` does (mig-113). So accepting
+   any version carrying members would error, and the 2026-06-03 claim that
+   accept updates `teams.member_agent_ids` was never true at any point. The
+   accept path now reconciles `workspace_agents` (mig-015) transactionally,
+   additive-first, with the coordination strategist exempt from eviction —
+   losing the agent that authors composition proposals as a side effect of
+   accepting one of its own proposals would be a surprising way to lose it.
 
-So Loop 4 today: generates evidence-backed proposals, surfaces them, records
-rejections into Loop 1 — and cannot apply an acceptance.
+**Why it is not turning.** Both generators work and the accept path applies. The
+blocker is upstream of the loop entirely: **127 workspaces, none of which has a
+composition identity** — no mission, no strategist — so there is nothing to
+version. That is an onboarding gap, not a loop defect (§5).
 
 **Timescale:** weeks to months. `MIN_FORECASTS_FOR_PROPOSAL = 5` is a floor,
 not a target; the loop is young and a confident proposal derived from two
@@ -675,19 +733,21 @@ on skill, not on `calibration_score`, which is inflated by outcome-skewed
 question sets."* Use `brier_skill_score`, which the previous revision omitted
 entirely.
 
-**What is missing for full closure:**
-- A `"get_agent_calibration"` dispatch arm delegating to the existing handler
-  (both 5a and 5b) — this is the whole break, and it is small
-- Widening the phantom-tool regression test
-  (`weather_agent_cards_declare_no_phantom_tools`, `agent_backend/weather_tools.rs`)
-  from its four hardcoded weather agents to all of `agents/curated`. A corpus
-  scan found **27 curated cards declaring undispatchable tools.**
+**Both of the 2026-08-15 gaps are closed.** The `get_agent_calibration`
+dispatch arm exists and shares `fermi::calibration::compute_agent_calibration`
+with the HTTP route, so the two cannot drift. The phantom-tool check now scans
+all of `agents/curated` as a ratchet rather than four hardcoded weather agents;
+the corpus scan that estimated 27 offenders in fact found 92, now 79 (§7).
+
+**What remains for Loop 5 is data, not wiring.** `agents_used` carries entries
+that resolve to no agent, so the mechanism probe reports `WIRING BROKEN` and
+declines to certify the score — correctly. See §5.
 
 **Timescale:** 5a: months (forecast resolution cadence). 5b: days to weeks (batch cycle cadence).
 
 **Status:**
-- 5a: ◐ Partial — signal collection, outcome annotation, and endpoint all ✅; router read path ✖ phantom tool.
-- 5b: ◐ Partial — full evaluator chain ✅ and deployed; same router read path ✖; awaiting a first real SOSA observation cycle for operational evidence.
+- 5a: ✅ Wiring closed — signal collection, outcome annotation, endpoint and router read path all verified. **But the mechanism probe reports `WIRING BROKEN` on data grounds** (§5): 7 scored forecasts have an empty roster and 6 roster entries name no agent, so those Brier scores can never reach an agent's calibration. Read `brier_skill_score`, not `calibration_score`.
+- 5b: ✅ Wiring closed — full evaluator chain deployed and the router can read it; awaiting a first real SOSA observation cycle for operational evidence.
 
 **See also:** `docs/specs/20_SIMOPS_PROJECTION_SCORING.md` for 5b implementation detail.
 
@@ -698,23 +758,27 @@ entirely.
 The five loops operate at different timescales and different system levels:
 
 ```
-Timescale    Loop                          Level              Status (2026-08-15)
-─────────────────────────────────────────────────────────────────────────────
-Hours        1a. Individual learning        Single agent       ✅ Closed — both legs live
-Hours        1b. Projection accuracy        SimOps agents      ✅ Closed, awaiting data
-Days         2.  HITL correction            Single agent       ✅ Closed — propagates
-Session      3a. Coherence (inner)          Composition chat   ✅ Closed — cascades to
-                                                                 member memory
-Weeks        3b. Coherence (outer)          Composition team   ✅ Closed — tool dispatches
-Months       4.  Composition evolution      Team structure     ✅ Closed — propose + accept
-Days-weeks   5b. Projection calibration     SimOps routing     ✅ Closed — router can read
-Months+      5a. Brier calibration          Platform-wide      ✅ Closed — router can read
-─────────────────────────────────────────────────────────────────────────────
-Offline      A.  BayesOps — parameter fit   FPL distributions  ✅ Phases 1–3 shipped
-             (feeds Loop B / FPL executor)
+Timescale    Loop                        Wiring   Observed turning?  (2026-08-16)
+──────────────────────────────────────────────────────────────────────────────
+Hours        1a. Individual learning      ✅       ✅ 8 eval runs, 23 ontology rows
+Hours        1b. Projection accuracy      ✅       — no real SOSA cycle yet
+Hours        1c. Live observation         ✅       — no live traffic since deploy
+Days         2.  HITL correction          ✅       — queue empty (depends on 1c)
+Session      3a. Coherence (inner)        ✅       ✅ 6 evaluations, Γ(C) 0.97
+Weeks        3b. Coherence (outer)        ✅       — needs session history
+Months       4.  Composition evolution    ✅       — no workspace has a composition
+Days-weeks   5b. Projection calibration   ✅       — awaiting first observation
+Months+      5a. Brier calibration        ✅       ✖ data malformed — see §5
+──────────────────────────────────────────────────────────────────────────────
+Offline      A.  BayesOps — parameter fit ✅       ✅ refits on workspace resolution
+             (feeds Loop B / FPL executor)         Phases 1–3; Phase 4 not built
 ```
 
-**Every loop is now closed.**
+**Two columns, two claims.** *Wiring* means every hop has an executing call
+site — the standard this document held itself to on 2026-08-15. *Observed
+turning* means it has moved on production data, which is the standard §5 holds
+it to. Conflating them is how the 2026-06-03 revision came to report closed
+loops that had never run.
 
 The nesting is real rather than aspirational, and now runs in both directions:
 Loop 2 → Loop 1 (corrections become embedded episodes that survive the
@@ -723,24 +787,19 @@ rules in member memory), Loop 5 → Loop 4 (Shapley attribution generates
 composition proposals), Loop 1 → Loop 2 (live traffic produces anomalies that
 reach the HITL queue).
 
-**Closure means the mechanism runs end to end with an executing call site at
-every hop. It does not mean the loop has yet changed an agent's behaviour in
-production.** Operationally these are young: at the time of writing the
-platform holds 1 ontology snapshot, 0 anomaly events, and 0 HITL items, and 14
-agents have unscanned observability backlog. The honest summary is that the
-wiring is complete and the evidence is not yet in.
+Loop 3's outer iteration was *supposed* to feed Loop 4 and never did — the
+`propose_composition_change` phantom tool meant the tension audit could conclude
+"the team should change" and end in `Unknown tool`. The Shapley path in
+`handlers::composition_evolution` replaced it as the primary generator; the tool
+now works as the qualitative second path.
 
-They are nested, and two of the nestings are now real rather than aspirational:
-Loop 2 feeds into Loop 1 (corrections become episodes — verified, though
-unweighted). **Loop 5 now feeds Loop 4**: Shapley attribution over resolved
-forecasts is what generates composition proposals — this is the connection the
-previous revision listed as future work, and it is the single most important
-thing that closed since. Loop 3's outer iteration was *supposed* to feed Loop 4
-and never did; the Shapley path replaced it.
+**Closure means the mechanism runs end to end with an executing call site at
+every hop. It does not mean the loop has been observed to turn.** §5 records
+which have, on real data, and which are still waiting.
 
 ---
 
-## 3. Loop 5 — Closure Status (revised 2026-08-15)
+## 3. Loop 5 — Closure Status (revised 2026-08-16)
 
 The four steps of the original plan, re-verified:
 
@@ -748,10 +807,13 @@ The four steps of the original plan, re-verified:
 |---|---|---|
 | Bootstrap calibration data (backtest seed) | ✅ `BrierLookupSqlx` wired to `fermi_forecasts` | `src/handlers/eval_brier.rs` |
 | `GET /api/agents/:id/calibration` endpoint | ✅ Live — `calibration_score`, `brier_skill_score`, `trend`, `domain_calibration`, `projection_accuracy_mean`, `model_accuracy` | route in `src/api_server.rs` → `handlers::agents::get_agent_calibration_handler` |
-| `get_agent_calibration` tool on `moe_router_strategist` | ✖ **Declared, not dispatched** — phantom tool | card: `agents/curated/moe_router_strategist/agent_card.json`; missing arm: `src/agent_backend/tools_legacy.rs::ToolRegistry::execute` |
+| `get_agent_calibration` tool on `moe_router_strategist` | ✅ Dispatch arm + `BuiltinToolDef`; shares `fermi::calibration::compute_agent_calibration` with the route | `src/agent_backend/tools_legacy.rs`, `src/calibration.rs` |
 | Routing episode outcome annotation | ✅ Fires on forecast resolution | `src/handlers/forecasts.rs::resolve_forecast_handler` |
 
-**Loop 5 is three-quarters closed with a one-function gap at the consumer end.**
+**All four steps are closed. Loop 5's remaining problem is not wiring — it is
+data.** See §5: the mechanism probe reports `WIRING BROKEN` because
+`fermi_forecasts.agents_used` contains entries that resolve to no agent, so
+scored forecasts exist whose Brier can never reach an agent's calibration.
 
 ### New since 2026-06-03: routing moved to a measured substrate
 
@@ -932,28 +994,152 @@ lines there are stale), `docs/fermi/BAYESOPS_CONTRACT.md`, and
 
 ---
 
-## 5. Loop instrumentation
+## 5. Operational evidence — first deploy, 2026-08-16
 
-The previous revision had no notion of measuring the loops themselves. Three
+Everything above is a claim about wiring. This section records what has actually
+been **observed to move** against the production database, and what has not.
+Measured with `scripts/loop1_retrievability_census.sql` and the loop-health
+panel, which derive independently of the code paths they assess.
+
+### Confirmed turning
+
+**Seed embedding and idempotency — the clearest result.** Boot re-seeded the
+three damaged agents, and the numbers are exact:
+
+| Agent | Before | After | Embedded |
+|---|---|---|---|
+| `football_institution_agent` | 1,155 unreachable | **7** | 7/7 |
+| `fixture_context_agent` | 660 unreachable | **4** | 4/4 |
+| `macro_data_agent` | 660 unreachable | **4** | 4/4 |
+
+`duplicate_seed_facts: 0`. Previously every boot appended another copy of the
+whole set — 15 distinct facts had become 2,475 rows at 165 copies each. This
+boot added exactly one of each. **2,477 unreachable rows became 15 retrievable
+facts.** Platform-wide: 1,096 embedded, 107 CEP seeds, 26 unreachable — and all
+26 are test fixtures.
+
+**The observability sweeper ran.** 93 agents carry a checkpoint; backlog went
+**14 → 0**. That is the corrected `last_scan_completed_at` predicate executing
+against the real schema, which is the detail the first draft got wrong.
+
+**Loop 1a, measured independently.** The loop-health panel, which derives from
+`eval_runs ⋈ eval_signals` and `consolidation_jobs ⋈ entities/facts/semantic_rules`
+rather than from anything asserted here: *"8 eval runs, 3 dimensions scored, and
+3 dreaming cycles wrote back 23 ontology rows. Both halves turning."*
+
+**Loop 3a, measured independently.** *"6 evaluations across 1/127 workspaces,
+Γ(C) mean 0.97."*
+
+**mig-200, verified behaviourally rather than by inspection**, with a control:
+
+```
+executions_before                266
+after a coordinator_observation  266   ← excluded, as designed
+after an ordinary auto_pass      267   ← real runs still counted
+```
+
+### Wired but not yet turning — and why
+
+| Loop | State | Why |
+|---|---|---|
+| 1 observation | 0 live timeline entries | Newest entry predates the deploy. No agent has been executed since. Needs traffic, not repair. |
+| 1 drift | 0 anomalies | **1,170 of 1,245 timeline entries are at `persona_version = 1`**, which the worker skips by design. Historical eval-run entries written before the stamping fix. Only new live traffic is eligible. |
+| 1 snapshots | Still 1, newest February | `create_snapshot` fires on a consolidation cycle; none has run since deploy. |
+| 2 | Queue empty | Follows from Loop 1 observation. The mechanism is closed; nothing has reached it. |
+| 4 | 0 proposals | **127 workspaces, none of which has a composition identity** — no mission, no strategist — so there is nothing to version. This is an onboarding gap, not a loop defect. |
+
+One claim from this work remains unobserved in production: **1,263 episodes are
+stamped with a persona version and 1,999 are not**, but the newest episode
+predates the deploying boot, so the stamping fix has not yet been seen to fire
+on the live execution path.
+
+### Loop 5a — `WIRING BROKEN`, and the verdict is correct
+
+The mechanism probe reports two HIGH violations. Neither is a code defect; both
+are data, and the panel is right to refuse to certify the score while they
+stand.
+
+**L5-M04 — 6 roster entries naming no agent, all from a single forecast.** The
+London 32 °C question. Its `agents_used` entries are named
+`weather_oracle_synoptic_pattern_august_2025`,
+`macro_forecaster_climate_trend_adjustment`, and so on — `<agent>_<driver>`
+composites. Those are **FPL agent-statement names**, not agent names.
+`handlers/forecasts.rs` states the expected shape plainly:
+`{"name": "macro_data_agent", ...}`. The FPL author named the statements
+descriptively, attribution joins on that name, and so all five agents on that
+forecast lose their credit.
+
+Worth knowing it is one bad artefact rather than a systemic six — and it is the
+same forecast as the climate-routing failure recorded in `67066e4a`, where
+London 32 °C returned 0.3% against a 13.3% ensemble truth.
+
+**L5-M03 — 7 scored forecasts with an empty `agents_used`.** Resolved, Brier
+computed, attributable to nobody. The signal exists and has nowhere to go.
+
+**The seam this exposes.** `agents_used` records *which agent statements ran*,
+and every calibration reader treats those names as agent identities. Nothing
+enforces the correspondence, so an FPL author is free to name a statement
+anything. Two defensible fixes, and it is a design decision rather than a bug
+fix: require statement names to resolve to agents at parse time, or record the
+resolved `agent_id` alongside the statement name so attribution never depends on
+a human-chosen label. Deliberately not decided here.
+
+**Read the skill score, not the raw one.** The same panel reports
+`99% raw · n=48 · skill +0.35 vs 2% base rate`. A 2% base rate is exactly the
+outcome-skewed case `compute_agent_calibration`'s own doc-comment warns about:
+99% raw is uninformative, **+0.35 skill is the real number**, and it is good.
+
+### One thing to look into
+
+A dreaming cycle on `football_analyst` reported
+`12 episodes → 0 entities, 0 facts, 5 rules`. Rules extracted, entities zero.
+Entity extraction is a separate LLM call from rule extraction, so a silent
+failure there would look exactly like this. Unresolved: whether that is the
+extractor failing quietly or genuinely nothing entity-shaped in those twelve
+episodes. `scripts/loop1_retrievability_census.sql` will not distinguish them —
+this needs the extraction call inspected.
+
+---
+
+## 6. Loop instrumentation
+
+The 2026-06-03 revision had no notion of measuring the loops themselves. Four
 instruments now exist, and they should be consulted before any claim that a
-loop is working:
+loop is working — each derives independently of the code path it assesses,
+which is what makes it worth trusting:
 
 | Instrument | What it answers | Where |
 |---|---|---|
 | `GET /api/me/loop-health` | Live per-loop health aggregation, Loops 1–5 | `src/api_server.rs` → `handlers::agents::loop_health_handler` |
 | `GET /api/observatory/loops/dreaming/maturity` | Is Loop 1 running-but-learning-nothing? (the "91 cycles, zero rules" mode) | `src/handlers/dreaming_maturity.rs` |
+| Observatory **Loops** tab (`/observatory?agent=<name>`) | Per-agent RSI loop health, each row derived from a named query and labelled `closed` / `partial` / `open` / `broken` / `unmeasured`. Distinguishes *thin* (sound wiring, little data — wait) from *broken* (faulty wiring — repair), because the remedies are opposite | `src/handlers/observatory.rs`, `templates/observatory.html` |
 | `agent_evolution` ledger | Four un-averaged progression dimensions — `memory` (Loop 1), `judgment` (Loop 5), `conduct` (Loop 2), `craft` — with a `peak_level` ratchet so regression is measurable | `migrations/190_agent_evolution.sql`, `src/handlers/evolution.rs` |
 
 The dimensions are deliberately not averaged into a single score, and
 `agent_evolution` deliberately replaced an activity-based maturity metric that
 was measuring nothing but usage.
 
-Diagnostic scripts: `scripts/run_loop5_probe.sh`, `scripts/loop1_*.sql`,
-`scripts/loop_deploy_check.sql`.
+Diagnostic scripts, all read-only and all safe to run against production
+through `scripts/run_loop5_probe.sh` (which forces a direct connection and
+statically refuses to run a file containing mutating statements):
+
+| Script | Answers |
+|---|---|
+| `loop1_retrievability_census.sql` | Can each agent actually recall what it learned? Grades every agent `OPEN` / `UNEMBEDDED` / `EMPTY`, and separates CEP seeds (always injected) from stranded rows |
+| `loop1_maturity_census.sql` | Did consolidation produce anything at all? |
+| `loop1_extractor_readiness.sql` | Is the ontologist's credential funded? **Run this before re-dreaming anything** |
+| `loop5_brier_mechanical_check.sql` | Does the Brier chain move a signal correctly? Nine mechanism checks, fleet-wide and per-agent |
+| `loop_deploy_check.sql` | Post-deploy smoke check |
+
+Two are write scripts and are dry-run by default, requiring `-v apply=1`:
+`loop1_reset_sterile_episodes.sql` (recover episodes consumed by extractor-less
+runs, per-episode) and `loop1_dedupe_seed_entities.sql` (collapse duplicate seed
+rows; `-v reseed=1` deletes all copies so the next boot regenerates them
+embedded).
 
 ---
 
-## 6. Open breaks — consolidated
+## 7. Open breaks — consolidated
 
 Every verified break, ordered by cost-to-fix against value:
 
@@ -965,9 +1151,10 @@ Every verified break, ordered by cost-to-fix against value:
 | 4 | ~~Phantom-tool regression test covers only 4 weather agents~~ | all | **Fixed 2026-08-15** — `no_curated_card_declares_a_phantom_tool` scans all of `agents/curated` as a **ratchet**: 92 pre-existing declarations are quarantined in `known_debt`, anything new fails, and the list may only shrink |
 | 5 | ~~Live executions write no eval signal / timeline entry, so drift and anomaly detection never see real traffic~~ | 1, 2 | **Fixed 2026-08-15** — `handlers::live_observability`: deterministic evaluators only, fire-and-forget, plus a scan sweeper |
 | 6 | ~~`ConsolidationWorker` never reads `authority_weight`, and synthetic corrections are written unembedded, so a human correction can neither cluster nor survive the extraction budget~~ | 2 | **Fixed 2026-08-15** — `with_embedder` + `rank_success_episodes_by_authority`; locked by `consolidation::authority_tests` |
-| 7 | Coherence shelf executes the strategist without a `ToolContext`; Stages 0 and 3 are inert | 3a | Route the shelf through `ToolAwareExecutor` |
-| 8 | `_coordination/brief.md` sits outside the `context/` prefix that workspace auto-injection reads | 3a | Either move the brief or widen the prefix |
-| 9 | `create_snapshot` reachable only from the CLI; the API `dream_synopsis` update is a no-op without it | 1 | Call it on the API dreaming path |
+| 7 | ~~Coherence shelf executes the strategist without a `ToolContext`; Stages 0 and 3 are inert~~ | 3a | **Fixed 2026-08-15** — routed through `ToolAwareExecutor` with a full `ToolContext` |
+| 8 | ~~`_coordination/brief.md` sits outside the `context/` prefix~~ | 3a | **Superseded 2026-08-15** — the brief was never the mechanism; `record_coordination_observation` writes into member memory instead. The brief remains, for humans |
+| 9 | ~~`create_snapshot` reachable only from the CLI~~ | 1 | **Fixed 2026-08-15** — see 9d |
+
 | 9a | ~~`get_ontology` read `ontology_snapshots` (never written on the API path) and hardcoded empty entity/relationship arrays, so a successful dreaming cycle displayed as zero~~ | 1 | **Fixed 2026-08-15** — reads live tables; locked by `handlers::ontology::tests` |
 | 9c | ~~KG injection gated on `card.ontology_stats`, which nothing maintains (sole updater queried the nonexistent table `kg_entities`), so learned knowledge was never retrieved into any execution~~ | **1 — was the loop's actual break** | **Fixed 2026-08-15** — gate queries the knowledge tables; locked by `kg_context::gate_tests` |
 | 9d | ~~`create_snapshot` never called on the API path, so ontologies never developed and the narrator's synopsis write was a no-op~~ | 1 | **Fixed 2026-08-15** — `snapshot_ontology` on the dreaming path, push disabled, failure non-fatal |
@@ -975,24 +1162,65 @@ Every verified break, ordered by cost-to-fix against value:
 | 10 | Valence-homophily threshold (spread < 0.25) exists only as prompt text | 3b | Compute it, or stop documenting it as a mechanism |
 | 11 | `route_outcomes` joins heuristically on `(agent_id, driver)` within a time window | 5 | Stamp `episode_id` onto the claim row (deliberately deferred) |
 
-Breaks 1–4 were the phantom-tool family, all now closed. Their shared root
-cause — declaration never checked against dispatch for filesystem cards — is
-now covered by a corpus-wide ratchet.
+### The `detected_at` incident — why this section declares columns
 
-**Two things learned fixing them, worth keeping:**
+Worth recording in full because it is the whole class in miniature, and it
+happened *after* everything above was fixed.
 
-1. **A dispatch arm is not enough.** Cards are validated against
-   `builtin_tools()`, a separate declarative list. A tool with an arm but no
-   `BuiltinToolDef` is still a phantom tool. Both halves are required.
-2. **The crate split is load-bearing.** `tools_legacy.rs` is in the `fermi`
-   lib; `handlers/` is bin-only. A tool cannot call a handler. Anything both a
-   route and a tool need must live in the library — which is why
-   `compute_agent_calibration` now sits in `fermi::calibration` rather than
-   being duplicated.
+The Loop 2 row on the observatory panel read **`unmeasured`**, with
+`column "detected_at" does not exist`. `anomaly_events` has `created_at`
+(mig-105); nothing has ever had a `detected_at`.
+
+The dangerous part is the label. `unmeasured` reads as *"no data yet, come back
+later"* — and Loop 2 is precisely the loop whose queue is legitimately empty at
+first, which makes the wrong reading the plausible one. A broken query
+presented as a young loop. Had the panel said `error` it would have been fixed
+in minutes.
+
+`anomaly_events` was in `SCHEMA_TABLES` but **none of its columns were in
+`SCHEMA_COLUMNS`**, so the trust contract could not catch it. That is the same
+gap that let `kg_entities` — a table that has never existed — sit in a query
+for months. Declaring the six columns the panel reads means a rename now fails
+in CI instead of on the dashboard.
+
+**The rule this yields:** declaring the columns a loop's *reporting* query
+depends on is part of closing that loop. An instrument that cannot fail loudly
+is not an instrument.
+
+### Open breaks, 2026-08-16
+
+| # | Break | Loop | Notes |
+|---|---|---|---|
+| 12 | `fermi_forecasts.agents_used` records FPL *statement* names, which calibration readers treat as agent identities. 6 orphan refs (one forecast) + 7 forecasts with an empty roster | 5a | The probe correctly reports `WIRING BROKEN`. Design decision, not a bug fix — see §5 |
+| 13 | Entity extraction returned 0 entities on 12 episodes while rule extraction returned 5 | 1 | Unresolved: silent extractor failure vs. genuinely nothing entity-shaped |
+| 14 | 127 workspaces have no composition identity, so Loop 4 has nothing to version | 4 | Onboarding gap rather than loop defect |
+| 15 | 79 curated tool declarations remain undispatchable, quarantined in `known_debt` | all | Ratcheting down; breakdown below |
+| 10 | Valence-homophily threshold (spread < 0.25) exists only as prompt text | 3b | Compute it, or stop documenting it as a mechanism |
+| 11 | `route_outcomes` joins heuristically on `(agent_id, driver)` within a time window | 5 | Stamp `episode_id` onto the claim row (deliberately deferred) |
+
+### The phantom-tool debt
+
+Breaks 1–4 were the phantom-tool family, all closed. The corpus-wide ratchet
+that replaced them, `no_curated_card_declares_a_phantom_tool`, started at 92
+and is at **79**. It has two assertions and a stale-entry check, so a fixed card
+*must* leave the list — which is what keeps it ratcheting rather than rotting.
+It fired correctly three times during this work.
+
+What remains, categorised — the point being that most of it is not loop-related:
+
+| Category | Count | Nature |
+|---|---|---|
+| Third-party integrations never built | ~42 | `adaptogen_curator` (11), `stripe_billing` (9), `instagram_publisher` (6), `bluesky_publisher` (5), `social_media_studio` (5)… Cards written against APIs with no backend. Needs implementation or removal — a product decision |
+| Loop-relevant | 10 | **`intention_coordinator` — all 6 tools phantom, so the entire agent is inert.** That is Loop 3's Stage 0, the intention map meant to catch duplication *before* agents act. Plus `dyad_observer` (2) and `dream_coordinator`/`dream_narrator` (2) |
+| Fabricated helpers | ~27 | `performance_coach`, `ar_avatar_renderer`, `daily_puzzle` and others declare plausible-sounding tools that were never real |
+
+**`intention_coordinator` is the one worth prioritising.** Loop 3a is closed via
+the memory cascade, but Stage 0 — conflict detection before action — has never
+run. It is the last loop-relevant phantom agent on the platform.
 
 ---
 
-## 7. What makes this architecture coherent
+## 8. What makes this architecture coherent
 
 Each loop corrects at the appropriate timescale:
 - Fast loops (1, 2, inner-3) handle execution-level errors — the agent said the wrong thing, the team went in the wrong direction.
@@ -1002,7 +1230,7 @@ Each loop corrects at the appropriate timescale:
 
 Each loop uses a different corrective mechanism:
 - Loops 1 and 2: episodic memory → dreaming → semantic rules
-- Loop 3: TEC coherence → coordination brief → conversation steering
+- Loop 3: TEC coherence → coordination observation written into member memory → semantic rule → changed behaviour next execution
 - Loop 4: Shapley attribution → composition proposals → human approval → team change
 - Loop 5: calibration scores + route provenance → routing weights → member selection
 - Loop A: observation history → posterior fit → FPL distribution parameters
@@ -1010,7 +1238,7 @@ Each loop uses a different corrective mechanism:
 Each online loop (1–5) is separated from the others by a human or coherence gate:
 - Loop 2 requires a human reviewer (anomaly → HITL queue), and a second reviewer for agent-wide scope
 - Loop 4 requires owner approval (composition proposal → accept/reject), and proposals are suppressed below 5 forecasts of evidence
-- Loop 5's routing weights are readable by humans via the calibration endpoint
+- Loop 5's routing weights are readable by humans via the calibration endpoint, and its mechanism probe refuses to certify a score whose wiring is unsound rather than reporting the number anyway
 
 Loop A is separated from Loop B by the operator: fitted parameters pass a Monte
 Carlo impact gate and either auto-accept or stage a pending row for review.
@@ -1019,11 +1247,38 @@ production forecasts.
 
 No online loop can modify agent behaviour without either a human gate or the coherence gate. Loop A cannot modify forecast behaviour without passing the impact gate. These properties compound: the system learns continuously at the harness level (Loops 1–5) while requiring human acceptance of parameter-level changes (Loop A). Fast adaptation where the cost of error is low; human review where the cost is high.
 
-**A closing note on this revision.** The architecture is sound and most of it is
-built. What the 2026-06-03 revision got wrong was not the design — it was
-mistaking a declaration for an implementation, in a system where declarations
-are cheap and look exactly like implementations from the outside. Two loops
-were reported closed through a tool that returns `Unknown tool`. The remedy is
-structural, not editorial: break #4 above makes the class of error impossible
-to reintroduce silently, and §5's instruments make a loop that runs without
-learning visible as such.
+---
+
+## 9. A closing note on these revisions
+
+The architecture was sound. What the 2026-06-03 revision got wrong was not the
+design — it was mistaking a declaration for an implementation, in a system where
+declarations are cheap and look exactly like implementations from the outside.
+
+Every defect found across both revisions reduces to one shape: **a write path
+that worked, and a read path pointing somewhere else.**
+
+- Consolidation wrote entities; the UI read `ontology_snapshots`.
+- Consolidation embedded rules; retrieval gated on a counter nothing maintained.
+- HITL wrote corrections; clustering required an embedding they never got.
+- The strategist wrote a brief; dreaming reads episodes.
+- The router asked for calibration; the tool had no dispatch arm.
+- The panel asked for `detected_at`; the column is `created_at`.
+
+None of these were visible as errors. Four of them were *documented* as working,
+and three were protected by a comment asserting some other component would
+finish the job. That is why the remedies in this document are structural rather
+than editorial: a ratchet that only shrinks, payload assembly that fails in CI,
+a schema contract that names the columns a loop depends on, and an instrument
+that says `broken` where it used to say `unmeasured`.
+
+**What is genuinely unfinished** is honest to state plainly. Every loop is
+wired and four have been observed turning on real data. The rest are waiting on
+traffic, not repair — with two real exceptions: Loop 5a's attribution data is
+malformed (§5), and `intention_coordinator`, the whole of Loop 3's Stage 0, has
+never once run (§7).
+
+The system now learns continuously at the harness level while requiring human
+acceptance of parameter-level changes. Fast adaptation where the cost of error
+is low; human review where the cost is high. Both halves are, for the first
+time, measurable — which is the only claim in this document that matters.
