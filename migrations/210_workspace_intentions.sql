@@ -46,69 +46,83 @@
 -- active row, which keeps the map to at most one live intention per agent.
 -- ═══════════════════════════════════════════════════════════════════════
 
-CREATE TABLE IF NOT EXISTS public.workspace_intentions (
-    intention_id  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    workspace_id  UUID NOT NULL REFERENCES public.teams(id) ON DELETE CASCADE,
-    agent_id      UUID NOT NULL REFERENCES public.agents(agent_id) ON DELETE CASCADE,
-
-    -- What the agent is about to do.
-    action_type   TEXT NOT NULL
-        CHECK (action_type IN ('tool_call','research','synthesis','writing','review','idle')),
-    tool          TEXT,
-    description   TEXT NOT NULL,
-
-    -- Resources this action will consume or write. Overlap between two active
-    -- intentions is a resource conflict — the cheapest and most certain of the
-    -- four conflict classes, because it needs no semantics at all.
-    targets       TEXT[] NOT NULL DEFAULT '{}',
-
-    -- Named outputs this action needs before it can run. An entry naming
-    -- something no completed intention produced is a dependency conflict.
-    depends_on    TEXT[] NOT NULL DEFAULT '{}',
-
-    status        TEXT NOT NULL DEFAULT 'active'
-        CHECK (status IN ('active','completed','cancelled','superseded')),
-
-    -- Semantic duplication detection. Nullable: see header.
-    embedding     vector(1024),
-
-    declared_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    resolved_at   TIMESTAMPTZ
-);
-
--- The conflict check reads active intentions for one workspace, which is the
--- only hot query on this table.
-CREATE INDEX IF NOT EXISTS idx_intentions_active
-    ON public.workspace_intentions(workspace_id, status)
-    WHERE status = 'active';
-
-CREATE INDEX IF NOT EXISTS idx_intentions_agent
-    ON public.workspace_intentions(agent_id, declared_at DESC);
-
-COMMENT ON TABLE public.workspace_intentions IS
-    'Loop 3 Stage 0 — prospective coordination. Agents declare planned actions '
-    'before acting so duplication, resource contention and unmet dependencies '
-    'are caught ahead of the work rather than diagnosed after it. Only `active` '
-    'rows participate in conflict checks.';
-
--- ── Emitted coherence signals ──────────────────────────────────────────
+-- ── Wrapped in a single DO block ───────────────────────────────────────
 --
--- `emit_coherence_signal` records an IntentionAligns / IntentionConflicts
--- relation. These are also posted into the workspace conversation, which is
--- what `ConversationObserver::observe` reads when building the TEC graph — so
--- the signal genuinely reaches coherence rather than being filed somewhere for
--- a future consumer. This table is the durable record and the audit trail.
-CREATE TABLE IF NOT EXISTS public.workspace_intention_signals (
-    signal_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    workspace_id  UUID NOT NULL REFERENCES public.teams(id) ON DELETE CASCADE,
-    relation_type TEXT NOT NULL CHECK (relation_type IN ('IntentionAligns','IntentionConflicts')),
-    agent_a       UUID NOT NULL REFERENCES public.agents(agent_id) ON DELETE CASCADE,
-    agent_b       UUID NOT NULL REFERENCES public.agents(agent_id) ON DELETE CASCADE,
-    strength      DOUBLE PRECISION NOT NULL DEFAULT 0.5
-        CHECK (strength >= 0.0 AND strength <= 1.0),
-    rationale     TEXT,
-    emitted_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+-- `run_migrations` hands each file whole to `sqlx::raw_sql`, so through the app
+-- this is already atomic. The wrap is for the two paths that are not: `psql -f`
+-- runs each statement in its own transaction, and `ensure_critical_schema` runs
+-- each as its own query. Every statement here is IF NOT EXISTS so a half-apply
+-- would be recoverable anyway — but the migration linter flags bare
+-- multi-statement files, and a warning left in place is how a control earns the
+-- right to be ignored.
+DO $$
+BEGIN
+    EXECUTE $ddl$
+        CREATE TABLE IF NOT EXISTS public.workspace_intentions (
+            intention_id  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            workspace_id  UUID NOT NULL REFERENCES public.teams(id) ON DELETE CASCADE,
+            agent_id      UUID NOT NULL REFERENCES public.agents(agent_id) ON DELETE CASCADE,
 
-CREATE INDEX IF NOT EXISTS idx_intention_signals_workspace
-    ON public.workspace_intention_signals(workspace_id, emitted_at DESC);
+            -- What the agent is about to do.
+            action_type   TEXT NOT NULL
+                CHECK (action_type IN ('tool_call','research','synthesis','writing','review','idle')),
+            tool          TEXT,
+            description   TEXT NOT NULL,
+
+            -- Resources this action will consume or write. Overlap between two active
+            -- intentions is a resource conflict — the cheapest and most certain of the
+            -- four conflict classes, because it needs no semantics at all.
+            targets       TEXT[] NOT NULL DEFAULT '{}',
+
+            -- Named outputs this action needs before it can run. An entry naming
+            -- something no completed intention produced is a dependency conflict.
+            depends_on    TEXT[] NOT NULL DEFAULT '{}',
+
+            status        TEXT NOT NULL DEFAULT 'active'
+                CHECK (status IN ('active','completed','cancelled','superseded')),
+
+            -- Semantic duplication detection. Nullable: see header.
+            embedding     vector(1024),
+
+            declared_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            resolved_at   TIMESTAMPTZ
+        );
+
+        -- The conflict check reads active intentions for one workspace, which is the
+        -- only hot query on this table.
+        CREATE INDEX IF NOT EXISTS idx_intentions_active
+            ON public.workspace_intentions(workspace_id, status)
+            WHERE status = 'active';
+
+        CREATE INDEX IF NOT EXISTS idx_intentions_agent
+            ON public.workspace_intentions(agent_id, declared_at DESC);
+
+        COMMENT ON TABLE public.workspace_intentions IS
+            'Loop 3 Stage 0 — prospective coordination. Agents declare planned actions '
+            'before acting so duplication, resource contention and unmet dependencies '
+            'are caught ahead of the work rather than diagnosed after it. Only `active` '
+            'rows participate in conflict checks.';
+
+        -- ── Emitted coherence signals ──────────────────────────────────────────
+        --
+        -- `emit_coherence_signal` records an IntentionAligns / IntentionConflicts
+        -- relation. These are also posted into the workspace conversation, which is
+        -- what `ConversationObserver::observe` reads when building the TEC graph — so
+        -- the signal genuinely reaches coherence rather than being filed somewhere for
+        -- a future consumer. This table is the durable record and the audit trail.
+        CREATE TABLE IF NOT EXISTS public.workspace_intention_signals (
+            signal_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            workspace_id  UUID NOT NULL REFERENCES public.teams(id) ON DELETE CASCADE,
+            relation_type TEXT NOT NULL CHECK (relation_type IN ('IntentionAligns','IntentionConflicts')),
+            agent_a       UUID NOT NULL REFERENCES public.agents(agent_id) ON DELETE CASCADE,
+            agent_b       UUID NOT NULL REFERENCES public.agents(agent_id) ON DELETE CASCADE,
+            strength      DOUBLE PRECISION NOT NULL DEFAULT 0.5
+                CHECK (strength >= 0.0 AND strength <= 1.0),
+            rationale     TEXT,
+            emitted_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_intention_signals_workspace
+            ON public.workspace_intention_signals(workspace_id, emitted_at DESC);
+    $ddl$;
+END $$;
