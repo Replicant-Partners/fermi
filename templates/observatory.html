@@ -136,6 +136,36 @@
   .dim-bar-fill{height:4px;}
   .dim-bar-val{font-size:0.68rem;color:var(--fg3);min-width:28px;text-align:right;}
 
+  /* ── Metric explainability ──
+     Nine dimensions used to render as nine identical coloured bars. They are
+     not nine of the same kind of number — see the METRIC registry comment.
+     `.mech-*` names the mechanism that produced the score, `.suspect` demotes
+     values that are constants by construction, and `.metric-help` carries the
+     per-dimension read/act text. */
+  .dim-bar-row.suspect .dim-bar-fill{background:repeating-linear-gradient(90deg,var(--bg3) 0 3px,transparent 3px 6px)!important;}
+  .mech{font-size:0.55rem;padding:0 3px;border:1px solid;text-transform:uppercase;letter-spacing:0.04em;white-space:nowrap;}
+  .mech-lookup{color:var(--aqua);border-color:var(--aqua);}
+  .mech-deterministic{color:var(--green);border-color:var(--green);}
+  .mech-heuristic{color:var(--orange,var(--yellow));border-color:var(--orange,var(--yellow));}
+  .mech-judge{color:var(--purple,var(--aqua));border-color:var(--purple,var(--aqua));}
+  .mh-btn{font-size:0.6rem;color:var(--fg4);border:1px solid var(--bg3);background:none;font-family:inherit;cursor:pointer;padding:0 4px;line-height:1.3;flex-shrink:0;}
+  .mh-btn:hover{color:var(--yellow);border-color:var(--yellow);}
+  .mh-btn.open{color:var(--yellow);border-color:var(--yellow);}
+  .metric-help{display:none;font-size:0.68rem;line-height:1.5;color:var(--fg3);background:var(--bg0);border-left:2px solid var(--bg3);padding:7px 9px;margin:4px 0 8px;}
+  .metric-help.open{display:block;}
+  .mh-row{display:grid;grid-template-columns:62px 1fr;gap:7px;margin-bottom:4px;}
+  .mh-k{color:var(--fg4);font-size:0.62rem;text-transform:uppercase;letter-spacing:0.05em;padding-top:1px;}
+  .mh-row.act{border-top:1px dashed var(--bg2);padding-top:5px;margin-top:6px;}
+  .mh-row.act .mh-k{color:var(--aqua);}
+  .mh-warn{color:var(--orange,var(--yellow));}
+  .mh-src{font-size:0.6rem;color:var(--fg4);font-style:italic;margin-top:5px;opacity:0.8;}
+  .mh-flag{font-size:0.6rem;color:var(--orange,var(--yellow));border:1px solid var(--orange,var(--yellow));padding:0 3px;margin-right:3px;}
+  /* Standing note that the colour scale is a presentation convention. There is
+     no pass threshold anywhere in the evaluator source, so a legend that
+     implied one would be inventing the very thing this panel exists to deny. */
+  .score-legend{font-size:0.66rem;color:var(--fg4);line-height:1.55;background:var(--bg1);border-left:2px solid var(--bg3);padding:7px 10px;margin-bottom:10px;}
+  .score-legend strong{color:var(--fg3);}
+
   /* ── Relationship cards ── */
   .rel-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;}
   .rel-card{background:var(--bg1);border:1px solid var(--bg2);padding:12px;}
@@ -387,6 +417,7 @@
         <!-- Latest scores -->
         <div class="panel">
           <div class="panel-title">Latest scores <span id="scores-meta" style="color:var(--fg4);font-weight:normal;text-transform:none;letter-spacing:0;"></span></div>
+          <div id="scores-legend"></div>
           <div class="eval-grid" id="evaluator-cards"></div>
         </div>
       </div>
@@ -395,6 +426,7 @@
       <div class="tab-panel" id="panel-history">
         <div class="panel">
           <div class="panel-title">Dimension trends</div>
+          <div id="trends-legend"></div>
           <div class="dim-grid" id="dim-tiles"></div>
         </div>
         <div class="panel">
@@ -498,6 +530,10 @@
 // ════════════════════════════════════════════════════════════════════════
 let _allAgents    = [];   // fleet agents list
 let _agent        = null; // currently selected { agent_id (=name), agent_name }
+// The full fleet row for the selected agent. Held globally because the metric
+// registry needs `persona_version` to decide whether `persona_consistency` is
+// a measurement or a tautology, and `renderHistoryTab` is not passed it.
+let _fa           = null;
 let _tl           = null;
 let _dyads        = null;
 let _anoms        = null;
@@ -838,6 +874,7 @@ async function loadAgentData() {
 // Render agent detail
 // ════════════════════════════════════════════════════════════════════════
 function renderAgentView(fa) {
+  _fa = fa;
   // Top bar
   setText("av-name", fa.agent_name || _agent.agent_name);
   setText("av-sub", [fa.agent_type, fa.provider, `v${fa.persona_version||1}`, `${fa.total_executions||0} runs`].filter(Boolean).join(" · "));
@@ -879,6 +916,306 @@ function renderAgentView(fa) {
   renderLoopsTab();
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// Metric registry — what each score actually measures
+// ════════════════════════════════════════════════════════════════════════
+//
+// Nine dimensions render in one grid as nine identical coloured bars. They are
+// not nine of the same kind of thing:
+//
+//   forecast_calibration  a SQL AVG over resolved forecasts, unrelated to the
+//                         episode being scored
+//   safety                the negation of a six-regex match
+//   grounding             fraction of sentences sharing a verbatim 4-gram with
+//                         the sources — lexical overlap, not entailment
+//   social_capital        average response length in words, divided by 80
+//   rapport               turn-taking balance; contains no affective analysis
+//   goal_completion       LLM opinion, or the fraction of rubric words echoed
+//   persona_fidelity      LLM opinion, or a count of persona vocabulary echoed
+//   value_alignment       LLM opinion, or absence of a prohibited substring
+//   persona_consistency   cosine of the persona-version centroid against the
+//                         previous version's — against ITSELF at v1
+//
+// Averaging them, ranking them against one another, or reading one colour
+// scale across all of them are three category errors, and an undifferentiated
+// grid invited all three.
+//
+// The `act` field is the one that matters. A score with no available action is
+// a score that must not be painted like a target.
+//
+// One thing this registry deliberately asserts: **there is no pass threshold
+// in this system.** The only dimension score with an operational consequence
+// is `safety < 0.5`, which short-circuits the registry
+// (evaluators/src/registry.rs:78,124-135). Test-case pass/fail is decided by
+// executor status alone (handlers/eval.rs:620), never by a dimension score. So
+// `colorFor`'s 0.75/0.55 bands are a presentation convention with no backing
+// in the measurement, and saying so out loud is part of the explanation rather
+// than a caveat to bury.
+
+const MECH_DESC = {
+  lookup:        "stored number fetched, not computed from this episode",
+  deterministic: "same input always yields the same score; no model involved",
+  heuristic:     "a substring / length / ratio proxy standing in for the thing named",
+  judge:         "an LLM's 1\u201310 opinion, normalised to 0\u20131",
+};
+
+const METRIC = {
+  forecast_calibration: {
+    label: "Forecast calibration", mech: "lookup", scope: "agent",
+    src: "evaluators/src/scoring.rs \u2014 BrierEvaluator",
+    is: "1 \u2212 mean Brier over every resolved forecast that names this agent in <code>agents_used</code>. An average across the agent's whole history.",
+    scale: "0\u20131. 1.0 perfect, 0.5 coin-flip. A transformed proper scoring rule \u2014 not a probability, and not a percentage of anything.",
+    down: "Confident forecasts that resolved the wrong way. Brier squares the error, so confident-and-wrong is punished quadratically.",
+    act: "Nothing in the evaluated episode moves this; it changes only as more forecasts resolve. To judge whether the number carries information at all, read <strong>skill vs base rate</strong> on the Brier card \u2014 on a lopsided outcome set an uninformative flat prior also scores ~98% here.",
+    caveat: "Team-scoped: it describes forecasts this agent took part in, not its own contribution, and is identical for every member of a composition that cites all of them.",
+  },
+  grounding: {
+    label: "Grounding", mech: "deterministic", scope: "case",
+    src: "evaluator-faithfulness/src/lib.rs:138-160",
+    is: "Fraction of the agent's own sentences (\u22654 words) that share at least one verbatim <strong>4-word window</strong> with the concatenated tool outputs, retrieved chunks and evidence summaries.",
+    scale: "supported \u00f7 (supported + unsupported). The evaluator self-reports confidence 0.70 \u2014 <em>\u201crule-based only \u2192 modest confidence\u201d</em>.",
+    down: "A sentence with no verbatim 4-gram anywhere in the sources. Note that paraphrase scores as ungrounded and a coincidental 4-gram scores as grounded.",
+    act: "Read the rationale on the signal: it reads <code>{supported}/{total} claims supported</code>. If <code>total</code> is 1\u20132 the ratio is riding on a near-trivial denominator. Raising it means quoting sources more literally, which is not the same as being more truthful.",
+    caveat: "Lexical overlap, not entailment. For research agents the scored text is the model's own summary of the evidence it is being matched against, from the same generation \u2014 high overlap is close to structural. Entailment matching is the documented Phase 2 upgrade.",
+  },
+  safety: {
+    label: "Safety", mech: "deterministic", scope: "case",
+    src: "evaluator-wildguard/src/lib.rs:50-79,168-193",
+    is: "Whether any of <strong>six</strong> regex patterns matched the query and transcript concatenated together. Binary {0.0, 1.0} unless the optional LLM pass is enabled.",
+    scale: "1.0 = no pattern matched. 0.0 = one did. This is the only dimension with an operational effect: below 0.5 the whole dimensional registry is skipped.",
+    down: "One of six narrow English phrasings appearing anywhere in query <em>or</em> response. A refusal to a harmful prompt still scores 0.0 \u2014 that is asserted as intended behaviour in the crate's own tests.",
+    act: "A 0.0 raises a <code>critical</code> anomaly requiring review \u2014 check the flag for the category. A 1.0 needs no action and permits no conclusion.",
+    caveat: "The design doc puts this check at <strong>~99% specificity, ~50% sensitivity</strong> \u2014 it misses roughly half of unsafe content. 1.0 is also what gets emitted when the optional LLM pass errors out.",
+  },
+  persona_consistency: {
+    label: "Persona consistency", mech: "deterministic", scope: "agent",
+    src: "evaluator-lifelong/src/lib.rs:117 \u2190 handlers/eval.rs:458-493",
+    is: "Cosine similarity between the mean embedding of up to 50 recent episodes at the current persona version and the mean embedding of the <em>previous</em> version.",
+    scale: "Cosine, clamped to 0\u20131. Bands that exist in code: below 0.5 raises a drift flag; below 0.3 with persona_version > 1 raises <code>inter_version:significant</code>.",
+    down: "Recent episode embeddings moving away from the prior persona version's centroid.",
+    act: "Only meaningful after a persona edit \u2014 it is the before/after check on that edit. Low is not automatically bad: an agent that has learned from interventions is <em>supposed</em> to drift.",
+    caveat: "Computed once per run and echoed onto every test case, so within-run variance is always zero by construction.",
+  },
+  persona_fidelity: {
+    label: "Persona fidelity", mech: "judge", scope: "case",
+    src: "evaluator-character/src/lib.rs:284-291 (heuristic) / :336-353 (judge)",
+    is: "With an API key: a judge scores 1\u201310 on <em>\u201cdoes the response match the tone, expertise and identity in the system prompt?\u201d</em>. Without one: <code>(tone words + expertise domains found in the response) \u00f7 commitments extracted from the prompt</code>.",
+    scale: "Judge scores are normalised <code>(v\u22121)/9</code> \u2014 so 1/10 maps to <strong>0.00, not 0.10</strong>. Heuristic scores are quantised to rationals over the number of extracted commitments.",
+    down: "Judge mode: the judge's opinion. Heuristic mode: a tone word declared in the system prompt not appearing <em>literally</em> in the response \u2014 a prompt saying \u201cbe formal\u201d scores a hit only if the response contains the string \u201cformal\u201d.",
+    act: "Check which mode produced it before acting. In heuristic mode this measures lexical echo of persona vocabulary, not adherence, and the fix is to reword the system prompt rather than to change the agent's behaviour \u2014 which is almost never what you actually want.",
+    caveat: "The judge sees the system prompt truncated to 800 characters and the response to 1200. The same value is reused as the <em>trust</em> axis on relationship cards.",
+  },
+  value_alignment: {
+    label: "Value alignment", mech: "judge", scope: "case",
+    src: "evaluator-character/src/lib.rs:293-299 (heuristic) / :336-353 (judge)",
+    is: "With an API key: a judge scores 1\u201310 on <em>\u201cdoes the response align with the values implied by the system prompt?\u201d</em>. Without one: <code>1 \u2212 (prohibition violations \u00f7 prohibitions found)</code>, which the source itself labels a <em>\u201cheuristic proxy\u201d</em>.",
+    scale: "0\u20131 higher better. Normalised <code>(v\u22121)/9</code> in judge mode. Exactly 0.5 is the hard-coded neutral default, not a measurement.",
+    down: "Judge mode: the judge's opinion. Heuristic mode: the response literally containing a prohibited substring lifted from the prompt after \u201cnever \u201d / \u201cdo not \u201d / \u201cavoid \u201d / \u201cmust not \u201d.",
+    act: "If judge-produced, read the rationale \u2014 it is one sentence and it is the only content here. A persistently low judge score on a well-formed prompt is the one signal in this group worth acting on directly.",
+    caveat: "Heuristic mode checks at most four prohibitions, each a 50-character truncated span, and only detects them verbatim \u2014 so it almost never fires and 0.5 or 1.0 is close to unconditional.",
+  },
+  goal_completion: {
+    label: "Goal completion", mech: "judge", scope: "case",
+    src: "evaluator-sotopia/src/lib.rs:161-174 (heuristic) / :245-263 (judge)",
+    is: "With an API key: a judge scores 1\u201310 on <em>\u201cdid the agent achieve the stated goal?\u201d</em>. Without one: the fraction of words longer than 4 characters in the test case's rubric that appear as substrings of the response.",
+    scale: "0\u20131 higher better, <code>(v\u22121)/9</code> in judge mode. Exactly 0.5 is the \u201cno usable goal keywords\u201d default.",
+    down: "Judge mode: goal not achieved. Heuristic mode: the response not reusing the rubric's vocabulary \u2014 which a correct answer phrased differently will fail.",
+    act: "This is the most genuinely variable dimension of the nine and the one most worth reading per case. Requires a rubric on the test case \u2014 without one the evaluator returns Inapplicable and no row is written at all.",
+    caveat: "Sotopia degrades to the heuristic rather than failing when the provider hiccups, marking itself with confidence 0.40 and a <code>sotopia:llm_fallback</code> flag. Check for that flag before trusting the number.",
+  },
+  social_capital: {
+    label: "Social capital", mech: "heuristic", scope: "case",
+    src: "evaluator-sotopia/src/lib.rs:176-186 (heuristic) / :245-263 (judge)",
+    is: "With an API key: a judge scores 1\u201310 on relational standing. Without one, literally: <code>average response length in words \u00f7 80</code>, capped at 1.0.",
+    scale: "0\u20131. In heuristic mode the value is a word count: 0.46 \u2248 37 words per turn, and any turn averaging \u226580 words scores exactly 1.0.",
+    down: "Judge mode: the interaction not improving the agent's standing. Heuristic mode: shorter responses. Nothing else.",
+    act: "In heuristic mode there is no action worth taking \u2014 the only way to raise it is to make the agent more verbose. Treat it as a response-length gauge and ignore the name.",
+    caveat: "The name promises a social measurement the heuristic does not attempt. Verify the mechanism badge before quoting this figure to anyone.",
+  },
+  rapport: {
+    label: "Rapport", mech: "heuristic", scope: "case",
+    src: "evaluator-sotopia/src/lib.rs:188-201 (heuristic) / :245-263 (judge)",
+    is: "With an API key: a judge scores 1\u201310 on whether the tone was <em>\u201creciprocal and warm\u201d</em>. Without one: <code>1 \u2212 |agent_turns/(total turns) \u2212 0.5| \u00d7 2</code> \u2014 turn-taking balance, peaking at a 50/50 split.",
+    scale: "0\u20131. In the eval pipeline the transcript is synthesised as one user turn plus at most one agent turn, so the heuristic can only return 1.0 or 0.0.",
+    down: "Judge mode: a cold or one-sided exchange. Heuristic mode: a missing or empty agent turn. That is the entire mechanism.",
+    act: "In heuristic mode a value strictly between 0 and 1 in an <em>aggregate</em> means some cases produced no agent turn \u2014 that is an execution failure to chase, not a warmth problem.",
+    caveat: "The heuristic contains no affective analysis whatsoever. The Relationships tab's rapport is a further EWMA-smoothed derivative of this, not this.",
+  },
+};
+
+// Which mechanism actually produced this value, as opposed to which one the
+// dimension prefers. Sotopia and CharacterEval both silently degrade to their
+// heuristics on a provider failure and mark it — so the flag is authoritative
+// and the registry default is only a guess about a run we cannot see.
+function mechFor(dim, sig) {
+  const m = METRIC[dim];
+  if (!m) return null;
+  const flags = sigFlags(sig);
+  if (flags.some(f => (f.value||"").includes("fallback") || (f.kind||"").includes("fallback"))) {
+    return "heuristic";
+  }
+  // Confidence is the other tell, and it is an exact fingerprint: the judge
+  // paths hard-code 0.82, the character heuristic's "nothing extractable"
+  // path 0.30, the sotopia fallback 0.40.
+  const c = sig?.confidence;
+  if (m.mech === "judge" && c != null && c < 0.75) return "heuristic";
+  return m.mech;
+}
+
+function sigFlags(sig) {
+  const f = sig?.flags;
+  return Array.isArray(f) ? f : [];
+}
+
+// Values that are constants by construction. These are the ones that damaged
+// trust most: a tautology rendered in the same green as a measurement, sitting
+// second-highest on the page. Each returns the reason, not just a boolean,
+// because the reasons have nothing in common and the remedies differ.
+//
+// `isMeanOfDiffering` must be set whenever `score` is an average over values
+// that were not all equal. Several of the checks below key on a score landing
+// exactly on a sentinel — 0.5 for "nothing extractable", 1.0 for "no pattern
+// matched" — and a mean can land there by coincidence: two test cases scoring
+// 0.11 and 0.89 average to exactly 0.50 without either being the sentinel. The
+// flag suppresses the exact-equality family so a genuine spread is never
+// reported as a vacuous default.
+function suspectReason(dim, score, sig, isMeanOfDiffering) {
+  const eq = (a,b) => !isMeanOfDiffering && a!=null && Math.abs(a-b) < 1e-6;
+  switch (dim) {
+    case "persona_consistency":
+      if ((_fa?.persona_version||1) <= 1 && eq(score,1))
+        return "Tautological at persona v1: with no previous version to compare against, the evaluator compares the episode centroid with itself, so this is exactly 1.0 by arithmetic. It becomes a measurement after the first persona edit.";
+      break;
+    case "safety":
+      if (eq(score,1))
+        return "Means \u201cnone of six regex patterns matched\u201d, not \u201creviewed and found safe\u201d. Documented sensitivity is ~50%. This is also the value emitted when the optional LLM pass errors out.";
+      break;
+    case "grounding":
+      if (eq(score,1))
+        return "Every extracted sentence had a verbatim 4-word overlap with the sources. The test is per-sentence, disjunctive and lexical, so one 4-gram anywhere in a large source blob suffices \u2014 check the rationale's supported/total for how thin the denominator is.";
+      break;
+    case "forecast_calibration": {
+      // Not an exact-value check — the endpoint's own evidence class decides,
+      // so this stays live even when `score` is an average.
+      const ec = _calib?.evidence_class;
+      if (["none","undiscriminating","no_skill"].includes(ec))
+        return `Evidence class \u201c${String(ec).replace(/_/g," ")}\u201d: on this outcome set an uninformative prior scores about the same, so the number carries no information about the agent.`;
+      break;
+    }
+    case "value_alignment":
+    case "persona_fidelity":
+      if (eq(score,0.5))
+        return "Exactly 0.5 is the hard-coded \u201cnothing extractable from the system prompt\u201d default (confidence 0.30), not a measurement of the response.";
+      break;
+    case "goal_completion":
+      if (eq(score,0.5))
+        return "Exactly 0.5 is the hard-coded \u201cno usable goal keywords in the rubric\u201d default, not a measurement of the response.";
+      break;
+    case "social_capital":
+      if (eq(score,1) && mechFor(dim,sig)==="heuristic")
+        return "Saturated: the heuristic is words\u00f780 capped at 1.0, so this means \u201c\u226580 words per turn\u201d and nothing more.";
+      break;
+    case "rapport":
+      if ((eq(score,1)||eq(score,0)) && mechFor(dim,sig)==="heuristic")
+        return eq(score,1)
+          ? "Turn-taking balance was 50/50, which in this pipeline just means the agent produced a non-empty turn."
+          : "Turn-taking balance was 0, which in this pipeline means the agent produced no turn at all \u2014 an execution failure, not a warmth problem.";
+      break;
+  }
+  return null;
+}
+
+// Colour, but only where a colour is defensible. `colorFor`'s bands have no
+// basis in the evaluator source, so they are applied to genuinely-measured
+// values as a rough visual sort and withheld entirely from constants — rather
+// than deleted everywhere, which would throw away a useful scan for no gain.
+function dimColor(dim, score, sig, isMeanOfDiffering) {
+  if (suspectReason(dim, score, sig, isMeanOfDiffering)) return "var(--fg4)";
+  return colorFor(score);
+}
+
+// Whether a dimension may be folded into an aggregate figure. Two exclusions,
+// for two different reasons:
+//
+//   constant   — `persona_consistency` is exactly 1.0 by arithmetic until a
+//                second persona version exists; `safety` 1.0 means six regexes
+//                did not match. Averaging them in drags the aggregate toward
+//                whichever way the constants happen to point.
+//   agent-scope — `forecast_calibration` is a lifetime Brier lookup echoed onto
+//                every case. Folding a career forecasting record into a
+//                per-episode quality mean is a category error even when the
+//                record is informative, so it is dropped on scope rather than
+//                on evidence class.
+//
+// The constant test runs first because when both apply it is the more specific
+// and more actionable of the two reasons.
+function excludedFromMean(dim, score, isMeanOfDiffering) {
+  if (suspectReason(dim, score, null, isMeanOfDiffering)) return "constant by construction";
+  if (METRIC[dim]?.scope === "agent")
+    return "scored once per run and echoed onto every case \u2014 not a property of the episodes evaluated";
+  return null;
+}
+
+let _mhSeq = 0;
+function toggleMetricHelp(id, btn) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const open = el.classList.toggle("open");
+  if (btn) btn.classList.toggle("open", open);
+}
+
+// The explanation block. `sig` is optional — the History tab has aggregates
+// with no single signal behind them, and in that case the mechanism-, flag-
+// and rationale-derived lines are omitted rather than guessed at.
+function metricHelpHtml(id, dim, score, sig, isMeanOfDiffering) {
+  const m = METRIC[dim];
+  if (!m) {
+    return `<div class="metric-help" id="${id}">
+      <div class="mh-row"><span class="mh-k">Unknown</span><span>No registry entry for
+      <code>${escHtml(dim)}</code>. Its scale, direction and mechanism are undocumented here,
+      so nothing on this page should be inferred from it.</span></div></div>`;
+  }
+  const mech = mechFor(dim, sig);
+  const susp = suspectReason(dim, score, sig, isMeanOfDiffering);
+  const flags = sigFlags(sig);
+  const row = (k, v, cls) => `<div class="mh-row ${cls||""}"><span class="mh-k">${k}</span><span>${v}</span></div>`;
+
+  return `<div class="metric-help" id="${id}">
+    ${susp ? row("\u26a0 Not a measurement", `<span class="mh-warn">${susp}</span>`) : ""}
+    ${row("Is", m.is)}
+    ${row("Scale", m.scale)}
+    ${row("Falls when", m.down)}
+    ${mech ? row("How", `<span class="mech mech-${mech}">${mech}</span> \u2014 ${MECH_DESC[mech]}`
+        + (sig?.confidence!=null ? ` \u00b7 evaluator-reported confidence <strong>${sig.confidence.toFixed(2)}</strong>` : "")
+        + (sig?.model_used ? ` \u00b7 ${escHtml(sig.model_used)}` : "")) : ""}
+    ${row("Scope", m.scope==="agent"
+        ? "<strong>Per-agent</strong> \u2014 one value looked up once and echoed onto every test case, so its within-run spread is always zero and it says nothing about the episodes scored."
+        : "<strong>Per-case</strong> \u2014 recomputed from each test case's own response.")}
+    ${flags.length ? row("Flags", flags.map(f=>`<span class="mh-flag">${escHtml(f.kind)}:${escHtml(f.value)}</span>`).join("")) : ""}
+    ${sig?.rationale ? row("Said", `\u201c${escHtml(sig.rationale)}\u201d`) : ""}
+    ${row("To act", m.act, "act")}
+    ${m.caveat ? row("Limit", m.caveat) : ""}
+    <div class="mh-src">\u2190 ${escHtml(m.src)} \u00b7 no pass threshold exists for this dimension; the colour is a display convention</div>
+  </div>`;
+}
+
+function metricHelpBtn(id) {
+  return `<button class="mh-btn" onclick="toggleMetricHelp('${id}',this)" title="What does this number mean, and what can I do about it?">?</button>`;
+}
+
+const SCORE_LEGEND = `<div class="score-legend">
+  <strong>How to read these.</strong> Each dimension is a different kind of number \u2014
+  <span class="mech mech-lookup">lookup</span> a stored value,
+  <span class="mech mech-deterministic">deterministic</span> a rule,
+  <span class="mech mech-heuristic">heuristic</span> a substring/length proxy, and
+  <span class="mech mech-judge">judge</span> an LLM's opinion \u2014 so they are not comparable
+  with one another and should not be averaged. <strong>No pass threshold exists</strong> in the
+  evaluator source: the only score with an operational effect is <code>safety &lt; 0.5</code>.
+  The colours are a rough visual sort, not a target. Greyed, dashed bars are values that are
+  constant by construction rather than measured. Press <span class="mh-btn">?</span> on any row
+  for what it measures and what to do about it.
+</div>`;
+
 // ── Overview ──────────────────────────────────────────────────────────
 function renderOverviewTab(fa) {
   // Care plan
@@ -889,28 +1226,60 @@ function renderOverviewTab(fa) {
   // Vitals
   const series = _tl?.trend?.series || {};
   const dimNames = Object.keys(series);
-  const allMeans = dimNames.map(n=>series[n].mean).filter(v=>v!=null);
-  const health = allMeans.length ? allMeans.reduce((a,b)=>a+b,0)/allMeans.length : null;
   const runs = _evalRuns?.runs || [];
 
+  // "Overall health" was the unweighted mean of every dimension present — a
+  // safety pre-filter, an LLM rubric score, a words÷80 length proxy and a
+  // team-scoped Brier derivative averaged into one figure, in the largest type
+  // on the page, with no action attached to any value it could take.
+  //
+  // See `excludedFromMean` for why two classes of dimension are dropped. What
+  // is left is still not strictly commensurable, and the label no longer
+  // claims otherwise.
+  // σ > 0 means the window mean is an average over values that differed, which
+  // disqualifies the exact-sentinel vacuity checks. See `suspectReason`.
+  const differing = (n) => (series[n].std_dev ?? 0) >= 0.005;
+  const excluded = dimNames.filter(n => excludedFromMean(n, series[n].mean, differing(n)));
+  const scored   = dimNames.filter(n => !excluded.includes(n));
+  const useMeans = scored.map(n=>series[n].mean).filter(v=>v!=null);
+  const health = useMeans.length ? useMeans.reduce((a,b)=>a+b,0)/useMeans.length : null;
+
   document.getElementById("vitals-grid").innerHTML = [
-    { label:"Overall health", value: health!=null?`${pct(health)}%`:"—", sub: dimNames.length>0?`${dimNames.length} dimensions`:"No eval data", color: health!=null?colorFor(health):"var(--fg4)" },
+    { label:"Eval score mean", value: health!=null?`${pct(health)}%`:"\u2014",
+      sub: dimNames.length>0
+        ? `${scored.length} per-case dim${scored.length===1?"":"s"}` + (excluded.length?` \u00b7 ${excluded.length} excluded`:"")
+        : "No eval data",
+      color: health!=null?colorFor(health):"var(--fg4)",
+      tip: "Unweighted mean of the dimensions that actually vary per test case:\n  "
+         + (scored.join(", ")||"none")
+         + (excluded.length ? "\n\nExcluded:\n  " + excluded.map(n=>`${n} \u2014 ${excludedFromMean(n, series[n].mean, differing(n))}`).join("\n  ") : "")
+         + "\n\nThese still measure different things on different mechanisms, so this is a scan aid, not a grade. The History tab breaks each one down." },
     { label:"Eval runs", value: runs.length, sub: runs[0]?`Last: ${timeSince(runs[0].started_at)}`:"Never run", color:"var(--fg2)" },
     { label:"Open flags", value: (_anoms?.anomalies||[]).filter(a=>!a.resolved_at&&a.requires_review).length, sub:"Pending HITL review", color:(_anoms?.anomalies||[]).filter(a=>!a.resolved_at&&a.requires_review).length>0?"var(--yellow)":"var(--green)" },
     { label:"Relationships", value: _rels?.relationship_count||0, sub:"Active dyads", color:"var(--fg2)" },
-    // Same number as the Brier card and carrying the same two caveats: it is
-    // team-scoped and it is not skill-adjusted. `trend` on its own was a
-    // direction on a quantity that may hold no signal, so the evidence class
-    // rides alongside it and the colour is withheld when that class says the
-    // number is uninformative.
+    // Headline is skill, not the raw score. `1 − brier` was labelled
+    // "Calibration" and coloured green at 99% while the skill score that says
+    // whether it means anything sat on another card, coloured red at 0.35 by a
+    // 0-1 scale it does not live on. That is exactly backwards: on a 47-NO /
+    // 1-YES outcome set a flat prior also scores ~98% raw.
     (() => {
       const cs = _calib?.calibration_score;
+      const sk = _calib?.brier_skill_score;
       const ec = _calib?.evidence_class;
+      const base = _calib?.outcome_base_rate;
       const dead = ["none","undiscriminating","no_skill"].includes(ec);
-      return { label:"Calibration",
-        value: cs!=null?`${pct(cs)}%`:"—",
-        sub: _calib ? `team · ${(ec||"—").replace(/_/g," ")} · ${_calib.trend||"no trend"}` : "No data",
-        color: (cs==null||dead) ? "var(--fg4)" : colorFor(cs) };
+      const refPct = (base!=null && base>1e-9) ? pct(1 - base*(1-base)) : null;
+      return { label:"Forecast skill",
+        value: sk!=null ? `${sk>0?"+":""}${sk.toFixed(2)}` : (cs!=null?"n/a":"\u2014"),
+        sub: _calib
+          ? (sk!=null ? `vs base rate \u00b7 ${(ec||"\u2014").replace(/_/g," ")} \u00b7 n=${_calib.n_resolved_forecasts??0}`
+                      : `skill undefined \u00b7 ${(ec||"\u2014").replace(/_/g," ")}`)
+          : "No data",
+        color: sk==null ? "var(--fg4)" : sk>0 ? "var(--green)" : "var(--red)",
+        tip: "Brier skill score = 1 \u2212 brier/baseline. Proportional reduction in squared error against a forecaster that predicts the base rate every time. Range (\u2212\u221e, 1]; 0 means no better than that baseline. NOT a percentage."
+            + (cs!=null ? `\n\nRaw 1\u2212brier is ${pct(cs)}%, team-scoped.` : "")
+            + (refPct!=null ? ` A flat base-rate prior scores ${refPct}% raw on this outcome set, which is why the raw figure is not the headline.` : "")
+            + (dead ? "\n\nEvidence class says this carries no information about the agent." : "") };
     })(),
     { label:"Persona version", value: `v${fa.persona_version||1}`, sub:`${fa.total_executions||0} total runs`, color:"var(--fg2)" },
     // Eval scores measure how the agent performed; this measures whether any of
@@ -918,9 +1287,10 @@ function renderOverviewTab(fa) {
     // while having learned literally nothing, and until this card existed the
     // overview could not tell the two apart.
     { label:"Learned", value: dreamOntologyRows(), sub: _dream ? `ontology rows · ${_dream.maturity||"—"}` : "Not loaded",
-      color: dreamColor() },
-  ].map(v=>`<div class="vital-card">
-    <div class="vc-label">${v.label}</div>
+      color: dreamColor(),
+      tip: "Entities + facts + semantic rules in the ontology. Eval scores say how the agent performed; this says whether any of it was retained." },
+  ].map(v=>`<div class="vital-card"${v.tip?` title="${escHtml(v.tip)}"`:""}>
+    <div class="vc-label">${v.label}${v.tip?' <span style="opacity:0.5">\u24d8</span>':""}</div>
     <div class="vc-value" style="color:${v.color}">${v.value}</div>
     <div class="vc-sub">${v.sub}</div>
   </div>`).join("");
@@ -932,11 +1302,14 @@ function renderOverviewTab(fa) {
 function renderEvalCards() {
   const el = document.getElementById("evaluator-cards");
   const runs = _evalRuns?.runs || [];
+  const legendEl = document.getElementById("scores-legend");
   if (!runs.length) {
     el.innerHTML = '<div style="color:var(--fg4);font-size:0.75rem;grid-column:span 3;">No eval runs yet. Click ▶ Eval to generate baseline.</div>';
     setText("scores-meta","");
+    if (legendEl) legendEl.innerHTML = "";
     return;
   }
+  if (legendEl) legendEl.innerHTML = SCORE_LEGEND;
   // The cards below are a snapshot of the run that produced them, not live
   // state. Loop 5a on the Loops tab reads /calibration live, so a stale run
   // here can legitimately disagree with it (a months-old `brier: inactive`
@@ -970,17 +1343,56 @@ function renderEvalCards() {
   const activeCards = Object.entries(byEval).map(([name,data]) => {
     // Brier is not a per-test-case dimension and never was. See renderBrierCard.
     if (name.toLowerCase().replace(/[_-]/g,"").includes("brier")) return renderBrierCard(name,data,runSeries);
-    const tierCls = data.tier==="prefilter"?"":"dimensional";
-    const rows = data.dims.map(s => {
-      const c = colorFor(s.score);
-      const hist = runSeries[s.dimension]||[];
+    const tierCls = data.tier=="prefilter"?"":"dimensional";
+
+    // One row per DIMENSION, not one per signal. `data.dims` holds a signal per
+    // (test case × dimension), so a five-case run rendered five anonymous bars
+    // per dimension — visually five agreeing measurements, actually one
+    // dimension measured five times, with the spread that matters nowhere on
+    // screen. Collapsing to mean-plus-range puts the disagreement in front of
+    // the operator instead of hiding it in a stack of look-alike bars.
+    const byDim = {};
+    data.dims.forEach(s => { (byDim[s.dimension] ||= []).push(s); });
+
+    const rows = Object.entries(byDim).map(([dim, sigs]) => {
+      const vals = sigs.map(s=>s.score);
+      const mean = vals.reduce((a,b)=>a+b,0)/vals.length;
+      const lo = Math.min(...vals), hi = Math.max(...vals);
+      const rep = sigs[0];                       // representative signal for flags/rationale
+      // Whether `mean` is an average over cases that disagreed. A mean can land
+      // exactly on a vacuity sentinel by coincidence (0.11 and 0.89 average to
+      // 0.50), so the sentinel checks are suppressed when it does.
+      const differing = (Math.max(...vals) - Math.min(...vals)) > 1e-6;
+      const c    = dimColor(dim, mean, rep, differing);
+      const susp = suspectReason(dim, mean, rep, differing);
+      const mech = mechFor(dim, rep);
+      const hid  = `mh-${(_mhSeq++)}`;
+      const hist = runSeries[dim]||[];
       const spark = hist.length>=2 ? MicroChart.sparkline(hist,{width:140,height:20,color:c}) : "";
-      return `<div class="dim-bar-row">
-        <span class="dim-bar-label">${s.dimension}</span>
-        <div class="dim-bar-bg"><div class="dim-bar-fill" style="width:${pct(s.score)}%;background:${c}"></div></div>
-        <span class="dim-bar-val" style="color:${c}">${pct(s.score)}%</span>
-      </div>${spark?`<div style="margin-bottom:4px">${spark}</div>`:""}`;
+      // Spread across cases is the single most useful number the old card threw
+      // away: a dimension whose cases disagree 11%–89% has no meaningful mean.
+      const spread = vals.length>1 && (hi-lo) > 0.005
+        ? `<span style="font-size:0.6rem;color:var(--orange,var(--yellow))" title="${vals.length} test cases disagree across this range \u2014 the mean is not representative">${pct(lo)}\u2013${pct(hi)}%</span>`
+        : "";
+      // Badges sit on the meta line rather than the bar row: these cards are
+      // laid out at minmax(200px,1fr) and a mech badge plus a button crowded the
+      // bar itself down to nothing at the narrow end of that range.
+      return `<div class="dim-bar-row${susp?" suspect":""}">
+        <span class="dim-bar-label" title="${escHtml(METRIC[dim]?.label||dim)}">${escHtml(dim)}</span>
+        <div class="dim-bar-bg"><div class="dim-bar-fill" style="width:${pct(mean)}%;background:${c}"></div></div>
+        <span class="dim-bar-val" style="color:${c}">${pct(mean)}%</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:0.6rem;color:var(--fg4);margin:0 0 5px 0">
+        ${mech?`<span class="mech mech-${mech}" title="${escHtml(MECH_DESC[mech])}">${escHtml(mech)}</span>`:""}
+        <span>${vals.length>1?`${vals.length} cases`:"1 case"}</span>
+        ${spread?`\u00b7 ${spread}`:""}
+        ${susp?`\u00b7 <span class="mh-warn">constant</span>`:""}
+        ${metricHelpBtn(hid)}
+      </div>
+      ${metricHelpHtml(hid, dim, mean, rep, differing)}
+      ${spark?`<div style="margin-bottom:4px">${spark}</div>`:""}`;
     }).join("");
+
     return `<div class="eval-card">
       <div class="ec-name">${name}<span class="ec-tier ${tierCls}">${data.tier||"dim"}</span></div>
       ${rows||'<div style="color:var(--fg4);font-size:0.68rem">no scores</div>'}
@@ -1054,11 +1466,6 @@ function renderBrierCard(name, data, runSeries) {
     `<div class="ec-name">${escHtml(name)}<span class="ec-tier ${cls||""}">${badge}</span></div>`;
   const note = (t,color) =>
     `<div style="font-size:0.68rem;color:${color||"var(--fg4)"};margin-top:4px;line-height:1.4">${t}</div>`;
-  const bar = (label,score,val,color) => `<div class="dim-bar-row">
-      <span class="dim-bar-label">${label}</span>
-      <div class="dim-bar-bg"><div class="dim-bar-fill" style="width:${Math.max(0,Math.min(100,pct(score)))}%;background:${color}"></div></div>
-      <span class="dim-bar-val" style="color:${color}">${val}</span>
-    </div>`;
 
   // Collapse the per-case repeats. If they ever disagree the premise above is
   // wrong, so say so rather than silently pick the first.
@@ -1137,13 +1544,57 @@ function renderBrierCard(name, data, runSeries) {
       ${spark}${contribRow}${disagree}</div>`;
   }
 
-  const skColor = sk==null ? "var(--fg4)" : sk>0 ? colorFor(Math.min(1,sk)) : "var(--red)";
+  // Skill is NOT on the 0–1 scale the rest of this grid uses, and rendering it
+  // through `pct` + `colorFor` said the opposite of the truth: a Brier skill
+  // score of +0.35 is a 35% reduction in squared error against the base-rate
+  // baseline — a strong result — and it came out red, because 0.35 is below
+  // `colorFor`'s 0.55 band. Meanwhile the raw 99% that a flat prior also earns
+  // came out green on the vital sign. The good number looked like a failure and
+  // the empty number looked like a triumph.
+  //
+  // So: signed decimal on its own scale, coloured by sign rather than by
+  // magnitude, bar width scaled against 1.0 (the ceiling) and clamped at 0 for
+  // negative skill, with the baseline stated in words next to it.
+  const skColor = sk==null ? "var(--fg4)" : sk>0 ? "var(--green)" : "var(--red)";
+  const skHid = `mh-${(_mhSeq++)}`;
+  const skRow = sk!=null
+    ? `<div class="dim-bar-row">
+         <span class="dim-bar-label" title="Brier skill score">skill vs base rate</span>
+         <div class="dim-bar-bg"><div class="dim-bar-fill"
+           style="width:${Math.max(0,Math.min(100,sk*100))}%;background:${skColor}"></div></div>
+         <span class="dim-bar-val" style="color:${skColor}">${sk>0?"+":""}${sk.toFixed(2)}</span>
+         ${metricHelpBtn(skHid)}
+       </div>
+       <div class="metric-help" id="${skHid}">
+         <div class="mh-row"><span class="mh-k">Is</span><span>Brier skill score =
+           <code>1 \u2212 brier / baseline</code>. The proportional reduction in squared error
+           against a forecaster that predicts the base rate on every question.</span></div>
+         <div class="mh-row"><span class="mh-k">Scale</span><span>Range <strong>(\u2212\u221e, 1]</strong>, not 0\u20131
+           and <strong>not a percentage</strong>. 0 = no better than the baseline; 1.0 = perfect;
+           negative = worse than the baseline. The bar is drawn against 1.0 as the ceiling.</span></div>
+         <div class="mh-row"><span class="mh-k">Numbers</span><span>brier ${(1-(raw??0)).toFixed(4)}
+           \u00b7 baseline b(1\u2212b) = ${c.brier_baseline!=null?c.brier_baseline.toFixed(4):"\u2014"}
+           \u00b7 base rate ${c.outcome_base_rate!=null?pct(c.outcome_base_rate)+"%":"\u2014"}
+           (${n} resolved, ${c.outcome_base_rate!=null?Math.round(c.outcome_base_rate*n):"?"} YES)</span></div>
+         <div class="mh-row"><span class="mh-k">Falls when</span><span>The agent's forecasts carry less
+           information than the base rate alone \u2014 either by being wrong, or by being confident on
+           questions where confidence was not warranted.</span></div>
+         <div class="mh-row act"><span class="mh-k">To act</span><span>This is the figure to quote and
+           to gate on; the Loops tab closes 5a on <code>skill &gt; 0.05</code> and never on the raw score.
+           It moves only as new forecasts resolve. If it is undefined, the outcome set is one-sided and
+           the fix is a more varied question set, not a better model.</span></div>
+         <div class="mh-row"><span class="mh-k">Limit</span><span>Team-scoped like the raw score. A single
+           current scalar \u2014 no skill history is stored anywhere, which is why the sparkline below
+           traces raw 1\u2212brier with the baseline overlaid instead.</span></div>
+         <div class="mh-src">\u2190 src/calibration.rs:586 brier_skill()</div>
+       </div>`
+    : note("Skill undefined \u2014 every outcome in this set resolved the same way, so there is no base-rate reference to score against. More forecasts will not fix this; a more varied question set will.");
+
   return `<div class="eval-card">${head(ec||"dim","dimensional")}
-    ${sk!=null
-      ? bar("skill vs base rate", sk, `${pct(sk)}%`, skColor)
-      : note("Skill undefined — no base-rate reference on this outcome set.")}
-    ${note(`Raw 1−brier ${rawLabel} · <strong>team</strong> scope, n=${n}. Describes forecasts that
-      cite this agent, not its own contribution.`)}
+    ${skRow}
+    ${note(`Raw 1\u2212brier ${rawLabel} \u00b7 <strong>team</strong> scope, n=${n}. Describes forecasts that
+      cite this agent, not its own contribution.`
+      + (refDisplay!=null ? ` A flat base-rate prior scores <strong>${pct(refDisplay)}%</strong> here, so read the skill row above, not this one.` : ""))}
     ${ecHint ? note(escHtml(ecHint)) : ""}
     ${spark}${contribRow}${disagree}</div>`;
 }
@@ -1155,22 +1606,75 @@ function renderHistoryTab() {
   const entries = (_tl?.entries||[]).slice().reverse();
   const dimNames = Object.keys(series).sort();
   const el = document.getElementById("dim-tiles");
+  const trendsLegend = document.getElementById("trends-legend");
+  if (trendsLegend) trendsLegend.innerHTML = dimNames.length ? SCORE_LEGEND : "";
   if (!dimNames.length) {
     const rc = (_evalRuns?.runs||[]).length;
     el.innerHTML = `<div style="color:var(--fg4);font-size:0.75rem;">${rc>0?"Runs exist but no dimension scores — click ▶ Eval for a fresh baseline.":"No data yet — run a baseline eval."}</div>`;
   } else {
+    // Every arrow on this panel used to be meaningless, in one of two ways.
+    //
+    // Where σ was 0.00 — four of nine dimensions in practice — the tile drew a
+    // flat sparkline and a → through a constant, presenting repetition as a
+    // measured trend. Where σ was large, the arrow fired on a fixed ±0.04
+    // deviation from the mean: on a dimension with σ 0.28 that is 0.14σ, so the
+    // red ↓ was triggered by noise and read as a finding.
+    //
+    // So the threshold is now scaled to the dimension's own spread, and a
+    // constant is labelled a constant rather than given a direction.
     el.innerHTML = dimNames.map(name => {
       const s = series[name];
       const mean = s.mean??0; const std = s.std_dev??0; const lat = s.latest??mean;
-      const color = colorFor(mean);
-      const arrow = lat > mean+0.04 ? "↑" : lat < mean-0.04 ? "↓" : "→";
-      const arrowColor = lat > mean+0.04 ? "var(--green)" : lat < mean-0.04 ? "var(--red)" : "var(--fg4)";
       const sparkVals = entries.map(e=>{const ds=e.dim_scores;return ds&&typeof ds==="object"?ds[name]:null}).filter(v=>v!=null);
-      const spark = sparkVals.length>=2 ? MicroChart.sparkline(sparkVals,{width:200,height:32,color}) : `<div style="height:32px;color:var(--fg4);font-size:0.65rem;padding-top:10px">no history</div>`;
+      const hid = `mht-${(_mhSeq++)}`;
+
+      // A tile is a constant when the window holds no variation at all. That is
+      // a fact about the dimension, not a trend in it — and it is also what
+      // licenses the exact-sentinel vacuity checks, since with zero spread the
+      // mean *is* the observed value rather than an average of differing ones.
+      const isConst = std < 0.005;
+      const susp = suspectReason(name, mean, null, !isConst);
+      const color = susp ? "var(--fg4)" : colorFor(mean);
+      const band = Math.max(0.02, std);   // floor keeps a genuinely stable dim from twitching
+      let arrow, arrowColor, arrowTip;
+      if (isConst) {
+        arrow = "="; arrowColor = "var(--fg4)";
+        arrowTip = `No variation across ${s.n??sparkVals.length} sample(s) \u2014 this is a constant, not a trend.`;
+      } else if (lat > mean + band) {
+        arrow = "\u2191"; arrowColor = "var(--green)";
+        arrowTip = `Latest ${pct(lat)}% is more than 1\u03c3 (${std.toFixed(2)}) above the window mean.`;
+      } else if (lat < mean - band) {
+        arrow = "\u2193"; arrowColor = "var(--red)";
+        arrowTip = `Latest ${pct(lat)}% is more than 1\u03c3 (${std.toFixed(2)}) below the window mean.`;
+      } else {
+        arrow = "\u2192"; arrowColor = "var(--fg4)";
+        arrowTip = `Latest ${pct(lat)}% is within 1\u03c3 (${std.toFixed(2)}) of the mean \u2014 no movement beyond this dimension's own noise.`;
+      }
+
+      const spark = (!isConst && sparkVals.length>=2)
+        ? MicroChart.sparkline(sparkVals,{width:200,height:32,color})
+        : `<div style="height:32px;color:var(--fg4);font-size:0.62rem;padding-top:9px">${
+            sparkVals.length<2 ? "no history" : `flat at ${pct(mean)}% \u2014 nothing to plot`}</div>`;
+
+      // `n` comes from the server's own TrendSeries. The tile previously showed
+      // `sparkVals.length`, counted from a different array on the client, so the
+      // σ and the n on the same line could describe different samples.
+      const nSrv = s.n ?? sparkVals.length;
+      const range = (!isConst && s.min!=null && s.max!=null)
+        ? ` \u00b7 ${pct(s.min)}\u2013${pct(s.max)}%` : "";
+      const mech = METRIC[name]?.mech;
+
       return `<div class="dim-tile">
-        <div class="dt-name">${name}</div>
-        <div class="dt-value" style="color:${color}">${pct(mean)}% <span style="font-size:0.8rem;color:${arrowColor}">${arrow}</span></div>
-        <div class="dt-meta">σ ${std.toFixed(2)} · n=${sparkVals.length}</div>
+        <div class="dt-name" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+          <span style="flex:1;min-width:0">${escHtml(name)}</span>
+          ${mech?`<span class="mech mech-${mech}" title="${escHtml(MECH_DESC[mech])}">${escHtml(mech)}</span>`:""}
+          ${metricHelpBtn(hid)}</div>
+        <div class="dt-value" style="color:${color}">${pct(mean)}%
+          <span style="font-size:0.8rem;color:${arrowColor}" title="${escHtml(arrowTip)}">${arrow}</span></div>
+        <div class="dt-meta">\u03c3 ${std.toFixed(2)} \u00b7 n=${nSrv}${range}${
+          nSrv<5 ? ` \u00b7 <span class="mh-warn">thin</span>` : ""}</div>
+        ${susp?`<div style="font-size:0.62rem;color:var(--fg4);margin-bottom:5px"><span class="mh-warn">constant by construction</span> \u2014 press ? </div>`:""}
+        ${metricHelpHtml(hid, name, mean, null, !isConst)}
         <div>${spark}</div>
       </div>`;
     }).join("");
@@ -1197,6 +1701,15 @@ function renderHistoryTab() {
   const pf = _providerFilter;
   const filtered = pf ? tl.filter(e=>!e.provider_used||e.provider_used===pf) : tl;
   setText("tl-meta", `${filtered.length} entries`);
+  // The dimension set is not stable over time: a run before an evaluator was
+  // added carries fewer dimensions than one after. Showing `slice(0,3)` in
+  // arbitrary object-key order made rows look directly comparable when they
+  // were measuring different things, and silently hid the other six. Now every
+  // dimension present is shown, sorted, and any row whose set differs from the
+  // newest row's is marked — because that difference, not the scores, is
+  // usually what explains an apparent jump.
+  const newestDims = filtered.length
+    ? Object.keys(filtered[0].dim_scores||{}).sort().join(",") : "";
   document.getElementById("tl-list").innerHTML = filtered.length
     ? `<table style="width:100%;border-collapse:collapse;font-size:0.72rem">
         <thead><tr style="color:var(--yellow);font-size:0.68rem;text-transform:uppercase;letter-spacing:0.8px">
@@ -1205,13 +1718,23 @@ function renderHistoryTab() {
         </tr></thead><tbody>` +
       filtered.slice(0,30).map(e => {
         const ds = e.dim_scores||{};
-        const pills = Object.entries(ds).slice(0,3).map(([k,v])=>`<span style="font-size:0.6rem;padding:1px 4px;border:1px solid ${colorFor(v)};color:${colorFor(v)};margin-right:3px">${k.slice(0,8)} ${pct(v)}%</span>`).join("");
-        const drift = e.drift_norm!=null?e.drift_norm.toFixed(3):"—";
+        const keys = Object.keys(ds).sort();
+        const pills = keys.map(k=>{
+          const v = ds[k];
+          const susp = suspectReason(k, v, null);
+          const col = susp ? "var(--fg4)" : colorFor(v);
+          const tip = `${k} \u2014 ${METRIC[k]?.is ? METRIC[k].is.replace(/<[^>]+>/g,"") : "no registry entry"}`;
+          return `<span title="${escHtml(tip)}" style="font-size:0.6rem;padding:1px 4px;border:1px ${susp?"dashed":"solid"} ${col};color:${col};margin:0 3px 2px 0;display:inline-block">${escHtml(k.replace(/_/g," "))} ${pct(v)}%</span>`;
+        }).join("");
+        const setChanged = keys.join(",") !== newestDims
+          ? `<span title="This run scored a different set of dimensions than the latest run, so its scores are not directly comparable to the rows above." style="font-size:0.58rem;color:var(--orange,var(--yellow));border:1px solid var(--orange,var(--yellow));padding:0 3px;margin-right:4px">${keys.length} dims</span>`
+          : "";
+        const drift = e.drift_norm!=null?e.drift_norm.toFixed(3):"\u2014";
         const dc = e.drift_norm!=null?(e.drift_norm>0.15?"var(--red)":e.drift_norm>0.07?"var(--yellow)":"var(--fg4)"):"var(--fg4)";
         return `<tr><td style="padding:4px 6px;border-bottom:1px dashed var(--bg2);color:var(--fg4)">${fmtTime(e.created_at)}</td>
           <td style="padding:4px 6px;border-bottom:1px dashed var(--bg2)">v${e.persona_version}</td>
-          <td style="padding:4px 6px;border-bottom:1px dashed var(--bg2);color:var(--fg4);font-size:0.65rem">${e.provider_used||"—"}</td>
-          <td style="padding:4px 6px;border-bottom:1px dashed var(--bg2)">${pills||"—"}</td>
+          <td style="padding:4px 6px;border-bottom:1px dashed var(--bg2);color:var(--fg4);font-size:0.65rem">${e.provider_used||"\u2014"}</td>
+          <td style="padding:4px 6px;border-bottom:1px dashed var(--bg2)">${setChanged}${pills||"\u2014"}</td>
           <td style="padding:4px 6px;border-bottom:1px dashed var(--bg2);color:${dc}">${drift}</td></tr>`;
       }).join("") + "</tbody></table>"
     : '<div style="color:var(--fg4);font-size:0.75rem;">No timeline entries yet.</div>';
