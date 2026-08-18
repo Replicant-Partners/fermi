@@ -34,11 +34,17 @@ use fermi::schema_trust::SCHEMA_CONSTRAINTS;
 /// anyone who commits through the hook; this protects the repository from
 /// anyone who does not.
 ///
-/// 15, not the 25 the linter reports as errors: the other 10 are Rule 1
+/// Was 15; migration 052 was made atomic on 2026-08-18 while fixing the
+/// `creatures` column leak, because the lint refuses a commit that touches a file
+/// carrying this defect. Eleven droppers of `credit_ledger_tx_type_check` remain
+/// (027, 030, 032, 035, 050, 057, 059, 061, 063, 064, 075, 099) and each is the
+/// same one-line fix.
+///
+/// 14, not the number the linter reports as errors overall: the other 10 are Rule 1
 /// (`BEGIN`/`COMMIT`), a different failure with a different remedy. Counting
 /// the headline number would have made this ratchet move for reasons unrelated
 /// to constraints, which is how a ratchet stops meaning anything.
-const NON_ATOMIC_CONSTRAINT_MIGRATIONS: usize = 15;
+const NON_ATOMIC_CONSTRAINT_MIGRATIONS: usize = 14;
 
 #[test]
 fn every_declared_constraint_names_a_table_and_says_why() {

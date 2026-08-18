@@ -171,19 +171,41 @@ ON CONFLICT (creature_id) DO NOTHING;
 -- 6. Backfill creature_conditions from creatures columns
 -- ═══════════════════════════════════════════════════════════════
 
-INSERT INTO creature_conditions (creature_id, visibility, sosa_opt_in, active_modules, updated_at)
-SELECT
-    c.creature_id,
-    COALESCE(c.visibility, 'public'),
-    COALESCE(c.sosa_opt_in, false),
-    CASE
-        WHEN c.presence = 'tracking' THEN ARRAY['tether']
-        ELSE ARRAY[]::text[]
-    END,
-    NOW()
-FROM creatures c
-WHERE c.owner_id IS NOT NULL
-ON CONFLICT (creature_id) DO NOTHING;
+-- Guarded 2026-08-18. This one-time backfill reads three `creatures` columns
+-- that migration 080 drops once the data has moved. On every boot after that it
+-- re-ran and failed with `column c.visibility does not exist` — harmless in
+-- effect, since the rows it would insert already exist, but it meant this file
+-- reported as failing forever and the noise hid the real problem next door: the
+-- staging columns were being re-created every boot and permanently consuming
+-- slots on a table with a hard 1600-column ceiling. See migration 058.
+--
+-- Runs only while the staging columns are present, which is exactly when there
+-- is anything to copy. PL/pgSQL resolves column references at statement
+-- execution rather than block creation, so the guarded branch does not need the
+-- columns to exist in order to parse.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'creatures'
+           AND column_name = 'visibility'
+    ) THEN
+        INSERT INTO creature_conditions (creature_id, visibility, sosa_opt_in, active_modules, updated_at)
+        SELECT
+            c.creature_id,
+            COALESCE(c.visibility, 'public'),
+            COALESCE(c.sosa_opt_in, false),
+            CASE
+                WHEN c.presence = 'tracking' THEN ARRAY['tether']
+                ELSE ARRAY[]::text[]
+            END,
+            NOW()
+        FROM creatures c
+        WHERE c.owner_id IS NOT NULL
+        ON CONFLICT (creature_id) DO NOTHING;
+    END IF;
+END $$;
 
 -- ═══════════════════════════════════════════════════════════════
 -- 7. Backfill creature_versions from creature_flights history

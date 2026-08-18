@@ -68,9 +68,50 @@ CREATE INDEX IF NOT EXISTS idx_obs_sessions_platform ON observation_sessions(pla
 
 -- Opt-in flag for Rabble creatures: owner must explicitly enable SOSA telemetry sharing
 -- Defaults to false — respects AKP consent model (agent_interaction_policies roadmap)
-ALTER TABLE creatures ADD COLUMN IF NOT EXISTS sosa_opt_in BOOLEAN NOT NULL DEFAULT false;
+--
+-- Guarded 2026-08-18. Migration 078 copies this into
+-- `creature_conditions.sosa_opt_in` and 080 drops it, so on an already-migrated
+-- database this line re-added a column that was dropped again moments later —
+-- every boot. Postgres holds a dropped column's slot forever against the hard
+-- 1600-column ceiling, and together with 058 and 065 this burned five slots per
+-- boot until `creatures` hit 1600 of 1600 (1,575 dropped, 25 live) and could
+-- accept nothing further. See migration 058 for the full account.
+--
+-- Staged only while the destination is still absent.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'creature_conditions'
+           AND column_name = 'sosa_opt_in'
+    ) THEN
+        ALTER TABLE public.creatures
+            ADD COLUMN IF NOT EXISTS sosa_opt_in BOOLEAN NOT NULL DEFAULT false;
+    END IF;
+END $$;
 
 -- Add new tx_types
+--
+-- Wrapped in a DO block 2026-08-18, and the reason is the whole
+-- `credit_ledger_tx_type_check` story in miniature. As two top-level statements
+-- through PgBouncer these run in separate implicit transactions with no rollback
+-- between them: the DROP commits, the ADD fails against rows this list does not
+-- cover, and the net effect of the migration is to DELETE the constraint. Twelve
+-- migrations share that shape, which is how a CHECK declared seventeen times
+-- came to exist zero times.
+--
+-- Atomic, the failure becomes harmless: the ADD still fails on an established
+-- database — this list predates a dozen tx_types the code now emits — but the
+-- DROP rolls back with it, so the constraint migration 204 installed survives
+-- instead of disappearing for the rest of the boot. The migration still reports
+-- as failing, which is honest. It just no longer does damage while doing so.
+--
+-- The remaining eleven droppers (027, 030, 032, 035, 050, 057, 059, 061, 063,
+-- 064, 075, 099) have the same defect and the same fix. This one is done because
+-- the lint refuses a commit that touches the file without it.
+DO $$
+BEGIN
 ALTER TABLE credit_ledger DROP CONSTRAINT IF EXISTS credit_ledger_tx_type_check;
 ALTER TABLE credit_ledger ADD CONSTRAINT credit_ledger_tx_type_check
     CHECK (tx_type IN (
@@ -92,3 +133,4 @@ ALTER TABLE credit_ledger ADD CONSTRAINT credit_ledger_tx_type_check
         'swarm_session_create', 'swarm_telemetry_ingest',
         'observation_session_create', 'observation_ingest'
     ));
+END $$;
