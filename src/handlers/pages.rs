@@ -10,6 +10,51 @@ use serde::Deserialize;
 
 use crate::AppState;
 
+// ─── App shells ───────────────────────────────────────────────
+//
+/// Serve a template from disk as an uncacheable app shell.
+///
+/// ## Why `no-store`
+///
+/// These pages carry no data. Every number on them arrives later by XHR, and the
+/// shell is the rendering logic — markup, CSS and JS — which changes with every
+/// deploy. Until now none of them sent a single cache directive: no
+/// `Cache-Control`, no `ETag`, no `Last-Modified`. With nothing to go on a
+/// browser falls back to heuristic freshness and an intermediary may cache the
+/// document outright.
+///
+/// The result is the worst available combination, and it is not hypothetical:
+/// the observatory was observed serving a stale shell — badges overlapping their
+/// labels, a layout fix absent — while the API data rendered inside it was
+/// minutes old. A page that is visibly live and silently months behind is far
+/// more misleading than one that is obviously broken, because there is nothing
+/// to notice. On a dashboard whose entire purpose is telling you what is
+/// actually true, that is the one failure mode that must not exist.
+///
+/// `no-store` rather than `no-cache`: there is no value in revalidating a shell
+/// that is read from local disk on every request, and `no-store` is the
+/// directive intermediaries honour most consistently.
+fn app_shell(path: &str) -> Response {
+    let html = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Error loading {}: {}", path, e);
+            format!(
+                "<h1>Page unavailable</h1><p>Could not load <code>{}</code>: {}</p>",
+                path, e
+            )
+        }
+    };
+    (
+        [(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store, must-revalidate"),
+        )],
+        Html(html),
+    )
+        .into_response()
+}
+
 // ─── Fallback (404) ────────────────────────────────────────────────
 
 #[allow(dead_code)]
@@ -497,96 +542,40 @@ pub async fn projector_view(
     render_template("templates/projector.html", "Embedding Projector").into_response()
 }
 
-pub async fn dashboard_view() -> Html<String> {
-    let html = match std::fs::read_to_string("templates/dashboard.html") {
-        Ok(content) => content,
-        Err(e) => {
-            eprintln!("Error loading templates/dashboard.html: {}", e);
-            format!("<h1>Dashboard</h1><p>Error loading template: {}</p>", e)
-        }
-    };
-    Html(html)
+pub async fn dashboard_view() -> Response {
+    app_shell("templates/dashboard.html")
 }
 
-pub async fn agent_create_view() -> Html<String> {
-    let html = match std::fs::read_to_string("templates/agent_create.html") {
-        Ok(content) => content,
-        Err(e) => {
-            eprintln!("Error loading templates/agent_create.html: {}", e);
-            format!("<h1>Create Agent</h1><p>Error loading template: {}</p>", e)
-        }
-    };
-    Html(html)
+pub async fn agent_create_view() -> Response {
+    app_shell("templates/agent_create.html")
 }
 
-pub async fn workspace_view() -> Html<String> {
-    let html = match std::fs::read_to_string("templates/workspace.html") {
-        Ok(content) => content,
-        Err(e) => {
-            eprintln!("Error loading templates/workspace.html: {}", e);
-            format!("<h1>Workspace</h1><p>Error loading template: {}</p>", e)
-        }
-    };
-    Html(html)
+pub async fn workspace_view() -> Response {
+    app_shell("templates/workspace.html")
 }
 
 // ─── Settings page ─────────────────────────────────────────────────
 
-pub async fn settings_view() -> Html<String> {
-    let html = match std::fs::read_to_string("templates/settings.html") {
-        Ok(content) => content,
-        Err(e) => {
-            eprintln!("Error loading templates/settings.html: {}", e);
-            format!("<h1>Settings</h1><p>Error loading template: {}</p>", e)
-        }
-    };
-    Html(html)
+pub async fn settings_view() -> Response {
+    app_shell("templates/settings.html")
 }
 
-pub async fn docs_view() -> Html<String> {
-    let html = match std::fs::read_to_string("templates/docs.html") {
-        Ok(content) => content,
-        Err(e) => {
-            eprintln!("Error loading templates/docs.html: {}", e);
-            format!("<h1>Documentation</h1><p>Error loading template: {}</p>", e)
-        }
-    };
-    Html(html)
+pub async fn docs_view() -> Response {
+    app_shell("templates/docs.html")
 }
 
-pub async fn marketplace_view() -> Html<String> {
-    let html = match std::fs::read_to_string("templates/marketplace.html") {
-        Ok(content) => content,
-        Err(e) => {
-            eprintln!("Error loading templates/marketplace.html: {}", e);
-            format!("<h1>Marketplace</h1><p>Error loading template: {}</p>", e)
-        }
-    };
-    Html(html)
+pub async fn marketplace_view() -> Response {
+    app_shell("templates/marketplace.html")
 }
 
-pub async fn admin_view() -> Html<String> {
-    let html = match std::fs::read_to_string("templates/admin.html") {
-        Ok(content) => content,
-        Err(e) => {
-            eprintln!("Error loading templates/admin.html: {}", e);
-            format!("<h1>Admin</h1><p>Error loading template: {}</p>", e)
-        }
-    };
-    Html(html)
+pub async fn admin_view() -> Response {
+    app_shell("templates/admin.html")
 }
 
 // ─── Phase 4 — Observatory pages (Plane D) ─────────────────────────
 
-pub async fn observatory_view() -> Html<String> {
-    let html = match std::fs::read_to_string("templates/observatory.html") {
-        Ok(content) => content,
-        Err(e) => {
-            eprintln!("Error loading templates/observatory.html: {}", e);
-            format!("<h1>Observatory</h1><p>Error loading template: {}</p>", e)
-        }
-    };
-    Html(html)
+pub async fn observatory_view() -> Response {
+    app_shell("templates/observatory.html")
 }
 
 /// Ecology — the "what lives here" lens.
@@ -594,26 +583,12 @@ pub async fn observatory_view() -> Html<String> {
 /// Sibling to the Observatory. The Observatory asks a clinical question of
 /// one agent at a time; this asks a structural question of the whole
 /// population: what exists, how is it organised, and how did it get here.
-pub async fn ecology_view() -> Html<String> {
-    let html = match std::fs::read_to_string("templates/ecology.html") {
-        Ok(content) => content,
-        Err(e) => {
-            eprintln!("Error loading templates/ecology.html: {}", e);
-            format!("<h1>Ecology</h1><p>Error loading template: {}</p>", e)
-        }
-    };
-    Html(html)
+pub async fn ecology_view() -> Response {
+    app_shell("templates/ecology.html")
 }
 
-pub async fn observatory_hitl_view() -> Html<String> {
-    let html = match std::fs::read_to_string("templates/observatory_hitl.html") {
-        Ok(content) => content,
-        Err(e) => {
-            eprintln!("Error loading templates/observatory_hitl.html: {}", e);
-            format!("<h1>Review Queue</h1><p>Error loading template: {}</p>", e)
-        }
-    };
-    Html(html)
+pub async fn observatory_hitl_view() -> Response {
+    app_shell("templates/observatory_hitl.html")
 }
 
 pub async fn apps_catalogue_view() -> Html<String> {
@@ -641,13 +616,72 @@ pub async fn app_detail_view() -> Html<String> {
 ///
 /// The route is a static template; token extraction happens client-side
 /// so we don't need to thread the Path extractor through here.
-pub async fn invite_landing_view() -> Html<String> {
-    let html = match std::fs::read_to_string("templates/invite_landing.html") {
-        Ok(content) => content,
-        Err(e) => {
-            eprintln!("Error loading templates/invite_landing.html: {}", e);
-            format!("<h1>Invitation</h1><p>Error loading template: {}</p>", e)
+pub async fn invite_landing_view() -> Response {
+    app_shell("templates/invite_landing.html")
+}
+
+#[cfg(test)]
+mod app_shell_tests {
+    use super::*;
+
+    /// Every app shell must forbid caching.
+    ///
+    /// The failure this prevents has already happened once: a stale observatory
+    /// shell rendered live API data, so the page looked current while its layout
+    /// and JS were from an older deploy. There was nothing to notice — the
+    /// numbers were right. On a dashboard built to tell you what is actually
+    /// true, an invisibly stale rendering is the one failure that must not exist.
+    #[tokio::test]
+    async fn app_shells_are_never_cached() {
+        let resp = app_shell("templates/observatory.html");
+        let cc = resp
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("<absent>");
+        assert!(
+            cc.contains("no-store"),
+            "app shells must send no-store; got `{cc}`"
+        );
+    }
+
+    /// A missing template must still answer, and must still be uncacheable —
+    /// otherwise a transient deploy error can be cached as the page.
+    #[tokio::test]
+    async fn a_missing_template_is_reported_and_not_cached() {
+        let resp = app_shell("templates/definitely-not-a-real-template.html");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let cc = resp
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("<absent>");
+        assert!(cc.contains("no-store"), "got `{cc}`");
+    }
+
+    /// The shells are read from disk at request time, so a template that has
+    /// been renamed or dropped from the image becomes a broken page rather than
+    /// a compile error. Assert the ones this module names actually exist.
+    #[test]
+    fn every_named_template_exists_on_disk() {
+        let src = include_str!("pages.rs");
+        let mut checked = 0;
+        for cap in src.split("app_shell(\"").skip(1) {
+            let Some(path) = cap.split('"').next() else {
+                continue;
+            };
+            if !path.starts_with("templates/") || path.contains("not-a-real-template") {
+                continue;
+            }
+            assert!(
+                std::path::Path::new(path).exists(),
+                "{path} is served by a handler but is not on disk"
+            );
+            checked += 1;
         }
-    };
-    Html(html)
+        assert!(
+            checked >= 11,
+            "expected to check the app shells, saw {checked}"
+        );
+    }
 }
