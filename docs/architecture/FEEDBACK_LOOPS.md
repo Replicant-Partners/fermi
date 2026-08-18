@@ -1,8 +1,8 @@
 # Feedback Loops in the Agent Bestiary
 
-**Date:** 2026-05-15, revised 2026-06-03, **verified and revised 2026-08-15**, **operational evidence added 2026-08-16**
+**Date:** 2026-05-15, revised 2026-06-03, **verified and revised 2026-08-15**, **operational evidence + remaining fixes 2026-08-16**
 **Status:** Reference — describes the five adaptive feedback loops, their verified implementation state, what the first deploy actually demonstrated, and BayesOps Loop A (shipped through Phase 3).
-**Verified against:** `main` @ `a7e38f38`, migrations through `200`.
+**Verified against:** `main` @ `884daab3`, migrations through `210`.
 
 > **Read §5 first if you want the short version.** Every loop is wired, and
 > §5 records which ones have been *observed turning* on real data versus which
@@ -31,7 +31,7 @@ kinds of correction were needed, and the third is the one worth internalising:
    this defect class a **phantom tool**. Two loops — 4 and 5 — were documented
    as closed through a phantom tool and were not. Both are now genuinely
    dispatched; see §7 for the corpus-wide ratchet that replaced the ad-hoc
-   check, and for the 79 declarations still outstanding.
+   check, and for the 73 declarations still outstanding.
 4. **Written ≠ readable.** A loop can complete every write correctly and still
    report nothing, because the surface that displays it queries a different
    table than the one the loop writes. Loop 1 was in this state: consolidation
@@ -699,8 +699,9 @@ correlated forecasts would be worse than no proposal.
           outcome_quality (= 1 - brier.clamp(0,1)), outcome_source
           ("brier_forecast"), outcome_brier_score, outcome_annotated_at  ✅
     → GET /api/agents/:id/calibration serves it                      ✅
-    → moe_router_strategist Stage 0 calls get_agent_calibration
-      → ✖ Unknown tool: get_agent_calibration
+    → moe_router_strategist Stage 0 calls get_agent_calibration      ✅
+      (dispatch arm + BuiltinToolDef; shares fermi::calibration with
+       the route, so the two cannot drift)
 
 5b — Projection accuracy:
     Cascade projection runs → synthetic SOSA observation written,
@@ -711,11 +712,11 @@ correlated forecasts would be worse than no proposal.
       (registered in EvaluatorRegistry, handlers/eval.rs)
     → EvalSignal (projection_accuracy) → ConsolidationWorker           ✅
     → surfaced in the calibration response as projection_accuracy_mean ✅
-    → same phantom-tool break at the router                            ✖
-    Migration 130 deployed long ago (repo is at 199).
+    → router reads it through the same tool                            ✅
+    Migration 130 deployed long ago (repo is at 210).
 ```
 
-**The break, stated plainly.** The previous revision marked Loop 5 closed. Every
+**The break, as it stood on 2026-08-15 (fixed 2026-08-16).** The previous revision marked Loop 5 closed. Every
 *producer-side* claim in it holds: the evaluators are wired, the annotation
 fires on resolution, the endpoint is live and returns all five documented
 fields. But the consumer cannot read it.
@@ -737,7 +738,7 @@ entirely.
 dispatch arm exists and shares `fermi::calibration::compute_agent_calibration`
 with the HTTP route, so the two cannot drift. The phantom-tool check now scans
 all of `agents/curated` as a ratchet rather than four hardcoded weather agents;
-the corpus scan that estimated 27 offenders in fact found 92, now 79 (§7).
+the corpus scan that estimated 27 offenders in fact found 92, now 73 (§7).
 
 **What remains for Loop 5 is data, not wiring.** `agents_used` carries entries
 that resolve to no agent, so the mechanism probe reports `WIRING BROKEN` and
@@ -768,7 +769,7 @@ Session      3a. Coherence (inner)        ✅       ✅ 6 evaluations, Γ(C) 0.9
 Weeks        3b. Coherence (outer)        ✅       — needs session history
 Months       4.  Composition evolution    ✅       — no workspace has a composition
 Days-weeks   5b. Projection calibration   ✅       — awaiting first observation
-Months+      5a. Brier calibration        ✅       ✖ data malformed — see §5
+Months+      5a. Brier calibration        ✅       ✅ MECHANISM SOUND, 9/9
 ──────────────────────────────────────────────────────────────────────────────
 Offline      A.  BayesOps — parameter fit ✅       ✅ refits on workspace resolution
              (feeds Loop B / FPL executor)         Phases 1–3; Phase 4 not built
@@ -1053,7 +1054,7 @@ stamped with a persona version and 1,999 are not**, but the newest episode
 predates the deploying boot, so the stamping fix has not yet been seen to fire
 on the live execution path.
 
-### Loop 5a — `WIRING BROKEN`, and the verdict is correct
+### Loop 5a — was `WIRING BROKEN`; the verdict was correct, and it is now sound
 
 The mechanism probe reports two HIGH violations. Neither is a code defect; both
 are data, and the panel is right to refuse to certify the score while they
@@ -1076,28 +1077,77 @@ London 32 °C returned 0.3% against a 13.3% ensemble truth.
 **L5-M03 — 7 scored forecasts with an empty `agents_used`.** Resolved, Brier
 computed, attributable to nobody. The signal exists and has nowhere to go.
 
-**The seam this exposes.** `agents_used` records *which agent statements ran*,
-and every calibration reader treats those names as agent identities. Nothing
-enforces the correspondence, so an FPL author is free to name a statement
-anything. Two defensible fixes, and it is a design decision rather than a bug
-fix: require statement names to resolve to agents at parse time, or record the
-resolved `agent_id` alongside the statement name so attribution never depends on
-a human-chosen label. Deliberately not decided here.
+**The seam, and how it was closed — 2026-08-16.** `agents_used` records *which
+agent statements ran*, and every calibration reader treats those names as agent
+identities. Nothing enforced the correspondence, so an FPL author was free to
+name a statement anything.
+
+Of the two defensible fixes — reject non-resolving statement names at parse
+time, or resolve once and store the `agent_id` — the second was chosen.
+Rejecting would break every existing program that names statements after what
+they compute, which is a reasonable and arguably more readable convention. So
+`fermi::attribution::roster` resolves at write time: exact match, then longest
+`<agent>_<suffix>` prefix with a required underscore boundary. Longest and
+bounded because `macro` must never claim
+`macro_forecaster_climate_trend_adjustment` — attributing one agent's Brier score
+to another is worse than the orphan it replaces, so an unresolvable name is
+logged at creation and left alone rather than guessed. mig-209 repaired the
+backlog: 40 statement names, each to the correct agent.
+
+This also cleared **L5-M09**, which existed to warn that the write path emitted
+no `agent_id` and would "grow with every new forecast until the write path
+stamps agent_id at creation".
+
+**L5-M03 was narrowed, on evidence.** It counted every scored forecast with no
+resolvable roster, conflating *a roster that should exist and doesn't* with *a
+forecast that legitimately had no agents*. Of 48 resolved-and-scored forecasts
+whose `fpl_source` declares an `agent` statement, **zero** have an empty roster;
+of the 7 declaring none, 5 do. The correlation is total. Those five are programs
+of static drivers with no agent statement — one titled `v0.10.12 sanity check`
+— and they were failing the entire fleet verdict while behaving correctly.
+
+The check now requires the FPL to have declared an agent, with that evidence in
+the comment in both copies so the narrowing is auditable rather than looking like
+score-massaging. **Nine of nine mechanisms now report OK: `MECHANISM SOUND`.**
+
+Narrowing a HIGH-severity check to make a dashboard green is exactly the move
+that deserves scrutiny, which is why the evidence is recorded rather than the
+conclusion.
 
 **Read the skill score, not the raw one.** The same panel reports
 `99% raw · n=48 · skill +0.35 vs 2% base rate`. A 2% base rate is exactly the
 outcome-skewed case `compute_agent_calibration`'s own doc-comment warns about:
 99% raw is uninformative, **+0.35 skill is the real number**, and it is good.
 
-### One thing to look into
+### The zero-entity extraction — resolved 2026-08-16
 
 A dreaming cycle on `football_analyst` reported
-`12 episodes → 0 entities, 0 facts, 5 rules`. Rules extracted, entities zero.
-Entity extraction is a separate LLM call from rule extraction, so a silent
-failure there would look exactly like this. Unresolved: whether that is the
-extractor failing quietly or genuinely nothing entity-shaped in those twelve
-episodes. `scripts/loop1_retrievability_census.sql` will not distinguish them —
-this needs the extraction call inspected.
+`12 episodes → 0 entities, 0 facts, 5 rules`. Not a silent extractor failure:
+**the extractors were never shown the answers.**
+
+Both `extract_entities_with_llm` and `extract_knowledge_rules` built their
+prompts from `Query` plus a truncated `Context` preview. `response_text`
+appeared in `consolidation.rs` only in test fixtures. mig-199 added the column
+precisely so this would be available, and nothing then read it — the same shape
+as every other defect in this document.
+
+It is backwards for entity extraction especially. A question names few entities;
+the answer is where they are. Measured: queries average 487 chars, responses
+3,645. One episode asked *"Will Arsenal beat Manchester City in their next
+Premier League match?"* and answered *"Arsenal won the 2024-25 Premier League
+title with 85 points"* — an entity and a fact, in the half being discarded.
+`context`, meanwhile, is execution telemetry: stop reason, token counts,
+evidence ids. Mostly noise for extraction.
+
+Both extractors now share `episode_digest`, which includes the response at a
+1,200-char budget — twenty unabridged 5k responses would be ~25k tokens of prompt
+against a 2,048-token completion. The entity prompt now states that the Response
+is the primary source, because the previous wording described the input as
+"execution logs" while the digest carried only the query.
+
+**This does not retroactively help the 3,298 episodes with no stored response.**
+Retention began with mig-199; 71 episodes have one today. It changes what every
+cycle from here learns, which is the honest scope.
 
 ---
 
@@ -1191,10 +1241,10 @@ is not an instrument.
 
 | # | Break | Loop | Notes |
 |---|---|---|---|
-| 12 | `fermi_forecasts.agents_used` records FPL *statement* names, which calibration readers treat as agent identities. 6 orphan refs (one forecast) + 7 forecasts with an empty roster | 5a | The probe correctly reports `WIRING BROKEN`. Design decision, not a bug fix — see §5 |
-| 13 | Entity extraction returned 0 entities on 12 episodes while rule extraction returned 5 | 1 | Unresolved: silent extractor failure vs. genuinely nothing entity-shaped |
-| 14 | 127 workspaces have no composition identity, so Loop 4 has nothing to version | 4 | Onboarding gap rather than loop defect |
-| 15 | 79 curated tool declarations remain undispatchable, quarantined in `known_debt` | all | Ratcheting down; breakdown below |
+| 12 | ~~`fermi_forecasts.agents_used` records FPL *statement* names, which calibration readers treat as agent identities~~ | 5a | **Fixed 2026-08-16** — `fermi::attribution::roster` resolves at write time; mig-209 repaired 40 entries. **L5-M03 narrowed on evidence.** Probe now reports MECHANISM SOUND, 9/9 |
+| 13 | ~~Entity extraction returned 0 entities on 12 episodes while rule extraction returned 5~~ | 1 | **Fixed 2026-08-16** — neither extractor read `response_text`; both now share `episode_digest`. Not a failure, an omission |
+| 14 | 127 workspaces have no composition identity, so Loop 4 has nothing to version | 4 | **Open.** Onboarding gap rather than loop defect |
+| 15 | 73 curated tool declarations remain undispatchable, quarantined in `known_debt` | all | Ratcheting down: 92 → 79 → 73. Breakdown below |
 | 10 | Valence-homophily threshold (spread < 0.25) exists only as prompt text | 3b | Compute it, or stop documenting it as a mechanism |
 | 11 | `route_outcomes` joins heuristically on `(agent_id, driver)` within a time window | 5 | Stamp `episode_id` onto the claim row (deliberately deferred) |
 
@@ -1202,7 +1252,7 @@ is not an instrument.
 
 Breaks 1–4 were the phantom-tool family, all closed. The corpus-wide ratchet
 that replaced them, `no_curated_card_declares_a_phantom_tool`, started at 92
-and is at **79**. It has two assertions and a stale-entry check, so a fixed card
+and is at **73**. It has two assertions and a stale-entry check, so a fixed card
 *must* leave the list — which is what keeps it ratcheting rather than rotting.
 It fired correctly three times during this work.
 
@@ -1211,12 +1261,37 @@ What remains, categorised — the point being that most of it is not loop-relate
 | Category | Count | Nature |
 |---|---|---|
 | Third-party integrations never built | ~42 | `adaptogen_curator` (11), `stripe_billing` (9), `instagram_publisher` (6), `bluesky_publisher` (5), `social_media_studio` (5)… Cards written against APIs with no backend. Needs implementation or removal — a product decision |
-| Loop-relevant | 10 | **`intention_coordinator` — all 6 tools phantom, so the entire agent is inert.** That is Loop 3's Stage 0, the intention map meant to catch duplication *before* agents act. Plus `dyad_observer` (2) and `dream_coordinator`/`dream_narrator` (2) |
+| Loop-relevant | 4 | `dyad_observer` (2: `query_episodes`, `query_persona_history`) and `dream_coordinator`/`dream_narrator` (2: `consolidation_reader`, `agent_profile_loader`). **`intention_coordinator`'s six are done** — see below |
 | Fabricated helpers | ~27 | `performance_coach`, `ar_avatar_renderer`, `daily_puzzle` and others declare plausible-sounding tools that were never real |
 
-**`intention_coordinator` is the one worth prioritising.** Loop 3a is closed via
-the memory cascade, but Stage 0 — conflict detection before action — has never
-run. It is the last loop-relevant phantom agent on the platform.
+**`intention_coordinator` is fixed — 2026-08-16.** All six tools now dispatch,
+backed by `workspace_intentions` (mig-210) rather than the
+`_coordination/intention_map.json` the card described: a git file has no
+concurrency story, and the whole point is several agents declaring at once.
+
+Detection lives in `fermi::intentions` and is explicit about its limits, which
+matters more here than usual:
+
+| Class | Decidable | How |
+|---|---|---|
+| Resource conflict | certainly | two active intentions naming the same target |
+| Dependency | certainly | `depends_on` naming an output nothing produced |
+| Duplication | probabilistically | cosine ≥ 0.82 on embedded descriptions |
+| **Contradiction** | **no** | needs to understand the claim |
+
+Duplication is embedded **on the write path** at 0.82 — not the 0.30 used for KG
+retrieval, because a false positive there costs tokens whereas here it tells two
+agents to stop and differentiate. **Contradiction is not detected**; it is
+surfaced as a duplication candidate for the caller to judge and never asserted.
+Claiming otherwise would be the same error as reporting a number whose wiring
+had not been checked.
+
+`emit_coherence_signal` posts into the conversation as well as recording,
+because `ConversationObserver::observe` builds the TEC graph from workspace
+messages — a row in a table nothing reads would be the deferred-work pattern
+again. `suggest_differentiation` reports the overlap axes and declines to
+prescribe the split: it holds two descriptions and no knowledge of the workspace
+goal, so any division of labour it invented would be a guess dressed as advice.
 
 ---
 
@@ -1273,10 +1348,17 @@ a schema contract that names the columns a loop depends on, and an instrument
 that says `broken` where it used to say `unmeasured`.
 
 **What is genuinely unfinished** is honest to state plainly. Every loop is
-wired and four have been observed turning on real data. The rest are waiting on
-traffic, not repair — with two real exceptions: Loop 5a's attribution data is
-malformed (§5), and `intention_coordinator`, the whole of Loop 3's Stage 0, has
-never once run (§7).
+wired, four have been observed turning on real data, and the two exceptions
+named in the previous revision are both closed: Loop 5a's attribution now
+resolves at write time and its probe reports `MECHANISM SOUND`, and
+`intention_coordinator`'s six tools dispatch, so Loop 3's Stage 0 exists for the
+first time.
+
+What remains is not loop wiring. 127 workspaces have no composition identity, so
+Loop 4 has nothing to version — an onboarding gap. 73 curated tool declarations
+are still undispatchable, four of them loop-relevant, ratcheting down. And most
+loops are waiting on traffic rather than repair, which is a matter of use, not
+engineering.
 
 The system now learns continuously at the harness level while requiring human
 acceptance of parameter-level changes. Fast adaptation where the cost of error
