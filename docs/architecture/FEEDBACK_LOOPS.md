@@ -51,9 +51,18 @@ kinds of correction were needed, and the third is the one worth internalising:
    "closed" without the caveat would be the same overclaim this document was
    rewritten to remove. §5 separates the two.
 
+6. **Reachable ≠ reached.** A loop can be wired, its reporting correct, and
+   still be unreachable because a gate it depends on is never satisfied. Loop 3's
+   coordination tool authorises on `teams.coordination_strategist_id`; that
+   column was read in 40 places and written in none, so 248 of 249 workspaces had
+   no strategist and the tool declined in all of them. This is the worst variety
+   because it produces **no error at all** — a permission denial is the system
+   working correctly. See §5.
+
 A loop is only called closed here when every hop has an executing call site and
 the surface that reports it reads the tables the loop writes. It is only called
-*turning* when it has been observed to move on real data — see §5.
+*turning* when it has been observed to move on real data — see §5. And a gate is
+only closed when something is known to satisfy it.
 
 ### The deferred-work comment
 
@@ -1038,6 +1047,56 @@ executions_before                266
 after a coordinator_observation  266   ← excluded, as designed
 after an ordinary auto_pass      267   ← real runs still counted
 ```
+
+### The column nobody wrote — found 2026-08-16
+
+Loop 3's coordination half and the whole of Loop 4 were unreachable **by
+construction rather than by defect**, and this is the most instructive finding
+of the whole exercise.
+
+`teams.coordination_strategist_id` is read in **40 places**: the
+composition-dreaming handler, the Loop 4 accept path, and
+`record_coordination_observation`'s authorisation gate. It was written by none of
+them — and by no endpoint, no creation path, and no migration. Nothing on the
+platform had ever assigned a coordination strategist.
+
+**249 workspaces. One had one.** The exception looks manual.
+
+So the observation tool built to close Loop 3a — correctly implemented,
+correctly gated on "the caller must be this workspace's registered strategist"
+— would have refused in **248 of 249 workspaces**. It was shipped, tested, and
+aimed at a column nobody populated. Composition dreaming had the same problem:
+it looks up the strategist to attribute a tension audit to, and found NULL.
+
+`cohere_and_coordinate`'s own card opens: *"You are Cohere & Coordinate — the
+default coordination strategist for every workspace on the Agent Bestiary
+platform."* It held that role for 0.4% of them.
+
+**Why this is worse than a phantom tool.** A phantom tool fails loudly with
+`Unknown tool: X`. This fails as a *permission denial* — the tool politely
+declines, the agent reports it cannot coordinate, and every layer above is
+behaving exactly as designed. There is no error anywhere. The loop is
+unreachable and nothing in the system is wrong.
+
+**Fixed.** `fermi_auth::teams::assign_default_strategist` is called from both
+creation paths — `create_team`, and the forecast-repo path in
+`handlers/forecast_git.rs`, which bypasses it and accounts for 149 of the 249.
+It writes only when the column is NULL so a deliberate assignment is never
+clobbered, and it never fails the caller: a workspace with no strategist is
+degraded, one that could not be created is broken. mig-211 backfills, empty
+workspaces included on purpose — the column does no work by existing, and
+assigning it means coordination is available the moment a workspace is used
+rather than depending on a step nobody has ever taken.
+
+After: **249 of 249 assigned, both authorisation gates pass, and 83 workspaces
+have a strategist, members and a conversation** — that is, are ready for Loop 3
+today.
+
+The regression test greps both creation paths for the call rather than asserting
+a value, because the failure was never a wrong value. It was the absence of any
+writer at all, and a test that checks values cannot see that.
+
+---
 
 ### Wired but not yet turning — and why
 
