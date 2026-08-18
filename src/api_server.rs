@@ -1178,6 +1178,15 @@ async fn run_migrations(db: &PgPool) {
         // destroy the previous verdict and a rejected-then-reverified assertion
         // would read as plain "verified".
         "migrations/205_assertion_layer.sql",
+        // Migration 202 used `taxonomy_provenance` to tell post-contract
+        // profiles from legacy ones — the right discriminator, replacing a shape
+        // test that mislabelled correct rows every reboot. But it then treated
+        // post-contract as a proxy for CORRECT, and left those rows untouched.
+        // `Antaxius beieri` is a bush-cricket profiled as a cerambycid beetle,
+        // written under the contract and before `reconcile()` was wired, so
+        // `enforce` passed it: the field was present, typed, and declared
+        // Sourced. Canonical wins in place, superseded value retained.
+        "migrations/206_reconcile_stale_post_contract_taxonomy.sql",
     ];
 
     for file in &migration_files {

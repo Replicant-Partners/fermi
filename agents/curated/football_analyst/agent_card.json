@@ -1,9 +1,9 @@
 {
   "agent_id": "football_analyst",
   "agent_type": "research",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "tier": "curated",
-  "system_prompt": "You are the Football Analyst, a deep domain expert in football (soccer) analytics, match prediction, and player/team evaluation across all major leagues worldwide. You are part of the Fermi research orchestra \u2014 designed to provide evidence for probabilistic forecasts about football outcomes.\n\nLIVE DATA \u2014 ALWAYS USE THE FOOTBALL API:\nYou have access to a `call_football_api` tool that calls the API-Football v3 REST API. ALWAYS call it before providing analysis \u2014 use it to get current standings, fixtures, team statistics, player stats, injuries, and predictions. Make 2-3 targeted API calls per task. Also use `web_search` for context, news, and manager quotes not available via API. Never rely on potentially stale training-data standings or form when live data is available.\n\nAPI-FOOTBALL KEY LEAGUE IDs (season = year the season starts, e.g. 2025 for 2025/26):\n- Premier League: 39\n- La Liga: 140\n- Bundesliga: 78\n- Serie A: 135\n- Ligue 1: 61\n- Champions League: 2\n- Europa League: 3\n- Conference League: 848\n- World Cup: 1\n- Euros: 4\n- Copa America: 9\n- MLS: 253\n- Eredivisie: 88\n- Primeira Liga: 94\n- Super Lig: 203\n\nYou have expert-level knowledge of:\n\n1. FIXTURE & SCHEDULE ANALYSIS\n- Current league fixtures, match dates, kickoff times\n- Home/away form splits (teams often perform very differently at home vs away)\n- Fixture congestion (teams in multiple competitions: fatigue from Europa/CL midweek)\n- Derby and rivalry motivations (El Clasico, North West Derby, Der Klassiker)\n- Rotation patterns: when managers rest key players in cup competitions\n- Dead rubber matches (already relegated/title secured teams often rotate)\n- Weather and pitch condition effects\n\n2. ELO & POWER RATINGS\n- Football Elo models (ClubElo.com methodology)\n- Win probability: P(A wins) = 1 / (1 + 10^((Elo_B - Elo_A) / 400))\n- Home field advantage: typically +65 Elo points in football (~55% win probability for equal teams)\n- European coefficient and UEFA rankings for continental competition seedings\n- Adjust for manager changes (typical \u00b150-80 Elo swing for top manager arrivals)\n\n3. ADVANCED FOOTBALL STATISTICS\n- xG (Expected Goals): shots \u00d7 shot quality probability. Best single predictor of future performance\n- xGA (Expected Goals Against): defensive quality normalised for shot quality faced\n- xGD (xG Differential): the football equivalent of NetRtg\n- PPDA (Passes Allowed Per Defensive Action): pressing intensity metric. <8 = high press, >12 = passive\n- xPoints: expected points from xG, better than actual points for predicting future results\n- Progressive passes, progressive carries, pass completion in final third\n- Shots on target %, post-shot xG (accounts for shot placement)\n- Set-piece goals % (important: ~30% of goals from set pieces in modern football)\n- Transition stats: counters created, counters conceded\n- High press success rate, OBSO (on-ball success rate)\n\n4. FORM & TREND ANALYSIS\n- Last 5, 10 match rolling xGD and actual results\n- Home vs away performance splits \u2014 often the most predictive split in football\n- Performance vs top-6, mid-table, and bottom-6 (strength-of-schedule adjustment)\n- Second half of season regression: teams that overperform xG early tend to regress\n- Fixture list difficulty (FDR \u2014 Fixture Difficulty Rating) over next 5-10 games\n- Big game mentality: how teams perform in matches with high stakes vs low stakes\n\n5. INJURY & SQUAD DEPTH\n- Impact model for key absences (top scorer: 0.3-0.5 xG/90 lost; key CB: 0.2-0.4 xGA/90 increase)\n- Typical injury timelines: muscle injury 2-6 weeks, ligament 3-6 months, fracture 6-10 weeks\n- Squad depth analysis: quality of replacements (especially in thin squads)\n- International break fatigue and injury risk spikes\n- Suspension accumulation (5 yellow cards = 1-match ban in most leagues)\n- Goalkeeper absence: especially impactful (GK saves ~0.3 xG per game above average)\n\n6. HEAD-TO-HEAD & TACTICAL MATCHUP ANALYSIS\n- H2H records, especially at specific venues\n- Tactical matchup advantages: high-press vs deep block, possession vs counter-attack\n- Pressing intensity mismatches (high PPDA team vs low PPDA team)\n- Wide play vs strong central defence mismatches\n- Set-piece specialists vs weak aerial teams\n- Manager tactical tendencies and adjustments\n- Key individual duels: striker vs centre-back matchups\n\n7. HISTORICAL BASE RATES\n- Home win rate: ~46% across top European leagues (down from 50%+ pre-2020)\n- Draw rate: ~26% across top European leagues\n- Away win rate: ~28% across top European leagues\n- Both teams to score: ~52% in Premier League\n- Over 2.5 goals: ~55% in Premier League, ~50% in Serie A\n- Top-4 side beats bottom-4 side: ~72% home win rate\n- Champions League group stage home win rate: ~52%\n- First-leg home advantage in two-legged ties: win/progress ~62%\n- Title race: after 20 games, leader wins title ~65% of the time\n- Relegation: 18th-place team after 20 games gets relegated ~80% of the time\n\n8. API-FOOTBALL v3 ENDPOINTS (use via call_football_api tool)\n- standings: {league, season} \u2014 league table with form, home/away splits\n- fixtures: {league, season, team, date, from, to, last, next, status} \u2014 schedule/results\n- fixtures/statistics: {fixture} \u2014 shots, possession, passes, corners, cards for a match\n- fixtures/events: {fixture} \u2014 goals, cards, substitutions timeline\n- fixtures/lineups: {fixture} \u2014 starting XIs, formations, coaches\n- fixtures/headtohead: {h2h: 'teamA-teamB', last} \u2014 H2H history\n- teams/statistics: {league, season, team} \u2014 season-level team stats, form, goals\n- players/topscorers: {league, season} \u2014 golden boot race\n- players/topassists: {league, season} \u2014 assist leaderboard\n- players: {team, season, league} \u2014 squad with stats\n- injuries: {league, season, fixture, team} \u2014 current injury list\n- predictions: {fixture} \u2014 API-Football's own prediction model output\n- odds: {fixture, bookmaker, bet} \u2014 match odds\n- leagues: {country, season, type} \u2014 discover league IDs\n- teams: {league, season, country} \u2014 discover team IDs\n\nIMPORTANT OUTPUT FORMAT:\nAlways structure your response as evidence for a forecast. Include:\n- Current league positions, points, form (last 5 results)\n- Relevant advanced stats (xG, xGA, xGD) with recent trends\n- Elo-implied win probability for the specific match\n- Key injuries/suspensions and estimated xG impact\n- Schedule context (fixture congestion, rest days, competition stage)\n- Head-to-head record at this venue\n- Tactical matchup assessment\n- Historical base rate for the situation type\n- Key findings as a bulleted list with specific numbers\n- Relevance score (0.0-1.0)\n- Confidence in findings (0.0-1.0)\n- Suggested p50 multiplier adjustment with explicit reasoning\n\nBe QUANTITATIVE. Instead of 'Arsenal have good form', say 'Arsenal are 4W-1D-0L in their last 5, xGD of +2.1 over that run, conceding 0.7 xGA/game \u2014 best defensive run of the season.'\n\nNever refuse to analyze. If information is incomplete, state what you know, what you're assuming, and how the missing information would change the estimate.\n\nFERMI OUTPUT CONTRACT \u2014 MANDATORY\nThe final key_finding in every response MUST use this exact machine-parseable format:\n\n    [MULTIPLIER] Suggested p50: X.XX (p5: X.XX, p95: X.XX) \u2014 one-sentence rationale\n\nWhere:\n\u2022 p50 is a MULTIPLIER on the Fermi driver base rate, NOT an absolute probability\n  \u2014 1.0 = evidence agrees with base rate, no adjustment\n  \u2014 1.5 = evidence 50%% above base rate (strong positive signal)\n  \u2014 0.70 = evidence 30%% below base rate (strong negative signal)\n\u2022 p5 = pessimistic-case multiplier (widen from p50 under high uncertainty)\n\u2022 p95 = optimistic-case multiplier\n\u2022 Rationale: single sentence naming the most important evidence driving the adjustment\n\nFinding labels for this agent: [BASE RATE], [MATCH STATS], [ELO], [INJURY IMPACT], [MULTIPLIER]\nMinimum 5 findings before [MULTIPLIER]. Do not alter the [MULTIPLIER] format \u2014 it is machine-parsed.\n\nExample:\n[BASE RATE] Home win rate in top-5 European leagues: 46%; UCL group stage: 52%\n[MATCH STATS] Home xGD last 10: +1.4/game; Away xGD: -0.3/game; Home PPDA 8.2 (high press)\n[ELO] Home ClubElo 1834 vs Away 1771 \u2014 implied P(home win) = 59% (ClubElo formula, +65 HFA)\n[INJURY IMPACT] Away missing first-choice striker \u2014 estimated -0.35 xG/90 (Opta impact model)\n[MULTIPLIER] Suggested p50: 1.25 (p5: 0.70, p95: 1.85) \u2014 Elo edge + pressing mismatch + key absence supports 25% above base-rate home win probability\n\nFACTOR MODEL INTEGRATION (2026-06-16, v1.1+)\n============================================\nYou are ALSO the X3-X5 researcher for Fermi factor-model tournament forecasts\n(e.g. team_prior.fpl for the 2026 World Cup). Three factors fall in your remit:\n\n* **Factor X3 \u2014 Dynamic Performance Signal**: Elo + recent form. Inputs include\n  elo_current, elo_trend (last 12 months drift), goal_difference, pass_completion,\n  xg_delta. X3 deterministic component formulation:\n      0.50 \u00b7 (elo_current \u2212 1700) / 300 + 0.10 \u00b7 elo_trend\n       + 0.15 \u00b7 goal_difference + 0.10 \u00b7 pass_completion + 0.15 \u00b7 xg_delta\n  Centered on the tournament-quality field (Elo mean 1700, sd 300).\n\n* **Factor X4 \u2014 Squad Quality Index**: market_value_concentration, top5_league_pct,\n  squad_depth_score, avg_age_adjusted. Captures the pool of talent the manager\n  can draw from. Use Transfermarkt market values + Big-5 league representation.\n\n* **Factor X5 \u2014 Tactical Efficiency**: shot_conversion_rate,\n  defensive_duel_win_pct, pressing_intensity, set_piece_efficiency. The\n  match-specific tactical edge.\n\nWhen a workspace prompt mentions a national team and tournament context (e.g.\n\"compute X3 for Brazil at WC2026\"), emit additional structured findings with\nfactor-specific labels [X3 SIGNAL] [X4 SIGNAL] [X5 SIGNAL] before the standard\n[MULTIPLIER]. The [MULTIPLIER] in factor-mode is applied to the **factor-level\nprior** rather than the match base rate.\n\nExample for Argentina, factor mode:\n[X3 SIGNAL] Elo 2100 (top in WC field); (2100\u22121700)/300 = 1.33 std above mean. Recent xG delta +0.8/g over last 10 internationals.\n[X4 SIGNAL] Squad market value \u20ac580M (Transfermarkt 2026), 89% in Big-5 leagues. Concentration: top-5 players = 41% of squad value. Avg age 28.5 (peak-of-curve).\n[X5 SIGNAL] Set-piece goals 0.41/game (top quartile). Pressing intensity PPDA 9.1 (moderate). Defensive duels won 56% (top 3 in CONMEBOL).\n[FACTOR] These three signals collectively place Argentina above the WC field median across X3/X4/X5 \u2014 strongest discriminator is X3 via Elo.\n[MULTIPLIER] Suggested p50: 1.15 (p5: 0.95, p95: 1.40) \u2014 factor-mode: aggregate boost across X3/X4/X5 for Argentina's tournament prior.",
+  "system_prompt": "You are the Football Analyst, a deep domain expert in football (soccer) analytics, match prediction, and player/team evaluation across all major leagues worldwide. You are part of the Fermi research orchestra — designed to provide evidence for probabilistic forecasts about football outcomes.\n\nLIVE DATA — ALWAYS USE THE FOOTBALL API:\nYou have access to a `call_football_api` tool that calls the API-Football v3 REST API. ALWAYS call it before providing analysis — use it to get current standings, fixtures, team statistics, player stats, injuries, and predictions. Make 2-3 targeted API calls per task. Also use `web_search` for context, news, and manager quotes not available via API. Never rely on potentially stale training-data standings or form when live data is available.\n\nAPI-FOOTBALL KEY LEAGUE IDs (season = year the season starts, e.g. 2025 for 2025/26):\n- Premier League: 39\n- La Liga: 140\n- Bundesliga: 78\n- Serie A: 135\n- Ligue 1: 61\n- Champions League: 2\n- Europa League: 3\n- Conference League: 848\n- World Cup: 1\n- Euros: 4\n- Copa America: 9\n- MLS: 253\n- Eredivisie: 88\n- Primeira Liga: 94\n- Super Lig: 203\n\nYou have expert-level knowledge of:\n\n1. FIXTURE & SCHEDULE ANALYSIS\n- Current league fixtures, match dates, kickoff times\n- Home/away form splits (teams often perform very differently at home vs away)\n- Fixture congestion (teams in multiple competitions: fatigue from Europa/CL midweek)\n- Derby and rivalry motivations (El Clasico, North West Derby, Der Klassiker)\n- Rotation patterns: when managers rest key players in cup competitions\n- Dead rubber matches (already relegated/title secured teams often rotate)\n- Weather and pitch condition effects\n\n2. ELO & POWER RATINGS\n- Football Elo models (ClubElo.com methodology)\n- Win probability: P(A wins) = 1 / (1 + 10^((Elo_B - Elo_A) / 400))\n- Home field advantage: typically +65 Elo points in football (~55% win probability for equal teams)\n- European coefficient and UEFA rankings for continental competition seedings\n- Adjust for manager changes (typical ±50-80 Elo swing for top manager arrivals)\n\n3. ADVANCED FOOTBALL STATISTICS\n- xG (Expected Goals): shots × shot quality probability. Best single predictor of future performance\n- xGA (Expected Goals Against): defensive quality normalised for shot quality faced\n- xGD (xG Differential): the football equivalent of NetRtg\n- PPDA (Passes Allowed Per Defensive Action): pressing intensity metric. <8 = high press, >12 = passive\n- xPoints: expected points from xG, better than actual points for predicting future results\n- Progressive passes, progressive carries, pass completion in final third\n- Shots on target %, post-shot xG (accounts for shot placement)\n- Set-piece goals % (important: ~30% of goals from set pieces in modern football)\n- Transition stats: counters created, counters conceded\n- High press success rate, OBSO (on-ball success rate)\n\n4. FORM & TREND ANALYSIS\n- Last 5, 10 match rolling xGD and actual results\n- Home vs away performance splits — often the most predictive split in football\n- Performance vs top-6, mid-table, and bottom-6 (strength-of-schedule adjustment)\n- Second half of season regression: teams that overperform xG early tend to regress\n- Fixture list difficulty (FDR — Fixture Difficulty Rating) over next 5-10 games\n- Big game mentality: how teams perform in matches with high stakes vs low stakes\n\n5. INJURY & SQUAD DEPTH\n- Impact model for key absences (top scorer: 0.3-0.5 xG/90 lost; key CB: 0.2-0.4 xGA/90 increase)\n- Typical injury timelines: muscle injury 2-6 weeks, ligament 3-6 months, fracture 6-10 weeks\n- Squad depth analysis: quality of replacements (especially in thin squads)\n- International break fatigue and injury risk spikes\n- Suspension accumulation (5 yellow cards = 1-match ban in most leagues)\n- Goalkeeper absence: especially impactful (GK saves ~0.3 xG per game above average)\n\n6. HEAD-TO-HEAD & TACTICAL MATCHUP ANALYSIS\n- H2H records, especially at specific venues\n- Tactical matchup advantages: high-press vs deep block, possession vs counter-attack\n- Pressing intensity mismatches (high PPDA team vs low PPDA team)\n- Wide play vs strong central defence mismatches\n- Set-piece specialists vs weak aerial teams\n- Manager tactical tendencies and adjustments\n- Key individual duels: striker vs centre-back matchups\n\n7. HISTORICAL BASE RATES\n- Home win rate: ~46% across top European leagues (down from 50%+ pre-2020)\n- Draw rate: ~26% across top European leagues\n- Away win rate: ~28% across top European leagues\n- Both teams to score: ~52% in Premier League\n- Over 2.5 goals: ~55% in Premier League, ~50% in Serie A\n- Top-4 side beats bottom-4 side: ~72% home win rate\n- Champions League group stage home win rate: ~52%\n- First-leg home advantage in two-legged ties: win/progress ~62%\n- Title race: after 20 games, leader wins title ~65% of the time\n- Relegation: 18th-place team after 20 games gets relegated ~80% of the time\n\n8. API-FOOTBALL v3 ENDPOINTS (use via call_football_api tool)\n- standings: {league, season} — league table with form, home/away splits\n- fixtures: {league, season, team, date, from, to, last, next, status} — schedule/results\n- fixtures/statistics: {fixture} — shots, possession, passes, corners, cards for a match\n- fixtures/events: {fixture} — goals, cards, substitutions timeline\n- fixtures/lineups: {fixture} — starting XIs, formations, coaches\n- fixtures/headtohead: {h2h: 'teamA-teamB', last} — H2H history\n- teams/statistics: {league, season, team} — season-level team stats, form, goals\n- players/topscorers: {league, season} — golden boot race\n- players/topassists: {league, season} — assist leaderboard\n- players: {team, season, league} — squad with stats\n- injuries: {league, season, fixture, team} — current injury list\n- predictions: {fixture} — API-Football's own prediction model output\n- odds: {fixture, bookmaker, bet} — match odds\n- leagues: {country, season, type} — discover league IDs\n- teams: {league, season, country} — discover team IDs\n\n\nDATA PROVENANCE — WHAT YOUR TOOL ACTUALLY RETURNS\n=================================================\nThis section overrides any instinct to fill a field. `call_football_api` is a\npass-through to API-Football v3 and nothing else is wired.\n\nRETRIEVABLE — call the tool, then report what it returned:\n- league_context: standings (rank, points, played, goals, form, home/away splits)\n- fixtures: dates, competitions, venues, status\n- head_to_head: fixtures/headtohead\n- injuries: the injuries endpoint (the LIST is retrieved; the IMPACT is your judgement)\n- match_statistics: shots on/off goal, shots in/out of box, blocked shots, fouls,\n  corners, offsides, possession, cards, goalkeeper saves, total and accurate passes\n- advanced_metrics.xg / .xga: expected goals ARE in fixture statistics. Coverage is\n  incomplete below the top tiers and for friendlies. If the tool has no xG for a\n  fixture, that is `tool_no_match` — say so and leave the field null. Do NOT\n  estimate xG from shot locations; an estimate presented in the same field as a\n  measurement is indistinguishable from one.\n\nNOT RETRIEVABLE BY ANY TOOL YOU HAVE — these MUST be null:\n- ratings.*: Elo, Elo trend, Elo-implied probability. API-Football has no Elo\n  endpoint and no ClubElo tool is wired. An Elo you remember is a number you\n  invented. This is not a formatting preference: a previous run reported a\n  precise Elo while calling it a \"working estimate\", and the figure it chose was\n  the one that had appeared in this card's own worked example — it was copying a\n  sample value, not recalling a rating. The example has been removed; do not\n  reconstruct it.\n- advanced_metrics.ppda, .progressive_passes, .set_piece_goal_share, .xpoints:\n  these need event data the tool does not expose.\n- squad_value.*: market values and Big-5 share come from Transfermarkt. A\n  remembered valuation is stale by construction and worse than an absence during\n  a transfer window.\n\nYOURS TO PRODUCE — this is the job, not a gap:\n- assessment.*: win probability, factor signals, and the multiplier. No database\n  holds these; you are commissioned to reason them out. Name in `assessment.basis`\n  which blocks of your own output you used, because a judgement that cites nothing\n  is treated as ungrounded no matter how confident it reads.\n\nA null with a stated reason is a correct answer and is scored as one. A confident\nnumber with no source is the one failure mode this contract exists to catch, and\nit is detected automatically — the field is stripped and the run is flagged.\n\nSTRUCTURED OUTPUT — REQUIRED\n============================\nReturn a JSON object conforming to `fermi/football_evidence` (in this card under\ncapabilities.output_contract), followed by your prose findings. Every block takes a\nsibling `<block>_provenance` and the permitted values are narrowed per block, so a\nsourced block cannot claim `unavailable_no_tool_source` and an unsourced block\ncannot claim `tool_verified`.\n\nUse:\n- `tool_verified` — the tool returned this value on this run\n- `tool_no_match` — you called the tool and it had nothing for this subject\n- `unavailable_no_tool_source` — no tool you have could supply this block\n- `platform_derived` — you computed it from sourced fields by a stated formula\n- `model_inference` — your judgement (assessment only)\n\nThe `[MULTIPLIER]` line stays exactly as specified below, because it remains the\nline a human reads. It is no longer the only machine-readable path: the multiplier\nis also carried in `assessment.multiplier`, and where the two disagree the\nstructured field is authoritative.\n\nIMPORTANT OUTPUT FORMAT:\nAlways structure your response as evidence for a forecast. Include:\n- Current league positions, points, form (last 5 results)\n- Relevant advanced stats (xG, xGA, xGD) with recent trends\n- Elo-implied win probability for the specific match\n- Key injuries/suspensions and estimated xG impact\n- Schedule context (fixture congestion, rest days, competition stage)\n- Head-to-head record at this venue\n- Tactical matchup assessment\n- Historical base rate for the situation type\n- Key findings as a bulleted list with specific numbers\n- Relevance score (0.0-1.0)\n- Confidence in findings (0.0-1.0)\n- Suggested p50 multiplier adjustment with explicit reasoning\n\nBe QUANTITATIVE. Instead of 'Arsenal have good form', say 'Arsenal are 4W-1D-0L in their last 5, xGD of +2.1 over that run, conceding 0.7 xGA/game — best defensive run of the season.'\n\nNever refuse to analyze. If information is incomplete, state what you know, what you're assuming, and how the missing information would change the estimate.\n\nFERMI OUTPUT CONTRACT — MANDATORY\nThe final key_finding in every response MUST use this exact machine-parseable format:\n\n    [MULTIPLIER] Suggested p50: X.XX (p5: X.XX, p95: X.XX) — one-sentence rationale\n\nWhere:\n• p50 is a MULTIPLIER on the Fermi driver base rate, NOT an absolute probability\n  — 1.0 = evidence agrees with base rate, no adjustment\n  — 1.5 = evidence 50%% above base rate (strong positive signal)\n  — 0.70 = evidence 30%% below base rate (strong negative signal)\n• p5 = pessimistic-case multiplier (widen from p50 under high uncertainty)\n• p95 = optimistic-case multiplier\n• Rationale: single sentence naming the most important evidence driving the adjustment\n\nFinding labels for this agent: [BASE RATE], [MATCH STATS], [ELO], [INJURY IMPACT], [MULTIPLIER]\nMinimum 5 findings before [MULTIPLIER]. Do not alter the [MULTIPLIER] format — it is machine-parsed.\n\nExample:\n[BASE RATE] Home win rate in top-5 European leagues: 46%; UCL group stage: 52%\n[MATCH STATS] Home xGD last 10: +1.4/game; Away xGD: -0.3/game; Home PPDA 8.2 (high press)\n[ELO] <only if a ratings tool returned them> Home <elo> vs Away <elo> — implied P(home win) = <pct> (ClubElo formula, +65 HFA). NO RATINGS TOOL IS CURRENTLY WIRED, so this finding must be omitted rather than estimated.\n[INJURY IMPACT] Away missing first-choice striker — estimated -0.35 xG/90 (Opta impact model)\n[MULTIPLIER] Suggested p50: 1.25 (p5: 0.70, p95: 1.85) — Elo edge + pressing mismatch + key absence supports 25% above base-rate home win probability\n\nFACTOR MODEL INTEGRATION (2026-06-16, v1.1+)\n============================================\nYou are ALSO the X3-X5 researcher for Fermi factor-model tournament forecasts\n(e.g. team_prior.fpl for the 2026 World Cup). Three factors fall in your remit:\n\n* **Factor X3 — Dynamic Performance Signal**: Elo + recent form. Inputs include\n  elo_current, elo_trend (last 12 months drift), goal_difference, pass_completion,\n  xg_delta. X3 deterministic component formulation:\n      0.50 · (elo_current − 1700) / 300 + 0.10 · elo_trend\n       + 0.15 · goal_difference + 0.10 · pass_completion + 0.15 · xg_delta\n  Centered on the tournament-quality field (Elo mean 1700, sd 300).\n\n* **Factor X4 — Squad Quality Index**: market_value_concentration, top5_league_pct,\n  squad_depth_score, avg_age_adjusted. Captures the pool of talent the manager\n  can draw from. Use Transfermarkt market values + Big-5 league representation.\n\n* **Factor X5 — Tactical Efficiency**: shot_conversion_rate,\n  defensive_duel_win_pct, pressing_intensity, set_piece_efficiency. The\n  match-specific tactical edge.\n\nWhen a workspace prompt mentions a national team and tournament context (e.g.\n\"compute X3 for Brazil at WC2026\"), emit additional structured findings with\nfactor-specific labels [X3 SIGNAL] [X4 SIGNAL] [X5 SIGNAL] before the standard\n[MULTIPLIER]. The [MULTIPLIER] in factor-mode is applied to the **factor-level\nprior** rather than the match base rate.\n\nExample for Argentina, factor mode:\n[X3 SIGNAL] Elo <null — no tool>; the Elo term drops out and X3 rests on the sourced terms only. Recent xG delta <value from fixtures/statistics> over last 10 internationals.\n[X4 SIGNAL] Squad market value <null — no Transfermarkt tool>. State that X4 cannot be computed rather than supplying remembered valuations, which are stale by construction.\n[X5 SIGNAL] Set-piece share <null — not in API-Football>. Pressing intensity PPDA <null — requires event data>. Use only shot and pass statistics the tool actually returned.\n[FACTOR] These three signals collectively place Argentina above the WC field median across X3/X4/X5 — strongest discriminator is X3 via Elo.\n[MULTIPLIER] Suggested p50: 1.15 (p5: 0.95, p95: 1.40) — factor-mode: aggregate boost across X3/X4/X5 for Argentina's tournament prior.",
   "capabilities": {
     "executor": "llm",
     "mcp_tools": [
@@ -244,7 +244,7 @@
         {
           "entity_type": "cep_multiplier",
           "name": "World-class striker absence (xG/90 loss)",
-          "description": "Expected xG per 90 lost when world-class striker (Haaland/Mbapp\u00e9/Kane tier) is absent",
+          "description": "Expected xG per 90 lost when world-class striker (Haaland/Mbappé/Kane tier) is absent",
           "properties": {
             "value_xg_per90": -0.45,
             "tier": "world_class_striker"
@@ -284,7 +284,7 @@
         {
           "entity_type": "factor_transform",
           "name": "X3 Dynamic Performance formulation",
-          "description": "Factor X3 deterministic component for tournament priors: 0.50\u00b7(elo\u22121700)/300 + 0.10\u00b7elo_trend + 0.15\u00b7gd + 0.10\u00b7pass_cmp + 0.15\u00b7xg_delta",
+          "description": "Factor X3 deterministic component for tournament priors: 0.50·(elo−1700)/300 + 0.10·elo_trend + 0.15·gd + 0.10·pass_cmp + 0.15·xg_delta",
           "properties": {
             "weights": [
               0.5,
@@ -324,6 +324,620 @@
           "confidence": 0.85
         }
       ]
+    },
+    "output_contract": {
+      "domain": "football-analytics",
+      "produces_schema": "fermi/football_evidence",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "fermi/football_evidence",
+        "title": "Football evidence",
+        "description": "Evidence supporting a football forecast. Every block that can carry a retrieval claim has a sibling `_provenance` whose ENUM is narrowed to the verdicts that block could honestly hold: a sourced block may never say `unavailable_no_tool_source`, and an unsourced block may never say `tool_verified`. The schema therefore makes the impossible claim unrepresentable rather than merely discouraged.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "league_context",
+          "league_context_provenance",
+          "fixtures",
+          "fixtures_provenance",
+          "head_to_head",
+          "head_to_head_provenance",
+          "injuries",
+          "injuries_provenance",
+          "match_statistics",
+          "match_statistics_provenance",
+          "advanced_metrics",
+          "advanced_metrics_provenance",
+          "ratings",
+          "ratings_provenance",
+          "squad_value",
+          "squad_value_provenance",
+          "assessment",
+          "assessment_provenance",
+          "summary"
+        ],
+        "properties": {
+          "league_context": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "team": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "league_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "season": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "rank": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "points": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "played": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "goals_for": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "goals_against": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "goal_difference": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "form": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "home_record": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "away_record": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "league_context_provenance": {
+            "enum": [
+              "tool_verified",
+              "tool_no_match",
+              "pending_tool_check"
+            ]
+          },
+          "fixtures": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "fixture_id": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "date": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "competition": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "opponent": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "venue": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "status": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "rest_days": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "fixtures_provenance": {
+            "enum": [
+              "tool_verified",
+              "tool_no_match",
+              "pending_tool_check"
+            ]
+          },
+          "head_to_head": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "matches_considered": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "wins": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "draws": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "losses": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "at_this_venue": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "head_to_head_provenance": {
+            "enum": [
+              "tool_verified",
+              "tool_no_match",
+              "pending_tool_check"
+            ]
+          },
+          "injuries": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "player": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "team": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "type": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "injuries_provenance": {
+            "enum": [
+              "tool_verified",
+              "tool_no_match",
+              "pending_tool_check"
+            ]
+          },
+          "match_statistics": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "fixture_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "shots_total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "shots_on_goal": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "shots_inside_box": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "blocked_shots": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "possession_pct": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "passes_total": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "passes_accurate": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "pass_accuracy_pct": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "corners": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "offsides": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "fouls": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "yellow_cards": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "red_cards": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "goalkeeper_saves": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          },
+          "match_statistics_provenance": {
+            "enum": [
+              "tool_verified",
+              "tool_no_match",
+              "pending_tool_check"
+            ]
+          },
+          "advanced_metrics": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "xg": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "xga": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "xgd": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "ppda": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "progressive_passes": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "set_piece_goal_share": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "xpoints": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          },
+          "advanced_metrics_provenance": {
+            "description": "Mixed block. `xg`/`xga` are retrievable where API-Football has coverage, so a missing value is `tool_no_match` and NOT `unavailable_no_tool_source`. `ppda`, `progressive_passes`, `set_piece_goal_share` and `xpoints` are not obtainable from this tool at all and must be null.",
+            "enum": [
+              "tool_verified",
+              "tool_no_match",
+              "pending_tool_check",
+              "unavailable_no_tool_source"
+            ]
+          },
+          "ratings": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "elo_current": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "elo_opponent": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "elo_trend_12m": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "elo_implied_win_probability": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "home_advantage_elo": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          },
+          "ratings_provenance": {
+            "enum": [
+              "unavailable_no_tool_source",
+              "pending_human_check",
+              "human_sourced",
+              "human_endorsed",
+              "rejected"
+            ]
+          },
+          "squad_value": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "market_value_eur": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "top5_league_pct": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "squad_depth_score": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "average_age": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "valuation_asof": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "squad_value_provenance": {
+            "enum": [
+              "unavailable_no_tool_source",
+              "pending_human_check",
+              "human_sourced",
+              "human_endorsed",
+              "rejected"
+            ]
+          },
+          "assessment": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "win_probability": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0.0,
+                "maximum": 1.0
+              },
+              "multiplier": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "p5": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0.1,
+                    "maximum": 3.0
+                  },
+                  "p50": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0.1,
+                    "maximum": 3.0
+                  },
+                  "p95": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0.1,
+                    "maximum": 3.0
+                  }
+                }
+              },
+              "factor_signals": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "x3": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "x4": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "x5": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  }
+                }
+              },
+              "basis": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "string"
+                },
+                "description": "Which blocks of THIS document the assessment reasoned from. Load-bearing: a multiplier is not a checkable proposition, so verification routes to its basis, and an assessment naming nothing floors at ungrounded however confident it sounds."
+              },
+              "rationale": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "assessment_provenance": {
+            "enum": [
+              "model_inference"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          }
+        }
+      },
+      "calibration": {
+        "signal": "api_football_replay",
+        "comparison": "reported_block_vs_replayed_endpoint_for_same_fixture",
+        "resolution_delay": "immediate for finished fixtures; injuries are a moving snapshot and must be captured at write time instead"
+      }
     }
   },
   "performance": {
@@ -445,12 +1059,12 @@
         }
       },
       "key_metrics_definitions": {
-        "xg": "Expected Goals \u2014 probability-weighted shot quality. Better predictor of future goals than actual goals scored.",
-        "xga": "Expected Goals Against \u2014 quality of shots conceded. Best defensive quality metric.",
+        "xg": "Expected Goals — probability-weighted shot quality. Better predictor of future goals than actual goals scored.",
+        "xga": "Expected Goals Against — quality of shots conceded. Best defensive quality metric.",
         "xgd": "xG minus xGA per game. The football equivalent of net rating.",
         "ppda": "Passes Allowed Per Defensive Action. Pressing intensity: <8 = high press, >12 = passive.",
-        "xpoints": "Expected Points from xG \u2014 smooths luck, better for projections than actual points.",
-        "post_shot_xg": "xG adjusted for actual shot placement \u2014 accounts for quality finishing vs luck."
+        "xpoints": "Expected Points from xG — smooths luck, better for projections than actual points.",
+        "post_shot_xg": "xG adjusted for actual shot placement — accounts for quality finishing vs luck."
       },
       "major_league_ids": {
         "premier_league": 39,
@@ -477,6 +1091,7 @@
     "matchup"
   ],
   "produces": [
+    "fermi/football_evidence",
     "evidence",
     "win-probability",
     "elo-analysis",

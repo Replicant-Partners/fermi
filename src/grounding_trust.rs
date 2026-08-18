@@ -157,6 +157,84 @@ pub const PROVENANCE_VALUES: &[&str] = &[
 ///
 /// `(agent_id, path, why_not_and_what_would_fix_it)`
 pub const CROSS_CHECK_EXEMPTIONS: &[(&str, &str, &str)] = &[
+    // ── football_analyst ───────────────────────────────────────────
+    //
+    // Every entry here shares one cause and it is worth stating once rather
+    // than six times: the platform holds NO football data of its own. There is
+    // no standings table, no fixture list, no injury roster. `genome_profiler`
+    // could be cross-checked because the creature row already carried a
+    // GBIF-verified taxonomy — a second copy, one JOIN away. Here there is no
+    // second copy of anything.
+    //
+    // Two routes out, and they are different in kind:
+    //
+    //   * REPLAY — re-query `call_football_api` for the same fixture and
+    //     compare. Costs an external call per row and is subject to the same
+    //     rate limit the agent uses, but it is the only check that can catch a
+    //     value the tool never returned. This is the football equivalent of the
+    //     NCBI accession replay already deferred for genome size.
+    //   * INTERNAL CONSISTENCY — needs no external truth at all. `xgd` must
+    //     equal `xg - xga`; an Elo-implied probability must equal the card's
+    //     formula applied to the two Elos actually stated. These become real
+    //     cross-checks the moment the agent emits a structured payload, because
+    //     a `SELECT` can then read the fields out of `episodes.response_text`
+    //     (retained since migration 199) the way the taxonomy check reads
+    //     `creature_conditions.genome_profile`.
+    //
+    // The second route is deliberately NOT declared yet. The agent still emits
+    // prose, so such a query would parse nothing, count zero mismatches, and
+    // report clean — a check that passes because it matches nothing, which is
+    // the `fermi_leaderboard` failure this whole tier exists to avoid. It lands
+    // with the payload, together with an agreement probe proving it can go red.
+    (
+        "football_analyst",
+        "league_context",
+        "The platform stores no league table. A replay against `standings` for \
+         the same league and season would settle it exactly, since a finished \
+         table is immutable; deferred only because it spends the agent's own \
+         rate limit. Cheapest real check on this agent, and the one to write \
+         first.",
+    ),
+    (
+        "football_analyst",
+        "fixtures",
+        "No fixture list is held. A replay is possible and cheap for finished \
+         matches, whose dates and results never change.",
+    ),
+    (
+        "football_analyst",
+        "head_to_head",
+        "No H2H store. Replayable against `fixtures/headtohead`, and worth doing \
+         because a fabricated historical record is both easy to produce and \
+         completely invisible to a reader.",
+    ),
+    (
+        "football_analyst",
+        "injuries",
+        "No roster store, and unlike the others this one is NOT usefully \
+         replayable: an injury list is a snapshot of a moving state, so a replay \
+         weeks later disagrees for legitimate reasons and would report a \
+         mismatch that means nothing. Correct check is to capture the tool \
+         response alongside the claim at write time and compare then — which is \
+         what the assertion layer's `basis` field is for.",
+    ),
+    (
+        "football_analyst",
+        "match_statistics",
+        "No per-fixture statistics store. Replayable and immutable once a match \
+         is finished, so this is the second-cheapest real check after \
+         `league_context`.",
+    ),
+    (
+        "football_analyst",
+        "advanced_metrics.xg",
+        "Same as `match_statistics`, with one addition that matters: a replay \
+         must distinguish \"the tool returned a different number\" from \"the \
+         tool has no xG for this fixture\". Coverage is incomplete below the top \
+         tiers, so the second case is common and is `tool_no_match`, not a \
+         disagreement. A check that conflated them would flag honest gaps as \
+         fabrications and be deleted within a week — correctly.",
+    ),
     (
         "genome_profiler",
         "phylogeny.sister_taxa",
@@ -608,6 +686,201 @@ impl LeakRule {
 /// per agent as each is remediated; `port_census.py` reports which agents
 /// have output fields and no entry here.
 pub const FIELD_CONTRACTS: &[FieldContract] = &[
+    // ── football_analyst ───────────────────────────────────────────
+    //
+    // Tool: `call_football_api`, a pass-through to API-Football v3. Verified
+    // running in production: 7 of 9 retained episodes record `tool:
+    // call_football_api` in their tags, so unlike `genome_profiler` this agent
+    // is not toolless. What it does is assert three families of number the tool
+    // does not carry.
+    //
+    // A correction worth recording, because it nearly went the other way. An
+    // earlier draft classified xG as `Unsourced` on the strength of the agent's
+    // own words in a real episode: "API-Football does not provide xG for these
+    // fixtures". API-Football *does* expose expected goals in fixture
+    // statistics; coverage is incomplete for lower tiers and international
+    // friendlies, which is what that episode was actually looking at. So the
+    // agent's statement was true of those fixtures and false as a general claim
+    // about the tool — and trusting an agent's self-report about its own tool's
+    // capabilities is the identical error to trusting its self-report about a
+    // genome size. Declaring xG `Unsourced` would have nulled a field that is
+    // obtainable, which is worse than leaving it alone.
+    //
+    // That is exactly the distinction `tool_no_match` exists for: "the tool
+    // answered and had nothing for this fixture" is not "no tool can supply
+    // this".
+    FieldContract {
+        agent_id: "football_analyst",
+        path: "league_context",
+        grounding: Grounding::Sourced {
+            tool: "call_football_api",
+            response_field: "standings (rank, points, form, home/away splits)",
+        },
+        why: "The `standings` endpoint returns position, points, played, goal \
+              difference and a form string directly. Nothing here needs \
+              inferring.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "football_analyst",
+        path: "fixtures",
+        grounding: Grounding::Sourced {
+            tool: "call_football_api",
+            response_field: "fixtures (date, competition, venue, status)",
+        },
+        why: "The `fixtures` endpoint is the schedule. Rest days and congestion \
+              follow arithmetically from the dates it returns.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "football_analyst",
+        path: "head_to_head",
+        grounding: Grounding::Sourced {
+            tool: "call_football_api",
+            response_field: "fixtures/headtohead",
+        },
+        why: "A dedicated endpoint takes `h2h: 'teamA-teamB'` and returns the \
+              record. There is no reason for this to come from memory.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "football_analyst",
+        path: "injuries",
+        grounding: Grounding::Sourced {
+            tool: "call_football_api",
+            response_field: "injuries (player, type, reason)",
+        },
+        why: "The `injuries` endpoint returns the roster of absences. Note that \
+              the ESTIMATED IMPACT of an absence is a separate field and a \
+              judgement — the list is retrieved, the consequence is reasoned.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "football_analyst",
+        path: "match_statistics",
+        grounding: Grounding::Sourced {
+            tool: "call_football_api",
+            response_field: "fixtures/statistics (shots, possession, passes, cards, saves)",
+        },
+        why: "The documented statistics list: shots on/off goal, shots in/out \
+              of box, blocked shots, fouls, corners, offsides, possession, \
+              cards, saves, total and accurate passes. All retrievable per \
+              fixture.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "football_analyst",
+        path: "advanced_metrics.xg",
+        grounding: Grounding::Sourced {
+            tool: "call_football_api",
+            response_field: "fixtures/statistics.expected_goals",
+        },
+        why: "API-Football carries expected goals in fixture statistics. \
+              Coverage is incomplete below the top tiers, which makes an absent \
+              value `tool_no_match` — the tool answered and had nothing for this \
+              fixture — and NOT `unavailable_no_tool_source`, which would claim \
+              no tool can supply xG at all. The agent has asserted xG for \
+              fixtures where the tool has none; that is the case this entry \
+              exists to catch.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "football_analyst",
+        path: "advanced_metrics.xgd",
+        grounding: Grounding::Derived {
+            from: "advanced_metrics.xg and advanced_metrics.xga",
+            how: "xg - xga, per match or summed over a window",
+        },
+        why: "A subtraction, not a measurement. Reproducible from two sourced \
+              fields, so it is `Derived` rather than `Inferred` for the same \
+              reason `phylogeny.superorder` is: the transform can be read and \
+              re-run.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "football_analyst",
+        path: "ratings.elo_current",
+        grounding: Grounding::Unsourced,
+        why: "API-Football has no Elo endpoint. The card names ClubElo as the \
+              methodology and no ClubElo tool exists, so every Elo this agent \
+              has stated came from the model. The evidence is unusually direct: \
+              one episode reports `elo_current = 1834` while saying \
+              \"Using 1834 as working estimate\" — and 1834 is the number in the \
+              card's own worked example, which the model copied. Returns when a \
+              ClubElo or equivalent tool is added, exactly as the NCBI genome \
+              fields returned.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "football_analyst",
+        path: "ratings.elo_implied_win_probability",
+        // `Unsourced`, and an earlier draft of this entry had it as `Derived`
+        // with a note saying the strip would follow from its source. It does
+        // not: `Derived` fields SURVIVE enforcement, because a derivation by
+        // platform code from a sourced field is reproducible and that is the
+        // whole point of the variant. Declaring it `Derived` therefore let a
+        // correct formula over an invented Elo through untouched, which is the
+        // worst of the available outcomes — a plausible 59% with nothing under
+        // it, and no way for a reader to tell.
+        //
+        // The general rule, now enforced by
+        // `a_derived_field_may_not_derive_from_an_unsourced_one`: a derivation
+        // inherits the standing of what it derives from. Reproducibility is not
+        // a property of the transform alone.
+        grounding: Grounding::Unsourced,
+        why: "Computed by the card's own Elo formula, which is deterministic and \
+              correct — over `ratings.elo_current`, which no tool supplies. A \
+              faithful transform of an invented number is invented, and it is \
+              MORE dangerous than the raw number because the arithmetic lends \
+              it an air of derivation. Returns the moment a ratings tool does, \
+              at which point it becomes genuinely `Derived`.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "football_analyst",
+        path: "advanced_metrics.ppda",
+        grounding: Grounding::Unsourced,
+        why: "PPDA is an Opta/StatsBomb pressing metric computed from event \
+              data. API-Football's statistics list has no defensive-action \
+              counts, so it cannot be computed from what the tool returns, let \
+              alone retrieved. Same for progressive passes and set-piece share.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "football_analyst",
+        path: "squad_value",
+        grounding: Grounding::Unsourced,
+        why: "Market values and Big-5 league share come from Transfermarkt, for \
+              which there is no tool. The card asks for these as factor X4 \
+              inputs, so the agent supplies them from memory — and a market \
+              valuation from training data is stale by construction, which makes \
+              it worse than an absence during a transfer window.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "football_analyst",
+        path: "assessment",
+        grounding: Grounding::Inferred {
+            from: "league_context, fixtures, head_to_head, injuries, match_statistics",
+        },
+        why: "The agent's actual product. A win probability, a factor signal and \
+              a multiplier are judgements it is commissioned to make, and no \
+              database holds them — which is why they cannot be verified \
+              directly and why verification routes to this block's basis \
+              instead. Treating them like a fabricated Elo would null the \
+              agent's only output and prove the contract cannot tell an agent \
+              that fabricates from one that reasons.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "football_analyst",
+        path: "summary",
+        grounding: Grounding::Narrative,
+        why: "Prose for a human reader. Permitted, and scanned for quantities \
+              the unsourced blocks cannot support — an Elo or a market value \
+              recited in the summary is the same claim wearing a different hat.",
+        cross_check_sql: None,
+    },
     // ── genome_profiler ────────────────────────────────────────────
     // Tools: gbif_species_search, gbif_taxonomy_tree. Both taxonomy.
     FieldContract {
@@ -2415,6 +2688,229 @@ mod tests {
         assert!(get_path(&doc, "conservation.iucn_status")
             .unwrap()
             .is_null());
+    }
+
+    // ─── football_analyst ──────────────────────────────────────────────
+    //
+    // The agent that motivated the pending tier, and the one that proves the
+    // contract can handle a partially-tooled agent. `genome_profiler` had no
+    // tool for three of four blocks; this one has a working tool that carries
+    // five blocks and not three others. Getting that split wrong in either
+    // direction is a real cost: too strict and it nulls obtainable data, too
+    // loose and it launders a remembered Elo.
+
+    fn football_output() -> Value {
+        json!({
+            "league_context": { "team": "Arsenal", "rank": 2, "points": 71, "form": "WWDWL" },
+            "fixtures": [{ "opponent": "Man City", "date": "2026-04-11", "rest_days": 3 }],
+            "head_to_head": { "matches_considered": 10, "wins": 3, "draws": 3, "losses": 4 },
+            "injuries": [{ "player": "Saliba", "reason": "Hamstring" }],
+            "match_statistics": { "shots_total": 14, "possession_pct": 58.0, "passes_accurate": 397 },
+            "advanced_metrics": { "xg": 1.9, "xga": 0.8, "xgd": 1.1, "ppda": 8.2, "xpoints": 2.1 },
+            "ratings": { "elo_current": 1902.0, "elo_implied_win_probability": 0.59 },
+            "squad_value": { "market_value_eur": 580000000.0, "top5_league_pct": 89.0 },
+            "assessment": {
+                "win_probability": 0.44,
+                "multiplier": { "p5": 0.60, "p50": 0.85, "p95": 1.15 },
+                "basis": ["league_context", "injuries", "match_statistics"],
+                "rationale": "Saliba out; City at full strength."
+            },
+            "summary": "Arsenal are second on 71 points and have lost a first-choice centre-back."
+        })
+    }
+
+    /// A derivation inherits the standing of what it derives from.
+    ///
+    /// `Derived` fields survive enforcement, because platform code applying a
+    /// readable transform to a sourced value produces something reproducible.
+    /// That reasoning collapses the moment the input is not sourced: the
+    /// transform is still correct and the output is still invented, and the
+    /// arithmetic makes it *more* credible rather than less.
+    ///
+    /// This test exists because the first `football_analyst` contract declared
+    /// `elo_implied_win_probability` as `Derived` from an `Unsourced` Elo, with
+    /// a comment confidently asserting that enforcement would strip it. It did
+    /// not. The comment was wrong in the direction that ships a fabricated
+    /// probability, and only a test could tell the difference between the
+    /// declaration and the behaviour.
+    #[test]
+    fn a_derived_field_may_not_derive_from_an_unsourced_one() {
+        let mut offenders: Vec<String> = Vec::new();
+
+        for c in FIELD_CONTRACTS {
+            let Grounding::Derived { from, .. } = c.grounding else {
+                continue;
+            };
+            // `from` is prose naming one or more sibling paths. Match any
+            // contract for the same agent whose path appears in it, which is
+            // deliberately generous: a false positive here costs a comment
+            // edit, a false negative ships a laundered value.
+            for other in FIELD_CONTRACTS
+                .iter()
+                .filter(|o| o.agent_id == c.agent_id && from.contains(o.path))
+            {
+                if matches!(other.grounding, Grounding::Unsourced) {
+                    offenders.push(format!(
+                        "{}.{} is Derived from `{}`, which is Unsourced",
+                        c.agent_id, c.path, other.path
+                    ));
+                }
+            }
+        }
+
+        assert!(
+            offenders.is_empty(),
+            "a derivation cannot be more grounded than its input, but \
+             `Derived` fields SURVIVE enforcement — so these would ship a \
+             correct transform of a value nothing supplied:\n  {}\n\n\
+             Declare the field `Unsourced` until its input has a tool.",
+            offenders.join("\n  ")
+        );
+    }
+
+    #[test]
+    fn a_remembered_elo_is_stripped_from_a_football_report() {
+        // The headline case. API-Football has no Elo endpoint and no ClubElo
+        // tool is wired, so every Elo this agent has ever stated came from the
+        // model — one real episode copied the number out of the card's own
+        // worked example while calling it an estimate.
+        let mut doc = football_output();
+        let report = enforce("football_analyst", &mut doc);
+        assert!(
+            doc["ratings"]["elo_current"].is_null(),
+            "{:?}",
+            doc["ratings"]
+        );
+        assert!(!report.is_clean(), "a fabricated Elo must be a violation");
+        assert!(
+            report
+                .violations
+                .iter()
+                .any(|v| v.path.starts_with("ratings") && v.removed == json!(1902.0)),
+            "the discarded value must be retained for calibration: {:?}",
+            report.violations
+        );
+    }
+
+    #[test]
+    fn a_correct_formula_over_an_invented_input_is_still_invented() {
+        // `elo_implied_win_probability` is `Derived` and the transform is right.
+        // That must not rescue it: derived from an unsourced input is unsourced,
+        // and a reader who sees a plausible 59% has no way to know the Elo
+        // behind it was remembered.
+        let mut doc = football_output();
+        enforce("football_analyst", &mut doc);
+        assert!(
+            doc["ratings"]["elo_implied_win_probability"].is_null(),
+            "a derivation cannot launder its source: {:?}",
+            doc["ratings"]
+        );
+    }
+
+    #[test]
+    fn the_blocks_the_tool_really_carries_survive_untouched() {
+        // The other half, and the half that keeps the contract usable. This
+        // agent's tool genuinely returns standings, fixtures, h2h, injuries and
+        // match statistics. Stripping them would be destroying obtainable data,
+        // which is worse than leaving a guess in place.
+        let mut doc = football_output();
+        let before = doc.clone();
+        enforce("football_analyst", &mut doc);
+        for block in [
+            "league_context",
+            "fixtures",
+            "head_to_head",
+            "injuries",
+            "match_statistics",
+        ] {
+            assert_eq!(
+                doc[block], before[block],
+                "`{block}` is retrievable and must survive"
+            );
+        }
+    }
+
+    #[test]
+    fn expected_goals_survives_because_the_tool_does_carry_it() {
+        // The correction that nearly went the other way. An earlier draft
+        // classified xG as `Unsourced` on the strength of the agent's own words
+        // in a real episode — "API-Football does not provide xG for these
+        // fixtures" — which was true of those particular friendlies and false
+        // about the tool. Trusting an agent's self-report about its own tool is
+        // the same error as trusting its self-report about a genome size, and
+        // acting on it would have nulled an obtainable field.
+        let mut doc = football_output();
+        enforce("football_analyst", &mut doc);
+        assert_eq!(
+            doc["advanced_metrics"]["xg"],
+            json!(1.9),
+            "xG is in fixture statistics and must not be stripped"
+        );
+        assert_eq!(
+            doc["advanced_metrics"]["xgd"],
+            json!(1.1),
+            "xGD is a subtraction over two sourced fields"
+        );
+        // ...while the metrics that need event data the tool does not expose are
+        // gone, in the same block. A per-field contract is what makes that
+        // possible; a per-block one could not express it.
+        assert!(
+            doc["advanced_metrics"]["ppda"].is_null(),
+            "PPDA needs defensive-action counts API-Football does not return"
+        );
+    }
+
+    #[test]
+    fn the_agents_own_judgement_is_never_stripped() {
+        // The most important test on this agent, for the reason `enemy_sensor`
+        // has the equivalent: a win probability, a factor signal and a
+        // multiplier are what the agent was commissioned to produce. Nulling
+        // them would leave an empty document and prove the contract cannot tell
+        // an agent that fabricates from one that reasons — at which point it
+        // deserves to be switched off.
+        let mut doc = football_output();
+        enforce("football_analyst", &mut doc);
+        assert_eq!(doc["assessment"]["win_probability"], json!(0.44));
+        assert_eq!(doc["assessment"]["multiplier"]["p50"], json!(0.85));
+        assert_eq!(
+            doc.get("assessment_provenance").and_then(|v| v.as_str()),
+            Some(PROV_INFERRED),
+            "labelled as reasoning rather than measurement"
+        );
+    }
+
+    #[test]
+    fn a_market_valuation_from_memory_is_stripped() {
+        // Transfermarkt has no tool. Worth its own test because a remembered
+        // valuation is not merely unsourced but *stale by construction*, and a
+        // stale number during a transfer window is confidently wrong rather
+        // than vaguely wrong.
+        let mut doc = football_output();
+        enforce("football_analyst", &mut doc);
+        assert!(doc["squad_value"]["market_value_eur"].is_null());
+        assert_eq!(
+            doc.get("squad_value_provenance").and_then(|v| v.as_str()),
+            Some(PROV_UNAVAILABLE)
+        );
+    }
+
+    #[test]
+    fn the_summary_may_not_recite_a_stripped_number() {
+        // A narrative is not a loophole. An Elo or a market value quoted in
+        // prose is the same claim wearing a different hat, and the summary is
+        // the part a human actually reads.
+        let mut doc = football_output();
+        doc["summary"] = json!(
+            "Arsenal's ClubElo of 1902 implies a 59% win probability, and their \
+             squad is valued at EUR 580M."
+        );
+        let report = enforce("football_analyst", &mut doc);
+        assert!(
+            !report.is_clean(),
+            "prose asserting what the unsourced blocks cannot support must be \
+             flagged: {:?}",
+            report.violations
+        );
     }
 
     #[test]

@@ -596,6 +596,22 @@ So the leading indicator is the count of labels that **resolve to a registered t
 only counter that deletion cannot fake. Choose burn-down metrics by asking which cheap
 action would move them, and lead with the one where the answer is "none".
 
+The dual of this rule cost us a confusing half hour and is worth stating separately:
+**improving coverage can look exactly like regression.** Typing one agent's output moved
+`registered` from 4 to 5 and simultaneously moved `unbacked` from 42 to **46**. No label got
+worse. Four of that agent's six ports had always been unbacked; while the card had no
+machine-readable output shape the question could not be asked at all, so they were counted as
+*unresolvable* instead. Giving the agent a schema is what made them answerable, and the
+answer was bad.
+
+A ratchet that only knows "this number went up" reads that as a step backwards and blocks the
+change that caused the improvement. Ours demands the baseline be regenerated in the same
+commit, which is the right shape: the loosening becomes reviewable rather than invisible, and
+the commit has to say which of the two things happened. It is the same distinction as
+*unknown* versus *clean*, and as *inert* versus *pass*, arriving for the third time in a
+different costume — **a metric must distinguish "got worse" from "became measurable"**, and
+almost none do.
+
 ### 5.5 Distinguish retrieval from judgement, or the contract condemns competence
 
 The grounding contract nearly failed on its second agent. A threat-assessment agent is asked
