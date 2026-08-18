@@ -3169,7 +3169,6 @@ async fn execute_fermi_sensitivity_analysis(input: &serde_json::Value) -> Result
     .map_err(|e| format!("Serialization error: {e}"))
 }
 
-
 // ─── Loop 3 Stage 0 — prospective coordination ─────────────────────
 //
 // All six tools below were declared on `intention_coordinator`'s card and had
@@ -3497,22 +3496,16 @@ async fn execute_suggest_differentiation(
     // workspace's goal, so any concrete division of labour it invented would be
     // a guess dressed as advice. The agents have the context; give them the
     // facts.
-    let shared_targets: Vec<&String> = a
-        .targets
-        .iter()
-        .filter(|t| b.targets.contains(t))
-        .collect();
+    let shared_targets: Vec<&String> = a.targets.iter().filter(|t| b.targets.contains(t)).collect();
     let similarity = match (&a.embedding, &b.embedding) {
-        (Some(_), Some(_)) => crate::intentions::detect_conflicts(
-            &[a.clone(), b.clone()],
-            &[],
-            None,
-        )
-        .into_iter()
-        .find_map(|c| match c {
-            crate::intentions::Conflict::Duplication { similarity, .. } => Some(similarity),
-            _ => None,
-        }),
+        (Some(_), Some(_)) => {
+            crate::intentions::detect_conflicts(&[a.clone(), b.clone()], &[], None)
+                .into_iter()
+                .find_map(|c| match c {
+                    crate::intentions::Conflict::Duplication { similarity, .. } => Some(similarity),
+                    _ => None,
+                })
+        }
         _ => None,
     };
 
@@ -3536,9 +3529,7 @@ async fn execute_emit_coherence_signal(
         .and_then(|v| v.as_str())
         .unwrap_or("");
     if !matches!(relation_type, "IntentionAligns" | "IntentionConflicts") {
-        return Err(
-            "relation_type must be IntentionAligns or IntentionConflicts".to_string(),
-        );
+        return Err("relation_type must be IntentionAligns or IntentionConflicts".to_string());
     }
     let strength = input
         .get("strength")
@@ -3582,7 +3573,9 @@ async fn execute_emit_coherence_signal(
     let a_name = input.get("agent_a").and_then(|v| v.as_str()).unwrap_or("?");
     let b_name = input.get("agent_b").and_then(|v| v.as_str()).unwrap_or("?");
     let body = match rationale {
-        Some(r) => format!("**{relation_type}** — {a_name} ↔ {b_name} (strength {strength:.2}): {r}"),
+        Some(r) => {
+            format!("**{relation_type}** — {a_name} ↔ {b_name} (strength {strength:.2}): {r}")
+        }
         None => format!("**{relation_type}** — {a_name} ↔ {b_name} (strength {strength:.2})"),
     };
     let posted = sqlx::query(

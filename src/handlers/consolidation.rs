@@ -168,21 +168,6 @@ async fn record_dream_member_episode(
         return;
     };
 
-    // Price through the one pricing entry point. `cost_of_split` keys on
-    // (provider, model) and records WHICH row priced it, so this run is
-    // auditable the same way an ordinary execution is rather than carrying a
-    // number nobody can trace.
-    let est = if usage.total_tokens > 0 {
-        Some(fermi::agent_backend::rate_card::cost_of_split(
-            provider.as_deref().unwrap_or_default(),
-            model.as_deref().unwrap_or_default(),
-            usage.prompt_tokens as u32,
-            usage.completion_tokens as u32,
-        ))
-    } else {
-        None
-    };
-
     let mut tags = vec![
         "dream_pipeline".to_string(),
         format!("role:{}", role),
@@ -224,16 +209,23 @@ async fn record_dream_member_episode(
         execution_status: status,
         error_details: error,
         execution_time_ms: elapsed_ms,
-        tokens_used: (usage.total_tokens > 0).then_some(usage.total_tokens as i32),
-        input_tokens: (usage.prompt_tokens > 0).then_some(usage.prompt_tokens as i32),
-        output_tokens: (usage.completion_tokens > 0).then_some(usage.completion_tokens as i32),
-        cost_usd: est
-            .as_ref()
-            .and_then(|e| rust_decimal::Decimal::from_f64_retain(e.usd)),
-        cost_basis: est.as_ref().map(|e| e.basis.as_str().to_string()),
-        cost_rate_key: est.as_ref().map(|e| e.rate_key.clone()),
+        // Cost lives on the PER-CALL rows, not here.
+        //
+        // Both are episodes for the same agent, so `agent_execution_rollup` sums
+        // them: carrying the cycle total here as well as on each call would
+        // double every figure the extractor reports. The per-call rows are the
+        // more accurate ledger anyway — that is where the spend is actually
+        // incurred, one round-trip at a time — so this row keeps the aggregate in
+        // `context` for reading and contributes nothing to the sums.
+        tokens_used: None,
+        input_tokens: None,
+        output_tokens: None,
+        cost_usd: None,
+        cost_basis: None,
+        cost_rate_key: None,
         // No embedding, and pre-consolidated. Both deliberate, and they go
-        // together.
+        // together. (The per-call rows written by `record_extraction_call_episodes`
+        // are the learning material; this row is the cycle marker.)
         //
         // This row exists to make the work VISIBLE and COSTED, not to be
         // learned from. Its `query` is a template that differs only in the
@@ -968,6 +960,12 @@ pub async fn consolidate_agent_handler(
             cycle_started.elapsed().as_millis() as i64,
         )
         .await;
+
+        // (The per-call extraction episodes — the extractor's learning material —
+        // are written by the worker itself, inside the cycle. Deliberately not
+        // here: this handler and the batch `consolidate` CLI both drive the same
+        // worker, and a step only one of them performed would leave the extractor
+        // learning from part of its work with nothing saying which part.)
 
         // Resolve the extractor's utility now that another cycle's rules have
         // aged. This measures PREVIOUS cycles, not the one that just ran — rules

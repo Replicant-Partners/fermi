@@ -908,3 +908,41 @@ mod tests {
         assert_eq!(parse_at_mention("@xaman_ek"), None);
     }
 }
+
+#[cfg(test)]
+mod strategist_assignment_tests {
+    /// Both workspace-creation paths must assign a coordination strategist.
+    ///
+    /// `teams.coordination_strategist_id` was read in 40 places and written by
+    /// none: 1 workspace of 249 had one. Loop 3's coordination half and the
+    /// whole of Loop 4 were therefore unreachable by construction — both look
+    /// the strategist up and find NULL, so `record_coordination_observation`'s
+    /// authorisation gate refused in 248 of 249 workspaces.
+    ///
+    /// This is a source check rather than a DB test because the failure was
+    /// never a wrong value, it was the absence of any writer at all. Grepping
+    /// for the call is exactly the assertion that was missing.
+    #[test]
+    fn both_workspace_creation_paths_assign_a_strategist() {
+        let checks = [
+            ("fermi-auth/src/teams.rs", "assign_default_strategist(pool, team.id)"),
+            ("src/handlers/forecast_git.rs", "assign_default_strategist(pool, ws_id)"),
+        ];
+        for (file, needle) in checks {
+            let path = [
+                std::path::PathBuf::from(file),
+                std::path::PathBuf::from("../..").join(file),
+            ]
+            .into_iter()
+            .find(|p| p.exists())
+            .unwrap_or_else(|| panic!("cannot locate {file}"));
+            let src = std::fs::read_to_string(&path).unwrap();
+            assert!(
+                src.contains(needle),
+                "{file} creates workspaces but no longer calls {needle} — every \
+                 workspace without a strategist has Loop 3 coordination and Loop 4 \
+                 silently unavailable"
+            );
+        }
+    }
+}

@@ -1212,6 +1212,10 @@ async fn run_migrations(db: &PgPool) {
         // 210 — Loop 3 Stage 0. `intention_coordinator`'s six tools were all
         // phantom, so prospective coordination has never run.
         "migrations/210_workspace_intentions.sql",
+        // 211 — teams.coordination_strategist_id was read in 40 places and
+        // written by none: 1 of 249 workspaces had one, so Loop 3 coordination
+        // and Loop 4 were unreachable by construction.
+        "migrations/211_assign_default_coordination_strategist.sql",
     ];
 
     // Bootstrap the ledger before anything is recorded into it.

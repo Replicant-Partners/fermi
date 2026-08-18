@@ -26,7 +26,8 @@ pub mod types;
 pub use bundle::{AgentCardSnapshot, EpisodeBundle, TranscriptRole, TranscriptTurn};
 pub use clustering::{DBSCANClustering, EpisodeCluster};
 pub use consolidation::{
-    extractor_self_knowledge, ConsolidationResult, ConsolidationWorker, ExtractorUsage,
+    extractor_self_knowledge, ConsolidationResult, ConsolidationWorker, ExtractionCall,
+    ExtractorUsage,
 };
 pub use dyad::{
     agent_id_from_dyad, dyad_id, eval_dyad_id, human_id_from_dyad, is_eval_dyad, is_real_dyad,

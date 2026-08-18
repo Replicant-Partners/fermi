@@ -7,6 +7,75 @@ use crate::types::{
     TeamRole,
 };
 
+// ─── Coordination strategist ───────────────────────────────────────
+
+/// The agent assigned to coordinate a workspace unless something says otherwise.
+///
+/// `cohere_and_coordinate`'s own card opens: *"You are Cohere & Coordinate — the
+/// default coordination strategist for every workspace on the Agent Bestiary
+/// platform."* It was assigned to **1 workspace out of 249**.
+pub const DEFAULT_COORDINATION_STRATEGIST: &str = "cohere_and_coordinate";
+
+/// Assign the default coordination strategist to a workspace.
+///
+/// ## Why this exists
+///
+/// `teams.coordination_strategist_id` has been read in 40 places — the
+/// composition-dreaming path, the Loop 4 accept path, and
+/// `record_coordination_observation`'s authorisation gate — and written by
+/// none. Nothing on the platform has ever assigned one.
+///
+/// The consequence is that Loop 3's coordination half and the whole of Loop 4
+/// were unreachable by construction, not by defect. Both look up the workspace's
+/// strategist and find NULL, so a correctly-implemented, correctly-gated
+/// coordination tool refuses in 248 of 249 workspaces. The mechanisms were
+/// built, tested, and pointed at a column nobody populated.
+///
+/// ## Never fails the caller
+///
+/// Returns the assigned id, or `None` when the strategist agent is not present
+/// in this deployment. Workspace creation must not fail because a curated agent
+/// is missing — a workspace with no strategist is degraded, one that could not
+/// be created is broken.
+pub async fn assign_default_strategist(pool: &PgPool, workspace_id: Uuid) -> Option<Uuid> {
+    let strategist: Option<Uuid> =
+        sqlx::query_scalar("SELECT agent_id FROM agents WHERE agent_name = $1")
+            .bind(DEFAULT_COORDINATION_STRATEGIST)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+
+    let Some(agent_id) = strategist else {
+        eprintln!(
+            "WARN: default coordination strategist '{DEFAULT_COORDINATION_STRATEGIST}' not \
+             found — workspace {workspace_id} created without one, so Loop 3 coordination \
+             and Loop 4 composition are unavailable for it"
+        );
+        return None;
+    };
+
+    // Only when unset: an explicit assignment is more authoritative than this
+    // default, and re-running must not clobber it.
+    let res = sqlx::query(
+        "UPDATE teams
+            SET coordination_strategist_id = $2, strategist_assigned_at = NOW()
+          WHERE id = $1 AND coordination_strategist_id IS NULL",
+    )
+    .bind(workspace_id)
+    .bind(agent_id)
+    .execute(pool)
+    .await;
+
+    match res {
+        Ok(_) => Some(agent_id),
+        Err(e) => {
+            eprintln!("WARN: could not assign coordination strategist to {workspace_id}: {e}");
+            None
+        }
+    }
+}
+
 // ─── Team CRUD ─────────────────────────────────────────────────────
 
 pub async fn create_team(
@@ -41,6 +110,11 @@ pub async fn create_team(
         owner_id: row.4,
         origin: row.5,
     };
+
+    // Every workspace gets a coordination strategist at creation. Without it
+    // Loop 3's coordination half and Loop 4 are unreachable for that workspace
+    // — see `assign_default_strategist`.
+    assign_default_strategist(pool, team.id).await;
 
     // Auto-add owner as team member with 'owner' role
     add_team_member(

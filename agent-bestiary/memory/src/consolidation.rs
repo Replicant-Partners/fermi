@@ -128,6 +128,69 @@ impl ExtractorUsage {
     }
 }
 
+/// Longest prompt / response excerpt kept per call.
+///
+/// The prompt embeds the subject's episode text and can run to thousands of
+/// characters. Truncation is marked in the stored value rather than silent,
+/// because an episode that looks complete and is not is worse for a reader than
+/// one that says where it stops.
+const CALL_EXCERPT_CHARS: usize = 1200;
+
+fn excerpt(s: &str) -> String {
+    if s.chars().count() <= CALL_EXCERPT_CHARS {
+        return s.to_string();
+    }
+    let head: String = s.chars().take(CALL_EXCERPT_CHARS).collect();
+    format!("{head}\n[…truncated, {} chars total]", s.chars().count())
+}
+
+/// One extraction round-trip, recorded so the extractor has something to learn
+/// from.
+///
+/// WHY PER CALL AND NOT PER CYCLE
+///
+/// The dream ledger records one row per cycle, which is the right grain for cost
+/// and for "did this run". It is the wrong grain for learning: the unit of
+/// learnable behaviour is one extraction attempt, and a cycle averages ten to
+/// twenty of them with different inputs and different outcomes. Consolidating a
+/// single concatenated cycle summary would cluster cycles against each other
+/// rather than surfacing which *kinds of input* the extractor handles badly.
+///
+/// So each call is its own episode: real prompt, real outcome, its own
+/// success/failure verdict. That is what `DBSCANClustering` needs to find "when
+/// the episodes look like this, I return nothing".
+#[derive(Debug, Clone)]
+pub struct ExtractionCall {
+    /// What was being extracted — becomes a `role:` tag on the episode.
+    pub role: &'static str,
+    /// The agent whose episodes were being consolidated.
+    pub subject_agent_id: Uuid,
+    /// The prompt actually sent, excerpted.
+    pub prompt: String,
+    /// What came back, compactly — the extracted items themselves, not a count.
+    pub response: String,
+    /// Items successfully parsed out of the response.
+    pub items: usize,
+    /// Set when the call errored or its output could not be parsed.
+    pub error: Option<String>,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+    pub elapsed_ms: u64,
+}
+
+impl ExtractionCall {
+    /// A call that produced nothing is not a success.
+    ///
+    /// Recording a zero-yield extraction as success is the same mistake as
+    /// recording a zero-yield cycle as success: it is the platform's documented
+    /// silent failure, and it is exactly the case the extractor most needs to
+    /// learn to recognise.
+    pub fn is_failure(&self) -> bool {
+        self.error.is_some() || self.items == 0
+    }
+}
+
 /// Consolidation workflow orchestrator
 pub struct ConsolidationWorker {
     store: Arc<MemoryStore>,
@@ -148,8 +211,10 @@ pub struct ConsolidationWorker {
     /// Resolves how well-grounded the source episodes were.
     /// See [`ConsolidationWorker::with_provenance_oracle`].
     provenance_oracle: Option<Arc<dyn ProvenanceOracle>>,
+    /// Per-call extraction records for the cycle in flight — the extractor's own
+    /// learning material. Append-only; see [`ExtractionCall`].
+    calls: std::sync::Mutex<Vec<ExtractionCall>>,
 }
-
 
 /// Chars of an episode's response to include when summarising it for an
 /// extraction prompt.
@@ -243,6 +308,7 @@ impl ConsolidationWorker {
             extractor_guidance: None,
             extractor_identity: None,
             provenance_oracle: None,
+            calls: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -264,6 +330,7 @@ impl ConsolidationWorker {
             extractor_guidance: None,
             extractor_identity: None,
             provenance_oracle: None,
+            calls: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -388,6 +455,51 @@ impl ConsolidationWorker {
     /// Extraction cost accumulated so far this cycle.
     pub fn extractor_usage(&self) -> ExtractorUsage {
         self.usage.lock().map(|g| *g).unwrap_or_default()
+    }
+
+    /// Record one extraction round-trip as learning material.
+    ///
+    /// Poisoned-lock safe and infallible for the same reason `record_usage` is:
+    /// losing a bookkeeping row must never abort a consolidation cycle.
+    #[allow(clippy::too_many_arguments)]
+    fn record_call(
+        &self,
+        role: &'static str,
+        subject_agent_id: Uuid,
+        prompt: &str,
+        response: String,
+        items: usize,
+        error: Option<String>,
+        usage: Option<&crate::TokenUsage>,
+        elapsed_ms: u64,
+    ) {
+        let call = ExtractionCall {
+            role,
+            subject_agent_id,
+            prompt: excerpt(prompt),
+            response: excerpt(&response),
+            items,
+            error,
+            prompt_tokens: usage.map(|u| u.prompt_tokens as u64).unwrap_or(0),
+            completion_tokens: usage.map(|u| u.completion_tokens as u64).unwrap_or(0),
+            total_tokens: usage.map(|u| u.total_tokens as u64).unwrap_or(0),
+            elapsed_ms,
+        };
+        if let Ok(mut g) = self.calls.lock() {
+            g.push(call);
+        }
+    }
+
+    /// The per-call extraction records for this cycle.
+    ///
+    /// Drained rather than copied: the caller turns each into an episode, and a
+    /// second reader getting the same calls again would double-write both the
+    /// episodes and their cost.
+    pub fn take_extraction_calls(&self) -> Vec<ExtractionCall> {
+        self.calls
+            .lock()
+            .map(|mut g| std::mem::take(&mut *g))
+            .unwrap_or_default()
     }
 
     /// The model the extractor is running, when one is configured.
@@ -766,12 +878,182 @@ impl ConsolidationWorker {
             )
             .await?;
 
+        // Step 8b: write the extractor's own learning material.
+        //
+        // Inside the worker, not in a caller. The API handler and the batch
+        // `consolidate` CLI both drive this method, and a step that one performs
+        // and the other forgets would mean the extractor learns from some of its
+        // work and not the rest, with nothing anywhere saying which. Doing it
+        // here makes that class of divergence unrepresentable.
+        self.write_extraction_call_episodes(agent_id, job_id).await;
+
         // Step 9: Complete job
         self.store
             .complete_consolidation_job(job_id, "completed", None)
             .await?;
 
         Ok(result)
+    }
+
+    /// Turn this cycle's [`ExtractionCall`] records into episodes belonging to
+    /// the extractor.
+    ///
+    /// ## Why the extractor needs these and the cycle ledger will not do
+    ///
+    /// The dream-ledger row (written by the API handler) makes the extractor's
+    /// work *visible*. It cannot make it *learnable*: its query is a template
+    /// varying only by subject name, so embedding it clusters cycles against each
+    /// other on boilerplate instead of surfacing which kinds of input the
+    /// extractor handles badly. It is stored unembedded and pre-consolidated for
+    /// exactly that reason.
+    ///
+    /// These rows are the opposite in every respect, because they have to be:
+    /// real prompt, real result, embedded on that content, `consolidated: false`
+    /// so they enter the queue, and an honest success/failure verdict — a call
+    /// that returned nothing is `Partial`, never `Success`, because the
+    /// failure-cluster path is where the learnable patterns are.
+    ///
+    /// Never fails the cycle. Consolidation's real output is already durable;
+    /// losing a completed cycle to bookkeeping would be a strictly worse trade.
+    async fn write_extraction_call_episodes(&self, subject_agent_id: Uuid, job_id: Uuid) {
+        let Some(extractor_id) = self.extractor_identity else {
+            return;
+        };
+        let calls = self.take_extraction_calls();
+        if calls.is_empty() {
+            return;
+        }
+
+        let subject_name = self
+            .store
+            .get_agent(subject_agent_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|a| a.agent_name)
+            .unwrap_or_else(|| subject_agent_id.to_string());
+        let persona_version = self
+            .store
+            .get_agent(extractor_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|a| a.persona_version)
+            .unwrap_or(1);
+        let model = self.extractor_model();
+
+        for call in calls {
+            let mut tags = vec![
+                "dream_pipeline".to_string(),
+                "role:extract".to_string(),
+                format!("extract:{}", call.role),
+                format!("subject:{}", subject_name),
+                format!("job:{}", job_id),
+                if call.is_failure() {
+                    "status:error".to_string()
+                } else {
+                    "status:success".to_string()
+                },
+            ];
+            if let Some(m) = &model {
+                tags.push(format!("model:{}", m));
+            }
+            if call.items == 0 && call.error.is_none() {
+                // Distinct from a hard error, and the more interesting case: the
+                // call worked and the model found nothing to say.
+                tags.push("yield:none".to_string());
+            }
+
+            // Embed prompt + response — the content that actually varies between
+            // calls, so it is what clustering should group on. Same reasoning as
+            // the execution handler embedding query + reasoning rather than the
+            // query alone.
+            let embed_text = format!("{}\n\n{}", call.prompt, call.response);
+            let provenance = self.embedder.generate_provenanced(&embed_text).await.ok();
+
+            let episode = Episode {
+                episode_id: Uuid::new_v4(),
+                agent_id: extractor_id,
+                parent_episode_id: None,
+                timestamp_ref: chrono::Utc::now(),
+                query: call.prompt.clone(),
+                context: serde_json::json!({
+                    "kind": "extraction_call",
+                    "extract_role": call.role,
+                    "job_id": job_id,
+                    "subject_agent_id": call.subject_agent_id,
+                    "subject_agent_name": subject_name,
+                    "items_extracted": call.items,
+                    "model_used": model,
+                }),
+                execution_status: if call.error.is_some() {
+                    ExecutionStatus::Failure
+                } else if call.items == 0 {
+                    ExecutionStatus::Partial
+                } else {
+                    ExecutionStatus::Success
+                },
+                error_details: call.error.clone().or_else(|| {
+                    (call.items == 0).then(|| {
+                        format!(
+                            "Extraction returned no {} for agent \"{}\".",
+                            call.role, subject_name
+                        )
+                    })
+                }),
+                execution_time_ms: call.elapsed_ms as i64,
+                tokens_used: (call.total_tokens > 0).then_some(call.total_tokens as i32),
+                input_tokens: (call.prompt_tokens > 0).then_some(call.prompt_tokens as i32),
+                output_tokens: (call.completion_tokens > 0)
+                    .then_some(call.completion_tokens as i32),
+                // Unpriced here on purpose. The rate card is application
+                // configuration and lives in the upper crate, which depends on
+                // this one — pricing from here would invert that. `None` is this
+                // codebase's existing vocabulary for "not priced", and the tokens
+                // are recorded so a later pass can price them without guessing.
+                cost_usd: None,
+                cost_basis: None,
+                cost_rate_key: None,
+                embedding: provenance.as_ref().map(|p| p.vector.clone()),
+                // Enters the queue, unlike the cycle row. This is material the
+                // extractor has not learned from yet, and saying so is the point.
+                consolidated: false,
+                tags,
+                provenance: crate::Provenance::AutoPass,
+                authority_weight: 0.5,
+                dyad_id: None,
+                persona_version_at_write: Some(persona_version),
+                provider_used: None,
+                model_used: model.clone(),
+                response_text: Some(call.response.clone()),
+                // `None`, not `Some([])`. `Some([])` would claim this writer
+                // extracts assertions and found none; it does not extract them.
+                // The response is a JSON list of rules or entity names, not prose
+                // making quantified claims, so there is nothing to match — and
+                // conflating the two would show the extractor going quiet.
+                assertions: None,
+            };
+
+            if let Err(e) = self
+                .store
+                .store_episode_with_provenance(
+                    episode,
+                    provenance.as_ref(),
+                    Some(serde_json::json!({
+                        "kind": "extraction_call",
+                        "extract_role": call.role,
+                        "job_id": job_id,
+                        "subject_agent_id": call.subject_agent_id,
+                    })),
+                )
+                .await
+            {
+                tracing::warn!(
+                    role = call.role, error = %e,
+                    "[consolidation] failed to record extraction-call episode"
+                );
+            }
+        }
     }
 
     /// Extracts semantic rules from an episode cluster.
@@ -849,7 +1131,7 @@ impl ConsolidationWorker {
             self.system_message(system_prompt),
             Message {
                 role: MessageRole::User,
-                content: user_prompt,
+                content: user_prompt.clone(),
             },
         ];
 
@@ -868,9 +1150,47 @@ impl ConsolidationWorker {
         }
 
         // Call LLM with structured output (automatic parsing + graceful degradation)
-        let (llm_rules, usage): (Vec<LLMRule>, _) =
-            generate_structured_with_usage(llm.as_ref(), messages, &config).await?;
-        self.record_usage(&usage);
+        let t_call = std::time::Instant::now();
+        let called =
+            generate_structured_with_usage::<Vec<LLMRule>>(llm.as_ref(), messages, &config).await;
+
+        // Record the attempt before unwrapping it. A call that errored or failed
+        // to parse is the most informative thing the extractor can learn from,
+        // and `?` would discard it.
+        let (llm_rules, usage) = match called {
+            Ok((rules, usage)) => {
+                self.record_usage(&usage);
+                self.record_call(
+                    "rules_from_failures",
+                    agent_id,
+                    &user_prompt,
+                    rules
+                        .iter()
+                        .map(|r| format!("- ({:.2}) {}", r.confidence, r.rule))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    rules.len(),
+                    None,
+                    Some(&usage),
+                    t_call.elapsed().as_millis() as u64,
+                );
+                (rules, usage)
+            }
+            Err(e) => {
+                self.record_call(
+                    "rules_from_failures",
+                    agent_id,
+                    &user_prompt,
+                    String::new(),
+                    0,
+                    Some(e.to_string()),
+                    None,
+                    t_call.elapsed().as_millis() as u64,
+                );
+                return Err(e);
+            }
+        };
+        let _ = usage;
 
         // One floor per cluster, not per rule: every rule from this call was
         // extracted from the same episodes, so the answer cannot differ, and
@@ -1035,8 +1355,7 @@ impl ConsolidationWorker {
 
         // Batch episodes into groups of 20 for LLM calls
         for chunk in episodes.chunks(20) {
-            let episode_summaries: Vec<String> =
-                chunk.iter().map(episode_digest).collect();
+            let episode_summaries: Vec<String> = chunk.iter().map(episode_digest).collect();
 
             // The Response line is where the entities are. The prompt says so
             // explicitly because the earlier version described the input as
@@ -1065,7 +1384,7 @@ impl ConsolidationWorker {
                 self.system_message(system_prompt),
                 Message {
                     role: MessageRole::User,
-                    content: user_prompt,
+                    content: user_prompt.clone(),
                 },
             ];
 
@@ -1083,14 +1402,47 @@ impl ConsolidationWorker {
                 summary: String,
             }
 
+            let t_call = std::time::Instant::now();
             let llm_entities: Vec<LLMEntity> =
-                match generate_structured_with_usage(llm.as_ref(), messages, &config).await {
+                match generate_structured_with_usage::<Vec<LLMEntity>>(
+                    llm.as_ref(),
+                    messages,
+                    &config,
+                )
+                .await
+                {
                     Ok((e, usage)) => {
                         self.record_usage(&usage);
+                        self.record_call(
+                            "entities",
+                            agent_id,
+                            &user_prompt,
+                            e.iter()
+                                .map(|x: &LLMEntity| format!("- {} [{}]", x.name, x.entity_type))
+                                .collect::<Vec<_>>()
+                                .join("\n"),
+                            e.len(),
+                            None,
+                            Some(&usage),
+                            t_call.elapsed().as_millis() as u64,
+                        );
                         e
                     }
                     Err(e) => {
+                        // This arm already swallowed the error to keep the cycle
+                        // going; now it at least leaves a record that the batch
+                        // failed, instead of a `continue` and a stderr line.
                         eprintln!("Entity extraction batch failed: {}", e);
+                        self.record_call(
+                            "entities",
+                            agent_id,
+                            &user_prompt,
+                            String::new(),
+                            0,
+                            Some(e.to_string()),
+                            None,
+                            t_call.elapsed().as_millis() as u64,
+                        );
                         continue;
                     }
                 };
@@ -1175,7 +1527,7 @@ impl ConsolidationWorker {
             self.system_message(system_prompt),
             Message {
                 role: MessageRole::User,
-                content: user_prompt,
+                content: user_prompt.clone(),
             },
         ];
 
@@ -1203,9 +1555,44 @@ impl ConsolidationWorker {
             0.7
         }
 
-        let (llm_facts, usage): (Vec<LLMFact>, _) =
-            generate_structured_with_usage(llm.as_ref(), messages, &config).await?;
-        self.record_usage(&usage);
+        let t_call = std::time::Instant::now();
+        let llm_facts: Vec<LLMFact> =
+            match generate_structured_with_usage::<Vec<LLMFact>>(llm.as_ref(), messages, &config)
+                .await
+            {
+                Ok((f, usage)) => {
+                    self.record_usage(&usage);
+                    self.record_call(
+                        "facts",
+                        agent_id,
+                        &user_prompt,
+                        f.iter()
+                            .map(|x: &LLMFact| {
+                                format!("- {} --{}--> {}", x.source, x.relation, x.target)
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                        f.len(),
+                        None,
+                        Some(&usage),
+                        t_call.elapsed().as_millis() as u64,
+                    );
+                    f
+                }
+                Err(e) => {
+                    self.record_call(
+                        "facts",
+                        agent_id,
+                        &user_prompt,
+                        String::new(),
+                        0,
+                        Some(e.to_string()),
+                        None,
+                        t_call.elapsed().as_millis() as u64,
+                    );
+                    return Err(e);
+                }
+            };
 
         // Build name -> entity lookup (case-insensitive)
         let entity_map: std::collections::HashMap<String, &Entity> = entities
@@ -1255,8 +1642,7 @@ impl ConsolidationWorker {
         episodes: &[&Episode],
         llm: &Arc<dyn LLMProvider>,
     ) -> Result<Vec<(SemanticRule, Option<ProvenancedEmbedding>)>> {
-        let episode_summaries: Vec<String> =
-            episodes.iter().map(|e| episode_digest(e)).collect();
+        let episode_summaries: Vec<String> = episodes.iter().map(|e| episode_digest(e)).collect();
 
         let episode_ids: Vec<Uuid> = episodes.iter().map(|e| e.episode_id).collect();
 
@@ -1281,7 +1667,7 @@ impl ConsolidationWorker {
             self.system_message(system_prompt),
             Message {
                 role: MessageRole::User,
-                content: user_prompt,
+                content: user_prompt.clone(),
             },
         ];
 
@@ -1302,9 +1688,42 @@ impl ConsolidationWorker {
             0.7
         }
 
-        let (llm_rules, usage): (Vec<LLMRule>, _) =
-            generate_structured_with_usage(llm.as_ref(), messages, &config).await?;
-        self.record_usage(&usage);
+        let t_call = std::time::Instant::now();
+        let llm_rules: Vec<LLMRule> =
+            match generate_structured_with_usage::<Vec<LLMRule>>(llm.as_ref(), messages, &config)
+                .await
+            {
+                Ok((r, usage)) => {
+                    self.record_usage(&usage);
+                    self.record_call(
+                        "knowledge_rules",
+                        agent_id,
+                        &user_prompt,
+                        r.iter()
+                            .map(|x: &LLMRule| format!("- ({:.2}) {}", x.confidence, x.rule))
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                        r.len(),
+                        None,
+                        Some(&usage),
+                        t_call.elapsed().as_millis() as u64,
+                    );
+                    r
+                }
+                Err(e) => {
+                    self.record_call(
+                        "knowledge_rules",
+                        agent_id,
+                        &user_prompt,
+                        String::new(),
+                        0,
+                        Some(e.to_string()),
+                        None,
+                        t_call.elapsed().as_millis() as u64,
+                    );
+                    return Err(e);
+                }
+            };
 
         let floor = self.floor_for(&episode_ids).await;
 
@@ -1444,6 +1863,124 @@ mod read_back_tests {
         assert!(
             src.matches(uses).count() >= 4,
             "expected all four extraction sites to call self.system_message"
+        );
+    }
+
+    /// A call that returned nothing is a failure, not a success.
+    ///
+    /// This is the same mistake as recording a zero-yield *cycle* as success —
+    /// the platform's documented silent failure — one level down. It is also the
+    /// case the extractor most needs to be able to recognise, so it must be
+    /// clusterable as a failure rather than averaged into the successes.
+    #[test]
+    fn a_call_that_extracted_nothing_is_a_failure() {
+        let base = ExtractionCall {
+            role: "entities",
+            subject_agent_id: Uuid::nil(),
+            prompt: "p".into(),
+            response: String::new(),
+            items: 0,
+            error: None,
+            prompt_tokens: 10,
+            completion_tokens: 2,
+            total_tokens: 12,
+            elapsed_ms: 5,
+        };
+        assert!(base.is_failure(), "zero items is a failure");
+
+        let errored = ExtractionCall {
+            error: Some("parse failed".into()),
+            items: 3,
+            ..base.clone()
+        };
+        assert!(
+            errored.is_failure(),
+            "an error is a failure even with items"
+        );
+
+        let ok = ExtractionCall {
+            items: 3,
+            error: None,
+            ..base.clone()
+        };
+        assert!(!ok.is_failure());
+    }
+
+    /// Prompts embed the subject's episode text and can be very long. Truncation
+    /// must be visible in the value, because an episode that looks complete and
+    /// is not is worse for a reader than one that says where it stops.
+    #[test]
+    fn long_prompts_are_truncated_visibly() {
+        let short = "a short prompt";
+        assert_eq!(
+            excerpt(short),
+            short,
+            "short input must pass through intact"
+        );
+
+        let long = "x".repeat(CALL_EXCERPT_CHARS * 3);
+        let cut = excerpt(&long);
+        assert!(cut.len() < long.len());
+        assert!(cut.contains("truncated"), "truncation must announce itself");
+        assert!(
+            cut.contains(&(CALL_EXCERPT_CHARS * 3).to_string()),
+            "and must say how much there was: {}",
+            &cut[cut.len().saturating_sub(60)..]
+        );
+    }
+
+    /// The learning material must be written by the worker, inside the cycle.
+    ///
+    /// Both the API handler and the batch CLI drive `consolidate_agent_with_job`.
+    /// If this write lived in a caller, one entry point would do it and the other
+    /// would forget, and the extractor would learn from part of its work with
+    /// nothing anywhere recording which part. Keeping it in the cycle makes that
+    /// divergence unrepresentable — assert it stays there.
+    #[test]
+    fn the_cycle_writes_its_own_learning_material() {
+        let src = include_str!("consolidation.rs");
+        let call = concat!("self.write_extraction", "_call_episodes(");
+        assert!(
+            src.contains(call),
+            "consolidate_agent_with_job must write the extraction-call episodes itself"
+        );
+
+        // And it must be reached FROM the cycle, not merely defined. The call
+        // site sits between the cycle's entry point and the method's own
+        // definition, so ordering is sufficient and does not depend on guessing
+        // where a function body ends.
+        let cycle_at = src
+            .find("async fn consolidate_agent_with_job")
+            .expect("the cycle entry point should exist");
+        let call_at = src.find(call).expect("checked above");
+        let def_at = src
+            .find(concat!("async fn write_extraction", "_call_episodes"))
+            .expect("the method should be defined");
+
+        assert!(
+            cycle_at < call_at,
+            "the call must come after the cycle's entry point"
+        );
+        assert!(
+            call_at < def_at,
+            "the call must precede the definition — i.e. be invoked from the cycle, \
+             not only from inside the method itself"
+        );
+    }
+
+    /// Every extraction path must record its call on BOTH outcomes. A path that
+    /// records only successes gives the extractor a corpus with no failures in
+    /// it, which is the one thing it cannot learn from.
+    #[test]
+    fn every_extraction_path_records_both_outcomes() {
+        let src = include_str!("consolidation.rs");
+        let needle = concat!("self.record", "_call(");
+        let n = src.matches(needle).count();
+        assert_eq!(
+            n, 8,
+            "expected 4 extraction paths x 2 outcomes = 8 record_call sites, found {n}. \
+             A new path that records only its success would hand the extractor a corpus \
+             with no failures in it."
         );
     }
 

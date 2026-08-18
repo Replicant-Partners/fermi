@@ -1,0 +1,64 @@
+feat(loop1): give the extractor something it can actually learn from
+
+The dream ledger made the ontologist's work visible and the utility
+signal gave it a score, but it still had nothing to consolidate. Its one
+episode per cycle is a template varying only by subject name, so
+embedding it would cluster cycles against each other on boilerplate
+rather than surfacing which kinds of input the extractor handles badly.
+It is written unembedded and pre-consolidated for that reason, and it
+should stay that way — it is a cycle marker, not learning material.
+
+So this adds the other kind of row: one episode per extraction
+round-trip, with the prompt actually sent, the items actually returned,
+and an honest verdict. Embedded on that content, and consolidated: false
+so it enters the queue like any other agent's episodes.
+
+WRITTEN BY THE WORKER, NOT A CALLER
+
+Inside consolidate_agent_with_job. The API handler and the batch
+`consolidate` CLI both drive that method, and a step only one of them
+performed would leave the extractor learning from part of its work with
+nothing anywhere recording which part. Putting it in the cycle makes
+that divergence unrepresentable, and a test asserts it stays there by
+checking the call site precedes the definition.
+
+A CALL THAT RETURNED NOTHING IS NOT A SUCCESS
+
+`ExtractionCall::is_failure` counts zero items as failure, and the
+episode is stored Partial, tagged yield:none. This is the same mistake
+as recording a zero-yield cycle as success — the platform's documented
+silent failure — one level down, and it is the case the extractor most
+needs to be able to recognise. DBSCAN clusters failures; a corpus where
+zero-yield calls are filed as successes hides exactly the pattern worth
+finding.
+
+All four extraction paths now record on BOTH outcomes, eight sites,
+pinned by test. The entities path previously swallowed its error with a
+`continue` and a stderr line; it now leaves a record. A path that
+recorded only successes would hand the extractor a corpus with no
+failures in it, which is the one thing it cannot learn from.
+
+COST MOVES TO THE PER-CALL ROWS
+
+Both kinds of row are episodes for the same agent, so
+agent_execution_rollup sums them; carrying the cycle total in both
+places would double every figure the extractor reports. The per-call
+rows are the more accurate ledger anyway — spend is incurred one
+round-trip at a time. The cycle row keeps the aggregate in `context` for
+reading and contributes nothing to the sums.
+
+Left unpriced in the memory crate: the rate card is application
+configuration in the upper crate, which depends on this one, so pricing
+from here would invert that. Tokens are recorded so a later pass can
+price them without guessing, and `None` is already this codebase's
+vocabulary for "not priced".
+
+Prompts are excerpted at 1200 chars with the truncation and the original
+length stated in the value. An episode that looks complete and is not is
+worse for a reader than one that says where it stops.
+
+`assertions: None`, not `Some([])`: the response is a JSON list of rules
+or entity names, not prose making quantified claims, so there is nothing
+for the assertion vocabulary to match. Claiming otherwise would show the
+extractor going quiet as coverage improved — the exact conflation
+migration 205 is explicit about.

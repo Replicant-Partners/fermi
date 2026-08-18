@@ -624,9 +624,8 @@ async fn the_weather_checks_are_live_or_say_they_are_inert() {
 
     let mut inert_predicates = Vec::new();
     for (label, predicate) in probes {
-        let sql = format!(
-            "SELECT count(*)::bigint FROM (SELECT $1::jsonb AS doc) t WHERE {predicate}"
-        );
+        let sql =
+            format!("SELECT count(*)::bigint FROM (SELECT $1::jsonb AS doc) t WHERE {predicate}");
         let fires: i64 = sqlx::query_scalar(&sql)
             .bind(&violating)
             .fetch_one(&pool)

@@ -157,6 +157,19 @@ async fn ensure_forecast_repo(
     .await
     .map_err(|e| e.to_string())?;
 
+    // Forecast workspaces are the majority of the platform's workspaces
+    // (149 of 249), and this path bypasses `fermi_auth::teams::create_team`,
+    // so it needs the same assignment. Without it Loop 3's coordination half
+    // and Loop 4 are unreachable for every forecast workspace.
+    if let Ok(Some(ws_id)) =
+        sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM teams WHERE slug = $1")
+            .bind(&slug)
+            .fetch_optional(pool)
+            .await
+    {
+        fermi_auth::teams::assign_default_strategist(pool, ws_id).await;
+    }
+
     sqlx::query(
         "UPDATE fermi_forecasts
             SET workspace_id = (SELECT id FROM teams WHERE slug = $1)
