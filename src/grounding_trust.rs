@@ -795,7 +795,49 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               fields, so it is `Derived` rather than `Inferred` for the same \
               reason `phylogeny.superorder` is: the transform can be read and \
               re-run.",
-        cross_check_sql: None,
+        // The first cross-check on this platform that needs no external source
+        // of truth. Every other one compares agent output against a record we
+        // hold; this compares the document against ITSELF. `xgd` must be
+        // `xg - xga`, and an agent that reports all three has stated something
+        // falsifiable without anyone querying anything.
+        //
+        // Worth having precisely because it is cheap: the replay checks the
+        // other football fields need cost an external call each and spend the
+        // agent's own rate limit, so they are deferred. This one costs a
+        // `SELECT`. Internal consistency is the check you can always afford.
+        //
+        // Safety of the cast. `response_text` is prose for 18 of 18 episodes
+        // today, and `'not json'::jsonb` raises. `CASE` is the one construct SQL
+        // guarantees to short-circuit, so the cast is only ever reached for a
+        // row that `IS JSON OBJECT` already accepted. A `WITH ... MATERIALIZED`
+        // would also work but would fail the harness's bare-SELECT guard, and
+        // relaxing that guard to buy syntax would be the wrong trade.
+        // `jsonb_typeof(NULL)` is NULL, so a non-numeric or absent field drops
+        // the row rather than erroring — which matters, because an unrunnable
+        // check reports healthy forever.
+        //
+        // Tolerance 0.15, and the number is derived rather than picked. Reports
+        // round xG to one decimal, so `xg` and `xga` each carry up to 0.05 of
+        // rounding and their difference up to 0.10. A tolerance at or below that
+        // would fire on correctly-reported rounding, and a check that fires on
+        // correct behaviour gets deleted — the deletion looking like cleanup.
+        // 0.15 clears rounding and still catches any disagreement large enough
+        // to mean the three numbers were not computed from each other.
+        cross_check_sql: Some(
+            "SELECT count(*)::bigint AS mismatches \
+               FROM episodes e \
+               JOIN agents a ON a.agent_id = e.agent_id, \
+               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
+                                    THEN e.response_text::jsonb END AS doc) j \
+              WHERE a.agent_name = 'football_analyst' \
+                AND jsonb_typeof(j.doc #> '{advanced_metrics,xgd}') = 'number' \
+                AND jsonb_typeof(j.doc #> '{advanced_metrics,xg}')  = 'number' \
+                AND jsonb_typeof(j.doc #> '{advanced_metrics,xga}') = 'number' \
+                AND abs( (j.doc #>> '{advanced_metrics,xgd}')::numeric \
+                         - ( (j.doc #>> '{advanced_metrics,xg}')::numeric \
+                           - (j.doc #>> '{advanced_metrics,xga}')::numeric ) ) \
+                    > 0.15",
+        ),
     },
     FieldContract {
         agent_id: "football_analyst",

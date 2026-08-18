@@ -38,6 +38,7 @@
 //! bare SELECT and the offline tier asserts that at the unit level.
 
 use fermi::grounding_trust::{cross_check_exempt, cross_checks, FIELD_CONTRACTS};
+use sqlx::Row;
 
 /// Offline: the completeness claim, restated at the integration level so it
 /// fails in CI even if someone runs only the integration suite.
@@ -371,5 +372,108 @@ async fn a_dangling_citation_is_unknown_rather_than_clean() {
         "the basis must record that the sources could not be found, so the \
          gap is visible rather than inferable: {}",
         f.basis
+    );
+}
+
+/// Is the football consistency check comparing anything?
+///
+/// `advanced_metrics.xgd` is the first cross-check here that needs no external
+/// source of truth — it asks whether `xgd` equals `xg - xga` inside the agent's
+/// own document. That makes it cheap enough to run always, and it introduces a
+/// failure mode the other cross-checks do not have.
+///
+/// The other checks read a cached column that is either populated or not. This
+/// one reads `episodes.response_text`, which is **prose for every episode this
+/// agent has ever produced**. A query looking for JSON fields in prose matches
+/// nothing, counts zero mismatches, and reports clean — and "clean" and "there
+/// was nothing to look at" are the same number.
+///
+/// So the population is measured separately and the three states are named, the
+/// same way `liveness_trust` refuses to let *inert* be spelled *pass*. This test
+/// does not fail while the population is zero, because the agent emitting prose
+/// is the current known state of the world rather than a defect. What it will not
+/// do is let that state masquerade as a passing comparison.
+#[tokio::test]
+#[ignore = "needs DATABASE_URL; run via scripts/grounding_contract_live.sh"]
+async fn the_football_consistency_check_is_live_or_says_it_is_inert() {
+    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect");
+
+    // How many episodes could the check possibly have looked at? Same guard as
+    // the cross-check itself: `CASE` short-circuits, so the cast never sees
+    // prose.
+    let row = sqlx::query(
+        "SELECT count(*)::bigint AS total, \
+                count(*) FILTER (WHERE e.response_text IS JSON OBJECT)::bigint AS json_docs, \
+                count(*) FILTER (WHERE jsonb_typeof(j.doc #> '{advanced_metrics,xgd}') = 'number' \
+                                   AND jsonb_typeof(j.doc #> '{advanced_metrics,xg}')  = 'number' \
+                                   AND jsonb_typeof(j.doc #> '{advanced_metrics,xga}') = 'number' \
+                                )::bigint AS comparable \
+           FROM episodes e \
+           JOIN agents a ON a.agent_id = e.agent_id, \
+           LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
+                                THEN e.response_text::jsonb END AS doc) j \
+          WHERE a.agent_name = 'football_analyst' \
+            AND e.response_text IS NOT NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("population probe");
+
+    let total: i64 = row.get("total");
+    let json_docs: i64 = row.get("json_docs");
+    let comparable: i64 = row.get("comparable");
+
+    println!(
+        "\n  football_analyst: {total} retained response(s), {json_docs} structured, \
+         {comparable} carrying all three of xg/xga/xgd"
+    );
+
+    if comparable == 0 {
+        println!(
+            "  INERT — the check is watching and has compared nothing. This is the \
+             expected state until the agent runs under the `fermi/football_evidence` \
+             contract; its zero mismatches mean 'nothing to look at', NOT 'clean'."
+        );
+        // Deliberately not an assertion failure. The agent emitting prose is a
+        // known state of the corpus, not a regression, and a permanently-red
+        // check is one people learn to scroll past. The print is the point: a
+        // zero that cannot be mistaken for a pass.
+        return;
+    }
+
+    // Live. Now the same discipline as the taxonomy probe: confirm the
+    // comparison can succeed, so a zero mismatch count means agreement rather
+    // than a predicate that never matches.
+    let agreeing: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint \
+           FROM episodes e \
+           JOIN agents a ON a.agent_id = e.agent_id, \
+           LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
+                                THEN e.response_text::jsonb END AS doc) j \
+          WHERE a.agent_name = 'football_analyst' \
+            AND jsonb_typeof(j.doc #> '{advanced_metrics,xgd}') = 'number' \
+            AND jsonb_typeof(j.doc #> '{advanced_metrics,xg}')  = 'number' \
+            AND jsonb_typeof(j.doc #> '{advanced_metrics,xga}') = 'number' \
+            AND abs( (j.doc #>> '{advanced_metrics,xgd}')::numeric \
+                     - ( (j.doc #>> '{advanced_metrics,xg}')::numeric \
+                       - (j.doc #>> '{advanced_metrics,xga}')::numeric ) ) \
+                <= 0.15",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("agreement probe");
+
+    println!("  LIVE — {agreeing} of {comparable} document(s) are internally consistent");
+    assert!(
+        agreeing > 0,
+        "{comparable} document(s) carry all three fields and NONE of them is \
+         internally consistent. Either every report is computing xgd from \
+         something other than its own xg and xga, or the tolerance is wrong — \
+         and a check that can only fail is as useless as one that can only pass."
     );
 }
