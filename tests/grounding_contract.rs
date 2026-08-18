@@ -480,13 +480,13 @@ async fn the_football_consistency_check_is_live_or_says_it_is_inert() {
 
 /// Are the weather checks watching anything, and can they go red?
 ///
-/// The seven `weather_oracle` cross-checks all report zero mismatches, and until
+/// The `weather_oracle` cross-checks all report zero mismatches, and until
 /// there is a structured document in the corpus that means *nothing to look at*
 /// rather than *clean*. This is the same inertness the football probe reports,
 /// with one addition football does not have: a **falsifiability probe** per
 /// check, confirming the predicate fires on a document that violates it.
 ///
-/// That addition exists because six of the seven weather checks are range
+/// That addition exists because most of the weather checks are range
 /// assertions — a probability in `[0,1]`, a positive sd, a multiplier inside the
 /// declared `[0.1, 10.0]`. A range check on an absent field is exactly the shape
 /// that passes forever: `jsonb_typeof(NULL)` is NULL, the row drops, the count
@@ -648,7 +648,7 @@ async fn the_weather_checks_are_live_or_say_they_are_inert() {
     // ── 3. State the corpus honestly ────────────────────────────────────
     if structured == 0 {
         println!(
-            "  INERT ON CORPUS — all seven predicates can fail, and none has been \
+            "  INERT ON CORPUS — every predicate can fail, and none has been \
              applied to anything. {episodes} episode(s) exist and {retained} carry \
              retained text; every one predates migration 199 or is prose, so the \
              zero mismatches mean 'nothing to look at', NOT 'clean'. Goes live on \
