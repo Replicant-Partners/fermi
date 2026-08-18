@@ -927,6 +927,33 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
     // Tools: gbif_species_search, gbif_taxonomy_tree. Both taxonomy.
     // ── weather_oracle ─────────────────────────────────────────────
     //
+    // READING THE DOCUMENT OUT OF THE RESPONSE
+    //
+    // These checks extract the JSON with `substring(... from '(?s)\{.*\}')`
+    // rather than requiring `response_text IS JSON OBJECT`, and the difference
+    // is eight live checks versus eight inert ones.
+    //
+    // Measured on the first two retained runs: both emit a correct, complete
+    // document — `settlement_target.station` = KLGA, `final_probability`,
+    // `multiplier` and the `[MULTIPLIER]` line all present — wrapped in a prose
+    // preamble and a ```json fence, because the model narrates before it answers
+    // when it has just made eight tool calls. So `IS JSON OBJECT` is false of the
+    // whole column while the document inside it is fine.
+    //
+    // The card asks for nothing outside the object and that instruction stays,
+    // but a check must not depend on a model reliably suppressing its preamble.
+    // The rest of the platform already tolerates this: `parse_evidence_text`
+    // scans to the outer braces and `extract_summary_from_json_contract` strips
+    // the fence. These now agree with them. `football_analyst` is a third case —
+    // prose carrying no document at all — and its check is right to stay strict,
+    // which is why this relaxation is scoped to this block rather than applied
+    // to the file.
+    //
+    // The greedy `(?s)` match takes the FIRST `{` to the LAST `}` and can
+    // over-capture when the prose contains braces; the `IS JSON OBJECT` guard
+    // inside the `CASE` rejects that, so a bad capture drops the row rather than
+    // raising or comparing garbage.
+    //
     // The most favourable case brought under the contract so far, and worth
     // saying why rather than only claiming it.
     //
@@ -975,8 +1002,8 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             "SELECT count(*)::bigint AS mismatches \
                FROM episodes e \
                JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
-                                    THEN e.response_text::jsonb END AS doc) j \
+               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
               WHERE a.agent_name = 'weather_oracle' \
                 AND j.doc #>> '{settlement_target,station}' IS NOT NULL \
                 AND upper(j.doc #>> '{settlement_target,station}') \
@@ -1007,8 +1034,8 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             "SELECT count(*)::bigint AS mismatches \
                FROM episodes e \
                JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
-                                    THEN e.response_text::jsonb END AS doc) j \
+               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
               WHERE a.agent_name = 'weather_oracle' \
                 AND jsonb_typeof(j.doc #> '{stages,forecast,n_members}') = 'number' \
                 AND ( (j.doc #>> '{stages,forecast,n_members}')::numeric < 1 \
@@ -1037,8 +1064,8 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             "SELECT count(*)::bigint AS mismatches \
                FROM episodes e \
                JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
-                                    THEN e.response_text::jsonb END AS doc) j \
+               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
               WHERE a.agent_name = 'weather_oracle' \
                 AND ( (jsonb_typeof(j.doc #> '{stages,calibration,predictive_sd}') = 'number' \
                        AND (j.doc #>> '{stages,calibration,predictive_sd}')::numeric <= 0) \
@@ -1061,19 +1088,31 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         // and carry a positive edge worth acting on. The second half is the one
         // that matters: a settled market with a resting ask at 0.001 computes a
         // +54c/share edge, which is an artefact rather than an opportunity.
+        //
+        // The action test matches a NO-TRADE PREFIX rather than the exact token,
+        // and the first draft's exact comparison is why. It fired on three rows
+        // reading "NO TRADE — market is closed and settled" — correct decisions,
+        // failing only because the string was prose instead of the declared
+        // enum. That is a real finding about the card's output contract, but it
+        // is a DIFFERENT finding from the one this check exists for, and
+        // conflating them means the serious case (a trade recommended on a dead
+        // book) arrives buried in formatting noise. One check, one proposition:
+        // this one asks whether the agent recommended acting on an untradeable
+        // book, and "NO TRADE — ..." plainly does not.
         cross_check_sql: Some(
             "SELECT count(*)::bigint AS mismatches \
                FROM episodes e \
                JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
-                                    THEN e.response_text::jsonb END AS doc) j \
+               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
               WHERE a.agent_name = 'weather_oracle' \
                 AND jsonb_typeof(j.doc #> '{stages,pricing,implied_probability}') = 'number' \
                 AND ( (j.doc #>> '{stages,pricing,implied_probability}')::numeric < 0 \
                    OR (j.doc #>> '{stages,pricing,implied_probability}')::numeric > 1 \
                    OR ( j.doc #> '{stages,pricing,book_tradeable}' = 'false'::jsonb \
                         AND j.doc #>> '{recommendation,action}' IS NOT NULL \
-                        AND j.doc #>> '{recommendation,action}' <> 'no_trade' ) )",
+                        AND lower(j.doc #>> '{recommendation,action}') \
+                            NOT LIKE 'no%trade%' ) )",
         ),
     },
     FieldContract {
@@ -1091,8 +1130,8 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             "SELECT count(*)::bigint AS mismatches \
                FROM episodes e \
                JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
-                                    THEN e.response_text::jsonb END AS doc) j \
+               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
               WHERE a.agent_name = 'weather_oracle' \
                 AND jsonb_typeof(j.doc #> '{stages,calibration,climatology_base_rate}') = 'number' \
                 AND ( (j.doc #>> '{stages,calibration,climatology_base_rate}')::numeric < 0 \
@@ -1126,8 +1165,8 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             "SELECT count(*)::bigint AS mismatches \
                FROM episodes e \
                JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
-                                    THEN e.response_text::jsonb END AS doc) j \
+               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
               WHERE a.agent_name = 'weather_oracle' \
                 AND jsonb_typeof(j.doc -> 'final_probability') = 'number' \
                 AND ( (j.doc ->> 'final_probability')::numeric < 0 \
@@ -1156,8 +1195,8 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             "SELECT count(*)::bigint AS mismatches \
                FROM episodes e \
                JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
-                                    THEN e.response_text::jsonb END AS doc) j \
+               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
               WHERE a.agent_name = 'weather_oracle' \
                 AND jsonb_typeof(j.doc -> 'multiplier') = 'number' \
                 AND ( (j.doc ->> 'multiplier')::numeric < 0.1 \
@@ -1229,8 +1268,8 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             "SELECT count(*)::bigint AS mismatches \
                FROM episodes e \
                JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
-                                    THEN e.response_text::jsonb END AS doc) j \
+               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
               WHERE a.agent_name = 'weather_oracle' \
                 AND jsonb_typeof(j.doc #> '{stages,calibration,calibrated_probability}') = 'number' \
                 AND jsonb_typeof(j.doc #> '{stages,pricing,implied_probability}') = 'number' \

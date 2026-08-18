@@ -486,6 +486,11 @@ async fn the_football_consistency_check_is_live_or_says_it_is_inert() {
 /// with one addition football does not have: a **falsifiability probe** per
 /// check, confirming the predicate fires on a document that violates it.
 ///
+/// "Structured" here means a JSON object can be EXTRACTED from the response, not
+/// that the whole column is one. Both retained runs wrap a correct document in a
+/// prose preamble and a ```json fence, so a strict `IS JSON OBJECT` would call
+/// them unstructured and leave every check inert while the data sat there.
+///
 /// That addition exists because most of the weather checks are range
 /// assertions — a probability in `[0,1]`, a positive sd, a multiplier inside the
 /// declared `[0.1, 10.0]`. A range check on an absent field is exactly the shape
@@ -507,13 +512,13 @@ async fn the_weather_checks_are_live_or_say_they_are_inert() {
     let row = sqlx::query(
         "SELECT count(*)::bigint AS episodes, \
                 count(*) FILTER (WHERE e.response_text IS NOT NULL)::bigint AS retained, \
-                count(*) FILTER (WHERE e.response_text IS JSON OBJECT)::bigint AS structured, \
+                count(*) FILTER (WHERE substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT)::bigint AS structured, \
                 count(*) FILTER (WHERE j.doc #>> '{settlement_target,station}' IS NOT NULL \
                                 )::bigint AS with_station \
            FROM episodes e \
            JOIN agents a ON a.agent_id = e.agent_id, \
-           LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
-                                THEN e.response_text::jsonb END AS doc) j \
+           LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
           WHERE a.agent_name = 'weather_oracle'",
     )
     .fetch_one(&pool)

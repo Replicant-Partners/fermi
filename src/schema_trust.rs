@@ -156,6 +156,12 @@ pub const SCHEMA_TABLES: &[&str] = &[
     // (`workspace_agents`, which Loops 3a and 4 join against, is already
     // declared above with the workspace relations.)
     "coherence_evaluations",
+    // mig-210. Their columns were declared in SCHEMA_COLUMNS without the
+    // relations, which `every_column_belongs_to_a_declared_relation` exists to
+    // catch: a column entry whose table is undeclared produces a check that can
+    // never pass and never says why.
+    "workspace_intentions",
+    "workspace_intention_signals",
     // Harness / benchmark
     "harness_snapshots",
     // v0.11.2 — orchestra registry
