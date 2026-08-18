@@ -112,9 +112,12 @@ as colour on a monochrome panel is a confidence signal that does not exist.
 
 ### 2.3 Still unknown — needs Rokid DevRel or a device in hand
 
-1. Latency and throughput: BLE control round-trip, sustained Wi-Fi Direct
+1. **Latency and throughput**: BLE control round-trip, sustained Wi-Fi Direct
    throughput, `startAudioStream` first-byte latency, `customViewUpdate` render
-   latency. **All four need measuring, not estimating.**
+   latency. **All four need measuring, not estimating.** Partly moot for the
+   AIUI path — see §5c, where the transport is a single HTTPS request — but the
+   glasses→phone Bluetooth proxy hop underneath it is still unmeasured, and the
+   docs give no keep-alive or concurrency guarantees for it.
 2. Whether the AI trigger is genuinely un-ownable on this device, or whether the
    assistant listens out-of-band on the co-processor.
 3. The exact Rizon SSE contract: schema, real timeout (community reports
@@ -385,6 +388,120 @@ by declaration** — they inherit the default. If Rabble expands beyond insects
 alongside `insecta`), each should start passing `scope` explicitly so the default
 stops carrying the meaning. `hymenoptera`, `lepidoptera` and `magnoliopsida` are
 already in the table for that reason.
+
+## 5c. AIUI resolved — 2026-08-18
+
+Read against `jsar-project/AIUI` @ `595197c`, `jsar-project/aix` @ `ab14162`, and
+the `js.rokid.com` docs SPA. This resolves four items previously listed as
+unknown, and kills one idea that looked obvious.
+
+### `mcp-configs/` does not exist
+
+The AIUI marketing page renders an illustrative project tree containing
+`AGENTS.md`, `skills/`, `mcp-configs/`, `pages/`. **`mcp-configs/` is a
+hardcoded string in a Vue render function and corresponds to no feature.** Not
+in the repo, not in `aix`, not in the scaffold output, not in the docs TOC.
+Neither `tools/list` nor `tools/call` nor `mcpServers` appears anywhere.
+
+There is no MCP client in AIUI. The framework's MCP framing runs the other way:
+an AIUI page *is* an MCP UI component that a host renders, and tools are derived
+from the package via a page's `<script def>` schema block.
+
+Worth recording because the plausible-looking directory name nearly became an
+architecture. A tree in a marketing illustration is not an API surface, and the
+only reason this was caught is that someone went looking for the schema to code
+against and found there wasn't one.
+
+### The install path needs no ADB and no cable
+
+The blocker that stopped this work — an international Hi Rokid unit with no
+Agent Debug menu, no wireless debugging, and no 5-pin cable — is not on the
+critical path at all. Documented in `0-guide/quickstart/quickstart.en-US.md`:
+
+```
+Settings > Developer > AIUI > Update Glasses Resource Package
+```
+
+Build → bind to an Agent in AIUI Studio → upload → the glasses pull the package
+over the network → wake the assistant and say the agent's name. `adb`, `usb` and
+`sideload` return **zero hits** across the entire documentation tree.
+
+Publishing is `aix pack` → `aiui-global.rokid.com/space` → review, and the doc is
+titled "Publish to the **Hi Rokid** Agent Store" — the international path is the
+documented one.
+
+### Two device-free simulators exist
+
+- **Craft Global** — `js.rokid.com/craft?region=global`. Simulates wake, ASR,
+  LLM, TTS, and the Back/Tap/swipe controls. Imports from a local folder, an
+  `.aix`, or a GitHub subdirectory.
+- **`aix preview --dev`** — local server, live reload. **Loopback-only**
+  (`server.listen(0, "127.0.0.1")`), so it cannot serve a device on the LAN
+  without a tunnel you add yourself.
+
+The docs are explicit that the simulator is not a substitute for the device on
+UI and performance, and that sensor-dependent APIs return simulated data.
+
+### The monochrome constraint is specified, and tighter than assumed
+
+`design/monochrome/design-system-green.md` gives exact tokens: `#40ff5e` on
+`#000000`, `primary-60/40/08` for secondary text, borders and fills. Canvas is
+**480px wide, 120px min / 352px max height**. Headings `monospace`, body
+`sans-serif` 15px.
+
+This **confirms** the typographic-marker decision in `hud_contract` — "only the
+green channel is available" is now a quoted constraint rather than an inference
+from a filename, and the design system's own don'ts include "do not make error
+states red".
+
+It also makes one of our constants checkable rather than guessed.
+`hud_contract::LINE_MAX` is 60 characters, chosen before any of this was known.
+At 15px sans-serif on a 480px canvas, 60 characters plus a 2-character marker is
+at or past the edge once card padding is taken out. **`LINE_MAX` should be
+re-derived from the 480px canvas and the actual type metrics rather than left at
+a round number**, and the title — which renders `monospace` — can be computed
+exactly. Listed in follow-ups; not changed blind, because guessing a smaller
+number is no better than guessing the current one.
+
+### Consequence for the architecture
+
+The shell/agent split still holds, but the seam is **plain HTTPS, not MCP**:
+
+```
+glasses (AIUI .ink page)
+   fetch()  -->  POST /api/agents/hud_field_scout/execute   (ABW)
+                    grounding + provenance boundary
+                    episodes, dreaming, evals
+   <-- card JSON
+   render with the green tokens + hud_contract markers
+```
+
+ABW already exposes that endpoint, so nothing new is needed server-side. This
+deliberately avoids hand-rolling an MCP client on QuickJS: MCP Streamable HTTP
+wants a long-lived POST/SSE channel and a round-tripped `Mcp-Session-Id`, on a
+runtime whose streaming support landed in v0.16.0, over a link that may be
+silently proxied via Bluetooth through the phone. One request, one response,
+over a link with documented timeouts, is the version that survives.
+
+It also keeps credentials off the device and shrinks the mandatory domain
+allowlist to one domain we control.
+
+### Constraints to design against
+
+- **HTTPS mandatory**, and request domains must be **allowlisted in the AIUI
+  console before publishing**.
+- **Rokid reviews** every agent for performance, interaction compliance and
+  security. An agent whose core function is calling a third-party endpoint has
+  not been shown to pass review; unknown, and worth knowing early.
+- **Cards in a conversation flow are display-only.** Fine for a glanceable card;
+  it rules out interactive follow-ups on that surface.
+- **`AGENTS.md` has three mutually incompatible conventions** across the spec
+  doc, the `aiui-dev` skill, and the scaffold template. The samples follow the
+  skill's shape (`## Capabilities` → `- **Permissions**:`), the platform
+  validates the manifest at upload, and **the validation rules are not
+  published**. A generator must follow the samples and expect churn.
+- LAN networking is marked **unsupported**; no subprocess surface exists
+  (QuickJS), so a local MCP server is impossible even in principle.
 
 ## 6. Follow-ups
 
