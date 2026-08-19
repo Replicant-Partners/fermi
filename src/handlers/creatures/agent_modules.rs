@@ -1814,16 +1814,45 @@ pub async fn creature_dream_handler(
 /// indistinguishable from the calls that include it, and it is the one that
 /// matters.
 ///
-/// Written as a plain statement rather than a hedge. "Photographic
-/// identification cannot exclude lethal lookalikes" is not a disclaimer
-/// protecting the platform; it is a fact about mycology. Several lethal species
-/// are separated from edible ones by spore print colour, cut-flesh reaction,
-/// stipe base morphology or microscopy — none of which survive a photograph.
+/// Written as a plain statement rather than a hedge, and now a **measured** one.
+///
+/// Hodgson SE, McKenzie C, May TW, Greene SL. "A comparison of the accuracy of
+/// mushroom identification applications using digital photographs."
+/// Clin Toxicol (Phila). 2023 Mar;61(3):166-172. PMID 36794335.
+///
+/// 78 specimens sent to the Victorian Poisons Information Centre and Royal
+/// Botanic Gardens Victoria over 2020-2021, each confirmed by an expert
+/// mycologist, run through three popular phone identification apps. Best
+/// accuracy 49% (Picture Mushroom); iNaturalist and Mushroom Identificator 35%
+/// each. On the poisonous subset: 44%, 40%, 30%. *Amanita phalloides* was
+/// **falsely identified** twice by Picture Mushroom and once by iNaturalist. The
+/// paper's stated motivation is an observed increase in poisonings following
+/// incorrect identification of poisonous species as edible using such apps.
+///
+/// Two things follow, and the second is the uncomfortable one.
+///
+/// First, the directive stops being an assertion about mycology and becomes a
+/// citation. "Photographs cannot exclude lethal lookalikes" was reasonable
+/// before; it is now measured, and a wearer can go and read the measurement.
+///
+/// Second, **this platform has no accuracy figure of its own.** The paper
+/// measures three specific apps, not a general vision model, so 49% is not our
+/// number and must not be quoted as one. What it is, is the best published
+/// figure for the task, produced on precisely the population that matters —
+/// specimens sent to a poisons centre, self-selected for being confusing. Until
+/// someone measures this handler on a comparable set, the honest prior is that
+/// it is no better than these, and the confidence interval on the best of them
+/// spans [0-100].
 const FORAGE_SAFETY_DIRECTIVE: &str = "This is a guess from one photograph. It is \
     not an identification and it says nothing about whether the specimen is safe \
     to eat. Photographs cannot exclude lethal lookalikes: several deadly species \
     are separated from edible ones only by spore print, cut-flesh reaction, stipe \
-    base, or microscopy. Do not eat anything on the strength of this response.";
+    base, or microscopy. This is measured, not cautionary — the best of three \
+    popular phone identification apps was correct for 49% of 78 expert-confirmed \
+    specimens sent to a poisons centre, and death caps were misidentified by two \
+    of the three (Hodgson et al., Clin Toxicol 2023, PMID 36794335). No accuracy \
+    figure exists for this system, so assume it is no better. Do not eat anything \
+    on the strength of this response.";
 
 /// What would actually answer the question this handler refuses.
 ///
