@@ -1804,6 +1804,38 @@ pub async fn creature_dream_handler(
 // wild_companion provides foraging intelligence using its full tool suite.
 
 /// POST /api/creatures/:creature_id/forage
+/// The safety warning returned by every `identify` response.
+///
+/// A platform constant, not model output, and that is the whole design. The
+/// previous version asked the model for a `safety_note` "especially if toxic
+/// look-alikes exist" — so the presence of a warning depended on the model
+/// deciding a warning was warranted, on a call where it had already decided the
+/// specimen was a `choice` edible. The call that omits the caution is
+/// indistinguishable from the calls that include it, and it is the one that
+/// matters.
+///
+/// Written as a plain statement rather than a hedge. "Photographic
+/// identification cannot exclude lethal lookalikes" is not a disclaimer
+/// protecting the platform; it is a fact about mycology. Several lethal species
+/// are separated from edible ones by spore print colour, cut-flesh reaction,
+/// stipe base morphology or microscopy — none of which survive a photograph.
+const FORAGE_SAFETY_DIRECTIVE: &str = "This is a guess from one photograph. It is \
+    not an identification and it says nothing about whether the specimen is safe \
+    to eat. Photographs cannot exclude lethal lookalikes: several deadly species \
+    are separated from edible ones only by spore print, cut-flesh reaction, stipe \
+    base, or microscopy. Do not eat anything on the strength of this response.";
+
+/// What would actually answer the question this handler refuses.
+///
+/// Paired with the directive because a refusal that does not say where to go
+/// next gets ignored, and the person ignoring it is then relying on the guess
+/// alone. The refusal is only useful if it redirects.
+const FORAGE_NEXT_STEPS: &[&str] = &[
+    "Have the specimen checked in person by a local expert or mycological society.",
+    "Work it through a regional key, with the specimen in hand and a spore print taken.",
+    "If anyone has already eaten it, contact poison control immediately and keep the specimen.",
+];
+
 pub async fn forage_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
@@ -2040,6 +2072,12 @@ pub async fn forage_handler(
 
         "identify" => {
             // Photo-based species identification via Claude vision API.
+            //
+            // Read `FORAGE_SAFETY_DIRECTIVE` and the `forage_identify` entries in
+            // `grounding_trust::FIELD_CONTRACTS` before changing the prompt below.
+            // This endpoint previously asked the model for an edibility enum and a
+            // lookalike list with a `fatal` severity level, and returned both as
+            // structured fields with a self-rated confidence attached.
             // The client uploads the photo to the workspace git first, then
             // passes the raw URL here. We build a vision message directly
             // using the Anthropic messages API with an image URL content block.
@@ -2065,12 +2103,34 @@ pub async fn forage_handler(
             let request_body = json!({
                 "model": "claude-haiku-4-5-20251001",
                 "max_tokens": 1024,
-                "system": "You are an expert field mycologist and foraging safety advisor. \
-                           When shown a photo of a wild specimen, you identify the species \
-                           with scientific rigour and provide a clear safety assessment. \
-                           You ALWAYS flag toxic look-alikes. When uncertain, you say so. \
-                           Never recommend harvesting an unidentified specimen. \
-                           Respond in JSON only.",
+                // The prompt no longer asks for edibility, lookalikes, a harvest
+                // window or a self-rated confidence.
+                //
+                // Stripping those fields after the fact is the backstop, not the
+                // fix. Asking for them and then nulling them wastes the model's
+                // attention on the answer a forager most wants and least ought to
+                // receive, and pushes the claim into whatever prose field is left
+                // — which is precisely how genome_profiler's summary ended up
+                // restating numbers that had already been cleared from the
+                // structured fields.
+                "system": "You are a field mycologist looking at a photograph. Your job is to \
+                           say what the specimen appears to be and WHY, so the person holding \
+                           it can check your reasoning against the specimen itself.\n\n\
+                           You are not a safety authority and you must not act as one. Do NOT \
+                           state or imply edibility, toxicity, whether something is safe to \
+                           eat, which species it could be confused with, when to harvest it, \
+                           or how to prepare it. You have no database for any of that; you \
+                           have a photograph. An answer you generate from memory is \
+                           indistinguishable from one you looked up, and here it is the \
+                           difference between a good afternoon and a liver transplant.\n\n\
+                           This holds when the species seems obvious, and most of all when \
+                           you are asked directly — a person asking a camera whether a \
+                           mushroom is safe is a person who may act on the answer.\n\n\
+                           Be precise about how far down the ladder the photograph actually \
+                           supports. 'Genus Amanita, species undetermined' is a better answer \
+                           than a binomial you cannot see enough to justify. Say what you \
+                           cannot see: gills obscured, no stipe base, no spore print, no \
+                           scale reference. Respond in JSON only.",
                 "messages": [{
                     "role": "user",
                     "content": [
@@ -2084,20 +2144,16 @@ pub async fn forage_handler(
                         {
                             "type": "text",
                             "text": format!(
-                                "Identify this specimen. Location: {}. Habitat: {}.\n\n\
+                                "What does this specimen appear to be? Location: {}. \
+                                 Habitat: {}.\n\n\
                                  Respond with JSON only:\n\
                                  {{\n\
-                                   \"species\": \"scientific name or null if uncertain\",\n\
-                                   \"common_name\": \"common name\",\n\
-                                   \"edibility\": \"choice|edible|inedible|toxic|unknown\",\n\
-                                   \"confidence\": \"high|medium|low\",\n\
-                                   \"identification_notes\": \"key visual features used\",\n\
-                                   \"look_alikes\": [\n\
-                                     {{\"species\": \"name\", \"danger\": \"fatal|toxic|inedible\", \"distinguishing\": \"how to tell apart\"}}\n\
-                                   ],\n\
-                                   \"harvest_window\": \"now|1-2 days|not prime|do not harvest\",\n\
-                                   \"processing_recommendation\": \"brief processing note\",\n\
-                                   \"safety_note\": \"critical safety information — especially if toxic look-alikes exist\"\n\
+                                   \"species\": \"scientific name, or null if the photo does not support one\",\n\
+                                   \"common_name\": \"common name, or null\",\n\
+                                   \"rank_reached\": \"species|genus|family|null — how far the photo actually supports\",\n\
+                                   \"visual_features\": \"the features in THIS photo that led you there\",\n\
+                                   \"not_visible\": \"what the photo does not show that would matter\",\n\
+                                   \"safety_note\": \"say only that a photograph cannot establish safety. No verdict.\"\n\
                                  }}",
                                 location_hint, habitat_hint
                             )
@@ -2148,16 +2204,49 @@ pub async fn forage_handler(
                 raw_text,
                 json!({
                     "species": null,
-                    "edibility": "unknown",
-                    "confidence": "low",
-                    "safety_note": "Could not identify specimen. Do not harvest unidentified fungi.",
+                    "common_name": null,
+                    "rank_reached": null,
+                    "visual_features": null,
+                    "safety_note": "A photograph cannot establish whether this is safe to eat.",
                 }),
             );
+
+            // Assemble the document, then enforce it. `safety` is written here,
+            // by Rust, and never by the model — see the `forage_identify`
+            // contracts in `grounding_trust`. A model-authored caution can be
+            // softened or dropped on any given call, and the call where it is
+            // dropped looks exactly like the ones where it is not.
+            let mut document = json!({
+                "identification": identification,
+                "safety": {
+                    "determination_basis": "photograph only",
+                    "edibility_source": null,
+                    "lookalike_check_performed": false,
+                    "directive": FORAGE_SAFETY_DIRECTIVE,
+                    "what_would_answer_it": FORAGE_NEXT_STEPS,
+                },
+            });
+
+            // The backstop. If a future prompt edit reintroduces an edibility
+            // verdict, or the model volunteers one unasked, it is cleared here
+            // and the removal is recorded rather than shipped.
+            let grounding = crate::grounding_trust::enforce("forage_identify", &mut document);
 
             Ok(Json(json!({
                 "creature_id": creature_id,
                 "photo_url": photo_url,
-                "identification": identification,
+                "identification": document.get("identification"),
+                "identification_provenance": document.get("identification_provenance"),
+                "safety": document.get("safety"),
+                "safety_provenance": document.get("safety_provenance"),
+                // Surfaced rather than logged silently: a stripped field is a
+                // prompt regression, and the client is the only place anyone is
+                // looking.
+                "grounding_violations": grounding
+                    .violations
+                    .iter()
+                    .map(|v| json!({ "path": v.path, "removed": v.removed }))
+                    .collect::<Vec<_>>(),
             })))
         }
 

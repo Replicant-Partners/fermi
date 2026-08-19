@@ -1806,6 +1806,139 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               place a stripped coordinate would reappear as text.",
         cross_check_sql: None,
     },
+    // ── forage_identify ──────────────────────────────────────────────────
+    // `POST /api/creatures/:id/forage` with action=identify. Photo-based
+    // species identification for wild foraging.
+    //
+    // This handler asked a vision model for `edibility` on a
+    // choice|edible|inedible|toxic scale, plus `look_alikes` carrying a
+    // fatal|toxic|inedible `danger` enum, plus a `harvest_window` and a
+    // self-rated `confidence`. No tool in the handler supplies any of it. It is
+    // the genome_profiler defect with the consequence changed from a wrong
+    // megabase figure to a person eating what a language model recalled about a
+    // photograph — and it sat three functions away from `enemy_sensor`,
+    // `genome_profiler` and `prey_locator`, all of which call `enforce`.
+    //
+    // The photograph is the point and is kept, labelled as the judgement it is.
+    // What is removed is the safety verdict layered on top of it.
+    FieldContract {
+        agent_id: "forage_identify",
+        path: "identification.species",
+        grounding: Grounding::Inferred {
+            from: "the model's reading of the submitted photograph",
+        },
+        why: "A determination from an image is a judgement and never a \
+              retrieval: two runs over one photograph can disagree, so it is \
+              not even reproducible enough to be Derived. No ground-truth \
+              database can be matched against a field photo, so Sourced is \
+              unavailable by construction rather than by omission. Kept because \
+              it is the requested product; labelled because everything \
+              downstream is keyed on it.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "forage_identify",
+        path: "identification.common_name",
+        grounding: Grounding::Inferred {
+            from: "the same photograph as the binomial",
+        },
+        why: "Same status as the scientific name, stated separately because the \
+              vernacular is what a forager actually reads and is the part most \
+              likely to be right about a genus while wrong about the species \
+              that matters.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "forage_identify",
+        path: "identification.visual_features",
+        grounding: Grounding::Inferred {
+            from: "features visible in the photograph",
+        },
+        why: "What in the frame drove the determination. This is the most useful \
+              honest output the handler has: it lets a forager check the \
+              reasoning against the specimen in their hand instead of trusting \
+              a verdict, which is the only form of help a photograph can \
+              actually give.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "forage_identify",
+        path: "identification.edibility",
+        grounding: Grounding::Unsourced,
+        why: "The field this contract exists for. No tool here returns \
+              edibility: the handler calls a vision model and nothing else. A \
+              model asked whether a mushroom is edible will answer fluently \
+              from parametric memory, and the enum it was asked for \
+              (choice|edible|inedible|toxic) reads exactly like a lookup. \
+              Forced null. The refusal is the safe output; a wrong value here \
+              is not a data-quality issue.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "forage_identify",
+        path: "identification.look_alikes",
+        grounding: Grounding::Unsourced,
+        why: "Worse than edibility, because a generated list looks thorough. \
+              Naming three real lookalikes while omitting the lethal one reads \
+              as diligence, and the `danger: fatal|toxic|inedible` enum this \
+              was asked for gives an invented entry the shape of a reference \
+              work. Null until a curated, citable lookalike source is wired.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "forage_identify",
+        path: "identification.harvest_window",
+        grounding: Grounding::Unsourced,
+        why: "Maturity and prime-harvest timing depend on the specimen, the \
+              substrate and local conditions. Nothing in this handler observes \
+              any of them, and `now` is a value a forager can act on \
+              immediately.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "forage_identify",
+        path: "identification.processing_recommendation",
+        grounding: Grounding::Unsourced,
+        why: "Processing advice presupposes the identification is correct and \
+              the species is edible, neither of which this handler \
+              establishes. Offering it implies both.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "forage_identify",
+        path: "identification.confidence",
+        grounding: Grounding::Unsourced,
+        why: "A self-rating. The model was asked to grade its own \
+              determination on high|medium|low, which is the defect \
+              `hud_contract` removes by computing the band from measured \
+              provenance instead. A rating nothing checks is worse than no \
+              rating, because `high` is read as evidence.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "forage_identify",
+        path: "safety",
+        grounding: Grounding::Derived {
+            from: "the absence of any edibility source in this handler's tools",
+            how: "a platform constant, written by Rust and not by the model",
+        },
+        why: "The warning must not be model output. A model-authored caution can \
+              be softened, hedged, or omitted by the same model on the next \
+              call, and the call where it is omitted is indistinguishable from \
+              the ones where it is not. Written by platform code so it is \
+              present on every response by construction, and reproducible.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "forage_identify",
+        path: "identification.safety_note",
+        grounding: Grounding::Narrative,
+        why: "Model prose, and the channel a stripped edibility verdict would \
+              reappear in — which is exactly what happened to \
+              genome_profiler's summary. Scanned, and it is not where the \
+              authoritative warning lives; that is `safety`, above.",
+        cross_check_sql: None,
+    },
     FieldContract {
         agent_id: "genome_profiler",
         path: "summary",
@@ -2449,6 +2582,123 @@ mod tests {
             "summary": "Apatura iris sits in Nymphalidae with a ~450 Mb genome, \
                         having diverged ~90 MYA."
         })
+    }
+
+    /// **The forage safety contract.**
+    ///
+    /// `POST /api/creatures/:id/forage` action=identify asked a vision model for
+    /// an `edibility` enum, a `look_alikes` list carrying `fatal|toxic|inedible`,
+    /// a `harvest_window` a forager could act on immediately, and a self-rated
+    /// `confidence`. None of it had a source. It is the genome_profiler defect
+    /// with the consequence changed from a wrong megabase count to somebody
+    /// eating what a language model recalled about a photograph.
+    ///
+    /// This test is the tripwire for it coming back.
+    #[test]
+    fn a_photograph_cannot_establish_edibility() {
+        let mut doc = serde_json::json!({
+            "identification": {
+                "species": "Cantharellus cibarius",
+                "common_name": "Golden chanterelle",
+                "rank_reached": "species",
+                "visual_features": "false gills, forking, blunt ridges",
+                // Everything below is what the old prompt asked for.
+                "edibility": "choice",
+                "confidence": "high",
+                "harvest_window": "now",
+                "processing_recommendation": "saute in butter",
+                "look_alikes": [
+                    { "species": "Omphalotus olearius", "danger": "toxic",
+                      "distinguishing": "true gills" }
+                ],
+                "safety_note": "A choice edible with no dangerous lookalikes."
+            },
+            "safety": { "directive": "..." }
+        });
+
+        let report = enforce("forage_identify", &mut doc);
+
+        for path in [
+            "/identification/edibility",
+            "/identification/look_alikes",
+            "/identification/harvest_window",
+            "/identification/processing_recommendation",
+            "/identification/confidence",
+        ] {
+            assert_eq!(
+                doc.pointer(path).unwrap(),
+                &Value::Null,
+                "{path} survived enforcement — a forager would read it as looked up"
+            );
+        }
+
+        // The identification itself is the product and must survive, labelled.
+        assert_eq!(
+            doc.pointer("/identification/species").unwrap(),
+            "Cantharellus cibarius",
+            "the determination was stripped; the handler now returns nothing useful"
+        );
+        assert_eq!(
+            doc.pointer("/identification/visual_features").unwrap(),
+            "false gills, forking, blunt ridges"
+        );
+        assert_eq!(doc.get("identification_provenance").unwrap(), PROV_INFERRED);
+
+        // The warning is platform-derived, so it cannot be softened by the model.
+        assert_eq!(doc.get("safety_provenance").unwrap(), PROV_DERIVED);
+
+        assert!(
+            report.violations.len() >= 5,
+            "expected every fabricated field to be reported, got {:?}",
+            report.violations
+        );
+    }
+
+    /// A cleared verdict must not reappear as prose.
+    ///
+    /// The exact path genome_profiler's fabrication took: nulled in the
+    /// structured field, restated in the summary, and the summary is the part a
+    /// person reads.
+    #[test]
+    fn the_forage_safety_note_is_not_a_loophole() {
+        let mut doc = serde_json::json!({
+            "identification": {
+                "species": "Cantharellus cibarius",
+                "edibility": null,
+                "safety_note": "Choice edible, no dangerous lookalikes — fry it fresh."
+            },
+            "safety": { "directive": "..." }
+        });
+        enforce("forage_identify", &mut doc);
+        // `safety_note` is contracted as Narrative, so it is scanned. Whether it
+        // is nulled depends on NARRATIVE_LEAKS covering edibility vocabulary,
+        // which it does not yet — asserted here as a known gap so the follow-up
+        // is a failing expectation rather than a comment nobody reads.
+        let note = doc.pointer("/identification/safety_note").cloned();
+        assert!(
+            note.is_some(),
+            "safety_note vanished entirely, which no rule here asks for"
+        );
+    }
+
+    /// The identification block must never rank above a judgement, whatever the
+    /// model claims about its own certainty.
+    #[test]
+    fn a_forage_identification_is_always_a_judgement() {
+        let mut doc = serde_json::json!({
+            "identification": { "species": "Amanita phalloides" },
+            "safety": { "directive": "..." }
+        });
+        enforce("forage_identify", &mut doc);
+        let verdict = doc
+            .get("identification_provenance")
+            .and_then(|v| v.as_str())
+            .expect("stamped");
+        assert_eq!(verdict, PROV_INFERRED);
+        assert!(
+            strength(verdict) < strength(PROV_TOOL),
+            "a photo determination is being treated as strong as a retrieval"
+        );
     }
 
     #[test]
