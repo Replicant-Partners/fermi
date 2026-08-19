@@ -859,20 +859,166 @@ pub fn compute_divergence_pp(fermi_probability: f64, market_price: f64) -> f64 {
     (fermi_probability - market_price) * 100.0
 }
 
-/// Interpret a divergence value into a human-readable edge assessment.
-pub fn interpret_divergence(divergence_pp: f64) -> &'static str {
-    let abs_div = divergence_pp.abs();
-    if abs_div < 2.0 {
-        "Consensus — your model agrees with the crowd"
-    } else if abs_div < 5.0 {
-        "Minor divergence — within noise"
-    } else if abs_div < 15.0 {
-        "Moderate divergence — potential edge worth investigating"
-    } else if abs_div < 30.0 {
-        "Significant divergence — strong disagreement with crowd. Is this alpha?"
-    } else {
-        "Extreme divergence — verify your model assumptions, this level of disagreement is unusual"
+// ─── did the model earn its disagreement? ─────────────────────────────
+//
+// ## The case this exists for
+//
+// Chicago, KORD 78-79F on 2026-08-20, live on Polymarket:
+//
+//     model  5.91%    base rate 6.70%    crowd 46.5%
+//     model - base    -0.8pp
+//     model - crowd  -40.6pp
+//     base  - crowd  -39.8pp
+//
+// The panel reported "DIVERGENCE: 40.6pp below crowd" and asked "Is this alpha or
+// overconfidence?" — in front of a sizing decision. But the model had moved 0.8pp
+// off its own base rate, so 98% of that gap is the BASE RATE disagreeing with the
+// market and 2% is everything the drivers contributed. There was no forecast
+// there to be alpha or overconfidence: `weather_oracle` had put the bucket at 35%
+// against the market's 45.5%, and that view never reached the model because the
+// driver could not carry it.
+//
+// Two situations produce one number, and they call for opposite actions:
+//
+//     moved a long way on evidence, disagrees with crowd   -> candidate edge
+//     never moved, crowd is elsewhere                      -> dead driver
+//
+// A magnitude ladder cannot tell them apart, which is the same ambiguity
+// `liveness_trust` exists to break: `count(*) = 0` is meaningless until you know
+// what the opportunity was.
+//
+// ## How common
+//
+// 582 multiplier claims platform-wide, 115 of them (19.8%) within 5% of 1.0 — a
+// neutral multiplier leaves the driver prior untouched, so the model sits at its
+// base rate. Every domain, not just weather: football_analyst 21, macro_data_agent
+// 20, fixture_context_agent 18, nba_analyst 6, biotech_analyst 5, and
+// weather_oracle worst at 28 of 58. The 23 claims dropped for being out of range
+// land in the same place. This is not a weather bug.
+//
+// ## Why the denominator is the gap and not the base rate
+//
+// The first threshold proposed for this was "model within 5% RELATIVE of base",
+// and it would have missed Chicago: 0.79 / 6.70 = 11.8%, comfortably outside 5%.
+// A 0.8pp move looks large next to a 6.7% base rate and is nothing next to a 40pp
+// claim. What matters is the share of the ASSERTED DISAGREEMENT the drivers
+// actually account for: 0.79 / 40.59 = 1.9%.
+//
+// So the test is scale-free in the dimension that matters, and it does not fire
+// on a small base rate merely for being small.
+
+/// Fraction of the model-versus-crowd gap that the drivers must account for
+/// before the gap is attributed to the model rather than to the base rate.
+pub const MIN_DRIVER_SHARE: f64 = 0.10;
+
+/// Below this gap the question does not arise: nobody sizes a position on a few
+/// points, and a small gap with a small driver move is simply consensus.
+pub const DEAD_DRIVER_MIN_GAP_PP: f64 = 10.0;
+
+/// What a model-versus-crowd gap means, once the base rate is taken into account.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DivergenceVerdict {
+    Consensus,
+    Minor,
+    Moderate,
+    Significant,
+    Extreme,
+    /// The drivers did not move this forecast; the disagreement belongs to the
+    /// base rate. `driver_share` is the fraction they did account for.
+    DriversSilent {
+        driver_share: f64,
+    },
+}
+
+impl DivergenceVerdict {
+    /// One word, for a chip.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Consensus => "Consensus",
+            Self::Minor => "Minor",
+            Self::Moderate => "Moderate",
+            Self::Significant => "Significant",
+            Self::Extreme => "Extreme",
+            Self::DriversSilent { .. } => "Drivers silent",
+        }
     }
+
+    /// The sentence a human should read before acting.
+    pub fn describe(&self) -> &'static str {
+        match self {
+            Self::Consensus => "Consensus — your model agrees with the crowd",
+            Self::Minor => "Minor divergence — within noise",
+            Self::Moderate => "Moderate divergence — potential edge worth investigating",
+            Self::Significant => {
+                "Significant divergence — strong disagreement with crowd. Is this alpha?"
+            }
+            Self::Extreme => {
+                "Extreme divergence — verify your model assumptions, this level of \
+                 disagreement is unusual"
+            }
+            // Deliberately not phrased as a question. "Is this alpha?" invites a
+            // judgement call about a forecast, and there is no forecast here to
+            // judge — the drivers contributed almost none of this gap.
+            Self::DriversSilent { .. } => {
+                "The drivers did not move this forecast — almost all of this gap is \
+                 your base rate disagreeing with the market, not your model. Check \
+                 that the drivers received live data before treating it as an edge"
+            }
+        }
+    }
+
+    /// Is this a gap worth investigating as an edge at all?
+    ///
+    /// False for a silent-driver verdict: not because the market is right, but
+    /// because nothing has yet been said about it.
+    pub fn is_candidate_edge(&self) -> bool {
+        matches!(self, Self::Moderate | Self::Significant | Self::Extreme)
+    }
+}
+
+/// Classify a model-versus-crowd gap, using the base rate when it is known.
+///
+/// `base` is `Option` because a question need not declare one, and a missing base
+/// rate must not silently become a dead-driver verdict — with nothing to compare
+/// against, the honest answer is the magnitude ladder.
+pub fn assess_divergence(model: f64, crowd: f64, base: Option<f64>) -> DivergenceVerdict {
+    let gap_pp = ((model - crowd) * 100.0).abs();
+
+    if let Some(b) = base {
+        if b.is_finite() && gap_pp > DEAD_DRIVER_MIN_GAP_PP {
+            let driver_pp = ((model - b) * 100.0).abs();
+            let share = driver_pp / gap_pp;
+            if share < MIN_DRIVER_SHARE {
+                return DivergenceVerdict::DriversSilent {
+                    driver_share: share,
+                };
+            }
+        }
+    }
+
+    if gap_pp < 2.0 {
+        DivergenceVerdict::Consensus
+    } else if gap_pp < 5.0 {
+        DivergenceVerdict::Minor
+    } else if gap_pp < 15.0 {
+        DivergenceVerdict::Moderate
+    } else if gap_pp < 30.0 {
+        DivergenceVerdict::Significant
+    } else {
+        DivergenceVerdict::Extreme
+    }
+}
+
+/// Interpret a divergence value into a human-readable edge assessment.
+///
+/// Base-rate-blind, and kept because callers that genuinely hold only the gap
+/// exist. Prefer [`assess_divergence`]: this cannot distinguish a model that
+/// earned its disagreement from one that never moved.
+pub fn interpret_divergence(divergence_pp: f64) -> &'static str {
+    // Reconstructs a (model, crowd) pair with the right gap so there is one
+    // ladder rather than two. A second copy of these thresholds is how the
+    // console came to disagree with this function about the same number.
+    assess_divergence(divergence_pp / 100.0, 0.0, None).describe()
 }
 
 /// Format a USD volume value into a human-readable string.
@@ -990,6 +1136,105 @@ mod tests {
         assert!(interpret_divergence(10.0).contains("Moderate"));
         assert!(interpret_divergence(-25.0).contains("Significant"));
         assert!(interpret_divergence(50.0).contains("Extreme"));
+    }
+
+    /// The Chicago forecast that prompted this, verbatim.
+    ///
+    /// KORD 78-79F on 2026-08-20: model 5.91%, base rate 6.70%, Polymarket 46.5%.
+    /// The panel called it a 40.6pp edge and asked whether it was alpha. The model
+    /// had moved 0.8pp off its own base rate.
+    #[test]
+    fn a_model_sitting_on_its_base_rate_is_not_an_edge() {
+        let v = assess_divergence(0.0591, 0.465, Some(0.0670));
+        match v {
+            DivergenceVerdict::DriversSilent { driver_share } => {
+                // 0.79pp of a 40.59pp claim.
+                assert!(
+                    (driver_share - 0.019).abs() < 0.002,
+                    "driver share was {driver_share}"
+                );
+            }
+            other => panic!("expected DriversSilent, got {other:?}"),
+        }
+        assert!(!v.is_candidate_edge());
+        // The prose must not ask whether it is alpha: there is no forecast here to
+        // be alpha, and the question would be put in front of a sizing decision.
+        assert!(!v.describe().contains("alpha"));
+        assert!(v.describe().contains("base rate"));
+    }
+
+    /// The threshold that was proposed first, and why it is not the one used.
+    ///
+    /// "Model within 5% RELATIVE of its base rate" sounds equivalent and is not:
+    /// 0.79 / 6.70 = 11.8%, so it would have called Chicago a moved model. A 0.8pp
+    /// step is large against a 6.7% base rate and negligible against a 40pp claim,
+    /// so the denominator has to be the disagreement being asserted.
+    #[test]
+    fn the_denominator_is_the_gap_not_the_base_rate() {
+        let (model, base): (f64, f64) = (0.0591, 0.0670);
+        let relative_to_base = ((model - base) / base).abs();
+        assert!(
+            relative_to_base > 0.05,
+            "if this drops below 5% the cautionary tale no longer holds: {relative_to_base}"
+        );
+        assert!(matches!(
+            assess_divergence(model, 0.465, Some(base)),
+            DivergenceVerdict::DriversSilent { .. }
+        ));
+    }
+
+    /// A model that genuinely moved keeps its edge verdict.
+    ///
+    /// Without this the fix could suppress every large divergence and look like an
+    /// improvement — trading a false positive for a false negative on the panel
+    /// whose entire purpose is finding real disagreement.
+    #[test]
+    fn a_model_that_moved_a_long_way_still_reports_an_edge() {
+        // base 10%, model 40%, crowd 60%: the drivers account for 30 of the 20pp
+        // gap, so the model plainly has a thesis even though it disagrees.
+        let v = assess_divergence(0.40, 0.60, Some(0.10));
+        assert!(v.is_candidate_edge(), "got {v:?}");
+        assert!(matches!(v, DivergenceVerdict::Significant));
+    }
+
+    /// An unknown base rate falls back to magnitude rather than to silence.
+    ///
+    /// Treating "no base rate declared" as a dead driver would mute the panel for
+    /// every question that never declared one — a much larger silence than the bug
+    /// being fixed.
+    #[test]
+    fn a_missing_base_rate_does_not_become_a_dead_driver_verdict() {
+        let v = assess_divergence(0.0591, 0.465, None);
+        assert!(matches!(v, DivergenceVerdict::Extreme));
+        assert!(v.is_candidate_edge());
+    }
+
+    /// Small gaps are left alone even when the drivers are silent.
+    ///
+    /// A model sitting on its base rate 3pp from the crowd is agreement, not a
+    /// finding, and flagging it would make the verdict fire constantly on
+    /// well-calibrated questions.
+    #[test]
+    fn a_silent_driver_near_the_crowd_is_consensus_not_a_warning() {
+        let v = assess_divergence(0.30, 0.33, Some(0.30));
+        assert!(matches!(v, DivergenceVerdict::Minor), "got {v:?}");
+    }
+
+    /// One ladder, not two.
+    ///
+    /// `interpret_divergence` delegates, because a second copy of these thresholds
+    /// is exactly how `cockpit.rs` came to hold its own inlined ladder and could
+    /// disagree with this module about the same number.
+    #[test]
+    fn the_legacy_entry_point_agrees_with_the_ladder() {
+        for gap in [1.0_f64, 3.5, 10.0, 25.0, 50.0] {
+            assert_eq!(
+                interpret_divergence(gap),
+                assess_divergence(gap / 100.0, 0.0, None).describe()
+            );
+            // ...and sign must not change the verdict.
+            assert_eq!(interpret_divergence(gap), interpret_divergence(-gap));
+        }
     }
 
     #[test]

@@ -13854,16 +13854,31 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
             } else {
                 ("±", theme::FG_DIM)
             };
-            let div_label = if div_abs < 2.0 {
-                "Consensus"
-            } else if div_abs < 5.0 {
-                "Minor"
-            } else if div_abs < 15.0 {
-                "Moderate"
-            } else if div_abs < 30.0 {
-                "Significant"
+            // Was an inlined copy of the magnitude ladder in
+            // `fermi::polymarket`. Two readers of one rule is two answers to the
+            // same question, and this copy was base-rate-blind: it reported
+            // Chicago (model 5.91%, base 6.70%, crowd 46.5%) as a 40.6pp edge and
+            // asked whether it was alpha, when the model had moved 0.8pp off its
+            // own base rate and the drivers accounted for 1.9% of the gap.
+            //
+            // The base rate is passed in, so the shared assessment can tell a
+            // model that earned its disagreement from one that never moved.
+            let verdict = fermi::polymarket::assess_divergence(
+                fermi_prob,
+                pm_price,
+                base_rate.map(|br| br.historical_frequency),
+            );
+            let div_label = verdict.label();
+            // A silent-driver verdict is not an edge to weigh, so it must not be
+            // coloured like a bullish or bearish signal. Amber: something is
+            // wrong with the forecast, not with the market.
+            let div_color = if matches!(
+                verdict,
+                fermi::polymarket::DivergenceVerdict::DriversSilent { .. }
+            ) {
+                theme::GOLD
             } else {
-                "Extreme"
+                div_color
             };
 
             let vol_str = state.pm_volume_24h.map(|v| {
@@ -14022,13 +14037,32 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                                     .text_size(ui::TEXT_XS)
                                     .text_color(rgb(theme::FG_DIM))
                                     .child(format!(
-                                        "{} divergence — Your model: {:.1}% · Crowd: {:.1}%",
+                                        "{} — Your model: {:.1}% · Crowd: {:.1}%",
                                         div_label,
                                         fermi_prob * 100.0,
                                         pm_price * 100.0
                                     )),
                             )
-                            .when(div_abs > 15.0, |el| {
+                            // The prompt now comes from the verdict rather than from
+                            // the gap size. "Is this alpha or overconfidence?" is a
+                            // fair question about a forecast and the wrong question
+                            // about a base rate, and it was being asked immediately
+                            // above the action row.
+                            .when(
+                                matches!(
+                                    verdict,
+                                    fermi::polymarket::DivergenceVerdict::DriversSilent { .. }
+                                ),
+                                |el| {
+                                    el.child(
+                                        div()
+                                            .text_size(ui::TEXT_XS)
+                                            .text_color(rgb(theme::GOLD))
+                                            .child(verdict.describe()),
+                                    )
+                                },
+                            )
+                            .when(div_abs > 15.0 && verdict.is_candidate_edge(), |el| {
                                 el.child(
                                     div()
                                         .text_size(ui::TEXT_XS)
