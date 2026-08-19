@@ -106,15 +106,43 @@ else
                 | grep -oE '"commit"[[:space:]]*:[[:space:]]*"[0-9a-f]+"' \
                 | grep -oE '[0-9a-f]{7,}')
   LOCAL_COMMIT=$(git rev-parse HEAD 2>/dev/null)
+
+  # HEAD equality is the WRONG test, and the first draft of this check used it.
+  #
+  # It fired on a tree where everything relevant was deployed: HEAD had moved one
+  # commit ahead with an unrelated change (a `glasses/` UI shell), and the check
+  # announced "the deployment does NOT contain your change" about a change that
+  # was, in fact, live. With a second session committing to this repo all day,
+  # HEAD drifts constantly, so a check keyed on equality cries wolf — and a check
+  # that cries wolf gets muted, which is the failure this whole file exists to
+  # prevent.
+  #
+  # The real question is narrower: does the running deployment contain the code
+  # that WRITES what is checked below? So compare only the paths that run
+  # server-side. Undeployed commits touching docs, desktop UI or tests cannot
+  # affect an episode, and reporting them as a blocker is noise.
+  SERVER_PATHS=(src/ crates/ agent-bestiary/ migrations/ Cargo.toml Cargo.lock agents/)
   if [[ -z "$LIVE_COMMIT" ]]; then
     say UNRUNNABLE "deploy freshness" "$HEALTH_URL unreachable or reported no commit — cannot tell what code produced the episodes below"
   elif [[ -z "$LOCAL_COMMIT" ]]; then
     say UNRUNNABLE "deploy freshness" "not a git checkout — nothing to compare the deployed commit against"
   elif [[ "$LOCAL_COMMIT" == "$LIVE_COMMIT"* ]]; then
-    say OK "deploy freshness" "live commit ${LIVE_COMMIT} matches HEAD — the episodes below were produced by this code"
+    say OK "deploy freshness" "live commit ${LIVE_COMMIT} is exactly HEAD"
+  elif ! git cat-file -e "${LIVE_COMMIT}^{commit}" 2>/dev/null; then
+    say UNRUNNABLE "deploy freshness" "live commit ${LIVE_COMMIT} is not in this checkout — fetch, or the deployment is built from somewhere else. Cannot tell what code produced the episodes below"
+  elif ! git merge-base --is-ancestor "$LIVE_COMMIT" HEAD 2>/dev/null; then
+    say UNRUNNABLE "deploy freshness" "live commit ${LIVE_COMMIT} is NOT an ancestor of HEAD — the deployment is on a diverged line, so neither tree is a superset of the other"
   else
-    say UNRUNNABLE "deploy freshness" "live commit ${LIVE_COMMIT}, HEAD ${LOCAL_COMMIT:0:12} — the deployment does NOT contain your change. Anything below that depends on new code will read SILENT for that reason alone, not because the agent misbehaved"
-    echo "                 → git --no-pager log --oneline ${LIVE_COMMIT}..HEAD   # what is not deployed"
+    BEHIND=$(git rev-list --count "${LIVE_COMMIT}..HEAD" 2>/dev/null)
+    SERVER_DIFF=$(git diff --name-only "${LIVE_COMMIT}..HEAD" -- "${SERVER_PATHS[@]}" 2>/dev/null)
+    if [[ -z "$SERVER_DIFF" ]]; then
+      say OK "deploy freshness" "live commit ${LIVE_COMMIT}; HEAD is ${BEHIND} commit(s) ahead but none touch server-side code, so the episodes below were produced by the code being checked"
+    else
+      NFILES=$(printf '%s\n' "$SERVER_DIFF" | wc -l | tr -d ' ')
+      say UNRUNNABLE "deploy freshness" "live commit ${LIVE_COMMIT}; HEAD is ${BEHIND} commit(s) ahead and ${NFILES} server-side file(s) differ — the deployment does NOT contain them. Anything below that depends on new code will read SILENT for that reason alone, not because the agent misbehaved"
+      printf '%s\n' "$SERVER_DIFF" | head -5 | sed 's/^/                 · /'
+      echo "                 → git --no-pager log --oneline ${LIVE_COMMIT}..HEAD"
+    fi
   fi
 fi
 echo
