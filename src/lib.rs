@@ -23,6 +23,7 @@ pub mod api;
 
 // Gas fees and workflow engine
 pub mod gas;
+pub mod glasses_shell;
 pub mod workflows;
 
 // App primitive — registry + manifest builder

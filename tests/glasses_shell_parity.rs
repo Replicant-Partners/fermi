@@ -20,6 +20,7 @@
 //! That is a real limitation — see the module's final test, which says so out
 //! loud rather than letting the file's presence imply more coverage than it has.
 
+use std::fmt::Write as _;
 use std::path::Path;
 
 const SHELL_DIR: &str = "glasses/hud_field_scout";
@@ -399,4 +400,160 @@ fn the_uncovered_surface_is_named() {
         "if this list changed, say so in the commit: these are the things a \
          green run here does NOT establish"
     );
+}
+
+// ─── the generated apps are what the generator generates ────────────────
+
+/// Directories under `glasses/` that are deliberately not generated shells.
+///
+/// `minimal_probe` is a two-line "does the runtime load anything at all" page.
+/// It renders no card, has no provenance to carry, and generating it from the
+/// card template would give it the whole trust apparatus with nothing to apply
+/// it to — a shell asserting it copies markers it never receives.
+///
+/// This list is short on purpose. An exemption is how a hand-written app gets
+/// back in, so each entry needs a reason that is about the app not being a card
+/// surface, never about the generator being inconvenient.
+const NOT_GENERATED: &[&str] = &["minimal_probe"];
+
+/// **The keystone.** Every committed file in every registered shell is exactly
+/// what `src/glasses_shell.rs` produces for it.
+///
+/// This points the harder way round deliberately. A template validated only
+/// against its own output is an idealisation of what shipped; a template
+/// validated against the shipped bytes is a claim about reality that can be
+/// false — and was. The first run of this comparison found three real
+/// divergences: `app.js` referenced `pages/card/index.ink`, a path that does not
+/// exist; the manifest's permission list had drifted to four-space nesting away
+/// from the sample convention; and collapsing the package and manifest
+/// descriptions onto one spec field had silently dropped "Edibility is never
+/// answered, because no source can supply it" from the manifest.
+///
+/// It is also what makes the rest of this file's assertions general. Each of the
+/// tests above examines a single app, and that is sufficient rather than lazy:
+/// once byte-parity holds, every registered shell is the same template with
+/// different substitutions, so a doctrine assertion proved against one instance
+/// is proved against all of them. Without this test they would each be a claim
+/// about one hand-written file.
+#[test]
+fn the_committed_shell_is_what_the_generator_produces() {
+    for spec in fermi::glasses_shell::SHELL_SPECS {
+        let dir = fermi::glasses_shell::app_dir(spec);
+        for file in fermi::glasses_shell::render(spec) {
+            let path = format!("{dir}/{}", file.path);
+            let on_disk = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("{path} is registered but unreadable: {e}"));
+            if on_disk != file.contents {
+                panic!("{}", divergence(&path, &on_disk, &file.contents));
+            }
+        }
+    }
+}
+
+/// Every app directory is either generated or explicitly exempt.
+///
+/// An app on disk that no spec covers is unchecked, and an unchecked app is the
+/// hand-written copy the generator exists to prevent — it would carry its own
+/// transcription of the fail-closed unstamped check, and a transcription that
+/// lost it would still render markers. The failure has to be loud at the point
+/// the directory appears, not at the point someone wonders why coverage looks
+/// thin.
+#[test]
+fn every_app_directory_is_registered_or_exempt() {
+    let mut unregistered = Vec::new();
+    for entry in std::fs::read_dir("glasses").expect("read glasses/") {
+        let entry = entry.expect("dir entry");
+        if !entry.file_type().expect("file type").is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if NOT_GENERATED.contains(&name.as_str()) {
+            continue;
+        }
+        if fermi::glasses_shell::spec_for(&name).is_none() {
+            unregistered.push(name);
+        }
+    }
+    assert!(
+        unregistered.is_empty(),
+        "glasses/ contains app(s) with no ShellSpec: {unregistered:?}.\n\n\
+         Add a ShellSpec in src/glasses_shell.rs and regenerate, or add the \
+         directory to NOT_GENERATED with a reason it is not a card surface."
+    );
+}
+
+/// The generator refuses to register a shell for an agent it cannot mark up.
+///
+/// Asserted here as well as in the module's own tests because this is the
+/// boundary condition a person hits when they scaffold a shell for the first
+/// time: pick an agent with no field contracts and every line on the card comes
+/// back unmarked. Unmarked is the treatment reserved for verified retrieval, so
+/// the friendliest possible failure is the correct one.
+#[test]
+fn a_registered_shell_has_an_agent_under_grounding_contract() {
+    for spec in fermi::glasses_shell::SHELL_SPECS {
+        let n = fermi::grounding_trust::FIELD_CONTRACTS
+            .iter()
+            .filter(|c| c.agent_id == spec.agent_id)
+            .count();
+        assert!(
+            n > 0,
+            "`{}` has a shell but no field contracts",
+            spec.agent_id
+        );
+    }
+}
+
+/// Report *where* a generated file diverged, not that it did.
+///
+/// The first version of this used `assert_eq!` on the two documents, which
+/// printed sixteen kilobytes of escaped `.ink` source and buried the one changed
+/// line. A check whose output cannot be read is a check someone reruns with the
+/// expected value pasted in, which is the same as not having it — so it names
+/// the line, both sides of it, and what to do next.
+fn divergence(path: &str, on_disk: &str, generated: &str) -> String {
+    let d: Vec<&str> = on_disk.lines().collect();
+    let g: Vec<&str> = generated.lines().collect();
+
+    let mut report = format!("{path} is not what src/glasses_shell.rs produces.\n\n");
+
+    let first = (0..d.len().max(g.len())).find(|&i| d.get(i) != g.get(i));
+    match first {
+        Some(i) => {
+            let _ = write!(
+                report,
+                "first divergence at line {}:\n  on disk:   {}\n  generated: {}\n",
+                i + 1,
+                d.get(i).map_or("<end of file>", |l| l),
+                g.get(i).map_or("<end of file>", |l| l),
+            );
+            if d.len() != g.len() {
+                let _ = write!(
+                    report,
+                    "\nlengths differ: {} lines on disk, {} generated\n",
+                    d.len(),
+                    g.len()
+                );
+            }
+        }
+        None => {
+            report.push_str(
+                "the lines are identical, so the difference is trailing \
+                 whitespace or a final newline\n",
+            );
+        }
+    }
+
+    report.push_str(
+        "\nThis is not automatically a fault in the file on disk. Decide which \
+         side is wrong:\n\
+         \n\
+         - the template lost something a hand edit had added -> put it in the \
+           template or the ShellSpec\n\
+         - the file was edited directly -> `cargo run --example new_glasses_app` \
+           to regenerate\n\
+         \n\
+         `-- --check` lists every drifted file without writing anything.\n",
+    );
+    report
 }
