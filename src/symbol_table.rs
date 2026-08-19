@@ -21,6 +21,20 @@ pub enum SymbolType {
     Evidence,
     Agent,
     Function,
+    /// A `param name: type` declaration — bound at instantiation from
+    /// `workspace_outputs[ws].params`, not defined inside the program.
+    ///
+    /// Absent until now, and every reference to a param was therefore an
+    /// "Undefined symbol" error. Measured across the stored corpus: **48 of 78
+    /// programs** reported errors, all of them this, at 12 params each — the World
+    /// Cup family declares `param socio_p50: real` and then uses it in
+    /// `distribution: triangular(socio_p5, socio_p50, socio_p95)`.
+    ///
+    /// The programs were correct. The analyser did not know the statement existed,
+    /// which mattered the moment anyone proposed showing its output to a human:
+    /// 48 false errors would have taught an analyst to ignore the panel, and a
+    /// panel that is ignored is worse than one that is absent.
+    Param,
 }
 
 /// Symbol table for tracking all symbols in a program
@@ -157,6 +171,24 @@ impl SymbolTableBuilder {
                     if let Err(e) =
                         self.table
                             .define(driver.name.clone(), SymbolType::Driver, ty, None)
+                    {
+                        self.errors.push(e);
+                    }
+                }
+                // Register params BEFORE anything that might reference them.
+                // Statement order is authoring order, and a driver may use a
+                // param declared below it; the table is built in one pass over all
+                // statements, so both are present by the time `analyze` resolves
+                // identifiers. Declaring them here is what makes that true.
+                Statement::Param(param) => {
+                    let ty = match param.param_type {
+                        ParamType::Real | ParamType::Int => Type::Number,
+                        ParamType::Str => Type::String,
+                        ParamType::Bool => Type::Boolean,
+                    };
+                    if let Err(e) =
+                        self.table
+                            .define(param.name.clone(), SymbolType::Param, ty, None)
                     {
                         self.errors.push(e);
                     }

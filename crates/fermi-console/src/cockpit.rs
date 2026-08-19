@@ -406,6 +406,26 @@ pub struct CockpitState {
     pub sim_results: Option<SimResults>,
     pub sim_running: bool,
     pub sim_error: Option<String>,
+    /// Semantic analysis of the program that was last simulated.
+    ///
+    /// ── Why the console had none ──────────────────────────────────
+    ///
+    /// This path went lex → parse → execute, skipping `SemanticAnalyzer` entirely,
+    /// while `fermi_execute_fpl` (the agent tool) runs lex → parse → analyse and
+    /// REFUSES a program with semantic errors. Two answers to "is this program
+    /// valid", and the permissive one was the one a human used.
+    ///
+    /// So every existing rule — unused driver, missing base rate, narrow driver
+    /// range — has been computed for agents and never shown to the analyst who
+    /// authors the program. Reporting them here is the whole change.
+    ///
+    /// REPORT-ONLY, deliberately. A semantic error does not block the simulation:
+    /// the analyst's workflow is the one that must keep working, and the first
+    /// measurement of the corpus found 48 of 78 programs reporting errors that
+    /// turned out to be the analyser's fault, not theirs. Blocking on a check whose
+    /// false-positive rate had never been measured would have broken 60% of the
+    /// corpus on the strength of a bug.
+    pub sim_diagnostics: Vec<(bool, String)>,
 
     // ── Versioning ────────────────────────────────────────────────
     pub versions: Vec<ForecastVersion>,
@@ -1202,6 +1222,7 @@ impl CockpitState {
             sim_results: None,
             sim_running: false,
             sim_error: None,
+            sim_diagnostics: Vec::new(),
             versions: Vec::new(),
             current_version: 0,
             forecast_id: None,
@@ -8034,6 +8055,9 @@ impl CockpitState {
         self.save_focused_driver(cx);
         self.sim_running = true;
         self.sim_error = None;
+        // Cleared with `sim_error` so a stale diagnostic cannot be read as applying
+        // to the run now in flight.
+        self.sim_diagnostics.clear();
 
         // ── Source-of-truth selection for the FPL we run ────────────────
         //
@@ -8200,6 +8224,32 @@ impl CockpitState {
                 cx.notify();
                 return;
             }
+        };
+
+        // ── Analyse before executing (report-only) ───────────────────
+        //
+        // Runs the rules that already exist and surfaces them beside the result.
+        // Not a gate: `analysis.errors` is recorded, not obeyed, because the agent
+        // tool's behaviour of refusing on error has never been true here and
+        // turning it on would change what the analyst can simulate.
+        //
+        // This is also the enforcement point a dimensional check has to live at.
+        // Adding such a rule to `semantic.rs` alone would put a correct check on a
+        // path this console never calls — the same defect as `type_env`
+        // (constructed, never read) and `DriverStmt.constraints` (parsed, never
+        // enforced).
+        self.sim_diagnostics = {
+            let analysis = ::fermi::SemanticAnalyzer::new().analyze(&parsed);
+            let mut d: Vec<(bool, String)> = analysis
+                .errors
+                .iter()
+                .map(|e| (true, e.to_string()))
+                .collect();
+            d.extend(analysis.warnings.iter().map(|w| (false, w.clone())));
+            if !d.is_empty() {
+                log::info!("[sim] semantic diagnostics: {} item(s)", d.len());
+            }
+            d
         };
 
         let mut executor = ::fermi::executor::Executor::new(10_000);
@@ -17736,6 +17786,34 @@ fn render_forecast_index(state: &CockpitState, cx: &mut Context<CockpitState>) -
                     .text_size(ui::TEXT_SM)
                     .text_color(rgb(theme::RED))
                     .child(format!("✗ {}", state.sim_error.as_deref().unwrap_or(""))),
+            )
+        })
+        // Semantic diagnostics for the program that was simulated.
+        //
+        // These rules have existed and been computed for the agent tool since the
+        // analyser was written; this console never called it, so an analyst has
+        // never seen them. Shown BELOW the result rather than instead of it,
+        // because they are report-only: the number above is still what the model
+        // said, and a diagnostic here does not mean it was not computed.
+        .when(!state.sim_diagnostics.is_empty(), |el| {
+            let items = state.sim_diagnostics.clone();
+            el.child(
+                div()
+                    .px(ui::s(12.0))
+                    .py(ui::s(4.0))
+                    .flex()
+                    .flex_col()
+                    .gap(ui::s(1.0))
+                    .children(items.into_iter().map(|(is_error, msg)| {
+                        div()
+                            .text_size(ui::TEXT_XS)
+                            .text_color(rgb(if is_error { theme::RED } else { theme::GOLD }))
+                            .child(format!(
+                                "{} {}",
+                                if is_error { "error" } else { "warning" },
+                                msg
+                            ))
+                    })),
             )
         })
         .when(has_sim, |el| {
