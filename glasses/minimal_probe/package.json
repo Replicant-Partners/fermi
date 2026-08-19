@@ -1,0 +1,8 @@
+{
+  "name": "minimal-probe",
+  "version": "0.1.0",
+  "description": "Smallest AIUI project that renders. Bisection aid.",
+  "main": "app.js",
+  "private": true,
+  "dependencies": {}
+}

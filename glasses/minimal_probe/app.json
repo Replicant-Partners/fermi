@@ -3,7 +3,7 @@
     "pages/index/index"
   ],
   "window": {
-    "navigationBarTitleText": "Field Scout",
+    "navigationBarTitleText": "Probe",
     "backgroundColor": "#000000"
   }
 }

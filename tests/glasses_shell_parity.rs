@@ -23,7 +23,7 @@
 use std::path::Path;
 
 const SHELL_DIR: &str = "glasses/hud_field_scout";
-const PAGE: &str = "glasses/hud_field_scout/pages/card/index.ink";
+const PAGE: &str = "glasses/hud_field_scout/pages/index/index.ink";
 const MANIFEST: &str = "glasses/hud_field_scout/AGENTS.md";
 
 fn page() -> String {
