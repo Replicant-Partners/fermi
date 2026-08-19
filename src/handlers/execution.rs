@@ -35,6 +35,33 @@ pub struct ExecuteRequest {
     /// orchestra) keeps working unchanged.
     #[serde(default)]
     invocation: Option<serde_json::Value>,
+    /// Images to send with the question.
+    ///
+    /// `#[serde(default)]`, so every existing caller — curl, the console, another
+    /// orchestra — is unaffected and sends nothing.
+    ///
+    /// An attachment that cannot be delivered is a **400**, never a quieter
+    /// answer. See `src/attachments.rs`: a request whose frame goes missing still
+    /// returns a confident answer generated from the text alone, and nothing
+    /// downstream can tell that apart from an answer that had the picture.
+    #[serde(default)]
+    attachments: Vec<AttachmentRequest>,
+}
+
+/// One image, as a caller sends it.
+///
+/// Kept separate from [`fermi::attachments::ImageAttachment`] so the wire shape
+/// can accept what callers actually send — a `data:` URL prefix, odd casing — and
+/// normalise on the way in, rather than making every client get it exactly right.
+#[derive(Debug, Deserialize)]
+pub struct AttachmentRequest {
+    /// e.g. `image/jpeg`. Checked against a closed allowlist.
+    media_type: String,
+    /// Base64 payload. A `data:image/...;base64,` prefix is stripped.
+    data: String,
+    /// Optional provenance note, e.g. `glasses temple button`. Not interpreted.
+    #[serde(default)]
+    source: Option<String>,
 }
 
 pub async fn execute_agent_handler(
@@ -116,12 +143,41 @@ pub async fn execute_agent_handler(
     // on whether the tool loop runs.
     let credentials = crate::build_execution_credentials(&state, &db_agent, &card).await;
 
+    // Normalise the attachments, then refuse the request if any of them cannot
+    // be delivered to the model this execution resolved to.
+    //
+    // A 400 here is the point of the whole mechanism. The alternative is
+    // answering "what is this?" from the words alone, which the model will do
+    // fluently, and which arrives labelled `model_inference` by a boundary that
+    // cannot distinguish an inference from a photograph from an inference from
+    // nothing.
+    let attachments: Vec<fermi::attachments::ImageAttachment> = body
+        .attachments
+        .iter()
+        .map(|a| {
+            fermi::attachments::ImageAttachment::new(
+                a.media_type.clone(),
+                &a.data,
+                a.source.clone(),
+            )
+        })
+        .collect();
+
+    if let Err(e) = fermi::attachments::ensure_deliverable(
+        &attachments,
+        &card.capabilities.provider,
+        &card.capabilities.model,
+    ) {
+        return Err((StatusCode::BAD_REQUEST, e.to_string()));
+    }
+
     let context = ExecutionContext {
         program,
         agent_card: card.clone(),
         creature_id: None,
         cognition_tier: None,
         credentials: credentials.clone(),
+        attachments,
     };
 
     // Resolve the agent's remote MCP tools before building the context.

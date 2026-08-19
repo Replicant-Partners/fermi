@@ -450,6 +450,10 @@ pub async fn ingest_telemetry_handler(
                 creature_id: None,
                 cognition_tier: None,
                 credentials,
+                // Text-only path: this caller carries no image. Stated rather than
+                // defaulted, so a path that should carry one cannot acquire the field
+                // silently.
+                attachments: Vec::new(),
             };
 
             match spawn_state

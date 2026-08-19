@@ -1,10 +1,11 @@
+use crate::agent_backend::agent_card::{AgentCard, CognitionTier};
+use crate::agent_backend::credentials::ResolvedCredentials;
+use crate::ast::{AgentStmt, EvidenceStmt, Program};
 /// Agent Executors
 ///
 /// Pluggable execution engines for agents.
 /// Currently implements Mock executor for testing.
-use crate::agent_backend::agent_card::{AgentCard, CognitionTier};
-use crate::agent_backend::credentials::ResolvedCredentials;
-use crate::ast::{AgentStmt, EvidenceStmt, Program};
+use crate::attachments::ImageAttachment;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -29,6 +30,19 @@ pub struct ExecutionContext {
     /// that forgets to resolve credentials must not quietly spend the
     /// platform's money.
     pub credentials: Arc<ResolvedCredentials>,
+    /// Images travelling with this request.
+    ///
+    /// Empty on every existing path, and every literal construction site states
+    /// that explicitly rather than inheriting a default. That is deliberate: a
+    /// new execution path must decide whether it carries a frame, because the
+    /// failure mode of getting it wrong is silent. "What is this?" with the
+    /// image lost still returns a species name, correctly labelled
+    /// `model_inference` by a boundary that cannot distinguish an inference from
+    /// a photograph from an inference from nothing.
+    ///
+    /// Never dropped. [`crate::attachments::ensure_deliverable`] refuses the
+    /// execution when the resolved model or provider cannot carry them.
+    pub attachments: Vec<ImageAttachment>,
 }
 
 impl ExecutionContext {
@@ -42,11 +56,24 @@ impl ExecutionContext {
             creature_id: None,
             cognition_tier: None,
             credentials: ResolvedCredentials::unfunded_arc(),
+            attachments: Vec::new(),
         }
     }
 
     pub fn with_credentials(mut self, credentials: Arc<ResolvedCredentials>) -> Self {
         self.credentials = credentials;
+        self
+    }
+
+    /// Attach images to this execution.
+    ///
+    /// Validity is not checked here. It is checked at the executor boundary,
+    /// against the model and provider that were actually resolved — which is the
+    /// only place both facts are known, and therefore the only place the answer
+    /// is true. Checking here would validate against a model the tier ladder may
+    /// still replace.
+    pub fn with_attachments(mut self, attachments: Vec<ImageAttachment>) -> Self {
+        self.attachments = attachments;
         self
     }
 

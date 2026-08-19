@@ -344,6 +344,24 @@ impl AgentExecutor for LLMExecutor {
             None
         };
 
+        // Refuse before spending if a frame cannot be delivered.
+        //
+        // Checked here as well as at the HTTP boundary, and not redundantly: the
+        // handler validates against the card's declared model, and
+        // `apply_tier_resolution` may have replaced it since. This is the last
+        // point at which the model that will actually receive the request is
+        // known, so it is the only check whose answer is certainly true.
+        //
+        // An error costs the caller a 400. The alternative costs them an answer
+        // about nothing, which reads exactly like an answer about their
+        // photograph.
+        crate::attachments::ensure_deliverable(
+            &context.attachments,
+            "anthropic",
+            &context.agent_card.capabilities.model,
+        )
+        .map_err(|e| ExecutionError::InvalidContext(e.to_string()))?;
+
         let request = ClaudeRequest {
             model: context.agent_card.capabilities.model.clone(),
             max_tokens: sp.max_tokens,
@@ -354,7 +372,12 @@ impl AgentExecutor for LLMExecutor {
             system: Some(system_prompt),
             messages: vec![Message {
                 role: "user".to_string(),
-                content: MessageContent::Text(user_prompt),
+                // Text-only when there are no attachments, serialising to a bare
+                // JSON string exactly as before — asserted by
+                // `a_text_only_message_matches_the_previous_construction_exactly`,
+                // because this is the path every agent on the platform runs
+                // through.
+                content: user_content(&user_prompt, &context.attachments),
             }],
             tools: None,
             tool_choice: None,
@@ -756,7 +779,92 @@ struct EvidenceData {
 #[cfg(test)]
 mod attachment_wire_tests {
     use super::*;
+    use crate::agent_backend::agent_card::AgentCard;
+    use crate::agent_backend::executor::ExecutionContext;
+    use crate::ast::Program;
     use crate::attachments::ImageAttachment;
+
+    fn ctx_with(model: &str, attachments: Vec<ImageAttachment>) -> ExecutionContext {
+        let mut card = AgentCard::new("test_agent".to_string(), "research".to_string());
+        card.capabilities.model = model.to_string();
+        ExecutionContext::for_agent(Program { statements: vec![] }, card)
+            .with_attachments(attachments)
+    }
+
+    /// The plumbing property: what the context carries is what the request
+    /// carries. A frame that reaches `ExecutionContext` and not the wire is the
+    /// silent drop wearing a different hat.
+    #[test]
+    fn a_context_attachment_reaches_the_request_body() {
+        let c = ctx_with("claude-sonnet-4-5-20250929", vec![img()]);
+        let content = user_content("what is this?", &c.attachments);
+        let json = serde_json::to_value(&content).unwrap();
+        let blocks = json.as_array().expect("blocks");
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].get("type").unwrap(), "image");
+    }
+
+    /// And an empty context still produces the byte-identical text-only body.
+    #[test]
+    fn an_empty_context_is_indistinguishable_from_before() {
+        let c = ctx_with("claude-sonnet-4-5-20250929", vec![]);
+        assert!(c.attachments.is_empty());
+        let json = serde_json::to_value(user_content("hi", &c.attachments)).unwrap();
+        assert_eq!(json, serde_json::json!("hi"));
+    }
+
+    /// The executor's own gate, checked against the model the tier ladder
+    /// actually resolved rather than the one the card declared.
+    #[test]
+    fn the_executor_refuses_a_frame_a_resolved_model_cannot_see() {
+        use crate::attachments::ensure_deliverable;
+        let blind = ctx_with("some-text-only-model", vec![img()]);
+        assert!(
+            ensure_deliverable(
+                &blind.attachments,
+                "anthropic",
+                &blind.agent_card.capabilities.model
+            )
+            .is_err(),
+            "a blind model accepted a frame"
+        );
+        let seeing = ctx_with("claude-sonnet-4-5-20250929", vec![img()]);
+        assert!(ensure_deliverable(
+            &seeing.attachments,
+            "anthropic",
+            &seeing.agent_card.capabilities.model
+        )
+        .is_ok());
+    }
+
+    /// A text-only request must never be refused, whatever the model is.
+    #[test]
+    fn a_text_only_request_is_never_refused() {
+        use crate::attachments::ensure_deliverable;
+        for model in ["some-text-only-model", "", "claude-sonnet-4-5-20250929"] {
+            let c = ctx_with(model, vec![]);
+            assert!(
+                ensure_deliverable(&c.attachments, "anthropic", model).is_ok(),
+                "text-only execution refused on `{model}`"
+            );
+        }
+    }
+
+    /// Delegation does not inherit the parent's frame, and that is not a drop:
+    /// attachments belong to a request, and delegation builds a new one from the
+    /// text the parent chose to send. Pinned so nobody "fixes" it by propagating
+    /// silently.
+    #[test]
+    fn a_fresh_context_carries_no_attachments() {
+        let c = ExecutionContext::for_agent(
+            Program { statements: vec![] },
+            AgentCard::new("t".to_string(), "research".to_string()),
+        );
+        assert!(
+            c.attachments.is_empty(),
+            "for_agent acquired attachments from somewhere"
+        );
+    }
 
     fn img() -> ImageAttachment {
         ImageAttachment::new("image/jpeg", "AAAAAAAAAAAA", Some("glasses".into()))

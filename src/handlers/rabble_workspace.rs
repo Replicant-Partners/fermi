@@ -285,6 +285,10 @@ pub async fn dispatch_rabble_action(
         creature_id,
         cognition_tier,
         credentials: credentials.clone(),
+        // Text-only path: this caller carries no image. Stated rather than
+        // defaulted, so a path that should carry one cannot acquire the field
+        // silently.
+        attachments: Vec::new(),
     };
 
     // Minted ahead of the tool context because the episode for this

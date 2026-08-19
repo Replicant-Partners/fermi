@@ -613,6 +613,10 @@ async fn call_xaman_ek(state: &AppState, _user_id: &str, query: &str) -> Result<
         creature_id: None,
         cognition_tier: None,
         credentials,
+        // Text-only path: this caller carries no image. Stated rather than
+        // defaulted, so a path that should carry one cannot acquire the field
+        // silently.
+        attachments: Vec::new(),
     };
 
     let output = state

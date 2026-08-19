@@ -248,6 +248,10 @@ pub async fn evaluate_coherence_handler(
                     creature_id: None,
                     cognition_tier: None,
                     credentials: credentials.clone(),
+                    // Text-only path: this caller carries no image. Stated rather than
+                    // defaulted, so a path that should carry one cannot acquire the field
+                    // silently.
+                    attachments: Vec::new(),
                 };
 
                 // Run the strategist WITH tools.

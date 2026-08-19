@@ -455,6 +455,10 @@ impl ServerHandler for AgentBestiaryHandler {
                     creature_id: None,
                     cognition_tier: None,
                     credentials: operator_credentials(),
+                    // The MCP server's tools/call surface does not accept an image today.
+                    // Stated rather than defaulted: when it does, this is the line that
+                    // changes, and a reader can see it was a decision.
+                    attachments: Vec::new(),
                 };
 
                 // Execute the agent
@@ -647,6 +651,10 @@ impl ServerHandler for AgentBestiaryHandler {
                     creature_id: None,
                     cognition_tier: None,
                     credentials: operator_credentials(),
+                    // The MCP server's tools/call surface does not accept an image today.
+                    // Stated rather than defaulted: when it does, this is the line that
+                    // changes, and a reader can see it was a decision.
+                    attachments: Vec::new(),
                 };
 
                 let result = self

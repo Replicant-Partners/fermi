@@ -535,6 +535,10 @@ pub async fn run_eval_cases(
             creature_id: None,
             cognition_tier: None,
             credentials: credentials.clone(),
+            // Text-only path: this caller carries no image. Stated rather than
+            // defaulted, so a path that should carry one cannot acquire the field
+            // silently.
+            attachments: Vec::new(),
         };
         // Per-case id: each test case is its own execution, so each gets its
         // own root episode for delegated children to hang off (mig-198).

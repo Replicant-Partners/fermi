@@ -80,7 +80,7 @@
             "properties": {
               "modality": {
                 "enum": ["voice", "voice+image", "text"],
-                "description": "Only `voice` and `text` are reachable today: the request path cannot deliver an image, so `voice+image` is unreachable until the attachment plumbing lands. Kept in the enum because the schema describes the contract rather than the current wiring, and removing it would make the eventual change look like a feature addition rather than the completion of one."
+                "description": "All three are reachable. `voice+image` requires the caller to POST an `attachments` array to /api/agents/hud_field_scout/execute; an attachment that cannot be delivered to the resolved model is a 400 rather than a quieter answer, so a response claiming `voice+image` did have the frame."
               },
               "image_present": {
                 "type": "boolean"
@@ -387,11 +387,9 @@
     }
   },
   "accepts": [
-    "query"
+    "query",
+    "image"
   ],
-  "accepts_pending": {
-    "image": "Declared here and NOT in `accepts`, because the request path cannot deliver one yet. src/attachments.rs defines the payload, its validation and the refuse-rather-than-drop rule; src/agent_backend/llm_executor.rs can carry it on the wire. What is missing is the plumbing between them: ExecutionContext has no attachment field and POST /api/agents/:id/execute has no way to accept a frame. Listing `image` in `accepts` before that exists would be a declared capability nothing wired, which is the defect this catalogue's own tool-declaration check exists to catch — on the input side, where nothing checks. Move it into `accepts` in the commit that lands the plumbing, not before."
-  },
   "produces": [
     "abw/hud_card"
   ],

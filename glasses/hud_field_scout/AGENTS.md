@@ -19,6 +19,7 @@ measured evidence and yours would not be.
 
 ## Capabilities
 - **Permissions**:
+  - camera
   - microphone
   - network
 
@@ -28,15 +29,14 @@ measured evidence and yours would not be.
 
 ## Notes
 
-`camera` is deliberately **not** requested yet.
+`camera` is requested because the frame now has somewhere to go. It was withheld
+until that was true: a granted permission the agent cannot use is bad on its own
+terms, and a prompt a wearer cannot act on teaches them to accept prompts without
+reading.
 
-The glasses can capture a frame, but ABW's execute path cannot yet accept one:
-`src/attachments.rs` defines the payload and the rule that an undeliverable
-frame is an error, and `src/agent_backend/llm_executor.rs` can carry it on the
-wire, but nothing plumbs a request into either. Asking for camera permission
-before the frame has somewhere to go would be a granted permission the agent
-cannot use, and a permission prompt a wearer cannot act on teaches them to
-accept prompts without reading.
-
-Add `camera` here in the same change that lands the attachment plumbing, and
-not before.
+A frame is POSTed as an `attachments` array alongside the query. An attachment
+that cannot be delivered to the resolved model is refused with a 400 — never
+dropped, never answered around. That matters more here than the permission does:
+a lost frame still produces a confident species name generated from the words
+alone, arriving correctly labelled `model_inference` by a boundary that cannot
+tell an inference from a photograph from an inference from nothing.

@@ -6242,6 +6242,18 @@ async fn execute_execute_agent(
         cognition_tier: None,
         // Delegated child inherits the parent execution's funding.
         credentials: ctx.credentials.clone(),
+        // ...but NOT the parent's attachments, and that is not a dropped frame.
+        //
+        // Attachments belong to a request, not to a session. Delegation builds a
+        // new request whose content is the text the parent chose to send, so the
+        // child was never promised an image. Propagating one silently would hand
+        // a frame to an agent that may not declare `accepts: image`, and the
+        // parent would have no way to know whether it arrived.
+        //
+        // If a compound agent needs to pass a photograph to a specialist, that
+        // wants to be an explicit argument on `execute_agent` — visible in the
+        // call, and checkable against the child's declared inputs.
+        attachments: Vec::new(),
     };
 
     let output = if let Some(ws_id) = target_workspace_id {
@@ -6481,6 +6493,18 @@ async fn execute_delegate_to_agent(
         cognition_tier: None,
         // Delegated child inherits the parent execution's funding.
         credentials: ctx.credentials.clone(),
+        // ...but NOT the parent's attachments, and that is not a dropped frame.
+        //
+        // Attachments belong to a request, not to a session. Delegation builds a
+        // new request whose content is the text the parent chose to send, so the
+        // child was never promised an image. Propagating one silently would hand
+        // a frame to an agent that may not declare `accepts: image`, and the
+        // parent would have no way to know whether it arrived.
+        //
+        // If a compound agent needs to pass a photograph to a specialist, that
+        // wants to be an explicit argument on `execute_agent` — visible in the
+        // call, and checkable against the child's declared inputs.
+        attachments: Vec::new(),
     };
 
     // mig-198: minted before the child runs so it can be handed to the child's
