@@ -1,0 +1,151 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// REFERENCE FORECAST — a temperature-bucket question modelled correctly
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// This file exists to be the known-good artefact: one forecast where every layer
+// has been exercised honestly, so a regression has something to be measured
+// against. It is a REFERENCE, not a live position.
+//
+// ── What it is a reference AGAINST ────────────────────────────────────────
+//
+// The live version of this question was authored as a probability-ratio chain:
+//
+//     model: 0.067 * seasonal_climatology * enso_phase * synoptic_pattern
+//            * urban_heat_island * climate_trend
+//
+// and produced 5.9% — its own base rate — while the agent that read the
+// 103-member ensemble had concluded 35%, and the console reported the 40-point
+// gap to the market as a possible edge. Three defects compounded:
+//
+//   1. `unit: "multiplier"` never said multiplier of WHAT, so two drivers were
+//      probability ratios ("the bucket probability, 13.1% to 11.4%") and two were
+//      temperature ratios ("the temperature mean driver, not the bucket"), all
+//      multiplied together into a probability.
+//   2. `seasonal_climatology` (0.92) and `climate_trend` (0.87) both encoded the
+//      same measured +0.518F/decade trend, so it was applied twice.
+//   3. The model's hardcoded 0.067 contradicted the 11.1-13.1% the drivers were
+//      computed against — an ERA5 measurement over 525 station-days.
+//
+// The deepest problem was structural: a bucket probability is a LEVEL, and a
+// ratio on a driver cannot carry a level. The honest adjustment was 2.67x against
+// a declared ceiling of 1.75, so the agent emitted 1.00 — and 1.00 is not "no
+// opinion", it asserts that climatology is right.
+//
+// ── The shape used here instead ───────────────────────────────────────────
+//
+// Drivers live in the space they are actually about — degrees Fahrenheit — and the
+// probability is produced by INTEGRATING over the bucket rather than by scaling a
+// base rate. `evaluator.rs` returns 1.0/0.0 for comparisons and the executor
+// evaluates the model once per iteration, so the Monte Carlo mean of an indicator
+// IS the bucket probability. No ratio, no ceiling, no referent ambiguity.
+//
+// This is also the model the agent already uses internally — frame, ensemble,
+// calibrate, price — so the FPL now mirrors its reasoning instead of inverting it.
+//
+// ── Division of labour, per the architecture ──────────────────────────────
+//
+//   base_rate    empirical frequency in a reference class. Climatology here,
+//                because it is what the question falls back to when no ensemble
+//                is available (beyond ~16 days lead, as this agent reports).
+//   drivers      RECURRING corrections, which is what makes them learnable:
+//                "how wrong is this ensemble at lead 1 for this station" is a
+//                question that accumulates across days. "What is the airmass on
+//                August 20" is not, and never belongs in a learned shape.
+//   BayesOps     owns driver posteriors, fitted from resolved outcomes via
+//                `feeds_from`. Agents never supply a posterior; they supply the
+//                cold-start prior and the evidence.
+//
+// ── Honest limitations, recorded rather than tuned away ───────────────────
+//
+// This reconstruction yields ~20% and the agent stated 35%. The gap is NOT
+// resolved and is not papered over:
+//
+//   * The cluster centres below are published SUMMARY statistics (per-model
+//     medians), not the 103 individual members. The true member distribution
+//     would refine the answer and is the right input when available.
+//   * 2.796F is the measured PREDICTIVE sd — forecast error against outcome over
+//     a 121-day backtest — not the within-ensemble spread. Using it is the
+//     conservative and, for a calibrated probability, the correct choice: every
+//     published ensemble is under-dispersive, so a raw member frequency overstates
+//     a narrow bucket. The agent's 39.8% raw implies an effective sd near 1.9F.
+//
+// So this forecast disagrees with the agent by ~15pp, and that disagreement is now
+// VISIBLE: `[PROBABILITY]` carries the agent's level and the console flags a model
+// that lands outside the agent's stated interval. Before this work the model said
+// 5.9%, the agent said 35%, and nothing anywhere objected. A reference forecast
+// whose first act is to surface an unresolved 15pp gap is doing its job; one tuned
+// until it agreed would not be.
+
+question "Will the highest temperature at KORD (Chicago O'Hare) be 78-79°F on 2026-08-20?" {
+    base_rate {
+        reference_class: "ERA5 KORD daily maximum, Aug 13-27 window, 1990-2024, trend-adjusted"
+        historical_frequency: 11.1%
+        sample_size: 525
+        source: "ERA5 reanalysis via weather_oracle"
+        generated_by: weather_oracle
+        reasoning: "Trend-adjusted P(high in [77.5, 79.5)) = P(>=77.5) 76.0% minus P(>=79.5) 64.9%. Window mean 80.05F, sd 5.79F over 525 station-days. The measured warming trend of +0.518F/decade shifts the 2026 distribution ~0.93F warmer than the 1991-2020 normal, which LOWERS the probability of this below-normal bucket. Counted once, here, and not repeated in a driver."
+    }
+}
+
+// ── The dominant uncertainty: which ensemble is right ─────────────────────
+//
+// Not a nuisance term. The agent's own account: "this is not a tight ensemble with
+// a clear signal — it is a bimodal distribution where the dominant uncertainty is
+// which model is correct, not the meteorology within any one model." ECMWF (51
+// members, median 78.2F) and GEM (21, median 78.1F) cluster inside the bucket;
+// NCEP GEFS (31, median 84.2F) sits 6F higher. A 6.1F cross-model median range.
+//
+// Represented as a discrete driver over the two cluster centres, weighted by member
+// count, so the bimodality survives into the simulation instead of being averaged
+// into a single centre that no model actually predicts. This is why Sobol on this
+// forecast is worth reading: it will attribute bucket-probability variance to
+// MODEL CHOICE versus within-model error, which is the decomposition the agent
+// argued mattered and which the ratio-chain version could not express at all.
+//
+// A single normal at the pooled centre gives 23.8%; this mixture gives ~20.5%. The
+// difference is the point — averaging away a 6F disagreement flatters the forecast.
+driver model_cluster discrete {
+    values: [78.15, 84.2]
+    weights: [0.699, 0.301]
+    unit: "degF"
+    applies_to: quantity
+    rationale: "Cluster centres weighted by member count: 72 of 103 members (ECMWF 51 + GEM 21) near 78.15F, 31 of 103 (NCEP GEFS) near 84.2F. If the GEFS cluster is correct the bucket probability collapses to near zero, which is exactly the risk a pooled mean hides."
+}
+
+// ── Measured forecast error at this lead, for this station ────────────────
+//
+// Centred on zero because the cluster centres above are already bias-corrected;
+// applying the -0.585F measured bias again would be the double-count that the
+// live version committed with the warming trend.
+//
+// `learnable` because this IS the recurring correction BayesOps can learn: each
+// resolved day adds one observation of "how far was the lead-1 forecast from the
+// outcome at KORD". The triangular-versus-normal choice and the width both belong
+// to the posterior once there is data; the value below is the cold-start prior from
+// a 121-day backtest.
+driver predictive_error_f continuous {
+    distribution: normal(0.0, 2.796)
+    unit: "degF"
+    applies_to: quantity
+    learnable: true
+    rationale: "Bias-corrected residual sd of 2.796F at lead 1, measured over a 121-day KORD backtest by weather_dispersion_fit. This is forecast-error-versus-outcome, not within-ensemble spread: it is the sd a CALIBRATED probability needs, because a raw member frequency is under-dispersive and overstates a narrow bucket."
+}
+
+// ── The bucket, as an integral rather than a scaled base rate ─────────────
+//
+// `[78, 79]` in the market's integer labelling means the half-open real interval
+// [77.5, 79.5) — bucket labels are integer SETS, not thresholds, and reading them
+// as thresholds is a 6x error.
+//
+// Both driver references resolve to the SAME draw within an iteration: the executor
+// samples each driver once per iteration into the evaluation context. Referencing
+// `model_cluster` twice is one temperature compared against two bounds, not two
+// independent temperatures.
+//
+// The conjunction is `and`, not `&&`. FPL's lexer takes the word; `&&` is an
+// unexpected character and fails at tokenisation, which is a clear failure but an
+// easy half-hour to lose.
+model: (model_cluster + predictive_error_f) >= 77.5
+       and (model_cluster + predictive_error_f) < 79.5
+
+simulate 10000 iterations
