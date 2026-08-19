@@ -77,6 +77,31 @@ pub struct DriverStmt {
     pub values: Option<Vec<f64>>,           // For discrete drivers
     pub weights: Option<Vec<f64>>,          // For discrete drivers (must sum to 1)
     pub unit: Option<String>,
+    /// For a RATIO-valued driver: what the ratio multiplies.
+    ///
+    /// `unit: "multiplier"` says a driver is a ratio and never says a ratio of
+    /// WHAT, and two agents filling the same slot read it two different ways.
+    /// Measured on one live Chicago weather forecast, quoting the agents' own
+    /// rationales:
+    ///
+    /// | driver | value | what it says it multiplies |
+    /// | --- | --- | --- |
+    /// | `seasonal_climatology` | 0.92 | "the climatological FREQUENCY of the bucket" |
+    /// | `climate_trend` | 0.87 | "the bucket PROBABILITY, 13.1% to 11.4%" |
+    /// | `enso_phase` | 1.00 | "the TEMPERATURE MEAN driver, not the bucket" |
+    /// | `synoptic_pattern` | 1.00 | "the orchestra's broad TEMPERATURE prior" |
+    ///
+    /// `model: 0.067 * seasonal_climatology * enso_phase * synoptic_pattern * ...`
+    /// multiplies all five into a probability as though commensurable. Two of them
+    /// are not probabilities. The declared range is incoherent in both readings
+    /// too: as a probability ratio `synoptic_pattern` needed 2.67x against a
+    /// ceiling of 1.75; as a temperature ratio, 0.55 x 79F is 43F.
+    ///
+    /// `None` means undeclared, which is a warning rather than an error — the
+    /// corpus predates this field and a missing declaration is honest ignorance.
+    /// Defaulting it to `Probability` would silently reinstate exactly the guess
+    /// that caused the defect.
+    pub applies_to: Option<AppliesTo>,
     pub rationale: Option<String>,
     pub constraints: Vec<Constraint>,
     pub evidence_refs: Vec<String>,
@@ -163,6 +188,25 @@ pub enum Distribution {
 pub struct Constraint {
     pub condition: Expression,
     pub message: Option<String>,
+}
+
+/// The space a ratio-valued driver acts on. See [`DriverStmt::applies_to`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppliesTo {
+    /// Multiplies a probability. Composes with a base rate.
+    Probability,
+    /// Multiplies a physical quantity — a temperature, a goal count, a revenue.
+    /// Cannot be multiplied into a probability without a link function.
+    Quantity,
+}
+
+impl AppliesTo {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Probability => "probability",
+            Self::Quantity => "quantity",
+        }
+    }
 }
 
 /// Evidence statement: defines supporting evidence

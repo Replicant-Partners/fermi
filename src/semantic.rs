@@ -123,6 +123,7 @@ impl SemanticAnalyzer {
 
         // Phase 4: Check validation rules
         self.check_validation_rules(program);
+        self.check_driver_spaces(program);
 
         SemanticAnalysis {
             symbol_table: self.symbol_table,
@@ -714,6 +715,129 @@ impl SemanticAnalyzer {
     }
 
     /// Check validation rules
+    /// Every ratio-valued driver in one multiplication chain must act on the same
+    /// space.
+    ///
+    /// ## The defect
+    ///
+    /// A live Chicago weather forecast read
+    ///
+    /// ```text
+    /// model: 0.067 * seasonal_climatology * enso_phase * synoptic_pattern
+    ///        * urban_heat_island * climate_trend
+    /// ```
+    ///
+    /// and, quoting the agents' own rationales, `seasonal_climatology` and
+    /// `climate_trend` multiply a bucket PROBABILITY while `enso_phase` and
+    /// `synoptic_pattern` multiply a TEMPERATURE. All five were multiplied together
+    /// into a probability. The forecast came out at 5.9% — its own base rate — while
+    /// the agent that consulted the ensemble had concluded 35%, and the console
+    /// reported the 40-point gap to the market as a possible edge.
+    ///
+    /// ## Why a same-chain rule rather than a target-type rule
+    ///
+    /// Checking "the model is probability-valued, so every factor must be a
+    /// probability ratio" requires inferring the model's target type, and it is
+    /// wrong for the correct form of a bucket question:
+    ///
+    /// ```text
+    /// model: high_temp_f >= 77.5 && high_temp_f < 79.5
+    /// ```
+    ///
+    /// That model IS probability-valued — the mean of an indicator over iterations —
+    /// and its driver is legitimately a temperature. A target-type rule would reject
+    /// the shape we want people to move TO.
+    ///
+    /// Mixing spaces inside one product, by contrast, is incoherent whatever the
+    /// product feeds, and it is decidable locally without inferring anything. It
+    /// catches Chicago exactly and cannot fire on an indicator model, because there
+    /// the drivers are not multiplied by each other.
+    ///
+    /// ## Severity
+    ///
+    /// A declared mix is an ERROR. An undeclared driver is a WARNING, because the
+    /// stored corpus predates the field and silence is honest ignorance; treating
+    /// absence as `Probability` would reinstate the guess that caused this.
+    fn check_driver_spaces(&mut self, program: &Program) {
+        use std::collections::BTreeMap;
+
+        let spaces: BTreeMap<&str, Option<crate::ast::AppliesTo>> = program
+            .statements
+            .iter()
+            .filter_map(|s| match s {
+                Statement::Driver(d) => Some((d.name.as_str(), d.applies_to)),
+                _ => None,
+            })
+            .collect();
+
+        let Some(model) = program.statements.iter().find_map(|s| match s {
+            Statement::Model(m) => Some(m),
+            _ => None,
+        }) else {
+            return;
+        };
+
+        // Every maximal `a * b * c` chain in the expression, as driver names.
+        let mut chains: Vec<Vec<String>> = Vec::new();
+        collect_product_chains(&model.expression, &mut chains);
+
+        let mut undeclared: Vec<String> = Vec::new();
+
+        for chain in &chains {
+            let mut seen: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
+            for name in chain {
+                match spaces.get(name.as_str()) {
+                    Some(Some(space)) => seen.entry(space.as_str()).or_default().push(name.clone()),
+                    // A driver with no declaration, in a chain. Collected once
+                    // below rather than per chain, so a driver used twice is
+                    // reported once.
+                    Some(None) => {
+                        if !undeclared.contains(name) {
+                            undeclared.push(name.clone());
+                        }
+                    }
+                    // Not a driver — a param, a literal, a function result.
+                    None => {}
+                }
+            }
+            if seen.len() > 1 {
+                let detail = seen
+                    .iter()
+                    .map(|(space, names)| format!("{space}: {}", names.join(", ")))
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                self.errors.push(SemanticError::ValidationError {
+                    rule: "driver_space_consistency".to_string(),
+                    message: format!(
+                        "one product multiplies ratios that act on different things \
+                         ({detail}). A temperature ratio and a probability ratio are \
+                         not commensurable, so their product is not a quantity. \
+                         Compose the quantity drivers into the quantity, then take an \
+                         indicator over it."
+                    ),
+                });
+            }
+        }
+
+        // ONE warning per program, not one per driver.
+        //
+        // The per-driver version was measured against the stored corpus first: 78
+        // of 78 programs warned, 48 of them about `dynamic_performance` alone and
+        // 21 about `conditions`. Six lines of identical advice per forecast is how
+        // a diagnostics panel becomes wallpaper, and the panel had existed for one
+        // commit at that point. Naming the drivers once, in a single line, says the
+        // same thing and can be read.
+        if !undeclared.is_empty() {
+            let n = undeclared.len();
+            self.warnings.push(format!(
+                "{n} multiplied driver(s) declare no `applies_to` \
+                 (probability or quantity), so nothing can check that this product \
+                 is dimensionally coherent: {}",
+                undeclared.join(", ")
+            ));
+        }
+    }
+
     fn check_validation_rules(&mut self, program: &Program) {
         // Rule: All drivers should be used in model
         if !self.symbol_table.all_drivers_used() {
@@ -813,6 +937,60 @@ impl SemanticAnalyzer {
 impl Default for SemanticAnalyzer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Collect every maximal multiplication chain in an expression, as identifier names.
+///
+/// `0.067 * a * b` yields one chain `[a, b]`; the numeric literal is not a driver
+/// and is skipped. Division is deliberately NOT treated as part of a chain: `a / b`
+/// is a different dimensional relationship and lumping it in would report a false
+/// mix for a legitimate ratio-of-ratios.
+fn collect_product_chains(expr: &Expression, out: &mut Vec<Vec<String>>) {
+    match expr {
+        Expression::Multiply(_, _) => {
+            let mut names = Vec::new();
+            flatten_product(expr, &mut names, out);
+            if names.len() > 1 {
+                out.push(names);
+            }
+        }
+        // Recurse through everything else so a product nested inside a comparison,
+        // a sum or a call is still examined.
+        Expression::Add(l, r)
+        | Expression::Subtract(l, r)
+        | Expression::Divide(l, r)
+        | Expression::Modulo(l, r)
+        | Expression::Power(l, r)
+        | Expression::Greater(l, r)
+        | Expression::Less(l, r)
+        | Expression::GreaterEqual(l, r)
+        | Expression::LessEqual(l, r)
+        | Expression::Equal(l, r)
+        | Expression::NotEqual(l, r)
+        | Expression::And(l, r)
+        | Expression::Or(l, r) => {
+            collect_product_chains(l, out);
+            collect_product_chains(r, out);
+        }
+        _ => {}
+    }
+}
+
+/// Flatten a left-nested `Multiply` tree into the identifier names it multiplies,
+/// recursing into non-identifier operands so nested products are not lost.
+fn flatten_product(expr: &Expression, names: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
+    match expr {
+        Expression::Multiply(l, r) => {
+            flatten_product(l, names, out);
+            flatten_product(r, names, out);
+        }
+        Expression::Identifier(n) => names.push(n.clone()),
+        // `(driver ^ 1.8)` is still that driver's contribution to the product: the
+        // World Cup models raise every factor to a weight, and ignoring the base
+        // would make this rule blind to exactly the family that uses exponents.
+        Expression::Power(base, _) => flatten_product(base, names, out),
+        other => collect_product_chains(other, out),
     }
 }
 
@@ -1110,5 +1288,230 @@ simulate 10000 iterations
 
         let analysis = analyze_source(source);
         assert!(analysis.is_valid(), "Errors: {:?}", analysis.errors);
+    }
+
+    /// The Chicago shape, with the spaces its agents actually described.
+    ///
+    /// A rule that cannot fire is worse than no rule, so this is the falsifiability
+    /// probe: two probability ratios and two quantity ratios in one product, which
+    /// is what the live forecast contained, and it must be an ERROR.
+    #[test]
+    fn a_product_mixing_probability_and_quantity_ratios_is_an_error() {
+        let src = r#"
+question "Will the high be 78-79F?" {
+    base_rate {
+        reference_class: "August days"
+        historical_frequency: 6.7%
+        sample_size: 930
+        source: "climatology"
+        generated_by: macro_forecaster
+    }
+}
+
+driver climate_trend continuous {
+    distribution: triangular(0.8, 0.87, 0.95)
+    unit: "multiplier"
+    applies_to: probability
+}
+
+driver synoptic_pattern continuous {
+    distribution: triangular(0.55, 1.0, 1.75)
+    unit: "multiplier"
+    applies_to: quantity
+}
+
+model: 0.067 * climate_trend * synoptic_pattern
+
+simulate 1000 iterations
+"#;
+        let analysis = analyze_source(src);
+        let msgs: Vec<String> = analysis.errors.iter().map(|e| e.to_string()).collect();
+        assert!(
+            msgs.iter().any(|m| m.contains("different things")),
+            "the mixed-space product must be an error; got {msgs:?}"
+        );
+        // Both offenders are named, because "something is wrong somewhere" is not
+        // actionable in a five-driver model.
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("climate_trend") && m.contains("synoptic_pattern")),
+            "both sides of the mix must be named; got {msgs:?}"
+        );
+    }
+
+    /// One space throughout is fine, which is what stops this rule being a blanket
+    /// objection to multiplication.
+    #[test]
+    fn a_product_of_one_space_is_accepted() {
+        let src = r#"
+question "Will the high be 78-79F?" {
+    base_rate {
+        reference_class: "August days"
+        historical_frequency: 6.7%
+        sample_size: 930
+        source: "climatology"
+        generated_by: macro_forecaster
+    }
+}
+
+driver climate_trend continuous {
+    distribution: triangular(0.8, 0.87, 0.95)
+    unit: "multiplier"
+    applies_to: probability
+}
+
+driver seasonal_climatology continuous {
+    distribution: triangular(0.77, 0.92, 1.07)
+    unit: "multiplier"
+    applies_to: probability
+}
+
+model: 0.067 * climate_trend * seasonal_climatology
+
+simulate 1000 iterations
+"#;
+        let analysis = analyze_source(src);
+        assert!(
+            analysis.is_valid(),
+            "a single-space product must pass: {:?}",
+            analysis.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+        );
+    }
+
+    /// The shape we want people to move TO must not be rejected.
+    ///
+    /// For a bucket question the correct model is an indicator over a quantity —
+    /// `high_temp_f >= 77.5 && high_temp_f < 79.5` — whose Monte Carlo mean IS the
+    /// bucket probability. Its driver is legitimately a temperature. A rule keyed on
+    /// "the model is probability-valued so every factor must be a probability ratio"
+    /// would reject exactly this, which is why the rule is same-chain instead.
+    #[test]
+    fn an_indicator_over_a_quantity_driver_is_not_flagged() {
+        let src = r#"
+question "Will the high be 78-79F?" {
+    base_rate {
+        reference_class: "August days"
+        historical_frequency: 6.7%
+        sample_size: 930
+        source: "climatology"
+        generated_by: macro_forecaster
+    }
+}
+
+driver high_temp_f continuous {
+    distribution: normal(79.3, 3.2)
+    unit: "degF"
+    applies_to: quantity
+}
+
+model: high_temp_f >= 77.5
+
+simulate 1000 iterations
+"#;
+        let analysis = analyze_source(src);
+        assert!(
+            analysis.is_valid(),
+            "an indicator over a quantity must pass: {:?}",
+            analysis.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+        );
+        assert!(
+            !analysis
+                .warnings
+                .iter()
+                .any(|w| w.contains("applies_to")),
+            "a declared driver must not warn about being undeclared: {:?}",
+            analysis.warnings
+        );
+    }
+
+    /// Exponents do not hide a driver from the rule.
+    ///
+    /// The World Cup family writes `(dynamic_performance ^ 1.8)`, so a walker that
+    /// only recognised bare identifiers would be blind to the 48-forecast family
+    /// that uses weights.
+    #[test]
+    fn a_weighted_factor_is_still_part_of_the_product() {
+        let src = r#"
+question "Will they win?" {
+    base_rate {
+        reference_class: "48-team field"
+        historical_frequency: 2.08%
+        sample_size: 48
+        source: "field size"
+        generated_by: macro_forecaster
+    }
+}
+
+driver squad_quality continuous {
+    distribution: triangular(0.9, 1.1, 1.3)
+    unit: "multiplier"
+    applies_to: probability
+}
+
+driver expected_goals continuous {
+    distribution: triangular(1.0, 1.5, 2.0)
+    unit: "goals"
+    applies_to: quantity
+}
+
+model: 0.0208 * (squad_quality ^ 1.5) * (expected_goals ^ 0.5)
+
+simulate 1000 iterations
+"#;
+        let analysis = analyze_source(src);
+        let msgs: Vec<String> = analysis.errors.iter().map(|e| e.to_string()).collect();
+        assert!(
+            msgs.iter().any(|m| m.contains("different things")),
+            "a mix under exponents must still be caught; got {msgs:?}"
+        );
+    }
+
+    /// Undeclared drivers produce ONE warning naming them, not one warning each.
+    ///
+    /// Measured before this was aggregated: 78 of 78 stored programs warned, 48 of
+    /// them about a single driver name. A panel that prints six lines of identical
+    /// advice per forecast stops being read.
+    #[test]
+    fn undeclared_drivers_are_reported_once_together() {
+        let src = r#"
+question "Will they win?" {
+    base_rate {
+        reference_class: "field"
+        historical_frequency: 2.08%
+        sample_size: 48
+        source: "field size"
+        generated_by: macro_forecaster
+    }
+}
+
+driver first_factor continuous {
+    distribution: triangular(0.9, 1.0, 1.1)
+    unit: "multiplier"
+}
+
+driver second_factor continuous {
+    distribution: triangular(0.9, 1.0, 1.1)
+    unit: "multiplier"
+}
+
+model: 0.0208 * first_factor * second_factor
+
+simulate 1000 iterations
+"#;
+        let analysis = analyze_source(src);
+        let about: Vec<&String> = analysis
+            .warnings
+            .iter()
+            .filter(|w| w.contains("applies_to"))
+            .collect();
+        assert_eq!(
+            about.len(),
+            1,
+            "expected exactly one aggregated warning, got {about:?}"
+        );
+        assert!(about[0].contains("first_factor") && about[0].contains("second_factor"));
+        // Undeclared is a warning, never an error: the stored corpus predates the
+        // field and absence is honest ignorance rather than a mistake.
+        assert!(analysis.is_valid(), "{:?}", analysis.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>());
     }
 }

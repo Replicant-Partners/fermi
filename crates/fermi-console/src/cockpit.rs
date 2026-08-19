@@ -2845,6 +2845,7 @@ impl CockpitState {
                             values: None,
                             weights: None,
                             unit: None,
+                            applies_to: None,
                             rationale: Some(rationale.to_string()),
                             constraints: vec![],
                             evidence_refs: vec![],
@@ -2876,6 +2877,7 @@ impl CockpitState {
                             } else {
                                 Some(unit.to_string())
                             },
+                            applies_to: None,
                             rationale: Some(rationale.to_string()),
                             constraints: vec![],
                             evidence_refs: vec![],
@@ -27494,6 +27496,7 @@ fn make_continuous_driver(
         } else {
             Some(unit.to_string())
         },
+        applies_to: None,
         rationale: Some(rationale.to_string()),
         constraints: vec![],
         evidence_refs: vec![],
@@ -27520,6 +27523,7 @@ fn make_binary_driver(
         values: None,
         weights: None,
         unit: None,
+        applies_to: None,
         rationale: Some(rationale.to_string()),
         constraints: vec![],
         evidence_refs: vec![],

@@ -363,6 +363,7 @@ impl Parser {
         let mut values = None;
         let mut weights = None;
         let mut unit = None;
+        let mut applies_to: Option<crate::ast::AppliesTo> = None;
         let mut rationale = None;
         let constraints = Vec::new();
         let mut evidence_refs = Vec::new();
@@ -406,6 +407,26 @@ impl Parser {
                 "evidence_refs" => {
                     evidence_refs = self.parse_string_array()?;
                 }
+                "applies_to" => {
+                    // What a ratio-valued driver multiplies: `probability` or
+                    // `quantity`. A bare word rather than a string, matching
+                    // `generated_by` and the driver-type keywords, so a typo is a
+                    // parse error rather than an unrecognised string that silently
+                    // means nothing.
+                    let word = self.consume_identifier_or_keyword()?;
+                    applies_to = Some(match word.as_str() {
+                        "probability" => crate::ast::AppliesTo::Probability,
+                        "quantity" => crate::ast::AppliesTo::Quantity,
+                        other => {
+                            return Err(ParseError::UnexpectedToken {
+                                expected: "applies_to value (probability or quantity)".to_string(),
+                                found: TokenType::Identifier(other.to_string()),
+                                line: self.peek().line,
+                                column: self.peek().column,
+                            })
+                        }
+                    });
+                }
                 "learnable" => {
                     // Accept `learnable: true` / `learnable: false`.
                     // This opts the driver into BayesOps-managed distribution
@@ -439,6 +460,7 @@ impl Parser {
             values,
             weights,
             unit,
+            applies_to,
             rationale,
             constraints,
             evidence_refs,
