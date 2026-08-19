@@ -1,0 +1,8 @@
+{
+  "name": "hud-field-scout-shell",
+  "version": "0.1.0",
+  "description": "AIUI glasses shell for the ABW hud_field_scout agent. Captures the question, renders the card, decides nothing.",
+  "main": "app.js",
+  "private": true,
+  "dependencies": {}
+}

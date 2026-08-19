@@ -1,0 +1,9 @@
+{
+  "pages": [
+    "pages/card/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "Field Scout",
+    "backgroundColor": "#000000"
+  }
+}
