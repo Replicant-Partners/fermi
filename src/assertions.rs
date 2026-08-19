@@ -156,6 +156,24 @@ pub const MULTIPLIER_MIN: f64 = 0.1;
 pub const MULTIPLIER_MAX: f64 = 3.0;
 
 impl Spread {
+    /// Does the stated interval cover `value`?
+    ///
+    /// The test for "has the model landed somewhere this agent would recognise".
+    /// Lives here rather than in the console so there is one reader of the rule and
+    /// it can be tested: the same comparison is wanted by the analyst's panel, by a
+    /// cross-check over stored forecasts, and eventually by the composer.
+    ///
+    /// The interval is the agent's OWN, which makes the tolerance self-calibrating.
+    /// An agent that is candidly uncertain earns a wide one; a confident agent earns
+    /// a narrow one. A flat "disagree above 10pp" would nag where 10pp is noise and
+    /// stay silent where 3pp is a scandal.
+    ///
+    /// Inclusive at both ends: a model exactly on p5 is the weakest reading the
+    /// agent explicitly allowed for, so it is agreement.
+    pub fn contains(&self, value: f64) -> bool {
+        value >= self.p5 && value <= self.p95
+    }
+
     /// Is this a coherent spread, and in range for its kind?
     ///
     /// Ordering is checked because a reversed spread is not a wide estimate,
@@ -404,6 +422,104 @@ pub fn extract_from_prose(text: &str) -> (Vec<Assertion>, Vec<String>) {
     (out, rejected)
 }
 
+/// Wire format for a stated PROBABILITY, as opposed to a ratio.
+pub const PROBABILITY_PATTERN: &str = "probability_v1";
+
+/// The `[PROBABILITY]` line.
+///
+/// ## Why a second channel was needed at all
+///
+/// `[MULTIPLIER]` carries a RATIO, and a ratio cannot carry a LEVEL. That is not a
+/// stylistic complaint; it destroyed a real answer. On a live Chicago weather
+/// market `weather_oracle` computed a bucket probability of 35% from a 103-member
+/// ensemble. To cross this boundary it had to become `35% / 11.1% = 3.15x`, which
+/// exceeded the driver's declared `[0.55, 1.75]`, so the agent emitted `1.00` — and
+/// `1.00` is not "no opinion", it asserts that climatology is right. The model
+/// stayed at its base rate of 6.7% and the panel reported a 40-point edge.
+///
+/// The level was destroyed AT THE INTERFACE. Nothing downstream could recover it,
+/// because nothing downstream ever had it — which is also why no check caught it:
+/// there was no surviving number to disagree with.
+///
+/// ## Why the platform declares the format
+///
+/// `AssertionKind::Probability` has existed since the assertion layer was written,
+/// with a `[0,1]` range rule and its own provenance ceiling, and **nothing has ever
+/// constructed one**. The kind was waiting for a producer. Declaring the wire
+/// format here rather than describing it in an agent card is the point: the
+/// platform states what a legal stated probability looks like, and a card conforms
+/// to it. The reverse — inferring the contract from whatever prose an agent
+/// happened to write — is how two drivers came to hold quantities from different
+/// spaces.
+///
+/// ## Shape
+///
+/// ```text
+/// [PROBABILITY] Calibrated p50: 0.35 (p5: 0.25, p95: 0.45) — one-sentence basis
+/// ```
+///
+/// Anchored on the literal label, and using `Calibrated` where the multiplier line
+/// uses `Suggested`, so the two cannot match each other's text. Both appear in the
+/// same response, so "cannot collide" has to be true by construction rather than by
+/// luck — `a_probability_line_is_not_read_as_a_multiplier` holds it.
+///
+/// Markdown emphasis is tolerated for the same reason the multiplier pattern
+/// tolerates it: v1 of that regex lost 12 of 22 production lines to `**1.15**`,
+/// because the surrounding response is markdown and this is the sentence a model
+/// most wants to stress.
+static PROBABILITY_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(
+        r"(?i)\[PROBABILITY\][^\n]*?p50:\s*\**\s*([0-9]*\.?[0-9]+)\s*\**\s*\(\s*p5:\s*\**\s*([0-9]*\.?[0-9]+)\s*\**\s*,\s*p95:\s*\**\s*([0-9]*\.?[0-9]+)\s*\**\s*\)",
+    )
+    .expect("PROBABILITY_RE")
+});
+
+/// Every probability an agent stated in prose, as `AssertionKind::Probability`.
+///
+/// Deliberately a SEPARATE function from [`extract_from_prose`] rather than more
+/// results from it. `agent_params_hook::apply_agent_multipliers` takes
+/// `assertions.first()` and binds it to a driver as a multiplier; folding
+/// probabilities into the same vector would let a `0.35` probability be bound as a
+/// 0.35x multiplier, silently, on whichever line happened to appear first. Two
+/// kinds in one channel is what caused the original defect and it would be a poor
+/// way to fix it.
+///
+/// Out-of-range and unordered values are dropped with a reason, exactly as for
+/// multipliers: a probability outside `[0,1]` is broken rather than merely
+/// surprising, and repairing it would put a number into a forecast no agent stated.
+pub fn extract_probabilities_from_prose(text: &str) -> (Vec<Assertion>, Vec<String>) {
+    let mut out = Vec::new();
+    let mut rejected = Vec::new();
+
+    for caps in PROBABILITY_RE.captures_iter(text) {
+        let parse = |i: usize| caps.get(i).and_then(|m| m.as_str().parse::<f64>().ok());
+        let (Some(p50), Some(p5), Some(p95)) = (parse(1), parse(2), parse(3)) else {
+            continue;
+        };
+        let value = Spread { p5, p50, p95 };
+        if let Err(why) = value.validate(AssertionKind::Probability) {
+            rejected.push(format!(
+                "{why} (from {:?})",
+                caps.get(0).map(|m| m.as_str())
+            ));
+            continue;
+        }
+        out.push(Assertion {
+            assertion_id: Uuid::new_v4(),
+            kind: AssertionKind::Probability,
+            value,
+            basis: Vec::new(),
+            extraction: ExtractionPath::Prose {
+                pattern: PROBABILITY_PATTERN.to_string(),
+            },
+            target_hint: None,
+            raw: caps.get(0).map(|m| m.as_str().to_string()),
+        });
+    }
+
+    (out, rejected)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -549,6 +665,171 @@ mod tests {
         assert!(spread(0.6, 0.85, 1.15)
             .validate(AssertionKind::Multiplier)
             .is_ok());
+    }
+
+    /// The two channels must not read each other's lines.
+    ///
+    /// Both appear in the same response, so this has to be true by construction
+    /// rather than by luck. If a probability of `0.35` were read as a multiplier it
+    /// would be bound to a driver as a 0.35x downward adjustment — a wrong number
+    /// arriving silently, which is worse than the missing number this channel was
+    /// added to fix.
+    #[test]
+    fn a_probability_line_is_not_read_as_a_multiplier() {
+        let both = "[MULTIPLIER] Suggested p50: 1.00 (p5: 0.70, p95: 1.40) — no directional view\n\
+                    [PROBABILITY] Calibrated p50: 0.35 (p5: 0.25, p95: 0.45) — ensemble bucket";
+
+        let (mults, _) = extract_from_prose(both);
+        assert_eq!(mults.len(), 1, "got {mults:?}");
+        assert_eq!(mults[0].kind, AssertionKind::Multiplier);
+        assert_eq!(mults[0].value.p50, 1.00);
+
+        let (probs, _) = extract_probabilities_from_prose(both);
+        assert_eq!(probs.len(), 1, "got {probs:?}");
+        assert_eq!(probs[0].kind, AssertionKind::Probability);
+        assert_eq!(probs[0].value.p50, 0.35);
+    }
+
+    /// The Chicago numbers, which is why this channel exists.
+    ///
+    /// `0.35` is a legal probability and an ILLEGAL multiplier under the platform
+    /// floor of 0.1 — no, it is legal as a multiplier too, which is precisely the
+    /// trap: routed through the ratio channel it would be accepted and mean
+    /// something entirely different. The kinds have to be distinguished at
+    /// extraction, not by range.
+    #[test]
+    fn the_level_that_the_ratio_channel_destroyed_survives_this_one() {
+        let line = "[PROBABILITY] Calibrated p50: 0.35 (p5: 0.25, p95: 0.45) — \
+                    103-member pooled ensemble, bias-corrected centre 79.3F";
+        let (probs, rejected) = extract_probabilities_from_prose(line);
+        assert!(rejected.is_empty(), "{rejected:?}");
+        assert_eq!(probs.len(), 1);
+        assert_eq!(probs[0].value.p50, 0.35);
+        // Floors at `unavailable_no_tool_source`, NOT at `model_inference`.
+        //
+        // `PROV_INFERRED` is the CEILING this kind can reach; the floor is set by
+        // what it reasoned from, and a prose line cites nothing structurally. So
+        // recovering the level does not launder it into a grounded value — it is a
+        // stated judgement, recorded as one, exactly as a prose multiplier is.
+        // Capturing the number and inflating its standing would be a different bug
+        // wearing this fix's clothes.
+        assert_eq!(probs[0].entitled_provenance(), PROV_UNAVAILABLE);
+    }
+
+    /// The Chicago disagreement, as the panel now computes it.
+    ///
+    /// Model 5.91% against an agent stating 35% with a 25–45% interval. The point of
+    /// the fixture is that the gap is not marginal — the model is nowhere near the
+    /// weakest reading the agent allowed for — and a rule that needed tuning to
+    /// catch it would be the wrong rule.
+    #[test]
+    fn a_model_outside_the_agents_own_interval_is_a_disagreement() {
+        let stated = Spread {
+            p5: 0.25,
+            p50: 0.35,
+            p95: 0.45,
+        };
+        assert!(!stated.contains(0.0591), "Chicago must be flagged");
+
+        // Inside, and on both boundaries, is agreement.
+        assert!(stated.contains(0.35));
+        assert!(stated.contains(0.25));
+        assert!(stated.contains(0.45));
+
+        // A candidly uncertain agent earns a wide tolerance, and the same model
+        // value is then NOT a disagreement. This is the property that keeps the
+        // rule from nagging — and it is why the interval is the agent's own rather
+        // than a constant.
+        let humble = Spread {
+            p5: 0.02,
+            p50: 0.20,
+            p95: 0.60,
+        };
+        assert!(humble.contains(0.0591));
+    }
+
+    /// Markdown emphasis, because that is what cost the multiplier pattern 12 of 22
+    /// production lines and the same model writes both.
+    #[test]
+    fn emphasis_does_not_hide_a_stated_probability() {
+        let (probs, _) = extract_probabilities_from_prose(
+            "[PROBABILITY] Calibrated p50: **0.35** (p5: **0.25**, p95: 0.45)",
+        );
+        assert_eq!(probs.len(), 1, "got {probs:?}");
+        assert_eq!(probs[0].value.p50, 0.35);
+    }
+
+    /// The format the CARD declares is the format the EXTRACTOR reads.
+    ///
+    /// This is the port contract between a prompt and a parser, and it is the exact
+    /// place this platform has already been burned: v1 of `MULTIPLIER_RE` matched
+    /// the shape the card specified and not the shape the model emitted, losing 12
+    /// of 22 production lines. A card and a regex agreeing today is worth nothing
+    /// unless something fails when they stop.
+    ///
+    /// Takes the template out of the card ON DISK and fills it, rather than
+    /// restating the format here — restating it would create a third copy that can
+    /// drift from both.
+    #[test]
+    fn the_probability_line_the_card_declares_is_the_one_this_module_parses() {
+        let path = "agents/curated/weather_oracle/agent_card.json";
+        let raw = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            // Test runs from the workspace root; if the card is not there the
+            // packaging changed and that is a separate problem.
+            Err(e) => panic!("read {path}: {e}"),
+        };
+        let card: serde_json::Value = serde_json::from_str(&raw).expect("card is json");
+        let prompt = card["system_prompt"].as_str().expect("system_prompt");
+
+        let template = prompt
+            .lines()
+            .map(str::trim)
+            .find(|l| l.starts_with("[PROBABILITY]"))
+            .unwrap_or_else(|| panic!("the card no longer declares a [PROBABILITY] line at all"));
+
+        // Fill the placeholders in the order the card writes them.
+        let mut filled = template.to_string();
+        for v in ["0.35", "0.25", "0.45"] {
+            filled = filled.replacen("0.XX", v, 1);
+        }
+        assert!(
+            !filled.contains("0.XX"),
+            "template has more placeholders than expected: {template}"
+        );
+
+        let (probs, rejected) = extract_probabilities_from_prose(&filled);
+        assert!(
+            rejected.is_empty(),
+            "the card's own declared line was rejected: {rejected:?} from {filled}"
+        );
+        assert_eq!(
+            probs.len(),
+            1,
+            "the card declares a line this module cannot read: {filled}"
+        );
+        assert_eq!(probs[0].value.p50, 0.35);
+        assert_eq!(probs[0].value.p5, 0.25);
+        assert_eq!(probs[0].value.p95, 0.45);
+
+        // ...and the multiplier extractor must not claim it, which is the property
+        // that lets both lines live in one response.
+        let (mults, _) = extract_from_prose(&filled);
+        assert!(
+            mults.is_empty(),
+            "the card's probability line was also read as a multiplier: {mults:?}"
+        );
+    }
+
+    /// A probability outside `[0,1]` is dropped with a reason, not clamped.
+    #[test]
+    fn an_impossible_probability_is_dropped_and_says_why() {
+        let (probs, rejected) = extract_probabilities_from_prose(
+            "[PROBABILITY] Calibrated p50: 1.20 (p5: 0.90, p95: 1.40)",
+        );
+        assert!(probs.is_empty());
+        assert_eq!(rejected.len(), 1);
+        assert!(rejected[0].contains("probability outside"), "{rejected:?}");
     }
 
     #[test]

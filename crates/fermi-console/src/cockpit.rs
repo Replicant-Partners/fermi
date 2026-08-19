@@ -8378,6 +8378,56 @@ impl CockpitState {
                     bin_width,
                     learnable_drivers,
                 });
+
+                // ── Does the model agree with the agents that informed it? ────
+                //
+                // The check whose absence let a 40-point phantom reach a sizing
+                // decision. On a live Chicago weather market the model said 5.9%
+                // while `weather_oracle`'s own evidence said 35%, and BOTH NUMBERS
+                // WERE ON THIS SCREEN — one as the headline, the other inside a
+                // 500-word evidence summary. Nothing compared them, because they
+                // were in different units: a probability and a (clamped) ratio.
+                //
+                // Now an agent can state a level via `[PROBABILITY]`, so the
+                // comparison is possible at all.
+                //
+                // The threshold is the agent's OWN stated interval rather than a
+                // fixed number of points. An agent that is candidly uncertain earns
+                // a wide tolerance and a confident one earns a narrow tolerance,
+                // which is the behaviour you want and is self-calibrating. A flat
+                // "warn above 10pp" would nag on a question where 10pp is noise and
+                // stay silent on one where 3pp is a scandal.
+                {
+                    let model_p = results.mean;
+                    let mut disagreements: Vec<(bool, String)> = Vec::new();
+                    for ev in parsed.evidence_items() {
+                        let Some(summary) = ev.summary.as_deref() else {
+                            continue;
+                        };
+                        let (stated, _) =
+                            ::fermi::assertions::extract_probabilities_from_prose(summary);
+                        for a in stated {
+                            let (lo, hi) = (a.value.p5, a.value.p95);
+                            if !a.value.contains(model_p) {
+                                disagreements.push((
+                                    true,
+                                    format!(
+                                        "model {:.1}% is outside {}'s stated interval \
+                                         {:.1}–{:.1}% (its p50 {:.1}%). The drivers are \
+                                         not carrying what this agent concluded.",
+                                        model_p * 100.0,
+                                        ev.source,
+                                        lo * 100.0,
+                                        hi * 100.0,
+                                        a.value.p50 * 100.0,
+                                    ),
+                                ));
+                            }
+                        }
+                    }
+                    self.sim_diagnostics.extend(disagreements);
+                }
+
                 self.sim_running = false;
                 // A fresh sim result is a new persistable state — the
                 // computed mean becomes the new predicted_probability

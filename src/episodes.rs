@@ -159,10 +159,22 @@ pub fn agent_output_to_episode(
     // to make them fit would put a number into a forecast no agent asserted —
     // and the rejection is logged, because a silently discarded claim is what
     // this whole change exists to stop.
-    let (recovered, rejected) = match output.raw_response.as_deref() {
+    let (mut recovered, mut rejected) = match output.raw_response.as_deref() {
         Some(text) => crate::assertions::extract_from_prose(text),
         None => (Vec::new(), Vec::new()),
     };
+    // Stated probabilities travel beside stated ratios, from a separate extractor.
+    //
+    // Both land in the episode's `assertions` array because that array is a RECORD
+    // of what the agent quantified, and a level is as much a judgement as a ratio.
+    // They stay separate up to this point because `agent_params_hook` binds
+    // `first()` to a driver as a multiplier, and a probability arriving there would
+    // be bound as one.
+    if let Some(text) = output.raw_response.as_deref() {
+        let (probs, prob_rejected) = crate::assertions::extract_probabilities_from_prose(text);
+        recovered.extend(probs);
+        rejected.extend(prob_rejected);
+    }
     if !rejected.is_empty() {
         tracing::warn!(
             agent_id = %agent_db_id,
