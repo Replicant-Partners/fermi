@@ -1,0 +1,25 @@
+# `railway up` uploads the working directory as the build context.
+#
+# Same reason as .dockerignore, different consumer: that command packages the
+# local tree, and this tree carries a 209 GB `target/`. A CLI deploy without this
+# file does not fail with a useful message — it sits there compressing a quarter
+# of a terabyte and looks like a queued, stagnant deployment.
+#
+# Kept as a separate file rather than a symlink because the two tools read
+# different formats in edge cases, and a broken symlink here would silently mean
+# "exclude nothing".
+#
+# Before adding a pattern, read the WHAT MUST NOT BE EXCLUDED section in
+# .dockerignore. `scripts/` in particular holds Rust [[bin]] sources that the
+# Dockerfile builds by name, not just shell scripts.
+
+target/
+**/target/
+.git/
+docs/
+*.pdf
+.github/
+.env
+.env.*
+avatars_cache/
+static/rabble/

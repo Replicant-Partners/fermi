@@ -1,0 +1,85 @@
+# Docker build context — what Railway (and any `docker build`) must upload.
+#
+# WHY THIS FILE EXISTS
+#
+# The Dockerfile begins `COPY . .`, and until now there was no .dockerignore, so
+# the build context was the whole working tree: **209 GB**, of which 209 GB is
+# `target/`. `.gitignore` does not apply to Docker, so a directory that git has
+# correctly ignored since the first commit was still being packaged and shipped
+# on every build.
+#
+#   before   209 GB
+#   after    ~80 MB
+#
+# For a git-based deploy the context is a fresh checkout and `target/` is absent,
+# so this file changes nothing there — it is insurance for every other path:
+# `railway up`, a local `docker build`, or any CI runner with a warm target dir.
+# In those cases the build does not fail with a useful error, it simply appears
+# to hang while compressing a quarter-terabyte.
+#
+# ─── WHAT MUST NOT BE EXCLUDED ───────────────────────────────────────────
+#
+# Read this before adding a pattern. The Dockerfile needs more than it looks:
+#
+#   scripts/     NOT just shell scripts. Three [[bin]] targets live here, two of
+#                which the Dockerfile builds by name:
+#                  backfill-embedding-provenance = scripts/backfill_embedding_provenance.rs
+#                  embedding-anchors             = scripts/embedding_anchors.rs
+#                Excluding scripts/ breaks the build with a missing-path error.
+#   migrations/  copied into the image; the api-server runs them at startup.
+#   rabble-web/  copied to /app/static/rabble. Tracked in git precisely because
+#                static/rabble is a build artifact and is gitignored.
+#   agents/ apps/ ontologies/ templates/ static/   all copied into the runtime image.
+#   crates/      fermi-console is stripped from the workspace by sed, not by
+#                absence — the path must still exist for Cargo.toml to parse
+#                before sed runs.
+#   Cargo.lock   a release build must not silently resolve different versions
+#                than the ones tested.
+
+# ─── The 209 GB ─────────────────────────────────────────────────────────
+target/
+**/target/
+
+# ─── Version control ────────────────────────────────────────────────────
+# 180 MB, and the build reads no git metadata. Note: if a future build wants to
+# stamp a commit into /api/health from git rather than an env var, this line is
+# what makes that impossible — pass it as a build arg instead.
+.git/
+.gitignore
+.gitattributes
+
+# ─── Documentation ──────────────────────────────────────────────────────
+# 43 MB, mostly PDFs. Nothing reads docs/ at runtime.
+docs/
+*.pdf
+*.md
+!README.md
+
+# ─── CI / editor / OS cruft ─────────────────────────────────────────────
+.github/
+.vscode/
+.idea/
+.zed/
+*.swp
+*~
+.DS_Store
+
+# ─── Local-only state ───────────────────────────────────────────────────
+# Secrets must reach the container as Railway variables, never baked into a
+# layer: anything copied in is readable by anyone who can pull the image.
+.env
+.env.*
+!.env.example
+
+# Created by the Dockerfile itself (`mkdir -p /app/avatars_cache`).
+avatars_cache/
+
+# Flutter build output. The Dockerfile copies rabble-web/ to this path inside the
+# image instead, so shipping a local copy is wasted bytes that would be
+# overwritten anyway.
+static/rabble/
+
+# Test and coverage artifacts
+tarpaulin-report.html
+cobertura.xml
+*.profraw

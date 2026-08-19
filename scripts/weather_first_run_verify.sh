@@ -71,9 +71,52 @@ say() { # status label detail
 }
 
 echo
-echo "─── weather first-run verification ──────────────────────────────"
+echo "─── weather first-run verification ──────────────────────────"
 echo "  agent   $AGENT"
 echo "  since   $SINCE"
+echo
+
+# ── PREFLIGHT: is the code under test actually running? ──────────────
+#
+# This exists because of twenty minutes wasted concluding the wrong thing.
+#
+# `fermi-console` is an HTTPS client for a Railway deployment, not a local
+# server: its default base_url is https://agent-bestiary.world, and the
+# `http://localhost:3000` in `api/client.rs` is inside a unit test. The card that
+# steers an agent lives in the shared Neon database, so a card edit takes effect
+# on the next deploy of ANYTHING — but a code change takes effect only on a
+# deploy of ITSELF.
+#
+# That asymmetry is a trap. A prompt fix appears to work instantly while the
+# check meant to confirm it reads SILENT, and SILENT is the status for a broken
+# write path. Same symptom, completely different remedy: one needs a code fix,
+# the other needs a deploy. Nothing distinguished them.
+#
+# `/api/health` already returns the running commit, so the comparison is one
+# request. UNRUNNABLE rather than FAIL: when the deployment predates the change,
+# the run is not evidence about it either way, and "reports healthy forever" is
+# precisely what an unrunnable check does.
+HEALTH_URL="${HEALTH_URL:-https://agent-bestiary.world/api/health}"
+if [[ "${SKIP_DEPLOY_CHECK:-0}" == "1" ]]; then
+  echo "  (deploy check skipped)"
+elif ! command -v curl >/dev/null 2>&1; then
+  say UNRUNNABLE "deploy freshness" "curl not available — cannot tell whether the running code contains what is being tested"
+else
+  LIVE_COMMIT=$(curl -fsS --max-time 10 "$HEALTH_URL" 2>/dev/null \
+                | grep -oE '"commit"[[:space:]]*:[[:space:]]*"[0-9a-f]+"' \
+                | grep -oE '[0-9a-f]{7,}')
+  LOCAL_COMMIT=$(git rev-parse HEAD 2>/dev/null)
+  if [[ -z "$LIVE_COMMIT" ]]; then
+    say UNRUNNABLE "deploy freshness" "$HEALTH_URL unreachable or reported no commit — cannot tell what code produced the episodes below"
+  elif [[ -z "$LOCAL_COMMIT" ]]; then
+    say UNRUNNABLE "deploy freshness" "not a git checkout — nothing to compare the deployed commit against"
+  elif [[ "$LOCAL_COMMIT" == "$LIVE_COMMIT"* ]]; then
+    say OK "deploy freshness" "live commit ${LIVE_COMMIT} matches HEAD — the episodes below were produced by this code"
+  else
+    say UNRUNNABLE "deploy freshness" "live commit ${LIVE_COMMIT}, HEAD ${LOCAL_COMMIT:0:12} — the deployment does NOT contain your change. Anything below that depends on new code will read SILENT for that reason alone, not because the agent misbehaved"
+    echo "                 → git --no-pager log --oneline ${LIVE_COMMIT}..HEAD   # what is not deployed"
+  fi
+fi
 echo
 
 # ── 0. Is there a run at all? ────────────────────────────────────────
