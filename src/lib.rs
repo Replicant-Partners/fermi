@@ -90,6 +90,19 @@ pub mod grounding_trust;
 // that disagrees is the one nearest the writer.
 pub mod provenance_oracle;
 
+// Verification corpus — the domain layer for community expert determination.
+//
+// Hodgson et al. 2023 measured phone mushroom-ID apps at 49% best case against
+// expert-confirmed specimens. That figure disqualifies an app that tells people
+// what is safe to eat, and it is the curriculum for one that teaches how
+// unreliable photographic identification is.
+//
+// An expert determination is also the second independent determiner that
+// `grounding_trust`'s cross-check exemption for `forage_identify.taxonomy` calls
+// for — recorded there as a capability decision rather than a missing query. It
+// was never a structural limit; it was an absence of people.
+pub mod verification;
+
 // Image attachments — what may travel with a request, and the rule that an
 // undeliverable frame is an error rather than a silent omission.
 //
