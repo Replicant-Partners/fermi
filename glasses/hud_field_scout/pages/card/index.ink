@@ -87,6 +87,15 @@ export default {
     const query = (options && options.query) || '';
     if (query) {
       this.ask(query);
+      return;
+    }
+    // Craft launches a page with no `query` when you press Run Agent without
+    // going through the simulated assistant first, and the first version of
+    // this file then sat in `idle` with no template branch for it — a blank
+    // card, indistinguishable from a broken runtime. In stub mode, answer a
+    // sample question immediately so pressing Run Agent shows the card.
+    if (STUB) {
+      this.ask('what is this?');
     }
   },
 
@@ -178,7 +187,14 @@ export default {
 
 <page>
   <view class="card">
-    <view ink:if="{{ state === 'asking' }}" class="pending">
+    <!-- An idle card must still say something. A blank surface reads as a
+         crash, and the wearer cannot tell one from the other. -->
+    <view ink:if="{{ state === 'idle' }}" class="pending">
+      <text class="heading">Field Scout</text>
+      <text class="body-sm">Ask what you are looking at.</text>
+    </view>
+
+    <view ink:elif="{{ state === 'asking' }}" class="pending">
       <text class="label">looking…</text>
     </view>
 

@@ -247,6 +247,23 @@ fn the_stub_goes_through_the_same_render_path() {
     );
 }
 
+/// Every state the page can be in must render something.
+///
+/// The first version had no `idle` branch, so launching the page without a query
+/// — which is what Craft does when you press Run Agent directly — produced a
+/// blank card. A blank surface reads as a crash, and neither a wearer nor a
+/// developer can tell one from the other.
+#[test]
+fn every_state_has_a_template_branch() {
+    let p = page();
+    for state in ["'idle'", "'asking'", "'failed'", "'ready'"] {
+        assert!(
+            p.contains(&format!("state === {state}")),
+            "no template branch for state {state} — that state renders a blank card"
+        );
+    }
+}
+
 // ─── the monochrome constraint ─────────────────────────────────────────
 
 /// Single green channel. A second hue is not merely off-brand: the panel cannot
