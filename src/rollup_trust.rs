@@ -167,7 +167,17 @@ pub const ROLLUP_CONTRACTS: &[RollupContract] = &[
 ///   * `src/schema_trust.rs` — declares presence, not truth.
 ///   * `src/rollup_trust.rs` — this contract names them by definition.
 ///   * `scripts/` — diagnostics and seed fixtures, not user-facing reads.
-pub const SCANNED_ROOTS: &[&str] = &["src/handlers", "src/api", "src/apps"];
+///
+/// `src/workflows` was added after the original three let a real bug
+/// through. `publish_pipeline::run_publish_checks` read
+/// `agent.total_executions` for its `has_executions` check, so the
+/// Observatory's ABW conformance panel told owners "Zero executions — test
+/// your agent before publishing" about agents with hundreds of episodes.
+/// The detector would have flagged that line on sight — it is a textbook
+/// qualified read — but the file was outside every scanned root. A tripwire
+/// is only as wide as its search path, so prefer adding a root here over
+/// assuming request-serving code only lives under `handlers`.
+pub const SCANNED_ROOTS: &[&str] = &["src/handlers", "src/api", "src/apps", "src/workflows"];
 
 /// Readers of a write-orphaned column that are allowed to remain, with the
 /// reason. Anything not on this list is a contract violation.

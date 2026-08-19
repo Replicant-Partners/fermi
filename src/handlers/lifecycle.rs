@@ -175,7 +175,13 @@ pub async fn publish_checks_handler(
     )
     .await?;
 
-    let checks = publish_pipeline::run_publish_checks(&db_agent);
+    // Run count measured from `episodes`. `agents.total_executions` is
+    // write-orphaned, so reading it made `has_executions` report "Zero
+    // executions" on the Observatory conformance panel for agents with
+    // hundreds of real runs. See src/rollup_trust.rs.
+    let measured =
+        crate::agent_economics::measured_exec_stats_one(&state.db, db_agent.agent_id).await;
+    let checks = publish_pipeline::run_publish_checks(&db_agent, measured.map(|m| m.executions));
     let can_publish = publish_pipeline::can_publish(&checks);
 
     Ok(Json(json!({
@@ -235,7 +241,10 @@ pub async fn publish_agent_handler(
     // Preflight: compute checks before we call publish_agent so the
     // response body carries the same shape whether the publish
     // succeeded, was force-published, or was blocked by checks.
-    let preflight_checks = publish_pipeline::run_publish_checks(&db_agent);
+    let preflight_measured =
+        crate::agent_economics::measured_exec_stats_one(&state.db, db_agent.agent_id).await;
+    let preflight_checks =
+        publish_pipeline::run_publish_checks(&db_agent, preflight_measured.map(|m| m.executions));
     let will_bypass_checks = q.force && !publish_pipeline::can_publish(&preflight_checks);
 
     // When admin publishes on behalf of a third-party owner, charge the

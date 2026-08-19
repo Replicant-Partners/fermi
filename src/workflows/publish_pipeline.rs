@@ -25,7 +25,16 @@ use sqlx::PgPool;
 ///
 /// Everything below the contract block is advisory — `Warning` severity,
 /// reported but never blocking.
-pub fn run_publish_checks(agent: &Agent) -> Vec<PublishCheck> {
+///
+/// `measured_executions` is the agent's lifetime run count taken from
+/// `agent_execution_rollup` (see [`crate::agent_economics`]), and `None`
+/// means *not measured* — never "zero". The distinction is the whole of
+/// v0.16.1: this function used to read `agent.total_executions`, a column
+/// nothing writes, so `has_executions` reported "Zero executions — test
+/// your agent before publishing" against agents with hundreds of real
+/// episodes. Passing the number in keeps the function pure and sync, which
+/// `observatory::fleet_agents_handler` relies on to run it fleet-wide.
+pub fn run_publish_checks(agent: &Agent, measured_executions: Option<i64>) -> Vec<PublishCheck> {
     let view = ContractView::from(agent);
     let mut checks = contract_checks(&view);
 
@@ -59,15 +68,31 @@ pub fn run_publish_checks(agent: &Agent) -> Vec<PublishCheck> {
         },
     });
 
-    let execs = agent.total_executions;
-    checks.push(PublishCheck {
-        name: "has_executions".into(),
-        passed: execs > 0,
-        severity: CheckSeverity::Warning,
-        message: if execs > 0 {
-            format!("{} executions recorded", execs)
-        } else {
-            "Zero executions — test your agent before publishing".into()
+    // Measured from `episodes`, never from `agents.total_executions` —
+    // that column is write-orphaned and permanently zero. `None` is
+    // reported as unmeasured rather than as zero, because claiming an
+    // agent has never run when we simply failed to look is the exact
+    // defect this check shipped for months.
+    checks.push(match measured_executions {
+        Some(n) if n > 0 => PublishCheck {
+            name: "has_executions".into(),
+            passed: true,
+            severity: CheckSeverity::Warning,
+            message: format!("{} executions recorded", n),
+        },
+        Some(_) => PublishCheck {
+            name: "has_executions".into(),
+            passed: false,
+            severity: CheckSeverity::Warning,
+            message: "Zero executions — test your agent before publishing".into(),
+        },
+        None => PublishCheck {
+            name: "has_executions".into(),
+            passed: false,
+            severity: CheckSeverity::Warning,
+            message: "Execution count not measured — could not read the execution \
+                      rollup for this agent"
+                .into(),
         },
     });
 
@@ -106,7 +131,8 @@ pub async fn publish_agent(
     let current = AgentLifecycleStatus::from_str(&agent.status)?;
     validate_transition(&current, &AgentLifecycleStatus::Published)?;
 
-    let checks = run_publish_checks(agent);
+    let measured = crate::agent_economics::measured_exec_stats_one(pool, agent.agent_id).await;
+    let checks = run_publish_checks(agent, measured.map(|m| m.executions));
     if !force && !can_publish(&checks) {
         return Err("Publish blocked by failing checks".into());
     }
@@ -264,7 +290,7 @@ mod tests {
         // check — name, description, prompt, tags, samples, ports, valence —
         // which is exactly the state genome_profiler was in while it served
         // 56 episodes of fabricated genome data.
-        let checks = run_publish_checks(&untyped_agent());
+        let checks = run_publish_checks(&untyped_agent(), Some(0));
         assert!(!can_publish(&checks));
         assert!(
             checks
@@ -276,7 +302,7 @@ mod tests {
 
     #[test]
     fn conforming_agent_can_publish() {
-        let checks = run_publish_checks(&agent());
+        let checks = run_publish_checks(&agent(), Some(0));
         assert!(
             can_publish(&checks),
             "blocked by: {:?}",
@@ -294,7 +320,7 @@ mod tests {
     #[test]
     fn warnings_do_not_block_publish() {
         let a = agent();
-        let checks = run_publish_checks(&a);
+        let checks = run_publish_checks(&a, Some(0));
 
         let warnings: Vec<_> = checks
             .iter()
@@ -327,7 +353,7 @@ mod tests {
         a.produces = vec![];
         a.valence = None;
 
-        let checks = run_publish_checks(&a);
+        let checks = run_publish_checks(&a, Some(0));
         assert!(!can_publish(&checks));
 
         let blocking: Vec<_> = checks
@@ -356,6 +382,47 @@ mod tests {
         let mut a = agent();
         a.executor_type = "mcp".into();
         a.system_prompt = Some(String::new());
-        assert!(can_publish(&run_publish_checks(&a)));
+        assert!(can_publish(&run_publish_checks(&a, Some(0))));
+    }
+
+    /// The `has_executions` regression, pinned in all three states.
+    ///
+    /// This check read `agent.total_executions` — a write-orphaned column —
+    /// so it reported "Zero executions" on the Observatory conformance panel
+    /// for `prey_locator`, which had 93 measured episodes. The number now
+    /// arrives from `agent_execution_rollup` via the caller.
+    #[test]
+    fn has_executions_reports_the_measured_count() {
+        let a = agent();
+
+        let measured = run_publish_checks(&a, Some(93));
+        let c = measured
+            .iter()
+            .find(|c| c.name == "has_executions")
+            .expect("has_executions must always be reported");
+        assert!(c.passed, "93 measured executions must satisfy the check");
+        assert!(
+            c.message.contains("93"),
+            "message should name the count, got: {}",
+            c.message
+        );
+
+        // A genuine zero still warns — that is the check doing its job.
+        let zero = run_publish_checks(&a, Some(0));
+        let c = zero.iter().find(|c| c.name == "has_executions").unwrap();
+        assert!(!c.passed);
+        assert!(c.message.contains("Zero executions"));
+
+        // Unmeasured must NOT be presented as zero. Reporting "never run"
+        // when the rollup lookup simply failed is the defect this whole
+        // check shipped with for months.
+        let unknown = run_publish_checks(&a, None);
+        let c = unknown.iter().find(|c| c.name == "has_executions").unwrap();
+        assert!(!c.passed);
+        assert!(
+            !c.message.contains("Zero"),
+            "an unmeasured count must not claim zero, got: {}",
+            c.message
+        );
     }
 }
