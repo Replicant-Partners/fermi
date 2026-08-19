@@ -13214,7 +13214,7 @@ fn render_interactive_histogram(
 
     let tooltip = div()
         .w(ui::s(chart_w))
-        .h(ui::s(30.0))
+        .h(ui::s(38.0))
         .px(ui::s(6.0))
         .py(ui::s(3.0))
         .rounded(ui::s(4.0))
@@ -13224,6 +13224,8 @@ fn render_interactive_histogram(
         .text_size(ui::TEXT_XS)
         .flex()
         .flex_col()
+        .justify_center()
+        .gap(ui::s(2.0))
         .overflow_hidden()
         .child(div().text_color(rgb(accent)).child(line_one))
         .child(div().text_color(rgb(theme::FG_DIM)).child(line_two));
@@ -13644,7 +13646,7 @@ fn render_interactive_index_chart(
 
     let readout = div()
         .w(px(chart_w))
-        .h(ui::s(30.0))
+        .h(ui::s(38.0))
         .px(ui::s(6.0))
         .py(ui::s(3.0))
         .rounded(ui::s(4.0))
@@ -13654,6 +13656,8 @@ fn render_interactive_index_chart(
         .text_size(ui::TEXT_XS)
         .flex()
         .flex_col()
+        .justify_center()
+        .gap(ui::s(2.0))
         .overflow_hidden()
         .child(div().text_color(rgb(accent)).child(line_one))
         .child(div().text_color(rgb(theme::FG_DIM)).child(line_two));

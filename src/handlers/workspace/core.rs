@@ -925,8 +925,14 @@ mod strategist_assignment_tests {
     #[test]
     fn both_workspace_creation_paths_assign_a_strategist() {
         let checks = [
-            ("fermi-auth/src/teams.rs", "assign_default_strategist(pool, team.id)"),
-            ("src/handlers/forecast_git.rs", "assign_default_strategist(pool, ws_id)"),
+            (
+                "fermi-auth/src/teams.rs",
+                "assign_default_strategist(pool, team.id)",
+            ),
+            (
+                "src/handlers/forecast_git.rs",
+                "assign_default_strategist(pool, ws_id)",
+            ),
         ];
         for (file, needle) in checks {
             let path = [
