@@ -8,7 +8,31 @@ Craft: <https://js.rokid.com/craft?region=global>
 
 ---
 
-## Step 0 — Check whether a model is selected
+## Step 0 — Import the right folder
+
+**This was the actual cause the first time, so it goes first.**
+
+Craft treats the folder you select as the project root and looks for `app.json`
+*there*. Selecting `glasses/` gives:
+
+```
+当前工程缺少 app.json，无法打包为 AIX
+"The current project is missing app.json, cannot package as AIX"
+```
+
+...and Run Agent stays greyed out, because nothing valid loaded.
+
+Import **`glasses/minimal_probe`** or **`glasses/hud_field_scout`** directly. After
+importing, `app.json` must be at the top of the tree with no folder above it. If
+you can see two project names, you are one level too high.
+
+Note the error names the missing file rather than the wrong root, so it reads as a
+broken project rather than a bad selection. It is neither — it is the parent
+directory.
+
+---
+
+## Step 1 — Check whether a model is selected
 
 **Most likely cause, and free to rule out.**
 
@@ -25,7 +49,7 @@ If Run Agent lights up, that was it, and nothing in the project was wrong.
 
 ---
 
-## Step 1 — Try the eye icon instead
+## Step 2 — Try the eye icon instead
 
 There is a **preview (eye) icon** to the left of Run Agent. Preview and Run are
 different affordances: preview renders the page, Run drives the full assistant
@@ -45,7 +69,7 @@ a hypothesis to test rather than a fact.
 
 ---
 
-## Step 2 — Import `minimal_probe` instead
+## Step 3 — Import `minimal_probe` instead
 
 **This is the step that actually produces information.**
 
@@ -56,13 +80,13 @@ Import it and press Run Agent.
 
 | Outcome | What it means | Where to look next |
 | --- | --- | --- |
-| Probe runs, shell does not | The project layout is fine. Something in the shell's page is rejected — most likely the `<script setup>` top-level `const` declarations, `AbortController`, or `async` methods on the page object. | Step 3 |
+| Probe runs, shell does not | The project layout is fine. Something in the shell's page is rejected — most likely the `<script setup>` top-level `const` declarations, `AbortController`, or `async` methods on the page object. | Step 4 |
 | Neither runs | The blocker is the project layout, the manifest, or the session — not my page. | Steps 0 and 1, then Rokid's forum |
 | Both run | Something was stale. Re-import the shell. | Nothing |
 
 ---
 
-## Step 3 — If the probe runs and the shell does not
+## Step 4 — If the probe runs and the shell does not
 
 Bisect the shell by deleting from the bottom of `<script setup>` upward. In
 likelihood order, the suspects are:
