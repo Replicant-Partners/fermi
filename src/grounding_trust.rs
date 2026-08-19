@@ -304,6 +304,14 @@ pub const CROSS_CHECK_EXEMPTIONS: &[(&str, &str, &str)] = &[
          prey_targets[].creature_id check.",
     ),
     (
+        "forage_scout",
+        "species_likely[].inat_observations_nearby",
+        "A live third-party aggregate the platform stores no copy of. Replaying \
+         the same bounded query and comparing counts would test iNaturalist's \
+         stability rather than this agent's honesty, and a snapshot would go \
+         stale faster than it could be verified.",
+    ),
+    (
         "hud_field_scout",
         "taxonomy",
         "There is nothing to compare against, and the reason is structural \
@@ -2005,6 +2013,172 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               authoritative warning lives; that is `safety`, above.",
         cross_check_sql: None,
     },
+    // ── harvest_advisor ────────────────────────────────────────────────────
+    // Tools: mycobank_lookup, gbif_species_search, execute_agent. Nomenclature
+    // and taxonomy. Its prompt asked for a `safety.edibility` enum and a
+    // `look_alikes` list carrying `fatal|toxic|inedible`, under a heading
+    // claiming "toxic look-alikes for every edible species" while listing four.
+    //
+    // The claim of completeness is the dangerous part. Four hand-written entries
+    // are useful; four entries under a promise of exhaustiveness invite the model
+    // to fill the rest from memory, and a generated lethal-lookalike list reads
+    // as a reference work.
+    //
+    // Everything this agent does DOWNSTREAM of a confirmed identification —
+    // maturity, timing, yield, processing, culinary use — is legitimate
+    // judgement and is kept. Only the safety verdict is removed.
+    FieldContract {
+        agent_id: "harvest_advisor",
+        path: "harvest_assessment",
+        grounding: Grounding::Inferred {
+            from: "the species, the reported condition of the find, and food-science reasoning",
+        },
+        why: "Maturity stage, harvest window and yield are judgements over a \
+              specimen someone else has already identified, and they are the \
+              product this agent exists to provide. No database holds \
+              \"harvest within two days\" for a particular patch; producing it \
+              is the work. Distinguished from the safety fields below by the \
+              consequence of being wrong: a mistimed harvest costs a meal.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "harvest_advisor",
+        path: "safety.edibility",
+        grounding: Grounding::Unsourced,
+        why: "No declared tool returns edibility. MycoBank returns nomenclature \
+              and GBIF returns taxonomy; neither knows whether a thing can be \
+              eaten. The enum shape (choice|edible|inedible|toxic) is what makes \
+              this worse than prose — it reads as a database column.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "harvest_advisor",
+        path: "safety.look_alikes",
+        grounding: Grounding::Unsourced,
+        why: "A generated lookalike list is the most dangerous output in the \
+              foraging fleet. It looks thorough, and naming three real \
+              confusables while omitting the lethal one reads as diligence \
+              rather than as a gap. The prompt's four curated entries are \
+              retained as explicitly partial prose; what is refused is the \
+              agent extending them.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "harvest_advisor",
+        path: "safety.preparation_notes",
+        grounding: Grounding::Unsourced,
+        why: "\"Must be cooked\" and \"do not eat raw\" are safety claims about a \
+              species, not culinary preferences, and nothing here supplies them. \
+              Gyromitra is the case that matters: deadly raw, and the difference \
+              between a note and its absence is the outcome.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "harvest_advisor",
+        path: "processing_pathways",
+        grounding: Grounding::Inferred {
+            from: "species characteristics and food-preservation practice",
+        },
+        why: "Drying, fermenting and pickling suitability is applied food \
+              science over a known species — a judgement, and a useful one. Kept \
+              because stripping it would leave the agent with nothing, and an \
+              agent that returns nothing gets replaced by one that returns \
+              everything.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "harvest_advisor",
+        path: "culinary_notes",
+        grounding: Grounding::Narrative,
+        why: "Prose about flavour and preparation. Scanned, because it is the \
+              channel a stripped edibility verdict reappears in — \"delicious \
+              sauteed\" asserts edibility without using the word.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "harvest_advisor",
+        path: "summary",
+        grounding: Grounding::Narrative,
+        why: "One paragraph, and the part a forager actually reads. Same leak \
+              channel as every other summary under this contract, and the one \
+              genome_profiler's fabrication moved into after the structured \
+              fields were cleared.",
+        cross_check_sql: None,
+    },
+    // ── forage_scout ───────────────────────────────────────────────────────
+    // Tools: inat_observations, openweather_forecast, mycobank_lookup,
+    // gbif_species_search. Its structured response carried an `edibility` enum
+    // per candidate species and a `cautions` array for "look-alikes or toxic
+    // species", neither of which any of those four tools supplies.
+    //
+    // Unlike harvest_advisor, this agent has one genuinely sourced field, and it
+    // is worth keeping distinct from the judgements around it.
+    FieldContract {
+        agent_id: "forage_scout",
+        path: "species_likely[].inat_observations_nearby",
+        grounding: Grounding::Sourced {
+            tool: "inat_observations",
+            response_field: "total_results for the taxon within the queried radius",
+        },
+        why: "The one retrieval in this response, and the reason the agent is \
+              worth invoking at all: how often a taxon has actually been \
+              recorded near here recently. It corroborates plausibility and \
+              identifies nothing, which the prose must not blur.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "forage_scout",
+        path: "species_likely[].edibility",
+        grounding: Grounding::Unsourced,
+        why: "Same defect as harvest_advisor, one step earlier in the chain and \
+              worse for it: this agent lists SPECULATIVE candidates for a \
+              location, so an edibility verdict is attached to a species nobody \
+              has seen, let alone identified. A forager reading \"choice\" next \
+              to a name they have not found yet is being primed to confirm it.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "forage_scout",
+        path: "cautions",
+        grounding: Grounding::Unsourced,
+        why: "Asked for as \"any look-alikes or toxic species to be aware of\" \
+              with no source for either. The honest version of this field is a \
+              statement that no lookalike check was performed, which is what the \
+              prompt now returns in prose instead.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "forage_scout",
+        path: "foraging_signal",
+        grounding: Grounding::Inferred {
+            from: "the weather forecast, season and substrate reasoning",
+        },
+        why: "An enumerated judgement over real microclimate data. This is the \
+              agent's actual product and it is legitimate: no database holds \
+              \"good foraging conditions\" for a coordinate, and the reasoning \
+              from rainfall and temperature to fruiting probability is the work.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "forage_scout",
+        path: "species_likely[].probability",
+        grounding: Grounding::Inferred {
+            from: "observation density, season and condition match",
+        },
+        why: "A likelihood judgement, correctly labelled as one. Kept for the \
+              same reason foraging_signal is: it reasons over sourced inputs \
+              rather than asserting a fact nobody holds.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "forage_scout",
+        path: "summary",
+        grounding: Grounding::Narrative,
+        why: "The field report paragraph. Scanned as the channel a cleared \
+              edibility verdict would move into, which is the failure mode this \
+              whole contract family was written after.",
+        cross_check_sql: None,
+    },
     FieldContract {
         agent_id: "genome_profiler",
         path: "summary",
@@ -2800,6 +2974,93 @@ mod tests {
             strength(overall) < strength(PROV_TOOL),
             "a real GBIF retrieval lifted the response above a judgement about a \
              photograph"
+        );
+    }
+
+    /// **The fleet-wide tripwire.** No card may ask for an edibility verdict.
+    ///
+    /// `forage_identify`, `harvest_advisor` and `forage_scout` all had one, and
+    /// they had it for the same reason: the foraging agents were authored from a
+    /// shared intent, so a per-agent fix leaves the next author copying whichever
+    /// sibling they read first. This scans every card in the corpus.
+    ///
+    /// The check is on the *enum shape*, not the vocabulary. Prose discussing
+    /// toxicity is legitimate and often required — `harvest_advisor` now explains
+    /// at length why it cannot assess safety. What is refused is a card asking a
+    /// model to pick from `choice|edible|toxic`, because an enum reads as a
+    /// database column and a paragraph does not.
+    ///
+    /// An agent with a real safety tool is exempt by name, which is the honest
+    /// shape of the rule: `adaptogen_curator` uses the same vocabulary and has
+    /// `adaptogen_safety_check` and `adaptogen_drug_interaction_check` behind it.
+    #[test]
+    fn no_card_asks_a_model_to_rate_edibility() {
+        // Agents whose safety claims have a declared tool behind them.
+        const SOURCED_SAFETY: &[(&str, &str)] = &[(
+            "adaptogen_curator",
+            "declares adaptogen_safety_check, adaptogen_drug_interaction_check \
+             and adaptogen_species_detail against a curated database with \
+             citations, so its contraindication vocabulary is retrieval",
+        )];
+
+        // Enum shapes that ask a model to grade edibility or lethality.
+        const FABRICATION_SHAPES: &[&str] = &[
+            "choice | edible",
+            "choice|edible",
+            "fatal | toxic",
+            "fatal|toxic",
+            "edible | inedible | toxic",
+            "inedible | toxic | unknown",
+        ];
+
+        let mut offenders: Vec<String> = Vec::new();
+        let mut scanned = 0usize;
+        for tier in std::fs::read_dir("agents").expect("agents/") {
+            let tier = tier.expect("dir").path();
+            if !tier.is_dir() {
+                continue;
+            }
+            for agent in std::fs::read_dir(&tier).expect("tier") {
+                let path = agent.expect("dir").path().join("agent_card.json");
+                if !path.exists() {
+                    continue;
+                }
+                let raw = std::fs::read_to_string(&path).expect("read card");
+                let card: Value = serde_json::from_str(&raw)
+                    .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                let id = card
+                    .get("agent_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                if SOURCED_SAFETY.iter().any(|(a, _)| *a == id) {
+                    continue;
+                }
+                let prompt = card
+                    .get("system_prompt")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                scanned += 1;
+                for shape in FABRICATION_SHAPES {
+                    if prompt.contains(shape) {
+                        offenders.push(format!("{id}: asks for `{shape}`"));
+                    }
+                }
+            }
+        }
+        assert!(
+            scanned > 50,
+            "only scanned {scanned} cards — walk is broken"
+        );
+        assert!(
+            offenders.is_empty(),
+            "{} card(s) ask a model to grade edibility or lethality on an \
+             enum:\n  {}\n\nAn enum reads as a database column. If the agent has \
+             a real safety source, add it to SOURCED_SAFETY with what supplies \
+             it; otherwise the field must be null and the prompt must say why.",
+            offenders.len(),
+            offenders.join("\n  ")
         );
     }
 
