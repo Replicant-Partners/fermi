@@ -370,22 +370,58 @@ async fn refit_one_driver(
         &serde_json::to_value(&fitted).map_err(|e| RefitError::Internal(e.to_string()))?,
     );
 
-    let (rate_before, rate_after) = compute_impact(
+    let (impact_before, impact_after) = compute_impact(
         &linked.fpl_source,
         program,
         current_params,
         &proposed_params,
     );
-    let delta_pp = match (rate_before, rate_after) {
-        (Some(before), Some(after)) => (after - before).abs() * 100.0,
-        _ => 0.0, // No scorable rate — skip the gate, default to AutoAccept
+    // The snapshot keeps recording the CENTRE, so the stored series stays
+    // comparable across this change even though the decision now uses more.
+    let rate_before = impact_before.map(|s| s.mean);
+    let rate_after = impact_after.map(|s| s.mean);
+    // Impact is the LARGEST move across the mean and both tails, not the move in
+    // the mean alone.
+    //
+    // A distribution fit changes a distribution. `run_with_params` returned only
+    // `results.mean`, so a posterior that left the centre alone and doubled the
+    // interval scored an impact of exactly zero and was auto-accepted as harmless
+    // — on a forecasting platform where the interval is half the answer. All 55
+    // production snapshots recorded a mean delta of 0.0000, and nothing had ever
+    // looked at what happened to their p5 and p95.
+    let delta_pp = match (impact_before, impact_after) {
+        (Some(b), Some(a)) => [
+            (a.mean - b.mean).abs(),
+            (a.p5 - b.p5).abs(),
+            (a.p95 - b.p95).abs(),
+        ]
+        .into_iter()
+        .fold(0.0_f64, f64::max)
+            * 100.0,
+        // FAIL CLOSED. This was `0.0` with the comment "skip the gate, default to
+        // AutoAccept" — so a fit whose impact could not be MEASURED was adopted
+        // without review, which is the same defect as a cross-check that cannot run
+        // reporting healthy forever. An unmeasurable impact is not a small one.
+        // `f64::INFINITY` would hard-block; staging is right, because the failure is
+        // in the assessment rather than in the fit.
+        _ => {
+            tracing::warn!(
+                driver = %driver.name,
+                "impact could not be assessed; staging rather than auto-accepting"
+            );
+            f64::NAN
+        }
     };
 
     let threshold_pp = driver
         .auto_accept_threshold_pp
         .unwrap_or(DEFAULT_AUTO_ACCEPT_PP);
 
-    let decision = classify_decision(delta_pp, threshold_pp);
+    // NaN compares false against everything, so an unassessable impact falls
+    // through both magnitude branches and lands on Stage. Asserted by
+    // `an_unassessable_impact_stages_rather_than_auto_accepting` rather than left
+    // to a reader's knowledge of IEEE 754.
+    let decision = classify_decision(delta_pp, threshold_pp, fit_metadata.quality);
 
     // ── Step 4: write the snapshot regardless ────────────────────────────
     let snapshot_id = write_snapshot(
@@ -824,10 +860,49 @@ enum DecisionKind {
     HardBlock,
 }
 
-fn classify_decision(delta_pp: f64, threshold_pp: f64) -> DecisionKind {
+/// Decide what to do with a proposed fit.
+///
+/// ## The gate was not gating
+///
+/// This took `delta_pp` alone, so the only question asked was "does adopting this
+/// change the forecast much?". Measured over every snapshot the platform had
+/// produced:
+///
+/// ```text
+/// 55 snapshots · 55 auto_accepted · 55 quality = insufficient
+/// mean n_observations 2.0 · n_eff 2.0 · ci_width 4.441 · rate delta 0.0000
+/// ```
+///
+/// Every fit was built on two observations, self-labelled `Insufficient`, and
+/// adopted — **because** it changed nothing. A small immediate impact is not
+/// evidence that a posterior is trustworthy; it is the absence of evidence, and
+/// the gate was reading the two as the same thing.
+///
+/// `DataQuality::classify` already draws the line at `n_eff < 5.0`. The platform
+/// knew these fits were insufficient, wrote it on all 55 rows, and never consulted
+/// it. So the quality verdict now reaches the decision.
+///
+/// `Insufficient` STAGES rather than blocks: the fit may well be right, and the
+/// snapshot plus a pending row keeps it reviewable. What it must not do is silently
+/// replace a considered prior. `Sparse` (5–20 effective observations) may still
+/// auto-accept on small impact — that is the loop doing its job as data arrives,
+/// and holding it to the same bar as `Insufficient` would stall learning
+/// permanently on any driver with a modest history.
+fn classify_decision(
+    delta_pp: f64,
+    threshold_pp: f64,
+    quality: posterior::DataQuality,
+) -> DecisionKind {
     if delta_pp > HARD_BLOCK_PP {
-        DecisionKind::HardBlock
-    } else if delta_pp < threshold_pp {
+        return DecisionKind::HardBlock;
+    }
+    // Checked BEFORE the impact threshold, deliberately. Ordering the other way
+    // would auto-accept an insufficient fit whenever its impact was small, which
+    // is the exact case all 55 production snapshots fell into.
+    if matches!(quality, posterior::DataQuality::Insufficient) {
+        return DecisionKind::Stage;
+    }
+    if delta_pp < threshold_pp {
         DecisionKind::AutoAccept
     } else {
         DecisionKind::Stage
@@ -844,17 +919,30 @@ fn compute_impact(
     program: &fermi::ast::Program,
     current_params: &JsonValue,
     proposed_params: &JsonValue,
-) -> (Option<f64>, Option<f64>) {
+) -> (Option<ImpactSample>, Option<ImpactSample>) {
     let before = run_with_params(program, current_params, IMPACT_GATE_ITERATIONS).ok();
     let after = run_with_params(program, proposed_params, IMPACT_GATE_ITERATIONS).ok();
     (before, after)
+}
+
+/// The part of a simulation the impact gate compares.
+///
+/// Carries the tails as well as the centre so a fit that only widens the interval
+/// cannot read as zero impact. `rate_before`/`rate_after` on the snapshot still
+/// persist `mean`, so the stored series is unchanged and comparable across this
+/// change.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ImpactSample {
+    pub mean: f64,
+    pub p5: f64,
+    pub p95: f64,
 }
 
 fn run_with_params(
     program: &fermi::ast::Program,
     params: &JsonValue,
     iterations: u32,
-) -> Result<f64, fermi::ExecutionError> {
+) -> Result<ImpactSample, fermi::ExecutionError> {
     let mut executor = fermi::Executor::with_seed(iterations as usize, 0xBA1E_50);
     // Split params into numeric (set_params) and JSON (set_json_params).
     let mut numeric = HashMap::new();
@@ -875,7 +963,11 @@ fn run_with_params(
     executor.set_json_params(json_params);
 
     let results = executor.execute(program)?;
-    Ok(results.mean)
+    Ok(ImpactSample {
+        mean: results.mean,
+        p5: results.p5,
+        p95: results.p95,
+    })
 }
 
 /// Build a proposed params blob by merging `<driver_name>_fitted: fitted`
@@ -1270,27 +1362,138 @@ mod tests {
 
     #[test]
     fn classify_decision_thresholds() {
+        use posterior::DataQuality::Sufficient;
         // Below default threshold: auto-accept
         assert!(matches!(
-            classify_decision(1.5, DEFAULT_AUTO_ACCEPT_PP),
+            classify_decision(1.5, DEFAULT_AUTO_ACCEPT_PP, Sufficient),
             DecisionKind::AutoAccept
         ));
         // At/above threshold but below hard-block: stage
         assert!(matches!(
-            classify_decision(5.0, DEFAULT_AUTO_ACCEPT_PP),
+            classify_decision(5.0, DEFAULT_AUTO_ACCEPT_PP, Sufficient),
             DecisionKind::Stage
         ));
         // Above hard-block: hard-block (takes precedence)
         assert!(matches!(
-            classify_decision(25.0, DEFAULT_AUTO_ACCEPT_PP),
+            classify_decision(25.0, DEFAULT_AUTO_ACCEPT_PP, Sufficient),
             DecisionKind::HardBlock
         ));
         // Per-driver threshold override
         assert!(matches!(
-            classify_decision(2.5, 3.0),
+            classify_decision(2.5, 3.0, Sufficient),
             DecisionKind::AutoAccept
         ));
-        assert!(matches!(classify_decision(3.5, 3.0), DecisionKind::Stage));
+        assert!(matches!(
+            classify_decision(3.5, 3.0, Sufficient),
+            DecisionKind::Stage
+        ));
+    }
+
+    /// The production state, as a test: two observations, no impact, accepted.
+    ///
+    /// Every snapshot the platform had produced looked like this — 55 of them,
+    /// `quality: insufficient`, `n_eff 2.0`, mean delta `0.0000`, all
+    /// `auto_accepted`. The fit was adopted BECAUSE it changed nothing, which
+    /// treats "no evidence of harm" as "evidence of safety".
+    #[test]
+    fn an_insufficient_fit_is_staged_however_small_its_impact() {
+        use posterior::DataQuality::Insufficient;
+        // Impact of exactly zero — the case that auto-accepted all 55.
+        assert!(matches!(
+            classify_decision(0.0, DEFAULT_AUTO_ACCEPT_PP, Insufficient),
+            DecisionKind::Stage
+        ));
+        // ...and well under the threshold, in case zero is special-cased later.
+        assert!(matches!(
+            classify_decision(0.5, DEFAULT_AUTO_ACCEPT_PP, Insufficient),
+            DecisionKind::Stage
+        ));
+        // A wildly implausible impact is still hard-blocked: quality does not
+        // rescue a fit that moves the forecast 25 points.
+        assert!(matches!(
+            classify_decision(25.0, DEFAULT_AUTO_ACCEPT_PP, Insufficient),
+            DecisionKind::HardBlock
+        ));
+    }
+
+    /// `Sparse` still auto-accepts, so the loop is not stalled by the fix.
+    ///
+    /// Holding 5-20 effective observations to the same bar as fewer than 5 would
+    /// mean a driver with a modest history could never adopt anything, and the
+    /// learning loop would be permanently pending review. The point of the change
+    /// is to stop `Insufficient` being silently adopted, not to stop learning.
+    #[test]
+    fn a_sparse_fit_with_small_impact_still_auto_accepts() {
+        use posterior::DataQuality::Sparse;
+        assert!(matches!(
+            classify_decision(1.0, DEFAULT_AUTO_ACCEPT_PP, Sparse),
+            DecisionKind::AutoAccept
+        ));
+    }
+
+    /// An impact that could not be assessed must not be treated as a small one.
+    ///
+    /// The previous code set `delta_pp = 0.0` when either simulation failed, with
+    /// the comment "skip the gate, default to AutoAccept" — so a fit whose effect
+    /// was UNKNOWN was adopted without review. Same defect as a cross-check that
+    /// cannot run reporting healthy forever.
+    ///
+    /// The mechanism is NaN falling through both magnitude comparisons, which is
+    /// correct and non-obvious, so it is pinned here rather than left to a reader's
+    /// knowledge of IEEE 754.
+    #[test]
+    fn an_unassessable_impact_stages_rather_than_auto_accepting() {
+        use posterior::DataQuality::Sufficient;
+        assert!(matches!(
+            classify_decision(f64::NAN, DEFAULT_AUTO_ACCEPT_PP, Sufficient),
+            DecisionKind::Stage
+        ));
+        // Not hard-blocked either: the failure is in the assessment, not the fit.
+        assert!(!matches!(
+            classify_decision(f64::NAN, DEFAULT_AUTO_ACCEPT_PP, Sufficient),
+            DecisionKind::HardBlock
+        ));
+    }
+
+    /// A fit that leaves the centre alone and widens the interval has impact.
+    ///
+    /// `run_with_params` returned only `results.mean`, so this scored zero and was
+    /// auto-accepted as harmless — on a platform where the interval is half the
+    /// answer. The gate now takes the largest move across mean, p5 and p95.
+    #[test]
+    fn widening_the_interval_counts_as_impact() {
+        let before = ImpactSample {
+            mean: 0.30,
+            p5: 0.28,
+            p95: 0.32,
+        };
+        let after = ImpactSample {
+            mean: 0.30,
+            p5: 0.10,
+            p95: 0.50,
+        };
+        let delta_pp = [
+            (after.mean - before.mean).abs(),
+            (after.p5 - before.p5).abs(),
+            (after.p95 - before.p95).abs(),
+        ]
+        .into_iter()
+        .fold(0.0_f64, f64::max)
+            * 100.0;
+
+        assert_eq!(
+            (after.mean - before.mean).abs() * 100.0,
+            0.0,
+            "the mean is unchanged, which is why this used to score zero"
+        );
+        assert!(
+            delta_pp > DEFAULT_AUTO_ACCEPT_PP,
+            "an 18-point tail move must exceed the auto-accept threshold, got {delta_pp}"
+        );
+        assert!(matches!(
+            classify_decision(delta_pp, DEFAULT_AUTO_ACCEPT_PP, posterior::DataQuality::Sufficient),
+            DecisionKind::Stage
+        ));
     }
 
     #[test]
