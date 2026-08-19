@@ -327,6 +327,25 @@ pub const CROSS_CHECK_EXEMPTIONS: &[(&str, &str, &str)] = &[
          dismissed.",
     ),
     (
+        "forage_identify",
+        "taxonomy",
+        "Nothing to compare against, and structurally rather than for want of a \
+         query: the subject is whatever a forager photographed, and no platform \
+         row claims to know what that was. The check that would mean something \
+         is agreement between two independent determiners on the same frame, \
+         which needs a second recogniser — a capability decision, not a missing \
+         JOIN.",
+    ),
+    (
+        "forage_identify",
+        "taxonomy.nomenclatural_status",
+        "MycoBank is the only fungal-nomenclature source the platform has, so \
+         comparing it to itself is circular. It becomes checkable against GBIF's \
+         accepted-name view for the same binomial, which is worth doing because \
+         the two disagree often enough that the disagreement is the signal — \
+         deferred, not dismissed.",
+    ),
+    (
         "hud_field_scout",
         "observations",
         "iNaturalist occurrence counts are a live third-party aggregate the \
@@ -1917,6 +1936,53 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
     },
     FieldContract {
         agent_id: "forage_identify",
+        path: "taxonomy",
+        grounding: Grounding::Sourced {
+            tool: "gbif_species_search",
+            response_field: "species[0] rank ladder, matched name, usageKey, taxonomicStatus",
+        },
+        why: "The one block here that is a real retrieval, and the reason this \
+              handler can be checkable rather than merely honest. GBIF is asked \
+              whether the name the model produced resolves, and to what. \
+              Critically it does NOT confirm the determination — the lookup is \
+              keyed on a guess from a photograph — so a caller must floor this \
+              against `identification` before presenting it, exactly as \
+              `hud_contract::conditioned` does. A name that fails to resolve is \
+              itself informative to a forager: `tool_no_match` on a confident-\
+              looking binomial usually means the model invented the epithet.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "forage_identify",
+        path: "taxonomy.nomenclatural_status",
+        grounding: Grounding::Sourced {
+            tool: "mycobank_lookup",
+            response_field: "status / accepted_name, with `source` naming which database answered",
+        },
+        why: "Whether a fungal name is current or superseded, which is the usual \
+              reason a field guide and a database appear to disagree about a \
+              mushroom. The tool degrades to GBIF scoped to Fungi when no \
+              MycoBank key is configured and reports that in its own `source` \
+              field, so the answer stays traceable to whichever database \
+              supplied it.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "forage_identify",
+        path: "identification.kingdom",
+        grounding: Grounding::Inferred {
+            from: "the photograph, to choose which taxonomic scope to search",
+        },
+        why: "Asked of the model only because `gbif_species_search` defaults to \
+              Insecta and needs a scope, and a fungus searched under Insecta \
+              returns insects whose text happens to match. It is a judgement \
+              like the rest of the determination, and a wrong kingdom shows up \
+              honestly as `tool_no_match` on the taxonomy block rather than as \
+              a wrong ladder.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "forage_identify",
         path: "safety",
         grounding: Grounding::Derived {
             from: "the absence of any edibility source in this handler's tools",
@@ -2651,6 +2717,89 @@ mod tests {
             report.violations.len() >= 5,
             "expected every fabricated field to be reported, got {:?}",
             report.violations
+        );
+    }
+
+    /// A resolved name is a real retrieval; an unresolved one says so.
+    ///
+    /// This is what makes the handler checkable rather than merely honest: a
+    /// forager can follow every taxonomy value to a database. It is NOT
+    /// confirmation of the determination, and the block is deliberately still
+    /// weaker than the sum of its parts once floored against the guess it was
+    /// keyed on.
+    #[test]
+    fn a_resolved_name_is_sourced_and_an_unresolved_one_is_a_miss() {
+        // Resolved.
+        let mut hit = serde_json::json!({
+            "identification": { "species": "Cantharellus cibarius", "kingdom": "fungi" },
+            "taxonomy": {
+                "kingdom": "Fungi", "family": "Hydnaceae",
+                "matched_name": "Cantharellus cibarius Fr.",
+                "taxonomic_status": "ACCEPTED",
+                "nomenclatural_status": "ACCEPTED",
+                "gbif_usage_key": 5249504
+            },
+            "safety": { "directive": "..." }
+        });
+        enforce("forage_identify", &mut hit);
+        assert_eq!(hit.get("taxonomy_provenance").unwrap(), PROV_TOOL);
+        assert_eq!(hit.pointer("/taxonomy/family").unwrap(), "Hydnaceae");
+
+        // Not resolved — the databases were asked and did not recognise it.
+        // Distinct from "no database was consulted", and the more useful of the
+        // two: an unresolvable binomial usually means an invented epithet.
+        let mut miss = serde_json::json!({
+            "identification": { "species": "Cantharellus fictitius", "kingdom": "fungi" },
+            "taxonomy": {},
+            "safety": { "directive": "..." }
+        });
+        enforce("forage_identify", &mut miss);
+        assert_eq!(miss.get("taxonomy_provenance").unwrap(), PROV_NO_MATCH);
+        assert_ne!(
+            miss.get("taxonomy_provenance").unwrap(),
+            PROV_UNAVAILABLE,
+            "an unresolved name must not read as `no tool exists` — a tool exists \
+             and answered"
+        );
+    }
+
+    /// Grounding the taxonomy must not launder the guess it was keyed on.
+    ///
+    /// GBIF really returned that ladder; that the forager is holding that species
+    /// is not established. The floor across the response is therefore the
+    /// judgement, not the retrieval — the same rule
+    /// `hud_contract::conditioned` applies, asserted here so the forage path
+    /// cannot drift from it.
+    #[test]
+    fn a_grounded_taxonomy_does_not_raise_the_response_floor() {
+        let mut doc = serde_json::json!({
+            "identification": { "species": "Amanita phalloides", "kingdom": "fungi" },
+            "taxonomy": { "family": "Amanitaceae", "matched_name": "Amanita phalloides (Vaill. ex Fr.) Link" },
+            "safety": { "directive": "..." }
+        });
+        let report = enforce("forage_identify", &mut doc);
+        assert_eq!(doc.get("taxonomy_provenance").unwrap(), PROV_TOOL);
+        assert_eq!(doc.get("identification_provenance").unwrap(), PROV_INFERRED);
+
+        let overall = floor(report.provenance.iter().map(|(_, v)| *v));
+        // `model_inference`, not `tool_verified`: the weakest claim in the
+        // response is the determination from the photograph, and a real GBIF
+        // retrieval keyed on it cannot be stronger than the thing it was keyed
+        // on.
+        //
+        // Nor is it `unavailable_no_tool_source`. The first draft of this test
+        // asserted that, reasoning that the nulled edibility fields should drag
+        // the floor to the bottom — which is wrong, and wrong in a way worth
+        // recording. Those fields are declared gaps that came back correctly
+        // empty. They make no claim, so they cannot weaken one. Treating a
+        // properly-refused field as a defect would make every honest response
+        // score identically to a fabricated one, which is the same overreach
+        // `hud_contract::is_declared_gap` exists to avoid.
+        assert_eq!(overall, PROV_INFERRED, "floor over {:?}", report.provenance);
+        assert!(
+            strength(overall) < strength(PROV_TOOL),
+            "a real GBIF retrieval lifted the response above a judgement about a \
+             photograph"
         );
     }
 

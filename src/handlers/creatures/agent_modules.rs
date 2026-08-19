@@ -1836,6 +1836,92 @@ const FORAGE_NEXT_STEPS: &[&str] = &[
     "If anyone has already eaten it, contact poison control immediately and keep the specimen.",
 ];
 
+/// Resolve a guessed name against GBIF, and MycoBank when it is a fungus.
+///
+/// Returns an empty object when nothing resolved, which `grounding_trust` reads
+/// as `tool_no_match` — "the databases were asked and did not recognise this
+/// name". That is materially different from "no database was consulted", and for
+/// a forager it is the more useful of the two: an unresolvable binomial on a
+/// confident-sounding determination usually means the epithet was invented.
+///
+/// A lookup failure is never fatal to the response. The identification and the
+/// safety directive stand on their own, and losing the taxonomy to a network
+/// blip should not deny someone the warning.
+async fn resolve_forage_taxonomy(name: &str, kingdom: &str) -> serde_json::Value {
+    // `fermi::`, not `crate::`: this file is `#[path]`-included into the
+    // api-server binary, so `crate::` is the binary. The `crate::grounding_trust`
+    // paths elsewhere in this file work only because api_server.rs re-exports
+    // that module with `pub(crate) use`. Reaching the tools directly avoids
+    // adding another crate-level re-export for two functions.
+    use fermi::agent_backend::tools::{execute_gbif_species_search, execute_mycobank_lookup};
+
+    let mut out = serde_json::Map::new();
+
+    // `gbif_species_search` defaults to Insecta, so an unscoped search for a
+    // mushroom returns insects whose text matches. The scope is chosen from the
+    // model's kingdom guess; a wrong guess surfaces as `tool_no_match` rather
+    // than as a confident ladder for the wrong organism.
+    let scope = match kingdom {
+        "fungi" => Some("fungi"),
+        "plantae" | "plant" | "plants" => Some("plantae"),
+        "animalia" | "animal" | "animals" => Some("animalia"),
+        _ => None,
+    };
+
+    if let Some(scope) = scope {
+        let query = json!({ "query": name, "scope": scope, "limit": 1 });
+        if let Ok(raw) = execute_gbif_species_search(&query).await {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) {
+                if let Some(hit) = parsed.pointer("/species/0") {
+                    for (from, to) in [
+                        ("kingdom", "kingdom"),
+                        ("phylum", "phylum"),
+                        ("class", "class"),
+                        ("order", "order"),
+                        ("family", "family"),
+                        ("genus", "genus"),
+                        ("species", "species"),
+                        ("scientificName", "matched_name"),
+                        ("vernacularName", "vernacular_name"),
+                        ("taxonomicStatus", "taxonomic_status"),
+                        ("key", "gbif_usage_key"),
+                    ] {
+                        if let Some(v) = hit.get(from) {
+                            if !v.is_null() {
+                                out.insert(to.to_string(), v.clone());
+                            }
+                        }
+                    }
+                    out.insert("scope_searched".into(), json!(scope));
+                }
+            }
+        }
+    }
+
+    if kingdom == "fungi" {
+        let query = json!({ "name": name, "include_synonyms": true });
+        if let Ok(raw) = execute_mycobank_lookup(&query).await {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) {
+                if let Some(status) = parsed.get("status").filter(|v| !v.is_null()) {
+                    out.insert("nomenclatural_status".into(), status.clone());
+                }
+                if let Some(accepted) = parsed.get("accepted_name").filter(|v| !v.is_null()) {
+                    out.insert("accepted_name".into(), accepted.clone());
+                }
+                // Which database actually answered. The tool falls back to GBIF
+                // when MYCOBANK_API_KEY is unset and says so; passing that
+                // through is what keeps the value traceable rather than merely
+                // present.
+                if let Some(src) = parsed.get("source").filter(|v| !v.is_null()) {
+                    out.insert("nomenclature_source".into(), src.clone());
+                }
+            }
+        }
+    }
+
+    serde_json::Value::Object(out)
+}
+
 pub async fn forage_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
@@ -2150,6 +2236,7 @@ pub async fn forage_handler(
                                  {{\n\
                                    \"species\": \"scientific name, or null if the photo does not support one\",\n\
                                    \"common_name\": \"common name, or null\",\n\
+                                   \"kingdom\": \"fungi|plantae|animalia|null — used to scope the database lookup\",\n\
                                    \"rank_reached\": \"species|genus|family|null — how far the photo actually supports\",\n\
                                    \"visual_features\": \"the features in THIS photo that led you there\",\n\
                                    \"not_visible\": \"what the photo does not show that would matter\",\n\
@@ -2211,6 +2298,30 @@ pub async fn forage_handler(
                 }),
             );
 
+            // Ground the determination against real databases.
+            //
+            // This is what moves the handler from honest to checkable. The model
+            // produced a name from pixels; GBIF is now asked whether that name
+            // resolves and to what, and MycoBank whether it is current. Neither
+            // confirms the identification — both are keyed on the guess — but a
+            // forager can follow every value here to a database, and a name that
+            // fails to resolve is itself a signal that the epithet was invented.
+            let guessed_name = identification
+                .get("species")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let kingdom = identification
+                .get("kingdom")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+
+            let taxonomy = match guessed_name {
+                None => json!({}),
+                Some(name) => resolve_forage_taxonomy(name, &kingdom).await,
+            };
+
             // Assemble the document, then enforce it. `safety` is written here,
             // by Rust, and never by the model — see the `forage_identify`
             // contracts in `grounding_trust`. A model-authored caution can be
@@ -2218,6 +2329,7 @@ pub async fn forage_handler(
             // dropped looks exactly like the ones where it is not.
             let mut document = json!({
                 "identification": identification,
+                "taxonomy": taxonomy,
                 "safety": {
                     "determination_basis": "photograph only",
                     "edibility_source": null,
@@ -2237,6 +2349,8 @@ pub async fn forage_handler(
                 "photo_url": photo_url,
                 "identification": document.get("identification"),
                 "identification_provenance": document.get("identification_provenance"),
+                "taxonomy": document.get("taxonomy"),
+                "taxonomy_provenance": document.get("taxonomy_provenance"),
                 "safety": document.get("safety"),
                 "safety_provenance": document.get("safety_provenance"),
                 // Surfaced rather than logged silently: a stripped field is a

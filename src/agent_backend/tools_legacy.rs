@@ -5017,7 +5017,14 @@ pub fn gbif_preferred_vernacular(species: &serde_json::Value, language: &str) ->
     best.map(|(_, _, original)| original.clone())
 }
 
-async fn execute_gbif_species_search(input: &serde_json::Value) -> Result<String, String> {
+/// Public so a handler that already has a name can ground it without standing
+/// up a full [`ToolContext`].
+///
+/// This function takes no `ctx` — it is a keyless HTTP wrapper — so requiring a
+/// memory store, an embedder and an agent registry to call it would push callers
+/// toward re-implementing the GBIF request themselves, and a second copy of a
+/// lookup is a second answer to the same question.
+pub async fn execute_gbif_species_search(input: &serde_json::Value) -> Result<String, String> {
     // Direct key lookup
     if let Some(key) = input.get("gbif_key").and_then(|v| v.as_i64()) {
         let url = format!("https://api.gbif.org/v1/species/{}", key);
@@ -8272,7 +8279,12 @@ async fn execute_inat_observations(input: &serde_json::Value) -> Result<String, 
 /// Uses the bio-aware MycoBank web services API.
 /// Requires MYCOBANK_API_KEY environment variable (Bearer token).
 /// Falls back to a descriptive error if key is not set.
-async fn execute_mycobank_lookup(input: &serde_json::Value) -> Result<String, String> {
+/// Public for the same reason as [`execute_gbif_species_search`].
+///
+/// Note this one degrades honestly: with no `MYCOBANK_API_KEY` it falls back to
+/// GBIF scoped to Fungi and says so in its own `source` field, so a caller can
+/// tell which database answered.
+pub async fn execute_mycobank_lookup(input: &serde_json::Value) -> Result<String, String> {
     let name = input
         .get("name")
         .and_then(|v| v.as_str())

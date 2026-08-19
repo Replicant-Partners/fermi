@@ -75,6 +75,13 @@ mod legacy;
 // Re-export everything the rest of the codebase uses from the legacy module.
 pub use legacy::{
     dispatchable_tool_names,
+    // Two keyless HTTP tools, re-exported so a handler that already holds a name
+    // can ground it without standing up a full `ToolContext`. Neither takes
+    // `ctx`, so requiring a memory store, an embedder and an agent registry to
+    // reach them would push callers toward re-implementing the lookup — and a
+    // second copy of a lookup is a second answer to the same question.
+    execute_gbif_species_search,
+    execute_mycobank_lookup,
     // Tool-declaration validation. Names in `capabilities.mcp_tools` must
     // resolve to a dispatch arm in `ToolRegistry::execute`, or they become
     // phantom tools: advertised to the model and over `/mcp/agents/:id`,
