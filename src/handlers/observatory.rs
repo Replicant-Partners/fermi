@@ -57,6 +57,7 @@ use agent_bestiary_observability::{ObservabilityWorker, TrendAnalyzer, TrendWind
 use fermi_auth::{rbac, AuthPrincipal, ObjectType, Visibility};
 
 use crate::{resolve_agent, AppState};
+use fermi::workflows::{publish_pipeline, types::CheckSeverity};
 
 // ─── Permission helpers ──────────────────────────────────────────────────────
 
@@ -659,19 +660,53 @@ pub async fn confirm_two_reviewer_handler(
 
 // ─── Fleet endpoints ─────────────────────────────────────────────────────────
 
+/// Query params shared by the fleet endpoints. `scope=all` asks for the
+/// whole platform population rather than just the caller's own agents —
+/// honoured only for admins (see [`scoped_fleet_agents`]), so a non-admin
+/// passing it silently gets their own fleet back rather than an error that
+/// would leak the existence of the parameter.
+#[derive(Debug, Deserialize, Default)]
+pub struct FleetScopeParams {
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
+/// The population a fleet endpoint should report over.
+///
+/// Plain owners get exactly what they've always gotten: the agents they
+/// own. Admins asking for `scope=all` get every non-test agent on the
+/// platform, regardless of owner or publish status — deliberately
+/// including drafts, because the point of an admin-facing fleet view is
+/// to catch malformed agents *before* (or instead of) they get published,
+/// not just audit the ones that already cleared the gate.
+async fn scoped_fleet_agents(
+    state: &AppState,
+    principal: &AuthPrincipal,
+    scope: Option<&str>,
+) -> Result<Vec<agent_bestiary_memory::Agent>, (StatusCode, String)> {
+    let agents = if scope == Some("all") && principal.can_admin() {
+        state.memory_store.list_agents().await
+    } else {
+        state
+            .memory_store
+            .list_agents_for_owner(&principal.user_id())
+            .await
+    }
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(agents
+        .into_iter()
+        .filter(|a| !crate::handlers::is_test_cruft(&a.agent_name))
+        .collect())
+}
+
 pub async fn fleet_summary_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
+    Query(params): Query<FleetScopeParams>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let user_id = principal.user_id();
-    let agents: Vec<_> = state
-        .memory_store
-        .list_agents_for_owner(&user_id)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .into_iter()
-        .filter(|a| !crate::handlers::is_test_cruft(&a.agent_name))
-        .collect();
+    let all_scope = params.scope.as_deref() == Some("all") && principal.can_admin();
+    let agents = scoped_fleet_agents(&state, &principal, params.scope.as_deref()).await?;
     let agent_ids: Vec<Uuid> = agents.iter().map(|a| a.agent_id).collect();
 
     // The eval-run tally that used to drive staging is gone with
@@ -712,14 +747,23 @@ pub async fn fleet_summary_handler(
             }
         }
     }
-    let curated_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM agents WHERE user_id IS NULL AND tier = 'curated'",
-    )
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or(0);
+    // `scoped_fleet_agents` already returned every curated agent when
+    // `all_scope` is true (they're just rows with `user_id IS NULL` in the
+    // same `list_agents()` result) — counting them again here would double
+    // them into `total_agents`. Only add them separately in the owner-only
+    // case, where `agents` deliberately excludes anything not owned by the
+    // caller.
+    let curated_count: i64 = if all_scope {
+        0
+    } else {
+        sqlx::query_scalar("SELECT COUNT(*) FROM agents WHERE user_id IS NULL AND tier = 'curated'")
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0)
+    };
     let total_open: i64 = open_anom_map.values().sum();
     Ok(Json(serde_json::json!({
+        "scope": if all_scope { "all" } else { "mine" },
         "total_agents": agents.len() as i64 + curated_count,
         "owned_agents": agents.len(), "curated_agents": curated_count,
         "open_anomalies": total_open, "maturity_buckets": buckets, "provider_health": provider_health,
@@ -816,16 +860,9 @@ pub async fn fleet_scan_handler(
 pub async fn fleet_agents_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
+    Query(params): Query<FleetScopeParams>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let user_id = principal.user_id();
-    let agents: Vec<_> = state
-        .memory_store
-        .list_agents_for_owner(&user_id)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .into_iter()
-        .filter(|a| !crate::handlers::is_test_cruft(&a.agent_name))
-        .collect();
+    let agents = scoped_fleet_agents(&state, &principal, params.scope.as_deref()).await?;
     let agent_ids: Vec<Uuid> = agents.iter().map(|a| a.agent_id).collect();
     if agent_ids.is_empty() {
         return Ok(Json(serde_json::json!({"agents":[]})));
@@ -900,14 +937,30 @@ pub async fn fleet_agents_handler(
                     Some(v.iter().sum::<f64>() / v.len() as f64)
                 }
             });
+            // Publish-gate conformance, computed here rather than only at
+            // publish time. `run_publish_checks` is pure/sync — no I/O —
+            // so doing it for the whole fleet costs nothing, and it is the
+            // only way an admin auditing "all" can see a malformed agent
+            // that is already published (the gate only runs going forward,
+            // never retroactively) or stuck in draft precisely because it
+            // fails it.
+            let checks = publish_pipeline::run_publish_checks(a);
+            let can_publish = publish_pipeline::can_publish(&checks);
+            let failing_checks: Vec<&str> = checks
+                .iter()
+                .filter(|c| !c.passed && c.severity == CheckSeverity::Error)
+                .map(|c| c.name.as_str())
+                .collect();
             serde_json::json!({
                 "agent_id": a.agent_name, "agent_name": a.agent_name,
                 "agent_type": a.agent_type, "provider": a.llm_provider,
+                "owner_id": a.owner_id, "tier": a.tier, "status": a.status,
                 "persona_version": a.persona_version, "total_executions": measured.executions,
                 "eval_runs": runs, "open_anomalies": anom, "dyad_count": dyads,
                 "maturity": maturity, "overall_health": health, "latest_scores": sc,
                 "care_plan": build_care_plan(runs,tct,tcnr,anom,&maturity,health),
                 "last_consolidated_at": a.last_consolidated_at,
+                "conformance": { "can_publish": can_publish, "failing_checks": failing_checks },
             })
         })
         .collect();

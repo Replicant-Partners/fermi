@@ -25,7 +25,11 @@
   .left-controls{padding:8px 10px;border-bottom:1px solid var(--bg2);display:flex;gap:5px;flex-wrap:wrap;}
   .left-controls input,.left-controls select{background:var(--bg1);color:var(--fg2);border:1px solid var(--bg3);
     padding:4px 7px;font-family:inherit;font-size:0.74rem;}
-  .left-controls input{flex:1;min-width:0;}
+  /* Full-width row of its own: sharing the row with the group-by select
+     and the two filter buttons left it with `flex:1; min-width:0`, which
+     let the fixed-width siblings claim most of the row and squeezed the
+     input down to a few characters in the sidebar's narrow width. */
+  .left-controls input{flex:1 1 100%;min-width:0;}
   .btn-xs{background:transparent;border:1px solid var(--bg3);padding:3px 8px;font-size:0.7rem;
           color:var(--fg4);cursor:pointer;font-family:inherit;}
   .btn-xs:hover{border-color:var(--yellow);color:var(--yellow);}
@@ -373,8 +377,16 @@ function renderSheet(s) {
   }).join("") : "";
 
   const caps = s.capabilities || {};
-  const fc = caps.fermi_contract || null;
-  const oc = caps.output_contract || null;
+  // `fermi_contract`/`output_contract` are siblings of `capabilities` in the
+  // API response (see `build_agent_json` in src/handlers/agents.rs), not
+  // nested inside it — the card *file* nests them under `capabilities`,
+  // but the served JSON hoists them to the top level. Reading them off
+  // `caps` here silently returned undefined for every agent, including
+  // ones (genome_profiler) with a real inline schema, so this panel always
+  // rendered the untyped-ports caveat regardless of what was actually
+  // declared.
+  const fc = s.fermi_contract || caps.fermi_contract || null;
+  const oc = s.output_contract || caps.output_contract || null;
   const samples = (s.metadata && s.metadata.sample_queries) || [];
   const deps = s.dependencies || {};
   const mcpTools = caps.mcp_tools || [];

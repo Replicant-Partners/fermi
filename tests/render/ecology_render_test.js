@@ -118,18 +118,25 @@ ok(h.includes('Observatory'), 'cross-links to the clinical view');
 // ── I/O contract and material properties ──────────────────────────
 console.log('I/O contract:');
 ok(h.includes('material interface'), 'renders the I/O contract panel');
-ok(h.includes('labels, so composability with them is asserted, not verified'),
-   'says plainly that untyped ports are asserted, not verified — a label match must \n           not read as a schema match');
+ok(/labels, so composability\s+with them is asserted, not verified/.test(h),
+   'says plainly that untyped ports are asserted, not verified — a label match must not read as a schema match');
 ok(h.includes('Label match on produces'),
    'the feeds/fed-by panels caveat that they are label matches');
 
 // A card WITH a typed contract must show the schema instead of the caveat.
 const typed = {
   ...macro,
-  capabilities: { ...macro.capabilities, output_contract: {
+  // `output_contract`/`fermi_contract` are top-level siblings of
+  // `capabilities` in the real /api/ecology/specimens response (see
+  // build_agent_json in src/handlers/agents.rs) -- nested here too so the
+  // fixture also exercises the capabilities-nested fallback the panel
+  // keeps for cards read straight off disk.
+  output_contract: {
     domain: 'foraging_forecast', produces_schema: 'kask_wild/condition_forecast',
+    schema: { $id: 'kask_wild/condition_forecast', type: 'object',
+              properties: { probability: { type: 'number' } } },
     calibration: { signal: 'forage_observation', comparison: 'predicted_vs_actual',
-                   resolution_delay: '1-7 days' } } },
+                   resolution_delay: '1-7 days' } },
 };
 renderSheet(typed);
 let t = doc.sheet.innerHTML;

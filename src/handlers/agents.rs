@@ -2146,8 +2146,16 @@ pub async fn list_my_providers_handler(
 
     // 3. Also include curated agents' providers — they are part of the
     //    user's observable fleet even if not owned.
+    //
+    // Must union `model_ladder` here too, not just the primary
+    // `llm_provider` column — the same way block 1 does for owned agents.
+    // A curated card's typical shape is `premium: anthropic, standard:
+    // <cheaper provider>, free: openrouter`; the non-primary rungs are
+    // exactly where a provider like `deepseek`/`qwen`/`glm` shows up, and
+    // reading only `llm_provider` silently dropped every one of them from
+    // this filter while they remained visible in the agent card itself.
     let curated_rows = sqlx::query(
-        "SELECT DISTINCT llm_provider FROM agents WHERE user_id IS NULL AND tier = 'curated'",
+        "SELECT llm_provider, model_ladder FROM agents WHERE user_id IS NULL AND tier = 'curated'",
     )
     .fetch_all(&state.db)
     .await
@@ -2157,6 +2165,17 @@ pub async fn list_my_providers_handler(
         if let Ok(p) = row.try_get::<String, _>("llm_provider") {
             if !p.is_empty() {
                 providers.insert(p);
+            }
+        }
+        if let Ok(ladder) = row.try_get::<serde_json::Value, _>("model_ladder") {
+            if let Some(arr) = ladder.as_array() {
+                for rung in arr {
+                    if let Some(p) = rung.get("provider").and_then(|v| v.as_str()) {
+                        if !p.is_empty() {
+                            providers.insert(p.to_string());
+                        }
+                    }
+                }
             }
         }
     }

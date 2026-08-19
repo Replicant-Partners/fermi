@@ -374,6 +374,9 @@
           </select>
           <button class="btn-sm" onclick="runFleetScan()" id="fleet-scan-btn">⊙ Fleet scan</button>
           <button class="btn-sm" onclick="autoFormDyads()">⟳ Auto-form dyads</button>
+          <label id="scope-all-label" style="display:none;font-size:0.72rem;color:var(--fg4);align-items:center;gap:4px;cursor:pointer;" title="Admin: show every agent on the platform, not just yours">
+            <input type="checkbox" id="scope-all-toggle" onchange="toggleFleetScope()"/> all agents
+          </label>
         </div>
       </div>
 
@@ -420,6 +423,16 @@
           <span style="font-size:0.72rem;color:var(--fg4)" id="av-last-updated"></span>
           <button class="btn-sm btn-eval-sm" id="single-run-btn" onclick="triggerSingleEval()" disabled>▶ Eval</button>
           <button class="btn-sm" id="scan-btn" onclick="triggerScan()" disabled>⊙ Scan</button>
+          <!-- Self-service ABW conformance check. `/publish-checks` was
+               previously only ever called as a side effect of clicking
+               Publish, so an owner had no way to audit an already-
+               published (grandfathered) agent, or a draft they weren't
+               ready to publish yet, for the malformed-card problem
+               (untyped output contract, missing grounding, etc). Any
+               owner may call it — see rbac::require_admin_on in
+               publish_checks_handler, which means owner-or-platform-admin,
+               not platform-admin-only. -->
+          <button class="btn-sm" id="diagnose-btn" onclick="triggerDiagnostics()" disabled>◈ Diagnose</button>
           <!-- The correction half of Loop 1. The observatory could run evals
                (signal) but never consolidation, so the one action that closes
                the learning loop was the one action this page could not take. -->
@@ -452,6 +465,16 @@
       <div class="tab-panel active" id="panel-overview">
         <!-- Care plan -->
         <div class="care-plan" id="care-plan-box" style="margin-bottom:14px;"></div>
+        <!-- ABW conformance — the publish gate's own checklist, run on
+             demand rather than only as a side effect of clicking Publish.
+             Surfacing this here is the point: the historical failure mode
+             (genome_profiler et al.) was a malformed card that satisfied
+             every presence check and served fabricated data for months
+             before anyone looked. -->
+        <div class="panel" id="conformance-panel">
+          <div class="panel-title">ABW conformance <span id="conformance-meta" style="color:var(--fg4);font-weight:normal;text-transform:none;letter-spacing:0;"></span></div>
+          <div id="conformance-box" style="font-size:0.75rem;color:var(--fg4);">Click Diagnose to check this agent against the ABW publish contract.</div>
+        </div>
         <!-- Vitals -->
         <div class="panel">
           <div class="panel-title">Vital signs</div>
@@ -591,30 +614,60 @@ let _filterMaturity = null;
 let _filterProvider = "";
 let _providerFilter = "";
 let _currentTab   = "overview";
+let _isAdmin      = false;
+// "mine" (default, everyone) or "all" (admin only) — which population the
+// fleet endpoints report over. See `FleetScopeParams`/`scoped_fleet_agents`
+// in src/handlers/observatory.rs: a non-admin passing scope=all is silently
+// downgraded to "mine" server-side too, so this is a UI convenience, not
+// the access boundary.
+let _fleetScope   = "mine";
 
 // ════════════════════════════════════════════════════════════════════════
 // Boot
 // ════════════════════════════════════════════════════════════════════════
+async function loadFleet() {
+  const qs = _fleetScope === "all" ? "?scope=all" : "";
+  const [summaryResp, agentsResp, dreamResp] = await Promise.all([
+    fetch("/api/observatory/fleet/summary" + qs),
+    fetch("/api/observatory/fleet/agents" + qs),
+    fetch("/api/observatory/loops/dreaming/maturity"),
+  ]);
+  const summary   = summaryResp.ok ? await summaryResp.json() : {};
+  const agData    = agentsResp.ok  ? await agentsResp.json()  : {};
+  const dreamData = dreamResp.ok   ? await dreamResp.json()   : null;
+
+  _allAgents = (agData.agents || []).sort(agentUrgencySort);
+
+  renderFleetBar(summary);
+  renderRegister(_allAgents);
+  renderFleetView(summary);
+  renderFleetDreaming(dreamData);
+}
+
+function toggleFleetScope() {
+  _fleetScope = document.getElementById("scope-all-toggle").checked ? "all" : "mine";
+  loadFleet();
+}
+
 async function boot() {
   try {
-    const [summaryResp, agentsResp, providersResp, dreamResp] = await Promise.all([
-      fetch("/api/observatory/fleet/summary"),
-      fetch("/api/observatory/fleet/agents"),
-      fetch("/api/me/providers"),
-      fetch("/api/observatory/loops/dreaming/maturity"),
-    ]);
-    const summary   = summaryResp.ok   ? await summaryResp.json()   : {};
-    const agData    = agentsResp.ok    ? await agentsResp.json()    : {};
-    const provData  = providersResp.ok ? await providersResp.json() : {};
-    const dreamData = dreamResp.ok     ? await dreamResp.json()     : null;
+    const meResp = await fetch("/api/auth/me").catch(() => null);
+    if (meResp && meResp.ok) {
+      const me = await meResp.json();
+      _isAdmin = me.role === "admin";
+    }
+    if (_isAdmin) {
+      const label = document.getElementById("scope-all-label");
+      label.style.display = "inline-flex";
+      document.getElementById("scope-all-toggle").checked = true;
+      _fleetScope = "all";
+    }
 
-    _allAgents = (agData.agents || []).sort(agentUrgencySort);
-
-    renderFleetBar(summary);
-    renderRegister(_allAgents);
+    const [providersResp] = await Promise.all([fetch("/api/me/providers")]);
+    const provData = providersResp.ok ? await providersResp.json() : {};
     populateProviderDropdowns(provData.providers || []);
-    renderFleetView(summary);
-    renderFleetDreaming(dreamData);
+
+    await loadFleet();
 
     // Deep-link
     const urlParam = new URLSearchParams(location.search).get("agent");
@@ -707,6 +760,13 @@ function renderRegister(agents) {
     const dims = Object.values(scores).slice(0,3);
     const vdots = dims.map(v => `<div class="vital-dot" style="background:${colorFor(v)}" title="${Math.round(v*100)}%"></div>`).join("");
     const anomBadge = a.open_anomalies > 0 ? `<span class="reg-anom" title="${a.open_anomalies} open anomaly">⚑</span>` : '<span class="reg-anom"></span>';
+    // Publish-gate conformance, computed for the whole fleet server-side
+    // (see `fleet_agents_handler`) so a malformed agent is visible at a
+    // glance across the register, not just when someone happens to open
+    // its detail view and click Diagnose.
+    const conformBadge = (a.conformance && a.conformance.can_publish === false)
+      ? `<span class="reg-anom" style="color:var(--red)" title="Fails ABW conformance: ${(a.conformance.failing_checks||[]).join(', ')}">⬡</span>`
+      : '<span class="reg-anom"></span>';
     const selected = _agent && _agent.agent_id === a.agent_name ? " selected" : "";
     return `<div class="reg-row${selected}" onclick="selectAgent('${a.agent_name}','${a.agent_name}')">
       <div class="reg-dot rd-${a.maturity}" style="background:${color}"></div>
@@ -715,6 +775,7 @@ function renderRegister(agents) {
       <div class="reg-vitals">${vdots}</div>
       <div class="reg-executions">${fmt_k(a.total_executions||0)}</div>
       ${anomBadge}
+      ${conformBadge}
     </div>`;
   }).join("");
 }
@@ -770,8 +831,10 @@ function renderFleetDreaming(d) {
 
 function renderFleetProviderHealth(ph) {
   if (!ph) {
-    // Re-fetch summary for provider data
-    fetch("/api/observatory/fleet/summary").then(r=>r.json()).then(d=>renderFleetProviderHealth(d.provider_health||{}));
+    // Re-fetch summary for provider data — keep the current scope, or an
+    // admin's "all agents" toggle would silently narrow back to "mine".
+    const qs = _fleetScope === "all" ? "?scope=all" : "";
+    fetch("/api/observatory/fleet/summary" + qs).then(r=>r.json()).then(d=>renderFleetProviderHealth(d.provider_health||{}));
     return;
   }
   const el = document.getElementById("provider-health-list");
@@ -869,6 +932,12 @@ async function selectAgent(agentId, agentName) {
   document.getElementById("scan-btn").disabled = false;
   document.getElementById("dream-btn").disabled = false;
   document.getElementById("run-eval-btn").disabled = false;
+  document.getElementById("diagnose-btn").disabled = false;
+  // A fresh selection has no diagnostics yet — clear stale findings from
+  // whatever agent was previously selected rather than leaving them
+  // displayed under the new agent's name.
+  const diagBox = document.getElementById("conformance-box");
+  if (diagBox) diagBox.innerHTML = '<div style="color:var(--fg4);font-size:0.75rem;">Click Diagnose to check this agent against the ABW publish contract.</div>';
 
   setStatus("Loading…", "scanning");
   await loadAgentData();
@@ -2223,6 +2292,44 @@ async function triggerSingleEval() {
     await loadAgentData();
   } catch(e){setStatus("Eval failed: "+e.message,"error");}
   finally{btn.disabled=false;btn.textContent="▶ Eval";}
+}
+
+// Any owner can call this — `publish_checks_handler` gates on
+// `rbac::require_admin_on`, which resolves to owner-or-platform-admin, not
+// platform-admin-only. Works regardless of the agent's current status:
+// a draft sees what's blocking it, an already-published (possibly
+// grandfathered) agent sees whether it would still pass today.
+async function triggerDiagnostics() {
+  if (!_agent) return;
+  const btn = document.getElementById("diagnose-btn");
+  const box = document.getElementById("conformance-box");
+  const meta = document.getElementById("conformance-meta");
+  btn.disabled = true; btn.textContent = "Checking…";
+  box.innerHTML = '<div style="color:var(--fg4);font-size:0.75rem;">Running publish-gate checks…</div>';
+  try {
+    const r = await fetchJson(`/api/agents/${enc(_agent.agent_id)}/publish-checks`);
+    const checks = r.checks || [];
+    meta.textContent = r.can_publish ? "· would publish" : "· blocked";
+    meta.style.color = r.can_publish ? "var(--green)" : "var(--red)";
+    if (!checks.length) {
+      box.innerHTML = '<div style="color:var(--fg4);font-size:0.75rem;">No checks reported.</div>';
+    } else {
+      box.innerHTML = checks.map(c => {
+        const col = c.passed ? "var(--green)" : (c.severity === "error" ? "var(--red)" : "var(--yellow)");
+        const mark = c.passed ? "✓" : (c.severity === "error" ? "✗" : "⚠");
+        return `<div style="padding:4px 0;border-bottom:1px dashed var(--bg2);font-size:0.75rem;">
+          <span style="color:${col}">${mark} ${escHtml(c.name)}</span>
+          <span style="color:var(--fg4)"> — ${escHtml(c.message)}</span>
+        </div>`;
+      }).join("");
+    }
+    setStatus(r.can_publish ? "Diagnostics: would publish" : "Diagnostics: blocked by failing checks", r.can_publish ? "done" : "error");
+  } catch(e) {
+    box.innerHTML = `<div style="color:var(--red);font-size:0.75rem;">Diagnostics failed: ${escHtml(e.message)}</div>`;
+    setStatus("Diagnostics failed: "+e.message,"error");
+  } finally {
+    btn.disabled = false; btn.textContent = "◈ Diagnose";
+  }
 }
 
 async function triggerScan() {
