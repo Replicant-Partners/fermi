@@ -3459,6 +3459,16 @@ async fn main() {
             "/api/workspaces/:workspace_id/actions/log_observation",
             post(handlers::workspace::actions::log_observation_handler),
         )
+        // Wild's identification capability, reachable without a creature.
+        //
+        // `apps/kask_wild.json` always declared Wild a standalone App that Rabble
+        // consumes; until this route existed the only photo-identification path
+        // was creature-scoped, so the arrow pointed the other way. The creature
+        // route now calls the same function with its creature as context.
+        .route(
+            "/api/workspaces/:workspace_id/actions/identify",
+            post(handlers::wild::identify_action_handler),
+        )
         .route(
             "/api/workspaces/:workspace_id/actions/:action_id/accept",
             post(handlers::workspace::actions::accept_action_handler),

@@ -2186,26 +2186,22 @@ pub async fn forage_handler(
         }
 
         "identify" => {
-            // Photo-based species identification via Claude vision API.
+            // Rabble is a CALLER of Wild, not its host.
             //
-            // Read `FORAGE_SAFETY_DIRECTIVE` and the `forage_identify` entries in
-            // `grounding_trust::FIELD_CONTRACTS` before changing the prompt below.
-            // This endpoint previously asked the model for an edibility enum and a
-            // lookalike list with a `fatal` severity level, and returned both as
-            // structured fields with a self-rated confidence attached.
-            // The client uploads the photo to the workspace git first, then
-            // passes the raw URL here. We build a vision message directly
-            // using the Anthropic messages API with an image URL content block.
+            // The determination logic lives in `handlers::wild::identify_specimen`
+            // and takes no creature. This arm supplies a photograph and passes the
+            // creature along as context, which is the direction
+            // `apps/kask_wild.json` always declared: "the creature provides
+            // spatial context; Wild provides foraging intelligence."
+            //
+            // Before this, identification existed only here, so Wild's core
+            // capability was reachable only from inside the game — and every
+            // submission was bound to a creature, which would have fragmented the
+            // verification corpus past the point of ever reaching a reportable n.
             let photo_url = req.photo_url.as_deref().ok_or((
                 StatusCode::BAD_REQUEST,
                 "photo_url is required for identify action".to_string(),
             ))?;
-
-            let habitat_hint = req.habitat.as_deref().unwrap_or("unknown habitat");
-            let location_hint = match (req.lat, req.lng) {
-                (Some(la), Some(ln)) => format!("{:.4}, {:.4}", la, ln),
-                _ => "unknown".to_string(),
-            };
 
             let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
                 (
@@ -2214,164 +2210,19 @@ pub async fn forage_handler(
                 )
             })?;
 
-            // Build a vision request: text instruction + image URL block
-            let request_body = json!({
-                "model": "claude-haiku-4-5-20251001",
-                "max_tokens": 1024,
-                // The prompt no longer asks for edibility, lookalikes, a harvest
-                // window or a self-rated confidence.
-                //
-                // Stripping those fields after the fact is the backstop, not the
-                // fix. Asking for them and then nulling them wastes the model's
-                // attention on the answer a forager most wants and least ought to
-                // receive, and pushes the claim into whatever prose field is left
-                // — which is precisely how genome_profiler's summary ended up
-                // restating numbers that had already been cleared from the
-                // structured fields.
-                "system": "You are a field mycologist looking at a photograph. Your job is to \
-                           say what the specimen appears to be and WHY, so the person holding \
-                           it can check your reasoning against the specimen itself.\n\n\
-                           You are not a safety authority and you must not act as one. Do NOT \
-                           state or imply edibility, toxicity, whether something is safe to \
-                           eat, which species it could be confused with, when to harvest it, \
-                           or how to prepare it. You have no database for any of that; you \
-                           have a photograph. An answer you generate from memory is \
-                           indistinguishable from one you looked up, and here it is the \
-                           difference between a good afternoon and a liver transplant.\n\n\
-                           This holds when the species seems obvious, and most of all when \
-                           you are asked directly — a person asking a camera whether a \
-                           mushroom is safe is a person who may act on the answer.\n\n\
-                           Be precise about how far down the ladder the photograph actually \
-                           supports. 'Genus Amanita, species undetermined' is a better answer \
-                           than a binomial you cannot see enough to justify. Say what you \
-                           cannot see: gills obscured, no stipe base, no spore print, no \
-                           scale reference. Respond in JSON only.",
-                "messages": [{
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "url",
-                                "url": photo_url
-                            }
-                        },
-                        {
-                            "type": "text",
-                            "text": format!(
-                                "What does this specimen appear to be? Location: {}. \
-                                 Habitat: {}.\n\n\
-                                 Respond with JSON only:\n\
-                                 {{\n\
-                                   \"species\": \"scientific name, or null if the photo does not support one\",\n\
-                                   \"common_name\": \"common name, or null\",\n\
-                                   \"kingdom\": \"fungi|plantae|animalia|null — used to scope the database lookup\",\n\
-                                   \"rank_reached\": \"species|genus|family|null — how far the photo actually supports\",\n\
-                                   \"visual_features\": \"the features in THIS photo that led you there\",\n\
-                                   \"not_visible\": \"what the photo does not show that would matter\",\n\
-                                   \"safety_note\": \"say only that a photograph cannot establish safety. No verdict.\"\n\
-                                 }}",
-                                location_hint, habitat_hint
-                            )
-                        }
-                    ]
-                }]
-            });
-
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .unwrap_or_default();
-
-            let resp = client
-                .post("https://api.anthropic.com/v1/messages")
-                .header("x-api-key", &api_key)
-                .header("anthropic-version", "2023-06-01")
-                .header("content-type", "application/json")
-                .json(&request_body)
-                .send()
-                .await
-                .map_err(|e| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("Vision API request failed: {}", e),
-                    )
-                })?;
-
-            if !resp.status().is_success() {
-                let err = resp.text().await.unwrap_or_default();
-                return Err((
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Vision API error: {}", err),
-                ));
-            }
-
-            let claude_resp: serde_json::Value = resp
-                .json()
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-            let raw_text = claude_resp
-                .pointer("/content/0/text")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-
-            let identification = parse_agent_json(
-                raw_text,
-                json!({
-                    "species": null,
-                    "common_name": null,
-                    "rank_reached": null,
-                    "visual_features": null,
-                    "safety_note": "A photograph cannot establish whether this is safe to eat.",
-                }),
-            );
-
-            // Ground the determination against real databases.
-            //
-            // This is what moves the handler from honest to checkable. The model
-            // produced a name from pixels; GBIF is now asked whether that name
-            // resolves and to what, and MycoBank whether it is current. Neither
-            // confirms the identification — both are keyed on the guess — but a
-            // forager can follow every value here to a database, and a name that
-            // fails to resolve is itself a signal that the epithet was invented.
-            let guessed_name = identification
-                .get("species")
-                .and_then(|v| v.as_str())
-                .map(str::trim)
-                .filter(|s| !s.is_empty());
-            let kingdom = identification
-                .get("kingdom")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_ascii_lowercase();
-
-            let taxonomy = match guessed_name {
-                None => json!({}),
-                Some(name) => resolve_forage_taxonomy(name, &kingdom).await,
+            let locality = match (req.lat, req.lng) {
+                (Some(la), Some(ln)) => Some(format!("{:.4}, {:.4}", la, ln)),
+                _ => None,
             };
 
-            // Assemble the document, then enforce it. `safety` is written here,
-            // by Rust, and never by the model — see the `forage_identify`
-            // contracts in `grounding_trust`. A model-authored caution can be
-            // softened or dropped on any given call, and the call where it is
-            // dropped looks exactly like the ones where it is not.
-            let mut document = json!({
-                "identification": identification,
-                "taxonomy": taxonomy,
-                "safety": {
-                    "determination_basis": "photograph only",
-                    "edibility_source": null,
-                    "lookalike_check_performed": false,
-                    "directive": FORAGE_SAFETY_DIRECTIVE,
-                    "what_would_answer_it": FORAGE_NEXT_STEPS,
-                },
-            });
-
-            // The backstop. If a future prompt edit reintroduces an edibility
-            // verdict, or the model volunteers one unasked, it is cleared here
-            // and the removal is recorded rather than shipped.
-            let grounding = crate::grounding_trust::enforce("forage_identify", &mut document);
+            let document = crate::handlers::wild::identify_specimen(
+                photo_url,
+                locality.as_deref(),
+                req.habitat.as_deref(),
+                &api_key,
+            )
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
             Ok(Json(json!({
                 "creature_id": creature_id,
@@ -2382,14 +2233,7 @@ pub async fn forage_handler(
                 "taxonomy_provenance": document.get("taxonomy_provenance"),
                 "safety": document.get("safety"),
                 "safety_provenance": document.get("safety_provenance"),
-                // Surfaced rather than logged silently: a stripped field is a
-                // prompt regression, and the client is the only place anyone is
-                // looking.
-                "grounding_violations": grounding
-                    .violations
-                    .iter()
-                    .map(|v| json!({ "path": v.path, "removed": v.removed }))
-                    .collect::<Vec<_>>(),
+                "grounding_violations": document.get("grounding_violations"),
             })))
         }
 

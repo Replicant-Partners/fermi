@@ -105,6 +105,7 @@ pub mod swarm_telemetry;
 pub mod teams;
 pub mod users;
 pub mod wallet;
+pub mod wild;
 pub mod wizard;
 pub mod workspace;
 pub mod xaman;

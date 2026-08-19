@@ -184,7 +184,7 @@ the game and does not remove the determination from the shared corpus.
 `the_corpus_does_not_fragment_by_creature` asserts records with different creature
 contexts — and none — are scored together.
 
-### The refactor this implies, not done here
+### The refactor — done 2026-08-19
 
 1. **Extract the identify logic** from `forage_handler` into a function taking
    `(photo_ref, locality, habitat)` and no creature.
@@ -196,10 +196,15 @@ contexts — and none — are scored together.
 4. **Then** the corpus can accumulate from both, and the Rabble foraging module
    becomes what the manifest says it is: a caller.
 
-Deliberately not done in this commit. It re-routes a live endpoint, and another
-session is active in the tree; the corpus shape is the part that had to be right
-first, because it is the part that would have been expensive to change after data
-existed.
+All four landed. `handlers::wild::identify_specimen` takes no creature,
+`POST /api/workspaces/:id/actions/identify` is the way in, the creature route is a
+second caller passing its creature as context, and `identify` is now declared in
+the App's `action_types` where its absence had been the visible symptom.
+
+Wild also stopped depending on Rabble in the process: the extracted function uses
+`fermi::agent_backend::envelope::extract_json` rather than reaching into the
+creature module's private JSON parser, which would have inverted the arrow again
+one layer down. See `docs/specs/WILD_APP_DESIGN.md`.
 
 ### What informs what, once this holds
 

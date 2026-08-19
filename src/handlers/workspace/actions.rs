@@ -53,7 +53,11 @@ use crate::AppState;
 // ─── Shared request helpers ───────────────────────────────────────────────────
 
 /// Resolve workspace UUID and verify the caller is a member.
-async fn resolve_workspace(
+///
+/// `pub(crate)` so `handlers::wild` can reuse it rather than re-implementing a
+/// membership check — a second copy of an authorisation check is the one place a
+/// divergence is least acceptable.
+pub(crate) async fn resolve_workspace(
     state: &AppState,
     workspace_id: &str,
     user_id: &str,
