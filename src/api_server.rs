@@ -5846,7 +5846,7 @@ pub(crate) fn abw_profile_url() -> String {
 
 /// Build an AgentCard from a DB Agent record (for agents not in the filesystem registry)
 pub(crate) fn agent_card_from_db(agent: &Agent) -> AgentCard {
-    AgentCard {
+    let mut card = AgentCard {
         agent_id: agent.agent_name.clone(),
         agent_type: agent.agent_type.clone(),
         version: agent.version.clone(),
@@ -5941,6 +5941,9 @@ pub(crate) fn agent_card_from_db(agent: &Agent) -> AgentCard {
             taxonomy: agent.taxonomy.clone(),
         },
         system_prompt: agent.system_prompt.clone(),
+        // Set by `stamp_declared_prompt` at the end of this function, not carried
+        // in from a caller — so a client cannot assert which prompt produced a run.
+        declared_prompt_sha256: None,
         dependencies: AgentDependencies::default(),
         accepts: agent.accepts.clone(),
         produces: agent.produces.clone(),
@@ -5954,7 +5957,12 @@ pub(crate) fn agent_card_from_db(agent: &Agent) -> AgentCard {
             .as_ref()
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default(),
-    }
+    };
+    // Stamp here rather than trusting the caller to. `resolve_agent_card` stamps
+    // again after it overrides the prompt from the DB, which is correct and
+    // idempotent; this makes the function honest on its own, for any other caller.
+    card.stamp_declared_prompt();
+    card
 }
 
 /// Resolve an AgentCard: try registry first, fall back to building from DB agent.
@@ -5971,6 +5979,13 @@ pub(crate) fn resolve_agent_card(state: &AppState, db_agent: &Agent) -> AgentCar
     card.capabilities.temperature = db_agent.temperature;
     // Bridge system prompt from DB
     card.system_prompt = db_agent.system_prompt.clone();
+    // Hash it HERE, while it is still the card's own text.
+    //
+    // `kg_context::enrich` appends a retrieved-knowledge block before execution,
+    // so an executor never sees the declared prompt — five runs of one unchanged
+    // card produced four different hashes when this was computed downstream. This
+    // is the last point at which the prompt is the card's and nothing else's.
+    card.stamp_declared_prompt();
     // Bridge valence from DB (may have been updated via API)
     if !db_agent.accepts.is_empty() {
         card.accepts = db_agent.accepts.clone();

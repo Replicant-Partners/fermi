@@ -266,6 +266,12 @@ pub fn agent_output_to_episode(
             // so they never reach `stamp_input_binding` in `handlers/execution`.
             // Stamping there would have looked correct and covered nothing.
             "card_prompt_hash": output.metadata.card_prompt_hash,
+            // What was actually sent, knowledge block included. Differs from the
+            // card hash whenever retrieval injected context, which is why the
+            // first version of this stamp was wrong: it recorded THIS value under
+            // the other name, and five runs of one unchanged card produced four
+            // different hashes.
+            "effective_prompt_hash": output.metadata.effective_prompt_hash,
             "reasoning": output.metadata.reasoning,
             // Failure provenance. Persisted in context (not only folded into
             // `error_details`) so the raw executor verdict survives

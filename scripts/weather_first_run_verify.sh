@@ -346,7 +346,22 @@ COHORT=$(q "SELECT count(*) FROM episodes e JOIN agents a ON a.agent_id=e.agent_
 if [[ "${STAMPED:-0}" == "0" ]]; then
   say SILENT "5b. prompt hash recorded" "$EPISODES run(s), none carrying card_prompt_hash — the binary predates the stamp, or this path does not build episodes through agent_output_to_episode"
 elif [[ "${COHORT:-0}" == "0" ]]; then
-  say FAIL "5b. run matches current card" "$STAMPED run(s) stamped, 0 matching the prompt the card carries now — the card changed after these ran, or the Rust and SQL hashes disagree (see the_prompt_hash_means_the_same_thing_in_rust_and_in_sql)"
+  # The first version of this message named two causes and the real one was a
+  # third, so it sent me looking at the card and the hash function while the bug
+  # was in WHICH TEXT got hashed. `kg_context::enrich` appends retrieved
+  # knowledge to the prompt before execution, and the hash was taken downstream
+  # of that — so it was an effective-prompt hash wearing a card-prompt name, and
+  # it changed on every run whose retrieval differed. A diagnostic that offers a
+  # closed list of causes had better include the actual one.
+  DISTINCT=$(q "SELECT count(DISTINCT e.context->>'card_prompt_hash')
+                 FROM episodes e JOIN agents a ON a.agent_id=e.agent_id
+                WHERE a.agent_name='$AGENT' AND e.created_at >= '$SINCE'
+                  AND e.context ? 'card_prompt_hash'")
+  if [[ "${DISTINCT:-0}" -gt 1 ]]; then
+    say FAIL "5b. run matches current card" "$STAMPED run(s) stamped with ${DISTINCT} DIFFERENT hashes for one unchanged card — so the hashed text is per-run, not the card. Almost certainly the effective prompt (card + the knowledge block kg_context injects), not the declared one"
+  else
+    say FAIL "5b. run matches current card" "$STAMPED run(s) stamped, 0 matching the prompt the card carries now, all on one hash — the card changed after these ran, or the Rust and SQL hashes disagree (see the_prompt_hash_means_the_same_thing_in_rust_and_in_sql)"
+  fi
 else
   say OK "5b. run matches current card" "$COHORT of $STAMPED stamped run(s) produced by the current prompt — cross-checks on them are LIVE, not inert"
 fi

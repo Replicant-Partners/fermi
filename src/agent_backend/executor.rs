@@ -88,9 +88,18 @@ impl ExecutionContext {
     /// exactly what `stamp_invocation` got wrong when it filed the caller's
     /// assertion about input binding as fact.
     ///
-    /// `None` when the card declares no prompt, which is honest — such a run is
-    /// steered by an executor default, so there is no card text to attribute it
-    /// to, and it must not join any card's cohort.
+    /// `None` when no declared hash was captured — either the card has no prompt,
+    /// or it reached execution without passing through `resolve_agent_card`. Both
+    /// are honest: such a run must not join any card's cohort.
+    ///
+    /// It deliberately does NOT fall back to hashing the current prompt. That
+    /// fallback is what the first version did, and it silently recorded the
+    /// EFFECTIVE prompt — card text plus the per-query knowledge block
+    /// `kg_context::enrich` appends — as though it were the card's. The result
+    /// looked like it worked: agents with empty retrieval matched their cohort,
+    /// and agents that had learned something never did, reporting INERT rather
+    /// than anything alarming. A wrong hash is worse than no hash, because no
+    /// hash is visibly absent.
     ///
     /// SHA-256, hex, lowercase. `sha2` is already a direct dependency and
     /// Postgres has `sha256()` natively, so the comparison needs no new crate on
@@ -104,6 +113,20 @@ impl ExecutionContext {
     /// the server pick an encoding would make the hash depend on database
     /// settings rather than on the prompt.
     pub fn card_prompt_hash(&self) -> Option<String> {
+        self.agent_card.declared_prompt_sha256.clone()
+    }
+
+    /// `md5`-free hash of the prompt the model was ACTUALLY sent, including any
+    /// retrieved-knowledge block.
+    ///
+    /// Diagnostic, not a cohort key. It is what distinguishes "the card changed"
+    /// from "retrieval injected different context", and reconstructing that
+    /// distinction after the fact took four separate queries and a read of
+    /// `kg_context`. Recording both costs one hash.
+    ///
+    /// Expect it to differ from `card_prompt_hash` on any agent with knowledge to
+    /// recall, and to equal it on any agent without. That is not a fault.
+    pub fn effective_prompt_hash(&self) -> Option<String> {
         use sha2::{Digest, Sha256};
         self.agent_card.system_prompt.as_deref().map(|p| {
             let mut h = Sha256::new();
@@ -275,6 +298,13 @@ pub struct AgentMetadata {
     /// this agent has now?", which is the difference between a suite that detects
     /// a defect and one that can also confirm a fix.
     pub card_prompt_hash: Option<String>,
+    /// Hash of the prompt actually sent, retrieved-knowledge block included.
+    ///
+    /// Recorded beside `card_prompt_hash` so the two can be compared. Equal means
+    /// nothing was injected; different means retrieval added context, which is
+    /// normal for an agent with knowledge and is the single fact that explains why
+    /// a run's effective prompt is not its card's.
+    pub effective_prompt_hash: Option<String>,
 }
 
 /// Execution error

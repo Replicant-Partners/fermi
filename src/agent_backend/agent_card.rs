@@ -25,6 +25,33 @@ pub struct AgentCard {
     pub metadata: AgentMetadata,
     #[serde(default)]
     pub system_prompt: Option<String>,
+    /// SHA-256 of `system_prompt` as DECLARED, captured before anything augments
+    /// it. Hex, lowercase. Never serialised to a card file — it is derived, and a
+    /// stored copy could disagree with the text beside it.
+    ///
+    /// ── Why this cannot be computed at execution time ──────────────────
+    ///
+    /// By the time an executor runs, `system_prompt` is no longer the card's.
+    /// `kg_context::enrich` appends a retrieved-knowledge block built from
+    /// similarity scores against the query embedding, so the effective prompt is
+    /// per-RUN, not per-card. `orchestras.rs` appends a block too.
+    ///
+    /// Measured, which is how this was found: five `weather_oracle` runs of one
+    /// unchanged card produced FOUR distinct hashes, while the card on disk and
+    /// the row in `agents` agreed exactly. Runs four and five matched each other
+    /// — same retrieved set, same hash.
+    ///
+    /// The failure was worse than noise. Agents with empty retrieval hashed to
+    /// their card and joined their cohort; agents that had actually learned
+    /// something never matched. So a cohort meant to isolate "runs under the
+    /// current card" was silently excluding precisely the runs most worth
+    /// checking, and reporting INERT — a legitimate-looking state — while doing
+    /// it.
+    ///
+    /// Captured in `resolve_agent_card`, the one place a card's prompt is
+    /// bridged from the database, so augmentation downstream cannot destroy it.
+    #[serde(default, skip_serializing)]
+    pub declared_prompt_sha256: Option<String>,
     #[serde(default)]
     pub dependencies: AgentDependencies,
     #[serde(default)]
@@ -554,6 +581,24 @@ pub struct AgentMetadata {
 }
 
 impl AgentCard {
+    /// Record the hash of the prompt as declared, before anything appends to it.
+    ///
+    /// Call this at the moment a card's `system_prompt` is settled from its
+    /// source of truth and BEFORE any enrichment. Calling it twice is safe;
+    /// calling it after `kg_context::enrich` records the wrong thing, which is
+    /// the bug this exists to fix rather than a hazard it introduces.
+    ///
+    /// Idempotent in the sense that matters: it overwrites, so a card resolved
+    /// twice ends up with the hash of whatever prompt it currently declares.
+    pub fn stamp_declared_prompt(&mut self) {
+        use sha2::{Digest, Sha256};
+        self.declared_prompt_sha256 = self.system_prompt.as_deref().map(|p| {
+            let mut h = Sha256::new();
+            h.update(p.as_bytes());
+            format!("{:x}", h.finalize())
+        });
+    }
+
     /// Create a new agent card with default values
     pub fn new(agent_id: String, agent_type: String) -> Self {
         AgentCard {
@@ -614,6 +659,7 @@ impl AgentCard {
                 taxonomy: None,
             },
             system_prompt: None,
+            declared_prompt_sha256: None,
             dependencies: AgentDependencies::default(),
             accepts: vec![],
             produces: vec![],
@@ -638,7 +684,21 @@ impl AgentCard {
         // Parse as a generic Value first so we can rewrite legacy keys.
         let mut raw: serde_json::Value = serde_json::from_str(json)?;
         normalise_legacy_capability_fields(&mut raw);
-        serde_json::from_value(raw)
+        let mut card: Self = serde_json::from_value(raw)?;
+        // Stamp on load, so the hash does not depend on which handler resolved
+        // the card.
+        //
+        // `resolve_agent_card` also stamps, after overriding the prompt from the
+        // database, and that is the authoritative one for HTTP execution. But two
+        // paths build an `ExecutionContext` without ever calling it —
+        // `tools_legacy.rs` (the `execute_agent` / `delegate_to_agent` tools) and
+        // `consolidation.rs` — and a delegated child agent is exactly the run
+        // whose provenance matters most. Stamping at deserialisation means those
+        // paths get a correct hash rather than `None`, and `None` would have been
+        // invisible: it renders as INERT, which looks like an agent that has not
+        // run yet.
+        card.stamp_declared_prompt();
+        Ok(card)
     }
 
     /// Save agent card to JSON string
@@ -683,6 +743,91 @@ fn normalise_legacy_capability_fields(raw: &mut serde_json::Value) {
         }
         // If both forms were present (typed wins), we still removed the
         // legacy key from the gates map above — that's the intended cleanup.
+    }
+}
+
+#[cfg(test)]
+mod declared_prompt_tests {
+    use super::*;
+
+    fn card_with(prompt: Option<&str>) -> AgentCard {
+        let mut c = AgentCard::new("weather_oracle".into(), "research".into());
+        c.system_prompt = prompt.map(str::to_string);
+        c.stamp_declared_prompt();
+        c
+    }
+
+    /// The regression. Enrichment must not move the declared hash.
+    ///
+    /// `kg_context::enrich` appends a retrieved-knowledge block to
+    /// `card.system_prompt` before execution — literally
+    /// `format!("{}{}", system_prompt, block)`, reproduced here because that
+    /// function is private. The first version of the prompt hash was computed
+    /// downstream of this, so it hashed card-plus-knowledge and changed on every
+    /// run whose retrieval differed.
+    ///
+    /// Two different blocks, because a test with one block would pass for an
+    /// implementation that merely ignored a CONSTANT suffix.
+    #[test]
+    fn a_retrieved_knowledge_block_does_not_change_the_declared_hash() {
+        let base = "You are the Weather Oracle.";
+        let mut card = card_with(Some(base));
+        let declared = card.declared_prompt_sha256.clone().expect("stamped");
+
+        for block in [
+            "\n\n## Recalled\n- EGLC lead-1 RMSE is 0.909C\n",
+            "\n\n## Recalled\n- KLGA lead-1 RMSE is 1.49C\n- buckets are integer sets\n",
+        ] {
+            card.system_prompt = Some(format!("{}{}", card.system_prompt.take().unwrap(), block));
+            assert_eq!(
+                card.declared_prompt_sha256.as_deref(),
+                Some(declared.as_str()),
+                "appending retrieved knowledge must not move the declared hash — \
+                 that is what made five runs of one card produce four hashes"
+            );
+        }
+
+        // ...and the effective prompt really did change, so the two hashes are
+        // measuring different things rather than the test proving nothing.
+        let mut effective = card.clone();
+        effective.stamp_declared_prompt();
+        assert_ne!(
+            effective.declared_prompt_sha256.as_deref(),
+            Some(declared.as_str()),
+            "re-stamping an enriched prompt should differ; if it does not, this \
+             test cannot detect the bug it exists for"
+        );
+    }
+
+    /// Same text, same hash, regardless of which card carries it — the property
+    /// the SQL side depends on when it compares against `agents.system_prompt`.
+    #[test]
+    fn the_hash_is_of_the_text_and_nothing_else() {
+        let a = card_with(Some("identical prompt"));
+        let mut b = AgentCard::new("other_agent".into(), "creative".into());
+        b.system_prompt = Some("identical prompt".into());
+        b.stamp_declared_prompt();
+        assert_eq!(a.declared_prompt_sha256, b.declared_prompt_sha256);
+
+        // Known-answer, so a change of algorithm is caught rather than merely
+        // producing a different-but-self-consistent value. This is the digest
+        // Postgres returns for `encode(sha256(convert_to('abc','UTF8')),'hex')`.
+        let abc = card_with(Some("abc"));
+        assert_eq!(
+            abc.declared_prompt_sha256.as_deref(),
+            Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
+            "must stay SHA-256 hex: the cohort predicate compares against \
+             Postgres sha256() and a silent algorithm change matches nothing"
+        );
+    }
+
+    /// No prompt means no hash, not a hash of the empty string.
+    ///
+    /// An empty-string digest is a real, matchable value, so it would let every
+    /// promptless card share one cohort.
+    #[test]
+    fn a_card_with_no_prompt_has_no_declared_hash() {
+        assert!(card_with(None).declared_prompt_sha256.is_none());
     }
 }
 
