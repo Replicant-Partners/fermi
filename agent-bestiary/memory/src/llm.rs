@@ -135,7 +135,7 @@ where
     let response = provider.generate_raw(messages, config).await?;
     let usage = response.usage.clone();
 
-    let parsed = serde_json::from_str::<T>(&response.content).map_err(|e| {
+    let parsed = parse_lenient::<T>(&response.content).map_err(|e| {
         crate::error::MemoryError::ExternalError(format!(
             "Failed to parse structured output: {}. Response was: {}",
             e, response.content
@@ -143,6 +143,110 @@ where
     })?;
 
     Ok((parsed, usage))
+}
+
+/// Strip a markdown code fence, if the response is wrapped in one.
+///
+/// Handles both the multi-line form the chat models actually emit —
+///
+/// ```text
+/// ```json
+/// [{"name": "Asilidae"}]
+/// ```
+/// ```
+///
+/// — and the degenerate single-line form ```` ```[1,2]``` ````.
+fn strip_code_fence(s: &str) -> &str {
+    let t = s.trim();
+    if !t.starts_with("```") {
+        return t;
+    }
+    // Drop the opening fence and its optional language tag. On the
+    // single-line form there is no newline, so fall back to trimming the
+    // backticks and whatever language tag is glued to them.
+    let after_open = match t.find('\n') {
+        Some(i) => &t[i + 1..],
+        None => t.trim_matches('`'),
+    };
+    // Drop the closing fence. An unterminated fence (the model hit
+    // max_tokens mid-array) still yields the prefix, which `parse_lenient`
+    // will simply fail on — the same outcome as before, no worse.
+    match after_open.rfind("```") {
+        Some(i) => after_open[..i].trim(),
+        None => after_open.trim(),
+    }
+}
+
+/// The widest span between the first `[`/`{` and the last `]`/`}`.
+///
+/// Last resort for a model that prefixed its JSON with a sentence of
+/// explanation despite being told to return only JSON.
+fn json_span(s: &str) -> Option<&str> {
+    let start = s.find(['[', '{'])?;
+    let end = s.rfind([']', '}'])?;
+    (end > start).then(|| &s[start..=end])
+}
+
+/// Parse model output as JSON, tolerating the two ways a chat model
+/// habitually disobeys "return ONLY a JSON array".
+///
+/// ## Why this is not just `serde_json::from_str`
+///
+/// It was, and it cost the platform its entire learning loop. `gpt-4o-mini`
+/// — the `ontologist`'s configured model — wraps JSON in a markdown fence
+/// whenever it feels like it, which is often. `from_str` on that content
+/// fails at *line 1 column 1*, because line 1 column 1 is a backtick.
+///
+/// Every consolidation extractor (entities, facts, knowledge rules) funnels
+/// through this function, and each caller treats a parse failure as
+/// non-fatal: it logs, `continue`s, and the cycle completes having learned
+/// nothing. So a purely cosmetic formatting habit in the model presented as
+/// "dreaming ran successfully and extracted 0 entities" — on every agent,
+/// for months. The measured signature in `episodes`:
+///
+/// ```text
+/// External API error: Failed to parse structured output: expected value
+/// at line 1 column 1. Response was: ```json [ {"name": "Asilidae", ...
+/// ```
+///
+/// The entities were right there in the error message.
+///
+/// ## Order matters
+///
+/// Strict parse first, so a well-behaved bare-JSON response is never put
+/// through the salvage heuristics, and a `T` that is legitimately a string
+/// or a number is unaffected. The fence and span attempts only run once the
+/// strict parse has already failed.
+///
+/// On total failure the **original** error is returned, not the error from
+/// the last salvage attempt: it describes the text the model actually sent,
+/// which is what an operator reading the log needs.
+fn parse_lenient<T>(raw: &str) -> serde_json::Result<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let trimmed = raw.trim();
+    let first_err = match serde_json::from_str::<T>(trimmed) {
+        Ok(v) => return Ok(v),
+        Err(e) => e,
+    };
+
+    let unfenced = strip_code_fence(trimmed);
+    if unfenced != trimmed {
+        if let Ok(v) = serde_json::from_str::<T>(unfenced) {
+            return Ok(v);
+        }
+    }
+
+    if let Some(span) = json_span(unfenced) {
+        if span != unfenced {
+            if let Ok(v) = serde_json::from_str::<T>(span) {
+                return Ok(v);
+            }
+        }
+    }
+
+    Err(first_err)
 }
 
 /// Factory for creating LLM providers
@@ -843,5 +947,112 @@ impl LLMProvider for OpenRouterProvider {
 
     fn provider_name(&self) -> &str {
         "openrouter"
+    }
+}
+
+#[cfg(test)]
+mod structured_output_tests {
+    use super::parse_lenient;
+
+    #[derive(Debug, serde::Deserialize, PartialEq)]
+    struct Entity {
+        name: String,
+        #[serde(rename = "type")]
+        entity_type: String,
+    }
+
+    /// Bare JSON must still parse, and must not be routed through the
+    /// salvage path. This is the regression guard on the fast path.
+    #[test]
+    fn bare_json_parses() {
+        let v: Vec<Entity> = parse_lenient(r#"[{"name":"Asilidae","type":"Concept"}]"#).unwrap();
+        assert_eq!(v[0].name, "Asilidae");
+    }
+
+    /// The exact shape that broke the learning loop. Transcribed from a real
+    /// `episodes.error_details` row on the `ontologist` for `prey_locator`:
+    ///
+    /// ```text
+    /// Failed to parse structured output: expected value at line 1 column 1.
+    /// Response was: ```json [     {"name": "Asilidae", "type": "Concept", ...
+    /// ```
+    #[test]
+    fn fenced_json_from_the_real_failure_parses() {
+        let raw = "```json\n[\n    {\"name\": \"Asilidae\", \"type\": \"Concept\"},\n    \
+                   {\"name\": \"Prionyx popovi\", \"type\": \"Concept\"}\n]\n```";
+        let v: Vec<Entity> = parse_lenient(raw).expect("fenced JSON must parse");
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[1].name, "Prionyx popovi");
+    }
+
+    /// A fence with no language tag is just as common.
+    #[test]
+    fn untagged_fence_parses() {
+        let v: Vec<Entity> =
+            parse_lenient("```\n[{\"name\":\"London\",\"type\":\"Location\"}]\n```").unwrap();
+        assert_eq!(v[0].entity_type, "Location");
+    }
+
+    #[test]
+    fn single_line_fence_parses() {
+        let v: Vec<Entity> =
+            parse_lenient("```[{\"name\":\"X1\",\"type\":\"Concept\"}]```").unwrap();
+        assert_eq!(v[0].name, "X1");
+    }
+
+    /// Prose on either side, despite "Return ONLY a JSON array".
+    #[test]
+    fn prose_wrapped_json_parses() {
+        let raw = "Here are the entities I found:\n\
+                   [{\"name\":\"Arsenal\",\"type\":\"Organization\"}]\n\
+                   Let me know if you need more.";
+        let v: Vec<Entity> = parse_lenient(raw).unwrap();
+        assert_eq!(v[0].name, "Arsenal");
+    }
+
+    /// An empty array is a legitimate answer ("no named entities") and must
+    /// not be confused with a parse failure.
+    #[test]
+    fn empty_array_is_not_a_failure() {
+        let v: Vec<Entity> = parse_lenient("```json\n[]\n```").unwrap();
+        assert!(v.is_empty());
+    }
+
+    /// Salvage must not rescue genuinely malformed output into something
+    /// wrong. A truncated response (model hit `max_tokens`) has to fail.
+    #[test]
+    fn truncated_json_still_fails() {
+        let raw = "```json\n[{\"name\": \"Asilidae\", \"type\": \"Conc";
+        assert!(parse_lenient::<Vec<Entity>>(raw).is_err());
+    }
+
+    /// The reported error must describe the text the model actually sent,
+    /// not the last salvage attempt — that message is the only thing an
+    /// operator sees in `episodes.error_details`.
+    ///
+    /// A fenced-but-invalid payload distinguishes the two: the original
+    /// error points at the backtick (line 1, column 1), whereas the salvage
+    /// error would point somewhere inside the unfenced object.
+    #[test]
+    fn error_describes_the_original_response() {
+        let err = parse_lenient::<Vec<Entity>>("```json\n{\"oops\"\n```").unwrap_err();
+        assert_eq!(
+            (err.line(), err.column()),
+            (1, 1),
+            "expected the error about the raw fenced response, got: {err}"
+        );
+    }
+
+    #[test]
+    fn plain_garbage_still_fails() {
+        assert!(parse_lenient::<Vec<Entity>>("not json at all").is_err());
+    }
+
+    /// Scalars and strings go through the strict path untouched, so widening
+    /// the parser cannot change behaviour for non-collection `T`.
+    #[test]
+    fn scalars_are_unaffected() {
+        assert_eq!(parse_lenient::<String>(r#""hello""#).unwrap(), "hello");
+        assert_eq!(parse_lenient::<i64>("42").unwrap(), 42);
     }
 }
