@@ -186,9 +186,42 @@ pub fn compare_names(model: Option<&str>, settled: Option<&str>) -> MatchLevel {
 // ─── a record ──────────────────────────────────────────────────────────
 
 /// One submitted specimen and everything said about it.
+///
+/// ## Scoping: the corpus belongs to the App, never to a creature
+///
+/// This is the load-bearing decision in the whole module, and it is an
+/// architectural claim rather than a storage detail.
+///
+/// A community corpus only works if determinations accumulate across every
+/// submitter. [`MIN_N_FOR_HEADLINE`] is 30 and a useful figure wants a few
+/// hundred; a corpus partitioned per creature would never reach either, and each
+/// shard would report "insufficient evidence" forever while the aggregate had
+/// been answerable for months. Fragmentation would not look like a bug — it would
+/// look like a quiet platform.
+///
+/// So `app_slug` owns the record and [`Self::creature_context`] is **context, not
+/// ownership**. A Rabble creature may have been present when the photograph was
+/// taken, and saying so is useful for the game; it does not make the
+/// determination the creature's property or remove it from the shared corpus.
+///
+/// This is also the direction `apps/kask_wild.json` already declares — *"Rabble
+/// creatures consume Wild via cross-workspace delegation"* — and the opposite of
+/// what the code currently does, where `POST /api/creatures/:creature_id/forage`
+/// makes a creature mandatory for the only photo-identification path there is.
+/// See `docs/specs/VERIFICATION_CORPUS.md` §7.
 #[derive(Debug, Clone)]
 pub struct VerificationRecord {
     pub record_id: String,
+    /// The App whose corpus this belongs to, e.g. `kask_wild`. The owner.
+    pub app_slug: String,
+    /// Who submitted it.
+    pub submitted_by: String,
+    /// A creature that was present when this was photographed, if any.
+    ///
+    /// **Context, not ownership.** Records with different creature contexts — or
+    /// none — sit in the same corpus and are scored together;
+    /// `the_corpus_does_not_fragment_by_creature` asserts it.
+    pub creature_context: Option<String>,
     /// Where the image lives. Not fetched here.
     pub image_ref: String,
     /// Free-text locality as the submitter gave it. Not a coordinate: a precise
@@ -555,8 +588,15 @@ mod tests {
     }
 
     fn record(id: &str, dets: Vec<Determination>) -> VerificationRecord {
+        record_in(id, None, dets)
+    }
+
+    fn record_in(id: &str, creature: Option<&str>, dets: Vec<Determination>) -> VerificationRecord {
         VerificationRecord {
             record_id: id.into(),
+            app_slug: "kask_wild".into(),
+            submitted_by: "user-1".into(),
+            creature_context: creature.map(str::to_string),
             image_ref: "ws://photo.jpg".into(),
             locality: Some("Sherbrooke Forest".into()),
             determinations: dets,
@@ -857,6 +897,43 @@ mod tests {
         );
         assert_eq!(rep.genus_or_better.successes, 1);
         assert_eq!(rep.confusions.len(), 1);
+    }
+
+    /// **The architecture test.** A creature is context, not an owner.
+    ///
+    /// Submissions made inside Rabble, inside Wild directly, and with no creature
+    /// at all are one corpus and are scored together. A per-creature corpus would
+    /// never reach `MIN_N_FOR_HEADLINE`, and every shard would report
+    /// "insufficient evidence" indefinitely while the aggregate had been
+    /// answerable for months — a failure that looks like a quiet platform rather
+    /// than like a bug.
+    #[test]
+    fn the_corpus_does_not_fragment_by_creature() {
+        let settled = |taxon: &str| {
+            vec![
+                model(Some(taxon)),
+                expert(taxon, Some("Fungi of Southern Australia, key 2"), 1),
+            ]
+        };
+        let c = Corpus {
+            records: vec![
+                record_in("a", Some("creature-1"), settled("Boletus edulis")),
+                record_in("b", Some("creature-2"), settled("Boletus edulis")),
+                record_in("c", None, settled("Boletus edulis")),
+            ],
+        };
+        let rep = c.report();
+        assert_eq!(
+            rep.exact.n, 3,
+            "records were scored per creature instead of per corpus"
+        );
+        assert_eq!(rep.cited, 3);
+        assert_eq!(rep.exact.successes, 3);
+
+        // And every record names the App that owns it, not the creature.
+        for r in &c.records {
+            assert_eq!(r.app_slug, "kask_wild");
+        }
     }
 
     /// Contested records are surfaced, not smoothed. A specimen experts disagree

@@ -144,7 +144,82 @@ Named so the absence reads as a decision rather than an oversight:
   undercount; fixing it means routing both through GBIF's accepted-name view,
   which a pure function cannot do.
 
-## 7. What the corpus pays for, in order
+## 7. Wild is the App. Rabble consumes it. The code has this backwards.
+
+The corpus forced this question, and it turns out the manifest already answered
+it.
+
+`apps/kask_wild.json` declares Wild as a standalone App: its own slug, its own
+composition (`wild_forager`), its own schema (`kask-wild/1`), its own homepage,
+auto-hiring seven agents — and, verbatim:
+
+> Rabble creatures consume Wild via cross-workspace delegation — the creature
+> provides spatial context; Wild provides foraging intelligence.
+
+That is the right architecture and it is not what is wired.
+
+| | |
+| --- | --- |
+| Wild's declared workspace actions | `log_observation`, `update_goal`, `annotate_location` |
+| Where `identify` actually lives | `POST /api/creatures/:creature_id/forage`, `action: "identify"` |
+| Signature | `Path(creature_id): Path<uuid::Uuid>` — **mandatory** |
+
+So Wild's only photographic-identification capability is reachable **exclusively
+through a Rabble creature.** The dependency arrow points the opposite way from the
+one the manifest declares. Same defect class as everything else this week: a
+declared design and a wired design that disagree, with nothing comparing them.
+
+### Why the corpus makes this urgent rather than tidy
+
+If submissions are creature-scoped, **the corpus fragments.**
+
+`MIN_N_FOR_HEADLINE` is 30 and a useful figure wants a few hundred. Partitioned
+per creature, no shard ever reaches either. Every one reports "insufficient
+evidence" indefinitely while the aggregate had been answerable for months — and
+that failure does not look like a bug. It looks like a quiet platform.
+
+So `VerificationRecord` is owned by `app_slug` and carries `creature_context` as
+**context, not ownership**. A creature may have been present; that is useful for
+the game and does not remove the determination from the shared corpus.
+`the_corpus_does_not_fragment_by_creature` asserts records with different creature
+contexts — and none — are scored together.
+
+### The refactor this implies, not done here
+
+1. **Extract the identify logic** from `forage_handler` into a function taking
+   `(photo_ref, locality, habitat)` and no creature.
+2. **Add `identify` as a Wild workspace action** —
+   `POST /api/workspaces/:id/actions/identify` — and add it to the App's declared
+   `action_types`, which is where its absence is currently visible.
+3. **Keep the creature route**, delegating to the same function and passing the
+   creature as context. Rabble keeps working; the creature stops being required.
+4. **Then** the corpus can accumulate from both, and the Rabble foraging module
+   becomes what the manifest says it is: a caller.
+
+Deliberately not done in this commit. It re-routes a live endpoint, and another
+session is active in the tree; the corpus shape is the part that had to be right
+first, because it is the part that would have been expensive to change after data
+existed.
+
+### What informs what, once this holds
+
+```
+              kask_wild (App) — owns the corpus
+                       │
+     ┌────────────────┼────────────────┐
+     │                 │                │
+  Rabble          hud_field_scout    forage_scout /
+  creature        (glasses)          harvest_advisor
+  (context)                          (fleet)
+```
+
+One corpus, three surfaces. The glasses agent, the Rabble creature module and the
+Wild fleet all submit into it and all read the same accuracy figure, the same
+cross-check, and eventually the same confusion pairs. Three copies of a corpus
+would be three answers to one question, and the one that disagreed would be
+whichever was nearest the writer.
+
+## 8. What the corpus pays for, in order
 
 1. **An accuracy figure of our own.** ~30 settled records makes the headline
    reportable; a few hundred makes it meaningful. This is the cell currently
