@@ -124,6 +124,7 @@ impl SemanticAnalyzer {
         // Phase 4: Check validation rules
         self.check_validation_rules(program);
         self.check_driver_spaces(program);
+        self.check_driver_constraints(program);
 
         SemanticAnalysis {
             symbol_table: self.symbol_table,
@@ -758,6 +759,67 @@ impl SemanticAnalyzer {
     /// A declared mix is an ERROR. An undeclared driver is a WARNING, because the
     /// stored corpus predates the field and silence is honest ignorance; treating
     /// absence as `Probability` would reinstate the guess that caused this.
+    /// A driver's declared distribution must satisfy the driver's own constraints.
+    ///
+    /// ## Why this is the enforcement point
+    ///
+    /// `constraint:` states the legal domain of a driver's value. The obvious place
+    /// to enforce it is wherever a value is proposed — but a *prior* that can
+    /// produce illegal values is a defect that exists before any agent runs, and it
+    /// is decidable now, from the file, with no data and no plumbing.
+    ///
+    /// It also replaces something worse. `assertions.rs` enforces one hardcoded
+    /// `[0.1, 3.0]` on every multiplier on the platform, while twelve cards declare
+    /// twelve different ranges — `biotech_analyst` is invited to 0.05 and rejected
+    /// at it, `sentiment_analyzer` is capped at 0.3 by its card and accepted at 0.15
+    /// by the runtime. A per-driver declaration is the honest home for that bound.
+    ///
+    /// ## What it cannot do
+    ///
+    /// Drivers whose distribution parameters are `param` references
+    /// (`triangular(socio_p5, socio_p50, socio_p95)`, which is 48 of the stored
+    /// corpus) are skipped: the bounds are not known until instantiation. Skipping
+    /// is stated here rather than silently passing, because "no error" on those
+    /// drivers means "not checked", not "checked and clean".
+    fn check_driver_constraints(&mut self, program: &Program) {
+        for driver in program.drivers() {
+            if driver.constraints.is_empty() {
+                continue;
+            }
+            let Some(dist) = &driver.distribution else {
+                continue;
+            };
+            let Some((low, high)) = distribution_bounds(dist) else {
+                continue;
+            };
+
+            for c in &driver.constraints {
+                for (edge, value) in [("low", low), ("high", high)] {
+                    let mut ctx = crate::evaluator::EvaluationContext::new();
+                    ctx.set(driver.name.clone(), value);
+                    // A constraint that cannot be evaluated (references another
+                    // driver, say) is not a violation — it is out of scope for a
+                    // static check and must not be reported as a failure.
+                    if let Ok(result) = crate::evaluator::evaluate(&c.condition, &ctx) {
+                        if result == 0.0 {
+                            self.errors.push(SemanticError::ValidationError {
+                                rule: "driver_constraint_violated_by_own_prior".to_string(),
+                                message: format!(
+                                    "driver '{}' declares a constraint its own \
+                                     distribution can violate: at the {edge} end of \
+                                     its range ({value}) the constraint is false. The \
+                                     prior can therefore produce values the driver \
+                                     declares illegal.",
+                                    driver.name
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn check_driver_spaces(&mut self, program: &Program) {
         use std::collections::BTreeMap;
 
@@ -937,6 +999,44 @@ impl SemanticAnalyzer {
 impl Default for SemanticAnalyzer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Statically evaluate a distribution parameter, when it is a plain number.
+///
+/// `triangular(socio_p5, socio_p50, socio_p95)` binds params at instantiation and
+/// cannot be checked here, so those drivers are skipped rather than guessed at.
+fn static_number(expr: &Expression) -> Option<f64> {
+    match expr {
+        Expression::Number(n) => Some(*n),
+        Expression::Probability(p) => Some(*p),
+        _ => None,
+    }
+}
+
+/// The values a declared distribution can actually produce, when they are known.
+///
+/// Returns `(low, high)`. For bounded families these are exact; for Normal it is
+/// mean +/- 3 sigma, which covers 99.7% of draws — a constraint violated there is
+/// violated often enough to matter, and treating Normal as uncheckable would exempt
+/// the family the reference forecast uses.
+fn distribution_bounds(dist: &Distribution) -> Option<(f64, f64)> {
+    match dist {
+        Distribution::Triangular { p5, p95, .. } => {
+            Some((static_number(p5)?, static_number(p95)?))
+        }
+        Distribution::Uniform { low, high } => Some((static_number(low)?, static_number(high)?)),
+        Distribution::Normal { mean, stddev } => {
+            let (m, s) = (static_number(mean)?, static_number(stddev)?);
+            Some((m - 3.0 * s, m + 3.0 * s))
+        }
+        Distribution::Beta { min, max, .. } => Some((
+            min.as_ref().and_then(static_number).unwrap_or(0.0),
+            max.as_ref().and_then(static_number).unwrap_or(1.0),
+        )),
+        // Lognormal is unbounded above and its low tail approaches zero; there is no
+        // honest finite bound to test, so it is skipped rather than approximated.
+        _ => None,
     }
 }
 
@@ -1513,5 +1613,198 @@ simulate 1000 iterations
         // Undeclared is a warning, never an error: the stored corpus predates the
         // field and absence is honest ignorance rather than a mistake.
         assert!(analysis.is_valid(), "{:?}", analysis.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>());
+    }
+
+    /// A prior that can produce values its own constraint forbids.
+    ///
+    /// The falsifiability probe. `constraint:` was dead at both ends — the parser
+    /// held `let constraints = Vec::new();` (not even `mut`) and nothing read the
+    /// field — so a rule that could not fire would be indistinguishable from the
+    /// state it replaced.
+    #[test]
+    fn a_prior_that_violates_its_own_constraint_is_an_error() {
+        let src = r#"
+question "Will it?" {
+    base_rate {
+        reference_class: "days"
+        historical_frequency: 10%
+        sample_size: 100
+        source: "fixture"
+        generated_by: macro_forecaster
+    }
+}
+
+driver adjustment continuous {
+    distribution: triangular(0.05, 1.0, 2.0)
+    unit: "multiplier"
+    applies_to: probability
+    constraint: adjustment >= 0.1
+}
+
+model: 0.1 * adjustment
+
+simulate 1000 iterations
+"#;
+        let analysis = analyze_source(src);
+        let msgs: Vec<String> = analysis.errors.iter().map(|e| e.to_string()).collect();
+        assert!(
+            msgs.iter().any(|m| m.contains("can violate")),
+            "a prior reaching 0.05 under a `>= 0.1` constraint must be an error; \
+             got {msgs:?}"
+        );
+        // The driver and the offending end are named: "a constraint is violated"
+        // is not actionable in a six-driver model.
+        assert!(
+            msgs.iter().any(|m| m.contains("adjustment") && m.contains("low")),
+            "the driver and the end of its range must be named; got {msgs:?}"
+        );
+    }
+
+    /// A prior that respects its constraint passes, so the rule is not a blanket
+    /// objection to declaring one.
+    #[test]
+    fn a_prior_inside_its_constraint_is_accepted() {
+        let src = r#"
+question "Will it?" {
+    base_rate {
+        reference_class: "days"
+        historical_frequency: 10%
+        sample_size: 100
+        source: "fixture"
+        generated_by: macro_forecaster
+    }
+}
+
+driver adjustment continuous {
+    distribution: triangular(0.2, 1.0, 2.0)
+    unit: "multiplier"
+    applies_to: probability
+    constraint: adjustment >= 0.1
+}
+
+model: 0.1 * adjustment
+
+simulate 1000 iterations
+"#;
+        let analysis = analyze_source(src);
+        assert!(
+            analysis.is_valid(),
+            "{:?}",
+            analysis.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+        );
+    }
+
+    /// Both ends are tested, not only the low one.
+    ///
+    /// An upper bound is the case that matters for the multiplier ceiling — a
+    /// driver declared `[0.55, 1.75]` while the honest value needed 2.67 — so a
+    /// check that only looked downward would miss the defect that started this.
+    #[test]
+    fn the_upper_end_of_a_prior_is_checked_too() {
+        let src = r#"
+question "Will it?" {
+    base_rate {
+        reference_class: "days"
+        historical_frequency: 10%
+        sample_size: 100
+        source: "fixture"
+        generated_by: macro_forecaster
+    }
+}
+
+driver adjustment continuous {
+    distribution: triangular(0.5, 1.0, 4.0)
+    unit: "multiplier"
+    applies_to: probability
+    constraint: adjustment <= 3.0
+}
+
+model: 0.1 * adjustment
+
+simulate 1000 iterations
+"#;
+        let analysis = analyze_source(src);
+        let msgs: Vec<String> = analysis.errors.iter().map(|e| e.to_string()).collect();
+        assert!(
+            msgs.iter().any(|m| m.contains("high")),
+            "the high end must be checked; got {msgs:?}"
+        );
+    }
+
+    /// A driver whose bounds are params is SKIPPED, not silently passed.
+    ///
+    /// 48 of the stored corpus write `triangular(socio_p5, socio_p50, socio_p95)`,
+    /// whose bounds are unknown until instantiation. The test records that no error
+    /// is raised AND that this means "not checked" rather than "checked and clean".
+    #[test]
+    fn a_prior_built_from_params_is_not_checkable_here() {
+        let src = r#"
+question "Will it?" {
+    base_rate {
+        reference_class: "days"
+        historical_frequency: 10%
+        sample_size: 100
+        source: "fixture"
+        generated_by: macro_forecaster
+    }
+}
+
+param lo: real
+param mid: real
+param hi: real
+
+driver adjustment continuous {
+    distribution: triangular(lo, mid, hi)
+    unit: "multiplier"
+    applies_to: probability
+    constraint: adjustment >= 0.1
+}
+
+model: 0.1 * adjustment
+
+simulate 1000 iterations
+"#;
+        let analysis = analyze_source(src);
+        assert!(
+            analysis.is_valid(),
+            "param-bounded priors cannot be statically checked and must not error: {:?}",
+            analysis.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+        );
+    }
+
+    /// Normal is checked at +/- 3 sigma rather than exempted.
+    ///
+    /// The reference forecast uses `normal(0.0, 2.796)`, so treating unbounded
+    /// families as uncheckable would exempt the shape we are moving toward.
+    #[test]
+    fn a_normal_prior_is_checked_at_three_sigma() {
+        let src = r#"
+question "Will it?" {
+    base_rate {
+        reference_class: "days"
+        historical_frequency: 10%
+        sample_size: 100
+        source: "fixture"
+        generated_by: macro_forecaster
+    }
+}
+
+driver error_f continuous {
+    distribution: normal(0.0, 2.0)
+    unit: "degF"
+    applies_to: quantity
+    constraint: error_f >= -3.0
+}
+
+model: error_f >= 0.0
+
+simulate 1000 iterations
+"#;
+        let analysis = analyze_source(src);
+        let msgs: Vec<String> = analysis.errors.iter().map(|e| e.to_string()).collect();
+        assert!(
+            msgs.iter().any(|m| m.contains("error_f")),
+            "-3 sigma is -6.0, which violates `>= -3.0`; got {msgs:?}"
+        );
     }
 }

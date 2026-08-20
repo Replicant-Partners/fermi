@@ -365,7 +365,7 @@ impl Parser {
         let mut unit = None;
         let mut applies_to: Option<crate::ast::AppliesTo> = None;
         let mut rationale = None;
-        let constraints = Vec::new();
+        let mut constraints: Vec<crate::ast::Constraint> = Vec::new();
         let mut evidence_refs = Vec::new();
         let mut learnable = false;
         let mut feeds_from: Option<crate::ast::FeedsFrom> = None;
@@ -406,6 +406,21 @@ impl Parser {
                 }
                 "evidence_refs" => {
                     evidence_refs = self.parse_string_array()?;
+                }
+                "constraint" => {
+                    // A boolean expression the driver's value must satisfy, e.g.
+                    // `constraint: synoptic_pattern >= 0.1`. Repeatable.
+                    //
+                    // `DriverStmt.constraints` has been in the AST since the
+                    // language was written and `parse_driver` held
+                    // `let constraints = Vec::new();` — not even `mut` — so the
+                    // field was never populated, and nothing read it either. It was
+                    // dead at both ends.
+                    let condition = self.parse_expression()?;
+                    constraints.push(crate::ast::Constraint {
+                        condition,
+                        message: None,
+                    });
                 }
                 "applies_to" => {
                     // What a ratio-valued driver multiplies: `probability` or
