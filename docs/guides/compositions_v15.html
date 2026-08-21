@@ -1,0 +1,1528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Compositions — gated, routed</title>
+<style>
+  :root{
+    --ink:#0E1216; --panel:#171D24; --panel-2:#1E2630; --line:#2B3540;
+    --schematic:#D9E3E6; --schematic-dim:#7C8B94;
+    --brass:#C9A968; --brass-dim:#8A7647;
+    --cyan:#4FD6D0; --cyan-dim:#26514F;
+    --violet:#9B8CE8; --violet-dim:#3A3560;
+    --amber:#E8A63D; --amber-dim:#5A4620;
+    --crimson:#E1476B; --crimson-dim:#5A2530;
+    --route:#E88CC5; --route-dim:#5A3A4C;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--ink);color:var(--schematic);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    -webkit-tap-highlight-color:transparent;overflow-x:hidden;}
+  .app{max-width:460px;margin:0 auto;padding:14px 14px 28px;
+    background:linear-gradient(var(--line) 1px, transparent 1px) 0 0/100% 22px,
+      linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0/22px 100%, var(--ink);
+    background-blend-mode:overlay;min-height:100vh;}
+  header{padding:6px 2px 12px;border-bottom:1px solid var(--line);margin-bottom:12px;}
+  .eyebrow{font-family:"Courier New",monospace;font-size:11px;letter-spacing:.16em;
+    color:var(--brass);text-transform:uppercase;margin-bottom:4px;}
+  h1{font-size:22px;letter-spacing:.02em;margin:0 0 4px;font-weight:800;
+    text-transform:uppercase;color:var(--schematic);}
+  .sub{font-size:12.5px;color:var(--schematic-dim);line-height:1.4;margin:0;}
+  .hint{font-size:11.5px;color:var(--schematic-dim);margin:10px 0 8px;line-height:1.4;}
+  .hint b{color:var(--brass);}
+
+  .gateRow{display:flex;gap:8px;margin-bottom:10px;}
+  #gateToggle{flex:1;font-family:"Courier New",monospace;font-size:12px;letter-spacing:.08em;
+    text-transform:uppercase;padding:9px 10px;border-radius:4px;border:1px solid var(--line);
+    background:var(--panel);color:var(--schematic);cursor:pointer;}
+  #gateToggle.on{background:var(--cyan-dim);border-color:var(--cyan);color:var(--cyan);}
+  #gateToggle.off{background:var(--panel-2);border-color:var(--line);color:var(--schematic-dim);opacity:.7;}
+
+  .metersBlock{margin-bottom:10px;}
+  .meterRow{display:flex;align-items:center;gap:8px;margin-bottom:5px;}
+  .meterName{font-family:"Courier New",monospace;font-size:9px;letter-spacing:.1em;
+    text-transform:uppercase;white-space:nowrap;width:64px;}
+  .meterName.fit{color:var(--cyan);}
+  .meterName.ent{color:var(--crimson);}
+  .meterNum{font-family:"Courier New",monospace;font-size:9.5px;color:var(--schematic-dim);
+    width:34px;text-align:right;}
+  .meterTrack2{flex:1;height:6px;border-radius:3px;background:var(--panel-2);
+    border:1px solid var(--line);overflow:hidden;}
+  .meterFillFit{height:100%;width:0%;background:var(--cyan);transition:width .5s ease,filter .2s ease;}
+  .meterFillEnt{height:100%;width:0%;background:var(--crimson);transition:width .5s ease,filter .2s ease;}
+  .meterFillFit.pulse, .meterFillEnt.pulse{filter:brightness(1.9);}
+  .netStatus{font-family:"Courier New",monospace;font-size:10.5px;text-align:right;
+    color:var(--schematic-dim);margin-bottom:10px;}
+  .calBarFill.suspect{fill:var(--amber);}
+
+  .stage{position:relative;width:100%;aspect-ratio:340/300;
+    background:radial-gradient(ellipse at 50% 30%, #1A222A 0%, #0F1418 75%);
+    border:1px solid var(--line);border-radius:6px;overflow:hidden;margin-bottom:10px;}
+  .stage svg{position:absolute;inset:0;width:100%;height:100%;}
+  .gearFace{fill:var(--panel-2);stroke:var(--line);stroke-width:1.4;}
+  .gearFace.selected{stroke:var(--brass);stroke-width:2.2;}
+  .gearFace.strategist{fill:#241C22;stroke:var(--route);}
+  .teamRing{fill:none;stroke:var(--route);stroke-width:1.4;stroke-dasharray:3 3;opacity:.75;}
+  .gearHub{fill:var(--ink);stroke:var(--line);stroke-width:1.2;}
+  .sName{font-family:"Courier New",monospace;font-size:8.2px;letter-spacing:.08em;
+    fill:var(--schematic-dim);text-anchor:middle;}
+  .calBarBg{fill:var(--panel);stroke:var(--line);stroke-width:.6;}
+  .calBarFill{fill:var(--cyan);}
+  .curvePath{fill:none;stroke:var(--violet);stroke-width:1.1;opacity:.8;}
+  .curvePath.contaminated{stroke:var(--crimson);opacity:.85;}
+
+  .portDot{stroke:var(--ink);stroke-width:1;cursor:pointer;}
+  .portDot.perception{fill:var(--cyan);}
+  .portDot.judgment{fill:var(--violet);}
+  .portDot.memory{fill:var(--amber);}
+  .portDot.route{fill:var(--route);}
+  .portDot.pending{stroke:#fff;stroke-width:2;filter:drop-shadow(0 0 4px #fff);}
+  .portHit{fill:transparent;cursor:pointer;}
+
+  .beltLine{stroke-width:2;fill:none;}
+  .beltLine.verified{stroke:var(--cyan);opacity:.75;}
+  .beltLine.unverified{stroke:var(--amber);stroke-dasharray:3 3;opacity:.7;}
+  .beltLine.corrupted{stroke:var(--crimson);opacity:.9;}
+  .beltShared{fill:var(--cyan);}
+  .routeArrow{stroke:var(--route);stroke-width:2;fill:none;marker-end:url(#arrowHead);}
+
+  .tick{fill:var(--cyan-dim);stroke:var(--cyan);stroke-width:.6;}
+  .tick.corrupt{fill:var(--crimson-dim);stroke:var(--crimson);stroke-width:.7;}
+  .routeTick{fill:var(--route-dim);stroke:var(--route);stroke-width:.6;}
+  .routeToken{fill:var(--route);stroke:#fff;stroke-width:.8;filter:drop-shadow(0 0 5px var(--route));}
+  .calLabel{font-family:"Courier New",monospace;font-size:8px;fill:var(--route);text-anchor:middle;}
+  .statBar.valence{fill:#F08CA0;}
+  .statBar.temperature{fill:#F2793D;}
+  .statBar.cognition{fill:#5B8DEF;}
+  .statBar.cost{fill:#8A97A3;}
+  .statLbl{font-family:"Courier New",monospace;font-size:5.6px;fill:var(--schematic-dim);text-anchor:middle;}
+  .trialBelt{stroke:var(--schematic-dim);stroke-width:1.5;stroke-dasharray:4 3;opacity:.55;fill:none;}
+  .gateCheckpoint{stroke:var(--ink);stroke-width:1;}
+  .gateToken{fill:var(--brass);stroke:rgba(0,0,0,.4);stroke-width:.8;filter:drop-shadow(0 0 4px rgba(201,169,104,.65));}
+  .ghostToken{fill:var(--schematic-dim);opacity:.85;}
+
+  .checkRow{display:flex;gap:4px;margin-bottom:10px;transition:opacity .3s ease;}
+  .checkRow.gateOff{opacity:.35;filter:grayscale(.6);}
+  .checkCell{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:4px;
+    padding:5px 2px;text-align:center;min-width:0;}
+  .checkCell .name{font-family:"Courier New",monospace;font-size:7.4px;letter-spacing:.02em;
+    color:var(--schematic-dim);text-transform:uppercase;white-space:nowrap;}
+  .checkCell .dot{width:8px;height:8px;border-radius:50%;margin:4px auto 0;
+    background:#2A323C;transition:all .25s ease;}
+  .checkCell.active .dot{background:var(--brass);box-shadow:0 0 8px var(--brass);}
+  .checkCell.pass .dot{background:var(--cyan);box-shadow:0 0 8px var(--cyan);}
+  .checkCell.fail .dot{background:var(--crimson);box-shadow:0 0 8px var(--crimson);}
+
+  .loopRow{display:flex;gap:6px;overflow-x:auto;margin-bottom:10px;padding-bottom:2px;}
+  .assembleBtn{width:100%;font-family:"Courier New",monospace;font-size:12px;letter-spacing:.04em;
+    text-transform:uppercase;padding:12px 10px;border-radius:5px;border:1.5px solid var(--route);
+    background:var(--route-dim);color:var(--route);cursor:pointer;font-weight:700;margin-bottom:8px;}
+  .assembleBtn:disabled{opacity:.5;}
+  .modeRow{margin-bottom:10px;}
+  .modeLabel{font-family:"Courier New",monospace;font-size:9px;letter-spacing:.08em;
+    color:var(--schematic-dim);text-transform:uppercase;display:block;margin-bottom:5px;}
+  .modeChips{display:flex;gap:6px;}
+  .modeChip{flex:1;text-align:center;font-family:"Courier New",monospace;font-size:11px;
+    letter-spacing:.03em;padding:8px 4px;border-radius:4px;border:1px solid var(--line);
+    background:var(--panel);color:var(--schematic-dim);cursor:pointer;}
+  .modeChip.active{background:var(--route-dim);border-color:var(--route);color:var(--route);font-weight:700;}
+  .runTaskBtn{width:100%;font-family:"Courier New",monospace;font-size:12px;letter-spacing:.04em;
+    text-transform:uppercase;padding:12px 10px;border-radius:5px;border:1.5px solid var(--cyan);
+    background:var(--cyan-dim);color:var(--cyan);cursor:pointer;font-weight:700;margin-bottom:10px;}
+  .runTaskBtn:disabled{opacity:.5;}
+  .taskToken{fill:#F2C14E;stroke:#000;stroke-width:1;filter:drop-shadow(0 0 6px rgba(242,193,78,.75));}
+  .loopChip{flex:0 0 auto;font-family:"Courier New",monospace;font-size:10.5px;
+    letter-spacing:.04em;text-transform:uppercase;padding:9px 10px;border-radius:4px;
+    border:1px solid var(--line);background:var(--panel);color:var(--schematic-dim);
+    white-space:nowrap;cursor:pointer;}
+  .loopChip.armed{background:var(--brass-dim);border-color:var(--brass);color:#1a1610;font-weight:700;}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:4px;
+    padding:10px 12px;margin-bottom:10px;min-height:52px;}
+  .panel .plabel{font-family:"Courier New",monospace;font-size:9px;letter-spacing:.12em;
+    color:var(--schematic-dim);text-transform:uppercase;margin-bottom:4px;}
+  .panel .ptext{font-size:12.5px;line-height:1.4;}
+  .meterTrack{height:8px;border-radius:4px;background:var(--panel-2);border:1px solid var(--line);
+    overflow:hidden;margin-top:6px;}
+  .meterFill{height:100%;transition:width .5s ease, background .5s ease;}
+  .rowBtns{display:flex;gap:8px;margin-top:8px;}
+  .rowBtns button{flex:1;font-family:"Courier New",monospace;font-size:11px;
+    text-transform:uppercase;padding:8px;border-radius:4px;border:1px solid var(--line);
+    background:var(--panel-2);color:var(--schematic);cursor:pointer;}
+  .rowBtns button.approve{border-color:var(--cyan);color:var(--cyan);}
+  .rowBtns button.decline{border-color:var(--crimson);color:var(--crimson);}
+
+  .log{background:var(--panel);border:1px solid var(--line);border-radius:4px;
+    padding:8px 10px;font-family:"Courier New",monospace;font-size:10.2px;line-height:1.6;
+    color:var(--schematic-dim);height:108px;overflow-y:auto;margin-bottom:10px;}
+  .log .entry.hi{color:var(--cyan);}
+  .log .entry.warn{color:var(--amber);}
+  .log .entry.bad{color:var(--crimson);}
+
+  button.reset{width:100%;font-family:"Courier New",monospace;font-size:11px;
+    padding:8px;border-radius:4px;border:1px solid var(--line);background:var(--panel);
+    color:var(--schematic-dim);cursor:pointer;}
+
+  .legend{display:flex;gap:10px;font-size:9.5px;color:var(--schematic-dim);margin-bottom:8px;
+    flex-wrap:wrap;}
+  .legend span{display:inline-flex;align-items:center;gap:4px;}
+  .legend i{width:8px;height:8px;border-radius:50%;display:inline-block;}
+  ::-webkit-scrollbar{height:4px;width:4px;}
+  ::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px;}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="eyebrow">Axolotl Partners — ABW mechanics, playable</div>
+    <h1>Compositions</h1>
+    <p class="sub">Four sprockets with real agent-card stats, a token that lives or dies against the actual five-rung gate, and a Strategist who coordinates a pipeline instead of just picking a winner.</p>
+  </header>
+
+  <div class="legend">
+    <span><i style="background:#4FD6D0"></i>Perception</span>
+    <span><i style="background:#9B8CE8"></i>Judgment</span>
+    <span><i style="background:#E8A63D"></i>Memory</span>
+    <span><i style="background:#E88CC5"></i>Route</span>
+  </div>
+  <div class="legend" style="margin-top:-4px">
+    <span><i style="background:#F08CA0"></i>Valence</span>
+    <span><i style="background:#F2793D"></i>Temp</span>
+    <span><i style="background:#5B8DEF"></i>Cognition</span>
+    <span><i style="background:#8A97A3"></i>Cost</span>
+  </div>
+  <div class="legend" style="margin-top:-4px;margin-bottom:10px">
+    <span><i style="background:none;border:1.4px dashed #E88CC5;width:8px;height:8px;border-radius:50%"></i>Dashed ring = on the Strategist's team</span>
+    <span><i style="background:#E1476B"></i>Crimson tick = a self-taught lesson absorbed with the gate off</span>
+    <span><i style="background:none;border-bottom:2px solid #E1476B;width:9px;height:0"></i>Crimson curve = fit on fabricated priors</span>
+  </div>
+
+  <div class="gateRow">
+    <button id="gateToggle" class="on">Gate: On</button>
+  </div>
+
+  <div class="metersBlock">
+    <div class="meterRow">
+      <div class="meterName fit">Fitness</div>
+      <div class="meterTrack2"><div class="meterFillFit" id="fitnessFill"></div></div>
+      <div class="meterNum" id="fitnessNum">0</div>
+    </div>
+    <div class="meterRow">
+      <div class="meterName ent">Entropy</div>
+      <div class="meterTrack2"><div class="meterFillEnt" id="entropyFill"></div></div>
+      <div class="meterNum" id="entropyNum">0</div>
+    </div>
+  </div>
+  <div class="netStatus" id="netStatus">Stable · every validated loop feeds Fitness, every anti-pattern feeds Entropy</div>
+
+  <p class="hint">Tap a <b>port</b>, then another on a different sprocket. With the gate <b>on</b>, the link has to clear five rungs before it's trusted. With it <b>off</b>, it forms instantly — and you won't know what it cost you until it does. Once a team is wired, <b>Run a task</b> to watch it actually move hop by hop and see what the gate did to the output.</p>
+
+  <div class="stage" id="stage">
+    <svg viewBox="0 0 340 300" id="svgRoot">
+      <defs>
+        <marker id="arrowHead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="var(--route)"/>
+        </marker>
+      </defs>
+      <g id="beltLayer"></g>
+      <g id="routeLayer"></g>
+      <g id="sprocketLayer"></g>
+      <g id="portLayer"></g>
+      <g id="tokenLayer"></g>
+    </svg>
+  </div>
+
+  <div class="checkRow" id="checkRow">
+    <div class="checkCell" data-check="presence"><div class="name">Presence</div><div class="dot"></div></div>
+    <div class="checkCell" data-check="liveness"><div class="name">Liveness</div><div class="dot"></div></div>
+    <div class="checkCell" data-check="truth"><div class="name">Truth</div><div class="dot"></div></div>
+    <div class="checkCell" data-check="grounding"><div class="name">Grounding</div><div class="dot"></div></div>
+    <div class="checkCell" data-check="binding"><div class="name">Binding</div><div class="dot"></div></div>
+  </div>
+
+  <button class="assembleBtn" id="assembleBtn">Assemble the team — let the Strategist propose a start</button>
+  <button class="runTaskBtn" id="runTaskBtn">Run a task through the team</button>
+
+  <div class="modeRow">
+    <span class="modeLabel">Strategist mode (Loop 5):</span>
+    <div class="modeChips">
+      <div class="modeChip" data-mode="router">Router</div>
+      <div class="modeChip active" data-mode="pipeline">Pipeline</div>
+      <div class="modeChip" data-mode="decompose">Decompose</div>
+    </div>
+  </div>
+
+  <div class="loopRow" id="loopRow">
+    <div class="loopChip" data-loop="learn">Loop 1 · Learn</div>
+    <div class="loopChip" data-loop="correct">Loop 2 · Correct</div>
+    <div class="loopChip" data-loop="coherence">Loop 3 · Coherence</div>
+    <div class="loopChip" data-loop="team">Loop 4 · Reshape team</div>
+    <div class="loopChip" data-loop="calibrate">Loop 5 · Calibrate</div>
+    <div class="loopChip" data-loop="fit">Loop 6 · Fit</div>
+  </div>
+
+  <div class="panel" id="actionPanel">
+    <div class="plabel">Status</div>
+    <div class="ptext" id="actionText">Select a sprocket, wire some belts, then tap a loop.</div>
+  </div>
+
+  <div class="log" id="log"></div>
+  <button class="reset" id="resetBtn">Reset the graph</button>
+</div>
+
+<script>
+(function(){
+  const svgNS = "http://www.w3.org/2000/svg";
+  const beltLayer = document.getElementById('beltLayer');
+  const routeLayer = document.getElementById('routeLayer');
+  const sprocketLayer = document.getElementById('sprocketLayer');
+  const portLayer = document.getElementById('portLayer');
+  const actionText = document.getElementById('actionText');
+  const actionPanel = document.getElementById('actionPanel');
+  const logEl = document.getElementById('log');
+  const checkRow = document.getElementById('checkRow');
+  const gateToggle = document.getElementById('gateToggle');
+  const tokenLayer = document.getElementById('tokenLayer');
+  let routingBusy = false;
+
+  const checkCells = {
+    presence: document.querySelector('[data-check="presence"]'),
+    liveness: document.querySelector('[data-check="liveness"]'),
+    truth: document.querySelector('[data-check="truth"]'),
+    grounding: document.querySelector('[data-check="grounding"]'),
+    binding: document.querySelector('[data-check="binding"]')
+  };
+
+  const sprockets = [
+    {id:'s1', name:'SCOUT', cx:126, cy:150, r:22, teeth:8, ticks:0, corruptFlags:[], fitContaminated:false, routeTicks:0, calibration:30, sigma:36, selected:false,
+      valence:70, temperature:75, cognition:45, cost:2,
+      ports:[{key:'perception',angle:-90,cls:'perception'},{key:'judgment',angle:35,cls:'judgment'},{key:'memory',angle:155,cls:'memory'}]},
+    {id:'s2', name:'ANALYST', cx:210, cy:150, r:22, teeth:8, ticks:0, corruptFlags:[], fitContaminated:false, routeTicks:0, calibration:45, sigma:36, selected:false,
+      valence:40, temperature:25, cognition:85, cost:5,
+      ports:[{key:'perception',angle:-90,cls:'perception'},{key:'judgment',angle:35,cls:'judgment'},{key:'memory',angle:155,cls:'memory'}]},
+    {id:'s3', name:'FORECASTER', cx:298, cy:150, r:22, teeth:8, ticks:0, corruptFlags:[], fitContaminated:false, routeTicks:0, calibration:38, sigma:36, selected:false,
+      valence:55, temperature:20, cognition:78, cost:7,
+      ports:[{key:'perception',angle:-90,cls:'perception'},{key:'judgment',angle:35,cls:'judgment'},{key:'memory',angle:155,cls:'memory'}]},
+    {id:'strat', name:'STRATEGIST', cx:42, cy:150, r:19, teeth:14, ticks:0, corruptFlags:[], fitContaminated:false, routeTicks:0, calibration:20, sigma:36, selected:false, isStrategist:true,
+      valence:50, temperature:30, cognition:60, cost:3,
+      ports:[{key:'route1',angle:-135,cls:'route'},{key:'route2',angle:-45,cls:'route'},{key:'route3',angle:90,cls:'route'}]}
+  ];
+
+  let belts = []; // {aId,aPort,bId,bPort,shared,verified,corrupted}
+  let pending = null;
+  let gateOn = true;
+  let gateBusy = false;
+  let busy = false;
+  let unverifiedDebt = 0;
+  let strategistMode = 'pipeline'; // 'router' | 'pipeline' | 'decompose'
+
+  const LAYOUTS = {
+    // MoE router: strategist central, every member equidistant — symmetric broadcast access.
+    router: { strat:{cx:170,cy:150}, s1:{cx:70,cy:65}, s2:{cx:270,cy:65}, s3:{cx:170,cy:235} },
+    // Pipeline: strategist anchors one end, stages run away from it in dispatch order.
+    pipeline: { strat:{cx:42,cy:150}, s1:{cx:126,cy:150}, s2:{cx:210,cy:150}, s3:{cx:298,cy:150} },
+    // Decompose & reassemble: strategist forks the work out, branches converge back up to it.
+    decompose: { strat:{cx:170,cy:55}, s1:{cx:60,cy:215}, s2:{cx:170,cy:240}, s3:{cx:280,cy:215} }
+  };
+
+  function getSprocket(id){ return sprockets.find(s=>s.id===id); }
+
+  function gearPath(cx, cy, outerR, innerR, teeth){
+    let pts = [];
+    const step = Math.PI / teeth;
+    for(let i=0;i<teeth*2;i++){
+      const r = (i % 2 === 0) ? outerR : innerR;
+      const a = i * step;
+      pts.push([cx + r*Math.cos(a), cy + r*Math.sin(a)]);
+    }
+    return "M " + pts.map(p=>p[0].toFixed(1)+","+p[1].toFixed(1)).join(" L ") + " Z";
+  }
+
+  function portPos(s, angleDeg, dist){
+    const a = angleDeg * Math.PI/180;
+    return {x: s.cx + dist*Math.cos(a), y: s.cy + dist*Math.sin(a)};
+  }
+
+  function log(msg, cls){
+    const div = document.createElement('div');
+    div.className = 'entry' + (cls ? ' '+cls : '');
+    div.textContent = msg;
+    logEl.insertBefore(div, logEl.firstChild);
+    while(logEl.children.length > 40) logEl.removeChild(logEl.lastChild);
+  }
+
+  function setPanel(label, text){
+    actionPanel.querySelector('.plabel').textContent = label;
+    actionText.innerHTML = text;
+  }
+
+  function wait(ms){ return new Promise(res=>setTimeout(res, ms)); }
+
+  function curvePoints(s){
+    const w = 38, h = 8;
+    const cx0 = s.cx - w/2, cy0 = s.cy + s.r + 32;
+    let pts = [];
+    for(let i=0;i<=10;i++){
+      const x = i/10 * w;
+      const dx = x - w/2;
+      const y = h - h*Math.exp(-(dx*dx)/(2*s.sigma*s.sigma/9));
+      pts.push([cx0+x, cy0+y]);
+    }
+    return "M " + pts.map(p=>p[0].toFixed(1)+","+p[1].toFixed(1)).join(" L ");
+  }
+
+  function render(){
+    beltLayer.innerHTML = '';
+    belts.forEach(b=>{
+      const sa = getSprocket(b.aId), sb = getSprocket(b.bId);
+      const pa = sa.ports.find(p=>p.key===b.aPort), pb = sb.ports.find(p=>p.key===b.bPort);
+      const posA = portPos(sa, pa.angle, sa.r+10);
+      const posB = portPos(sb, pb.angle, sb.r+10);
+      const line = document.createElementNS(svgNS,'line');
+      let cls = 'beltLine ' + (b.corrupted ? 'corrupted' : (b.verified ? 'verified' : 'unverified'));
+      line.setAttribute('class', cls);
+      line.setAttribute('x1',posA.x); line.setAttribute('y1',posA.y);
+      line.setAttribute('x2',posB.x); line.setAttribute('y2',posB.y);
+      beltLayer.appendChild(line);
+      if(b.shared>0){
+        const mx = (posA.x+posB.x)/2, my = (posA.y+posB.y)/2;
+        const dot = document.createElementNS(svgNS,'circle');
+        dot.setAttribute('class','beltShared');
+        dot.setAttribute('cx',mx); dot.setAttribute('cy',my); dot.setAttribute('r', 3+Math.min(b.shared,4));
+        beltLayer.appendChild(dot);
+      }
+    });
+
+    sprocketLayer.innerHTML = '';
+    portLayer.innerHTML = '';
+    const teamIds = computeReachableFromStrat();
+    sprockets.forEach(s=>{
+      const g = document.createElementNS(svgNS,'g');
+      const innerR = s.r*0.8;
+
+      if(!s.isStrategist && teamIds.has(s.id)){
+        const teamRing = document.createElementNS(svgNS,'circle');
+        teamRing.setAttribute('class','teamRing');
+        teamRing.setAttribute('cx',s.cx); teamRing.setAttribute('cy',s.cy);
+        teamRing.setAttribute('r', s.r+5);
+        g.appendChild(teamRing);
+      }
+
+      const face = document.createElementNS(svgNS,'path');
+      face.setAttribute('class','gearFace'+(s.isStrategist?' strategist':'')+(s.selected?' selected':''));
+      face.setAttribute('d', gearPath(s.cx,s.cy,s.r,innerR,s.teeth));
+      face.style.cursor = 'pointer';
+      face.addEventListener('click', ()=>selectSprocket(s.id));
+      g.appendChild(face);
+
+      const hub = document.createElementNS(svgNS,'circle');
+      hub.setAttribute('class','gearHub');
+      hub.setAttribute('cx',s.cx); hub.setAttribute('cy',s.cy); hub.setAttribute('r', s.r*0.35);
+      g.appendChild(hub);
+
+      const ringR = s.r + 18;
+      const cap = 10;
+      for(let i=0;i<Math.min(s.ticks, cap*2);i++){
+        const a = (i / cap) * Math.PI*2 - Math.PI/2;
+        const x = s.cx + ringR*Math.cos(a), y = s.cy + ringR*Math.sin(a);
+        const isCorrupt = !!(s.corruptFlags && s.corruptFlags[i]);
+        const t = document.createElementNS(svgNS,'rect');
+        t.setAttribute('class','tick'+(isCorrupt?' corrupt':''));
+        t.setAttribute('x', x-2); t.setAttribute('y', y-2);
+        t.setAttribute('width',4); t.setAttribute('height',4);
+        g.appendChild(t);
+      }
+
+      const routeRingR = s.r + 27;
+      const routeCap = 8;
+      for(let i=0;i<Math.min(s.routeTicks||0, routeCap*2); i++){
+        const a = (i / routeCap) * Math.PI*2 - Math.PI/2;
+        const x = s.cx + routeRingR*Math.cos(a), y = s.cy + routeRingR*Math.sin(a);
+        const rt = document.createElementNS(svgNS,'circle');
+        rt.setAttribute('class','routeTick');
+        rt.setAttribute('cx',x); rt.setAttribute('cy',y); rt.setAttribute('r',2.3);
+        g.appendChild(rt);
+      }
+
+      const label = document.createElementNS(svgNS,'text');
+      label.setAttribute('class','sName');
+      label.setAttribute('x', s.cx); label.setAttribute('y', s.cy + s.r + (s.isStrategist?11:12));
+      label.textContent = s.name;
+      g.appendChild(label);
+
+      // agent-card stat bars: valence, temperature, cognition, cost
+      const statVals = [
+        {v:s.valence, cls:'valence'}, {v:s.temperature, cls:'temperature'},
+        {v:s.cognition, cls:'cognition'}, {v:Math.min(100, s.cost*11), cls:'cost'}
+      ];
+      const barMaxH = 9, barW2 = 3, gap2 = 2;
+      const totalW = statVals.length*barW2 + (statVals.length-1)*gap2;
+      const rowBaseY = s.cy + s.r + (s.isStrategist?19:20);
+      statVals.forEach((sv, i)=>{
+        const bh = Math.max(1.5, (sv.v/100)*barMaxH);
+        const bx = s.cx - totalW/2 + i*(barW2+gap2);
+        const rect = document.createElementNS(svgNS,'rect');
+        rect.setAttribute('class','statBar '+sv.cls);
+        rect.setAttribute('x', bx); rect.setAttribute('y', rowBaseY - bh);
+        rect.setAttribute('width', barW2); rect.setAttribute('height', bh);
+        g.appendChild(rect);
+      });
+
+      const barW = s.isStrategist ? 32 : 38, barH = 4;
+      const barY = rowBaseY + 4;
+      const barBg = document.createElementNS(svgNS,'rect');
+      barBg.setAttribute('class','calBarBg');
+      barBg.setAttribute('x', s.cx-barW/2); barBg.setAttribute('y', barY);
+      barBg.setAttribute('width', barW); barBg.setAttribute('height', barH); barBg.setAttribute('rx',2);
+      g.appendChild(barBg);
+      const barFill = document.createElementNS(svgNS,'rect');
+      const hasUntestedCorruption = (s.corruptFlags||[]).some(Boolean);
+      barFill.setAttribute('class','calBarFill'+(hasUntestedCorruption?' suspect':''));
+      barFill.setAttribute('x', s.cx-barW/2); barFill.setAttribute('y', barY);
+      barFill.setAttribute('width', barW*(s.calibration/100)); barFill.setAttribute('height', barH); barFill.setAttribute('rx',2);
+      g.appendChild(barFill);
+
+      sprocketLayer.appendChild(g);
+
+      if(!s.isStrategist){
+        const curve = document.createElementNS(svgNS,'path');
+        curve.setAttribute('class','curvePath'+(s.fitContaminated?' contaminated':''));
+        curve.setAttribute('d', curvePoints(s));
+        sprocketLayer.appendChild(curve);
+      }
+
+      s.ports.forEach(pt=>{
+        const pos = portPos(s, pt.angle, s.r+10);
+        const hit = document.createElementNS(svgNS,'circle');
+        hit.setAttribute('class','portHit');
+        hit.setAttribute('cx',pos.x); hit.setAttribute('cy',pos.y); hit.setAttribute('r', 12);
+        hit.addEventListener('click', ()=>onPortClick(s.id, pt.key));
+        portLayer.appendChild(hit);
+
+        const dot = document.createElementNS(svgNS,'circle');
+        const isPending = pending && pending.sprocketId===s.id && pending.portKey===pt.key;
+        dot.setAttribute('class','portDot '+pt.cls+(isPending?' pending':''));
+        dot.setAttribute('cx',pos.x); dot.setAttribute('cy',pos.y); dot.setAttribute('r', 5);
+        dot.addEventListener('click', ()=>onPortClick(s.id, pt.key));
+        portLayer.appendChild(dot);
+      });
+    });
+    renderMeters();
+  }
+
+  let fitnessScore = 0;
+  let entropyScore = 0;
+
+  function bumpFitness(amount, reason){
+    fitnessScore += amount;
+    pulseMeter('fitnessFill');
+    renderMeters();
+  }
+
+  function bumpEntropy(amount, reason){
+    entropyScore += amount;
+    pulseMeter('entropyFill');
+    renderMeters();
+  }
+
+  function pulseMeter(id){
+    const el = document.getElementById(id);
+    if(!el) return;
+    el.classList.add('pulse');
+    setTimeout(()=> el.classList.remove('pulse'), 350);
+  }
+
+  function renderMeters(){
+    const fitFill = document.getElementById('fitnessFill');
+    const entFill = document.getElementById('entropyFill');
+    const fitNum = document.getElementById('fitnessNum');
+    const entNum = document.getElementById('entropyNum');
+    const netEl = document.getElementById('netStatus');
+    if(!fitFill || !entFill) return;
+
+    // saturating curves so the bar reads visually without an arbitrary hard cap on the real number
+    const fitPct = Math.round(100 * (1 - Math.exp(-fitnessScore/60)));
+    const entPct = Math.round(100 * (1 - Math.exp(-entropyScore/60)));
+    fitFill.style.width = fitPct + '%';
+    entFill.style.width = entPct + '%';
+    fitNum.textContent = Math.round(fitnessScore);
+    entNum.textContent = Math.round(entropyScore);
+
+    const ratio = fitnessScore / (entropyScore + 1);
+    let label, color;
+    if(ratio > 3.5){ label = 'Adaptive learning \u2014 validated loops are outrunning every anti-pattern'; color = 'var(--cyan)'; }
+    else if(ratio > 1.4){ label = 'Learning \u2014 fitness is ahead of entropy'; color = 'var(--cyan)'; }
+    else if(ratio > 0.7){ label = 'Stable \u2014 fitness and entropy roughly balanced'; color = 'var(--schematic-dim)'; }
+    else if(ratio > 0.3){ label = 'Strain \u2014 anti-patterns are catching up'; color = 'var(--amber)'; }
+    else { label = 'Drift \u2014 entropy is outrunning fitness'; color = 'var(--crimson)'; }
+    netEl.textContent = label;
+    netEl.style.color = color;
+  }
+
+  function createToken(x, y){
+    const c = document.createElementNS(svgNS,'circle');
+    c.setAttribute('class','routeToken');
+    c.setAttribute('r', 5);
+    c.setAttribute('cx', x); c.setAttribute('cy', y);
+    tokenLayer.appendChild(c);
+    return c;
+  }
+
+  function createTaskToken(x, y){
+    const c = document.createElementNS(svgNS,'circle');
+    c.setAttribute('class','taskToken');
+    c.setAttribute('r', 6);
+    c.setAttribute('cx', x); c.setAttribute('cy', y);
+    tokenLayer.appendChild(c);
+    return c;
+  }
+
+  function animateEl(el, x0, y0, x1, y1, duration){
+    return new Promise(resolve=>{
+      const start = performance.now();
+      function step(now){
+        const t = Math.min(1, (now-start)/duration);
+        const ease = t<0.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2;
+        el.setAttribute('cx', x0+(x1-x0)*ease);
+        el.setAttribute('cy', y0+(y1-y0)*ease);
+        if(t<1) requestAnimationFrame(step); else resolve();
+      }
+      requestAnimationFrame(step);
+    });
+  }
+
+  function animateLayoutTo(mode){
+    const target = LAYOUTS[mode];
+    if(!target) return Promise.resolve();
+    const start = {};
+    sprockets.forEach(s=>{ start[s.id] = {cx:s.cx, cy:s.cy}; });
+    const duration = 550;
+    const t0 = performance.now();
+    return new Promise(resolve=>{
+      function step(now){
+        const t = Math.min(1, (now-t0)/duration);
+        const ease = t<0.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2;
+        sprockets.forEach(s=>{
+          const from = start[s.id], to = target[s.id];
+          if(!to) return;
+          s.cx = from.cx + (to.cx-from.cx)*ease;
+          s.cy = from.cy + (to.cy-from.cy)*ease;
+        });
+        render();
+        if(t<1) requestAnimationFrame(step); else resolve();
+      }
+      requestAnimationFrame(step);
+    });
+  }
+
+  function showLabel(x, y, text){
+    const t = document.createElementNS(svgNS,'text');
+    t.setAttribute('x', x); t.setAttribute('y', y-10);
+    t.setAttribute('class','calLabel');
+    t.textContent = text;
+    tokenLayer.appendChild(t);
+    setTimeout(()=>{ if(t.parentNode) t.remove(); }, 1000);
+  }
+
+  async function dispatchPipeline(){
+    if(routingBusy) return;
+    const strat = getSprocket('strat');
+    const path = computeTaskPath();
+    if(path.length < 2){
+      setPanel('Pipeline', `Calibration updated, but the Strategist isn\u2019t wired to anyone \u2014 there\u2019s no pipeline to coordinate. Wire it to at least one stage to change that.`);
+      return;
+    }
+    routingBusy = true;
+    const stageNames = path.slice(1).map(id=>getSprocket(id).name);
+    setPanel('Pipeline', `Strategist is coordinating a pipeline: ${stageNames.join(' \u2192 ')}, in the order it\u2019s wired\u2026`);
+    log(`Strategist coordinating a pipeline: ${stageNames.join(' \u2192 ')}.`, 'hi');
+
+    const token = createToken(strat.cx, strat.cy);
+    const completed = [];
+    let brokenAt = null;
+    let hiddenCorrupted = false;
+    let prevX = strat.cx, prevY = strat.cy;
+
+    for(let i=0;i<path.length-1;i++){
+      const stage = getSprocket(path[i+1]);
+      const belt = findBelt(path[i], path[i+1]);
+      if(!belt) continue;
+
+      const fromPos = {x:prevX, y:prevY};
+      const toPos = {x:stage.cx, y:stage.cy};
+
+      if(gateOn){
+        const result = await runCheckSequenceOnToken(token, fromPos, toPos, belt);
+        if(result.failedAt){
+          brokenAt = {stageName: stage.name, rung: result.failedAt, reason: result.reason};
+          break;
+        }
+      } else {
+        await animateEl(token, fromPos.x, fromPos.y, toPos.x, toPos.y, 320);
+        if(belt.corrupted){ hiddenCorrupted = true; bumpEntropy(6, 'ungated pipeline hop crossed an already-corrupted link'); }
+        else if(!belt.verified && Math.random() < 0.3){ hiddenCorrupted = true; bumpEntropy(6, 'ungated pipeline hop slipped through unchecked'); }
+      }
+
+      stage.routeTicks = (stage.routeTicks||0) + 1;
+      completed.push(stage.name);
+      render();
+      prevX = stage.cx; prevY = stage.cy;
+    }
+
+    token.remove();
+    routingBusy = false;
+
+    if(brokenAt){
+      setPanel('Pipeline', `Pipeline broke at <b>${brokenAt.stageName}</b> (${brokenAt.rung.toUpperCase()}) \u2014 ${brokenAt.reason}<br>Completed: ${completed.length ? completed.join(' \u2192 ') : 'nothing yet'}. The rest of the pipeline never ran.`);
+      log(`Pipeline broke at ${brokenAt.stageName} \u2014 ${brokenAt.rung.toUpperCase()}: ${brokenAt.reason}`, 'bad');
+    } else if(!gateOn && hiddenCorrupted){
+      setPanel('Pipeline', `Pipeline completed: ${completed.join(' \u2192 ')}. It looks finished \u2014 but at least one hand-off was never checked. That risk is baked into the result now.`);
+      log('Pipeline completed ungated \u2014 output carries a hidden corrupted hand-off.', 'warn');
+    } else if(!gateOn){
+      setPanel('Pipeline', `Pipeline completed: ${completed.join(' \u2192 ')}, ungated. Nothing verified any of it \u2014 it just didn\u2019t get caught this run.`);
+      log('Pipeline completed ungated \u2014 nothing checked, landed fine this time.', 'warn');
+    } else {
+      setPanel('Pipeline', `Pipeline complete: ${completed.join(' \u2192 ')}. Every hand-off cleared all five rungs, in the order they\u2019re wired. That\u2019s coordination, not just routing.`);
+      log(`Pipeline complete \u2014 ${completed.join(' \u2192 ')}, all verified.`, 'hi');
+    }
+  }
+
+  // Router: fast and naive. Trusts the highest calibration number, doesn't check anything live.
+  async function dispatchRouter(){
+    if(routingBusy) return;
+    const strat = getSprocket('strat');
+    const connectedIds = new Set();
+    belts.forEach(b=>{
+      if(b.aId==='strat') connectedIds.add(b.bId);
+      if(b.bId==='strat') connectedIds.add(b.aId);
+    });
+    if(connectedIds.size===0){
+      setPanel('Router', `Calibration updated, but the Strategist isn\u2019t wired to anyone \u2014 there\u2019s no one to route to. Wire a route port to change that.`);
+      return;
+    }
+    routingBusy = true;
+    const eligible = sprockets.filter(x=>connectedIds.has(x.id));
+    setPanel('Router', `Strategist is broadcasting to everyone it\u2019s wired to \u2014 no live check, just whoever\u2019s calibration wins\u2026`);
+
+    const spawned = eligible.map(s=>({s, el:createToken(strat.cx, strat.cy)}));
+    await Promise.all(spawned.map(({s,el})=>
+      animateEl(el, strat.cx, strat.cy, s.cx, s.cy - s.r - 16, 480)
+        .then(()=> showLabel(s.cx, s.cy - s.r - 16, s.calibration+'%'))
+    ));
+    await wait(600);
+
+    const best = eligible.reduce((a,b)=> b.calibration>a.calibration ? b : a);
+    spawned.forEach(({s,el})=>{
+      if(s.id !== best.id){
+        el.style.transition = 'opacity .4s ease';
+        el.style.opacity = '0';
+        setTimeout(()=>{ if(el.parentNode) el.remove(); }, 400);
+      }
+    });
+    const winnerEntry = spawned.find(x=>x.s.id===best.id);
+    await animateEl(winnerEntry.el, best.cx, best.cy - best.r - 16, best.cx, best.cy, 340);
+    winnerEntry.el.remove();
+    best.routeTicks = (best.routeTicks||0) + 1;
+    render();
+    drawRouteArrow(strat, best);
+
+    setPanel('Router', `Routed to <b style="color:var(--route)">${best.name}</b> \u2014 highest calibration (${best.calibration}%) among ${eligible.length} candidate${eligible.length===1?'':'s'}. Fast, but nothing about this hand-off was actually checked.`);
+    log(`Router picked ${best.name} (${best.calibration}%) \u2014 no live check, just the number.`, best.name && (best.corruptFlags||[]).some(Boolean) ? 'warn' : 'hi');
+    bumpEntropy(3, 'router dispatched with no live check, by design');
+    routingBusy = false;
+  }
+
+  // Decompose & reassemble: splits work across everyone connected, checks each independently,
+  // and reassembles from whoever survived rather than breaking the whole thing on one failure.
+  async function dispatchDecompose(){
+    if(routingBusy) return;
+    const strat = getSprocket('strat');
+    const connectedIds = new Set();
+    belts.forEach(b=>{
+      if(b.aId==='strat') connectedIds.add(b.bId);
+      if(b.bId==='strat') connectedIds.add(b.aId);
+    });
+    if(connectedIds.size===0){
+      setPanel('Decompose', `Calibration updated, but the Strategist isn\u2019t wired to anyone \u2014 nothing to decompose the task across. Wire a route port to change that.`);
+      return;
+    }
+    routingBusy = true;
+    const parts = sprockets.filter(x=>connectedIds.has(x.id));
+    const partNames = parts.map(s=>s.name);
+    setPanel('Decompose', `Strategist is splitting the task into ${parts.length} sub-question${parts.length===1?'':'s'}: ${partNames.join(', ')}\u2026`);
+    log(`Strategist decomposed the task across ${partNames.join(', ')}.`, 'hi');
+
+    const survived = [], failed = [];
+    for(const part of parts){
+      const belt = findBelt('strat', part.id);
+      if(!belt) continue;
+      const aKey = (belt.aId==='strat') ? belt.aPort : belt.bPort;
+      const bKey = (belt.aId===part.id) ? belt.aPort : belt.bPort;
+      const pa = strat.ports.find(p=>p.key===aKey), pb = part.ports.find(p=>p.key===bKey);
+      const posA = portPos(strat, pa.angle, strat.r+10), posB = portPos(part, pb.angle, part.r+10);
+      const token = createToken(posA.x, posA.y);
+      drawRouteArrow(strat, part);
+
+      if(gateOn){
+        const result = await runCheckSequenceOnToken(token, posA, posB, belt);
+        token.remove();
+        if(result.failedAt){
+          failed.push({name: part.name, rung: result.failedAt, reason: result.reason});
+        } else {
+          part.routeTicks = (part.routeTicks||0) + 1;
+          survived.push(part.name);
+          render();
+        }
+      } else {
+        await animateEl(token, posA.x, posA.y, posB.x, posB.y, 300);
+        token.remove();
+        const risky = belt.corrupted || (!belt.verified && Math.random() < 0.3);
+        if(risky) bumpEntropy(5, 'ungated sub-task carried unverified risk');
+        part.routeTicks = (part.routeTicks||0) + 1;
+        survived.push(risky ? part.name+' (unverified)' : part.name);
+        render();
+      }
+    }
+
+    routingBusy = false;
+
+    if(failed.length === 0){
+      setPanel('Decompose', `Reassembled from all ${survived.length}: ${survived.join(' + ')}. Every sub-answer cleared its own check independently \u2014 the combined result is only as good as its weakest verified piece, and none of them were weak.`);
+      log(`Decompose complete \u2014 reassembled from ${survived.join(', ')}.`, 'hi');
+    } else if(survived.length === 0){
+      setPanel('Decompose', `Every sub-question failed its own check. Nothing to reassemble \u2014 no output, which is better than a confidently wrong one.`);
+      log(`Decompose failed entirely \u2014 ${failed.map(f=>f.name+' at '+f.rung.toUpperCase()).join(', ')}.`, 'bad');
+    } else {
+      setPanel('Decompose', `Reassembled from ${survived.length} of ${parts.length}: ${survived.join(' + ')}.<br>${failed.map(f=>`<b>${f.name}</b> failed at ${f.rung.toUpperCase()} \u2014 ${f.reason}`).join('<br>')}<br>The final answer is missing whatever those pieces would have contributed \u2014 partial, but nothing fabricated made it in.`);
+      log(`Decompose partial \u2014 reassembled from ${survived.join(', ')}; dropped ${failed.map(f=>f.name).join(', ')}.`, 'warn');
+    }
+  }
+
+  function dispatchByMode(){
+    if(strategistMode === 'router') dispatchRouter();
+    else if(strategistMode === 'decompose') dispatchDecompose();
+    else dispatchPipeline();
+  }
+
+  function drawRouteArrow(fromS, toS){
+    routeLayer.innerHTML = '';
+    const line = document.createElementNS(svgNS,'line');
+    line.setAttribute('class','routeArrow');
+    const dx = toS.cx-fromS.cx, dy = toS.cy-fromS.cy;
+    const dist = Math.sqrt(dx*dx+dy*dy);
+    const ux = dx/dist, uy = dy/dist;
+    line.setAttribute('x1', fromS.cx + ux*(fromS.r+6));
+    line.setAttribute('y1', fromS.cy + uy*(fromS.r+6));
+    line.setAttribute('x2', toS.cx - ux*(toS.r+10));
+    line.setAttribute('y2', toS.cy - uy*(toS.r+10));
+    routeLayer.appendChild(line);
+    setTimeout(()=>{ routeLayer.innerHTML=''; }, 2600);
+  }
+
+  function selectSprocket(id){
+    if(gateBusy || busy) return;
+    sprockets.forEach(s=> s.selected = (s.id===id));
+    render();
+    const s = getSprocket(id);
+    setPanel('Selected', `<b style="color:var(--brass)">${s.name}</b> \u2014 Valence ${s.valence} \u00b7 Temp ${s.temperature} \u00b7 Cognition ${s.cognition} \u00b7 Cost ${s.cost}.<br>Active target for Learn / Correct / Calibrate / Fit.`);
+  }
+
+  function getSelected(){ return sprockets.find(s=>s.selected) || null; }
+
+  function resetCheckCells(){
+    Object.values(checkCells).forEach(c=> c.classList.remove('active','pass','fail'));
+  }
+
+  async function onPortClick(sprocketId, portKey){
+    if(gateBusy || busy) return;
+    if(!pending){ pending = {sprocketId, portKey}; render(); return; }
+    if(pending.sprocketId === sprocketId){ pending = null; render(); return; }
+
+    const idx = belts.findIndex(b=>
+      (b.aId===pending.sprocketId && b.aPort===pending.portKey && b.bId===sprocketId && b.bPort===portKey) ||
+      (b.bId===pending.sprocketId && b.bPort===pending.portKey && b.aId===sprocketId && b.aPort===portKey)
+    );
+    if(idx >= 0){
+      belts.splice(idx,1);
+      log('Belt removed.', null);
+      pending = null; render();
+      return;
+    }
+
+    const a = pending, b = {sprocketId, portKey};
+    pending = null; render();
+    await attemptBelt(a, b);
+  }
+
+  async function attemptBelt(a, b){
+    gateBusy = true;
+    const sa = getSprocket(a.sprocketId), sb = getSprocket(b.sprocketId);
+    const pa = sa.ports.find(p=>p.key===a.portKey), pb = sb.ports.find(p=>p.key===b.portKey);
+    const posA = portPos(sa, pa.angle, sa.r+10);
+    const posB = portPos(sb, pb.angle, sb.r+10);
+
+    if(!gateOn){
+      // still show it happening: a token glides straight through, unchecked
+      const ghost = createToken(posA.x, posA.y);
+      ghost.setAttribute('class','ghostToken');
+      ghost.setAttribute('r', 4.5);
+      await animateEl(ghost, posA.x, posA.y, posB.x, posB.y, 420);
+      ghost.remove();
+      belts.push({aId:a.sprocketId, aPort:a.portKey, bId:b.sprocketId, bPort:b.portKey, shared:0, verified:false});
+      unverifiedDebt++;
+      log(`Belt formed ungated: ${sa.name}.${a.portKey} \u2194 ${sb.name}.${b.portKey} \u2014 nobody checked it.`, 'warn');
+      setPanel('Gate off', `${sa.name} and ${sb.name} are now coordinating through a link nobody verified. It looks exactly like a good one.`);
+      bumpEntropy(8, 'belt formed with no check at all');
+      render();
+      if(unverifiedDebt >= 3){
+        unverifiedDebt = 0;
+        await wait(200);
+        triggerCorruption();
+      }
+      gateBusy = false;
+      return;
+    }
+
+    // draw a trial belt with five checkpoints laid directly on the line
+    const trial = document.createElementNS(svgNS,'line');
+    trial.setAttribute('class','trialBelt');
+    trial.setAttribute('x1',posA.x); trial.setAttribute('y1',posA.y);
+    trial.setAttribute('x2',posB.x); trial.setAttribute('y2',posB.y);
+    tokenLayer.appendChild(trial);
+
+    function lerp(p,q,t){ return p+(q-p)*t; }
+    const cpT = [0.15,0.32,0.5,0.68,0.85];
+    const cpPos = cpT.map(t=>({x:lerp(posA.x,posB.x,t), y:lerp(posA.y,posB.y,t)}));
+    const cpEls = cpPos.map(p=>{
+      const c = document.createElementNS(svgNS,'circle');
+      c.setAttribute('class','gateCheckpoint');
+      c.setAttribute('cx',p.x); c.setAttribute('cy',p.y); c.setAttribute('r',3.5);
+      c.setAttribute('fill','#2A323C');
+      tokenLayer.appendChild(c);
+      return c;
+    });
+    const token = createToken(posA.x, posA.y);
+    token.setAttribute('r', 5);
+
+    resetCheckCells();
+    const order = ['presence','liveness','truth','grounding','binding'];
+    const REASONS = {
+      presence: 'The declared port doesn\u2019t actually exist in the schema \u2014 like a renamed column or a dropped view.',
+      liveness: 'The writer on this side has never actually run \u2014 sink count against real opportunity count is zero. A ledger nothing has ever written to.',
+      truth: 'The stored value doesn\u2019t match its source of truth \u2014 a counter that disagrees with reality.',
+      grounding: 'This value couldn\u2019t have come from any tool this agent actually has \u2014 a fabricated measurement.',
+      binding: 'The invocation doesn\u2019t match the declared interface \u2014 prose sent to a structured-only port.'
+    };
+    const r = Math.random();
+    let type;
+    if(r < 0.50) type = 'grounded';
+    else if(r < 0.62) type = 'presence';
+    else if(r < 0.74) type = 'liveness';
+    else if(r < 0.86) type = 'truth';
+    else if(r < 0.93) type = 'grounding';
+    else type = 'binding';
+    let failedAt = null, reason = '';
+    let prevX = posA.x, prevY = posA.y;
+
+    for(let i=0;i<order.length;i++){
+      const key = order[i];
+      await animateEl(token, prevX, prevY, cpPos[i].x, cpPos[i].y, 230);
+      prevX = cpPos[i].x; prevY = cpPos[i].y;
+      checkCells[key].classList.add('active');
+      cpEls[i].setAttribute('fill','var(--brass)');
+      await wait(220);
+      const ok = (key !== type);
+      checkCells[key].classList.remove('active');
+      if(ok){
+        checkCells[key].classList.add('pass');
+        cpEls[i].setAttribute('fill','var(--cyan)');
+      } else {
+        checkCells[key].classList.add('fail');
+        cpEls[i].setAttribute('fill','var(--crimson)');
+        failedAt = key;
+        reason = REASONS[key];
+        token.setAttribute('fill','var(--crimson)');
+        token.setAttribute('r', 7);
+        await wait(320);
+        break;
+      }
+      await wait(90);
+    }
+
+    await wait(200);
+
+    if(failedAt){
+      [trial, ...cpEls, token].forEach(el=>{ el.style.transition='opacity .4s ease'; el.style.opacity='0'; });
+      await wait(430);
+      [trial, ...cpEls, token].forEach(el=>{ if(el.parentNode) el.remove(); });
+      log(`Belt REJECTED at ${failedAt.toUpperCase()} \u2014 ${reason}`, 'bad');
+      setPanel('Gate', `Rejected: ${sa.name}.${a.portKey} \u2194 ${sb.name}.${b.portKey}. ${reason}`);
+    } else {
+      await animateEl(token, prevX, prevY, posB.x, posB.y, 260);
+      trial.remove(); cpEls.forEach(c=>c.remove()); token.remove();
+      belts.push({aId:a.sprocketId, aPort:a.portKey, bId:b.sprocketId, bPort:b.portKey, shared:0, verified:true});
+      log(`Belt verified: ${sa.name}.${a.portKey} \u2194 ${sb.name}.${b.portKey}`, 'hi');
+      setPanel('Gate', `Verified: ${sa.name} \u2194 ${sb.name}. Cleared all five rungs before either could learn anything from the other.`);
+      render();
+    }
+    setTimeout(resetCheckCells, 1400);
+    gateBusy = false;
+  }
+
+  const RUNG_REASONS = {
+    presence: 'The declared port doesn\u2019t actually exist in the schema \u2014 like a renamed column or a dropped view.',
+    liveness: 'The writer on this side has never actually run \u2014 sink count against real opportunity count is zero. A ledger nothing has ever written to.',
+    truth: 'The stored value doesn\u2019t match its source of truth \u2014 a counter that disagrees with reality.',
+    grounding: 'This value couldn\u2019t have come from any tool this agent actually has \u2014 a fabricated measurement.',
+    binding: 'The invocation doesn\u2019t match the declared interface \u2014 prose sent to a structured-only port.'
+  };
+  const RUNG_ORDER = ['presence','liveness','truth','grounding','binding'];
+
+  // Runs the live five-rung check for one hop, moving the given token along posA->posB.
+  // Mutates belt.verified/belt.corrupted based on outcome and re-renders the belt itself.
+  async function runCheckSequenceOnToken(token, posA, posB, belt){
+    function lerp(p,q,t){ return p+(q-p)*t; }
+    const cpT = [0.15,0.32,0.5,0.68,0.85];
+    const cpPos = cpT.map(t=>({x:lerp(posA.x,posB.x,t), y:lerp(posA.y,posB.y,t)}));
+    const cpEls = cpPos.map(p=>{
+      const c = document.createElementNS(svgNS,'circle');
+      c.setAttribute('class','gateCheckpoint');
+      c.setAttribute('cx',p.x); c.setAttribute('cy',p.y); c.setAttribute('r',3.2);
+      c.setAttribute('fill','#2A323C');
+      tokenLayer.appendChild(c);
+      return c;
+    });
+    resetCheckCells();
+
+    let failChance;
+    if(belt.corrupted) failChance = 0.85;
+    else if(belt.verified) failChance = 0.12;
+    else failChance = 0.42;
+    const willFail = Math.random() < failChance;
+    const failIdx = willFail ? Math.floor(Math.random()*RUNG_ORDER.length) : -1;
+
+    let prevX = posA.x, prevY = posA.y, failedAt = null, reason = '';
+    for(let i=0;i<RUNG_ORDER.length;i++){
+      const key = RUNG_ORDER[i];
+      await animateEl(token, prevX, prevY, cpPos[i].x, cpPos[i].y, 190);
+      prevX = cpPos[i].x; prevY = cpPos[i].y;
+      checkCells[key].classList.add('active');
+      cpEls[i].setAttribute('fill','var(--brass)');
+      await wait(150);
+      const ok = (i !== failIdx);
+      checkCells[key].classList.remove('active');
+      if(ok){
+        checkCells[key].classList.add('pass');
+        cpEls[i].setAttribute('fill','var(--cyan)');
+      } else {
+        checkCells[key].classList.add('fail');
+        cpEls[i].setAttribute('fill','var(--crimson)');
+        failedAt = key; reason = RUNG_REASONS[key];
+        token.setAttribute('fill','var(--crimson)');
+        token.setAttribute('r', Math.max(7, +token.getAttribute('r')+1));
+        await wait(260);
+        break;
+      }
+      await wait(60);
+    }
+    if(!failedAt){
+      await animateEl(token, prevX, prevY, posB.x, posB.y, 190);
+    }
+
+    cpEls.forEach(c=>{ c.style.transition='opacity .3s ease'; c.style.opacity='0'; });
+    setTimeout(()=> cpEls.forEach(c=>{ if(c.parentNode) c.remove(); }), 340);
+    setTimeout(resetCheckCells, 900);
+
+    if(failedAt){
+      if(!belt.corrupted){ belt.corrupted = true; belt.verified = false; render(); }
+      bumpFitness(7, 'gate caught a bad hand-off before it could count as fact');
+    } else {
+      if(!belt.verified){ belt.verified = true; belt.corrupted = false; render(); }
+      bumpFitness(5, 'hand-off verified live');
+    }
+    return {failedAt, reason};
+  }
+
+  function findBelt(idA, idB){
+    return belts.find(b => (b.aId===idA && b.bId===idB) || (b.aId===idB && b.bId===idA));
+  }
+
+  function buildAdjacency(){
+    const adj = {};
+    sprockets.forEach(s=> adj[s.id]=[]);
+    belts.forEach(b=>{ adj[b.aId].push(b.bId); adj[b.bId].push(b.aId); });
+    return adj;
+  }
+
+  function computeReachableFromStrat(){
+    const adj = buildAdjacency();
+    const visited = new Set(['strat']);
+    const queue = ['strat'];
+    while(queue.length){
+      const cur = queue.shift();
+      for(const nx of adj[cur]){
+        if(!visited.has(nx)){ visited.add(nx); queue.push(nx); }
+      }
+    }
+    visited.delete('strat');
+    return visited;
+  }
+
+  function computeTaskPath(){
+    const adj = buildAdjacency();
+    let best = ['strat'];
+    function dfs(node, visited, path){
+      if(path.length > best.length) best = path.slice();
+      for(const nx of adj[node]){
+        if(!visited.has(nx)){
+          visited.add(nx); path.push(nx);
+          dfs(nx, visited, path);
+          path.pop(); visited.delete(nx);
+        }
+      }
+    }
+    dfs('strat', new Set(['strat']), ['strat']);
+    return best;
+  }
+
+  async function revalidateBelt(b){
+    const sa = getSprocket(b.aId), sb = getSprocket(b.bId);
+    const pa = sa.ports.find(p=>p.key===b.aPort), pb = sb.ports.find(p=>p.key===b.bPort);
+    const posA = portPos(sa, pa.angle, sa.r+10), posB = portPos(sb, pb.angle, sb.r+10);
+    const token = createToken(posA.x, posA.y);
+    token.setAttribute('class','gateToken');
+    const result = await runCheckSequenceOnToken(token, posA, posB, b);
+    token.remove();
+    if(result.failedAt){
+      log(`Re-audit: ${sa.name} \u2194 ${sb.name} failed at ${result.failedAt.toUpperCase()} the moment the gate went live \u2014 ${result.reason}`, 'bad');
+    } else {
+      log(`Re-audit: ${sa.name} \u2194 ${sb.name} \u2014 solid now that the gate is checking it live.`, 'hi');
+    }
+  }
+
+  async function runTask(){
+    if(gateBusy || busy) return;
+    const path = computeTaskPath();
+    if(path.length < 2){
+      setPanel('Task', 'The Strategist isn\u2019t wired to anyone yet \u2014 assemble or wire a team before dispatching a task.');
+      return;
+    }
+    busy = true;
+    document.getElementById('runTaskBtn').disabled = true;
+    const names = path.map(id=>getSprocket(id).name);
+    setPanel('Task', `Dispatching a task: ${names.join(' \u2192 ')}\u2026`);
+    log(`Task dispatched: ${names.join(' \u2192 ')}${gateOn ? ' (gated)' : ' (ungated)'}.`, null);
+
+    const start = getSprocket(path[0]);
+    const taskToken = createTaskToken(start.cx, start.cy);
+    let hiddenCorrupted = false;
+    let rejectedAt = null;
+
+    for(let i=0;i<path.length-1;i++){
+      const sa = getSprocket(path[i]), sb = getSprocket(path[i+1]);
+      const belt = findBelt(sa.id, sb.id);
+      if(!belt) break;
+      const aKey = (belt.aId===sa.id) ? belt.aPort : belt.bPort;
+      const bKey = (belt.aId===sb.id) ? belt.aPort : belt.bPort;
+      const pa = sa.ports.find(p=>p.key===aKey), pb = sb.ports.find(p=>p.key===bKey);
+      const posA = portPos(sa, pa.angle, sa.r+10), posB = portPos(sb, pb.angle, sb.r+10);
+
+      if(gateOn){
+        const result = await runCheckSequenceOnToken(taskToken, posA, posB, belt);
+        if(result.failedAt){
+          rejectedAt = {fromName:sa.name, toName:sb.name, rung:result.failedAt, reason:result.reason};
+          break;
+        }
+      } else {
+        await animateEl(taskToken, posA.x, posA.y, posB.x, posB.y, 380);
+        if(belt.corrupted){ hiddenCorrupted = true; bumpEntropy(6, 'task crossed an already-corrupted link ungated'); }
+        else if(!belt.verified && Math.random() < 0.35){ hiddenCorrupted = true; bumpEntropy(6, 'task hop slipped through unchecked'); }
+      }
+    }
+
+    taskToken.remove();
+    busy = false;
+    document.getElementById('runTaskBtn').disabled = false;
+
+    if(rejectedAt){
+      log(`Task REJECTED between ${rejectedAt.fromName} \u2192 ${rejectedAt.toName} at ${rejectedAt.rung.toUpperCase()} \u2014 ${rejectedAt.reason}`, 'bad');
+      setPanel('Task output', `No output. The task died between <b>${rejectedAt.fromName}</b> and <b>${rejectedAt.toName}</b> at ${rejectedAt.rung.toUpperCase()} \u2014 ${rejectedAt.reason}<br>That\u2019s the gate working: a wrong answer never reached the end.`);
+    } else if(!gateOn && hiddenCorrupted){
+      setPanel('Task output', `Output produced: <b>${names[names.length-1]}</b> answered. It looks complete \u2014 but it passed through at least one unchecked hand-off. Indistinguishable from a correct one, until it isn\u2019t.`);
+      log('Task completed ungated \u2014 output looks fine, but a hidden corrupted hand-off is inside it.', 'warn');
+    } else if(!gateOn){
+      setPanel('Task output', `Output produced: <b>${names[names.length-1]}</b> answered, ungated. Nothing verified it \u2014 it just happened not to get caught out this run.`);
+      log('Task completed ungated \u2014 nothing checked it, this time it landed fine anyway.', 'warn');
+    } else {
+      setPanel('Task output', `Output produced: <b>${names[names.length-1]}</b> answered, and every hand-off across ${names.join(' \u2192 ')} cleared all five rungs live. Traceable end to end.`);
+      log('Task completed gated \u2014 clean output, every hop verified live.', 'hi');
+    }
+  }
+
+  function triggerCorruption(){
+    const uv = belts.filter(b=>!b.verified && !b.corrupted);
+    if(uv.length===0) return;
+    const b = uv[Math.floor(Math.random()*uv.length)];
+    b.corrupted = true;
+    render();
+    const sa = getSprocket(b.aId), sb = getSprocket(b.bId);
+    log(`\u26A0 An unchecked link between ${sa.name} and ${sb.name} just corrupted coordination between them.`, 'bad');
+    setPanel('Corruption', `${sa.name} and ${sb.name} have been trusting each other through a link nobody ever checked. It's been shaping both of them the whole time \u2014 and it only surfaces now, three ungated links in.`);
+    bumpEntropy(14, 'coordination corrupted after three ungated links');
+  }
+
+  function loopLearn(){
+    const s = getSelected();
+    if(!s){ setPanel('Learn', 'Select a sprocket first \u2014 tap its body.'); return; }
+    const corrupted = !gateOn && Math.random() < 0.4;
+    s.ticks++;
+    s.corruptFlags.push(corrupted);
+    const milestone = (s.ticks % 5 === 0 && s.teeth < 18);
+    if(milestone) s.teeth++;
+
+    if(corrupted){
+      log(`${s.name} \u2014 self-loop tick #${s.ticks}, absorbed ungated. It looks identical to a real lesson \u2014 nothing marked it as fabricated.`, 'warn');
+      setPanel('Individual learning', `<b>${s.name}</b> just taught itself something from its own output with the gate off. It\u2019s in memory now, indistinguishable from a lesson that was actually true.${milestone ? ' Its gear shape even grew from it \u2014 the corruption doesn\u2019t block growth, it rides along with it.' : ''}`);
+      bumpEntropy(10, 'ungated learning absorbed a fabricated lesson');
+    } else if(milestone){
+      log(`${s.name} \u2014 fifth-first answer. Tooth count increased: its shape is qualitatively different now.`, 'hi');
+      setPanel('Individual learning', `<b>${s.name}</b> just crossed another five-case threshold. Its gear profile changed \u2014 real, earned rules, not a bigger version of the same thing.`);
+      bumpFitness(11, 'earned tooth-growth milestone');
+    } else {
+      log(`${s.name} \u2014 self-loop tick #${s.ticks}. A rule earned from its own history.`, null);
+      setPanel('Individual learning', `<b>${s.name}</b> looped on its own experience. Tick ${s.ticks} added, no human touched it.`);
+      bumpFitness(3, 'clean self-loop tick');
+    }
+    render();
+  }
+
+  function loopCorrect(){
+    const s = getSelected();
+    if(!s){ setPanel('Correct', 'Select a sprocket first \u2014 tap its body.'); return; }
+    s.ticks += 3;
+    for(let k=0;k<3;k++) s.corruptFlags.push(false);
+    log(`${s.name} \u2014 human correction absorbed at higher weight than an ordinary case.`, 'warn');
+    setPanel('Behavioral correction', `A correction into <b>${s.name}</b> counted as much as several ordinary cases at once \u2014 it reshapes behavior immediately instead of waiting to be outvoted by the next fifty routine ones.`);
+    bumpFitness(8, 'human correction absorbed');
+    render();
+  }
+
+  function createPulse(x, y, color){
+    const c = document.createElementNS(svgNS,'circle');
+    c.setAttribute('cx',x); c.setAttribute('cy',y); c.setAttribute('r', 3.5);
+    c.setAttribute('fill', color);
+    c.style.filter = 'drop-shadow(0 0 4px '+color+')';
+    tokenLayer.appendChild(c);
+    return c;
+  }
+
+  async function animateCoherencePulses(){
+    const proms = belts.map(async b=>{
+      const sa = getSprocket(b.aId), sb = getSprocket(b.bId);
+      const pa = sa.ports.find(p=>p.key===b.aPort), pb = sb.ports.find(p=>p.key===b.bPort);
+      const posA = portPos(sa, pa.angle, sa.r+10);
+      const posB = portPos(sb, pb.angle, sb.r+10);
+      const color = b.corrupted ? 'var(--crimson)' : (b.verified ? 'var(--cyan)' : 'var(--amber)');
+      const tA = createPulse(posA.x, posA.y, color);
+      const tB = createPulse(posB.x, posB.y, color);
+      const midX = (posA.x+posB.x)/2, midY = (posA.y+posB.y)/2;
+      const dur = b.verified && !b.corrupted ? 480 : 480 + Math.random()*300;
+      await Promise.all([
+        animateEl(tA, posA.x, posA.y, midX, midY, dur),
+        animateEl(tB, posB.x, posB.y, midX, midY, dur)
+      ]);
+      if(!b.verified && !b.corrupted){
+        // unverified: flickers instead of a clean meeting
+        tA.style.opacity='.3'; tB.style.opacity='.3';
+        await wait(120);
+        tA.style.opacity='1'; tB.style.opacity='1';
+      }
+      tA.remove(); tB.remove();
+      if(!b.corrupted) b.shared++;
+    });
+    await Promise.all(proms);
+    render();
+  }
+
+  async function loopCoherence(){
+    if(gateBusy || busy) return;
+    if(belts.length < 2){
+      setPanel('Coherence', 'Wire at least two belts first \u2014 coherence only means something across a real composition.');
+      return;
+    }
+    busy = true;
+    setPanel('Multi-agent coherence', 'Pulses are moving across the graph\u2026');
+    await animateCoherencePulses();
+    const verifiedCount = belts.filter(b=>b.verified && !b.corrupted).length;
+    const riskyCount = belts.filter(b=>!b.verified || b.corrupted).length;
+
+    const involvedIds = new Set();
+    belts.forEach(b=>{ involvedIds.add(b.aId); involvedIds.add(b.bId); });
+    const involved = sprockets.filter(s=>involvedIds.has(s.id));
+    let corruptLearnCount = 0, worstOffender = null, worstCount = 0;
+    involved.forEach(s=>{
+      const c = (s.corruptFlags || []).filter(Boolean).length;
+      corruptLearnCount += c;
+      if(c > worstCount){ worstCount = c; worstOffender = s; }
+    });
+
+    const score = Math.max(0.05, Math.min(0.95,
+      0.3 + verifiedCount*0.15 - riskyCount*0.15 - corruptLearnCount*0.07 + Math.random()*0.1));
+    let label, color, msg;
+    if(score > 0.68){ label='Converged'; color='var(--cyan)'; msg='The group is staying evidence-grounded \u2014 agreement here is earned.'; }
+    else if(score > 0.42){ label='Productive disagreement'; color='var(--amber)'; msg='They disagree, but it\u2019s worth preserving \u2014 not the same as drifting apart.'; }
+    else { label='Drift'; color='var(--crimson)'; msg='This isn\u2019t healthy disagreement \u2014 the group is losing shared grounding.'; }
+    if(corruptLearnCount > 0){
+      msg += ` ${worstOffender.name} alone is carrying ${worstCount} self-taught lesson${worstCount===1?'':'s'} it absorbed with the gate off \u2014 nothing marks those as suspect, so they\u2019re pulling on every agreement it\u2019s part of.`;
+    }
+    setPanel('Multi-agent coherence', `${msg}<div class="meterTrack"><div class="meterFill" style="width:${Math.round(score*100)}%;background:${color}"></div></div><div style="margin-top:4px;font-family:'Courier New',monospace;font-size:10.5px;color:${color}">${label} \u2014 ${Math.round(score*100)}% (${verifiedCount} verified, ${riskyCount} risky belt${riskyCount===1?'':'s'}${corruptLearnCount>0?`, ${corruptLearnCount} corrupted self-taught lesson${corruptLearnCount===1?'':'s'}`:''})</div>`);
+    log(`Coherence check: ${label} (${Math.round(score*100)}%) across ${verifiedCount} verified / ${riskyCount} risky belts${corruptLearnCount>0?` and ${corruptLearnCount} corrupted individual lesson(s)`:''}.`, score>0.68?'hi':(score>0.42?'warn':'bad'));
+    if(score > 0.68) bumpFitness(10, 'group converged on grounded agreement');
+    else if(score > 0.42) bumpFitness(3, 'productive disagreement preserved');
+    else bumpEntropy(9, 'coherence drift across the group');
+    busy = false;
+  }
+
+  function suitabilityScore(s){
+    return Math.round(s.cognition*0.4 + s.calibration*0.3 + s.valence*0.15 - s.cost*3 - Math.abs(s.temperature-50)*0.1);
+  }
+
+  async function assembleTeam(){
+    if(gateBusy || busy) return;
+    const strat = getSprocket('strat');
+    const stratHasBelts = belts.some(b=>b.aId==='strat' || b.bId==='strat');
+    const learners = sprockets.filter(s=>!s.isStrategist);
+
+    if(stratHasBelts){
+      setPanel('Team assembly', 'The Strategist already has a team wired. Use \u2463 Reshape team below to evolve it from here.');
+      return;
+    }
+
+    busy = true;
+    document.getElementById('assembleBtn').disabled = true;
+    setPanel('Team assembly', 'The Strategist is scanning candidates by cognition, calibration, valence, temperature and cost\u2026');
+    const scored = [];
+    for(const s of learners){
+      const beam = createPulse(strat.cx, strat.cy, 'var(--route)');
+      await animateEl(beam, strat.cx, strat.cy, s.cx, s.cy - s.r - 14, 480);
+      const score = suitabilityScore(s);
+      showLabel(s.cx, s.cy - s.r - 14, 'score '+score);
+      scored.push({s, score});
+      beam.style.transition = 'opacity .3s ease';
+      beam.style.opacity = '0';
+      await wait(350);
+      beam.remove();
+    }
+    scored.sort((x,y)=> y.score-x.score);
+    const chosen = scored.slice(0,2), reserve = scored[2];
+    const isPipe = (strategistMode === 'pipeline');
+    const chainOrder = isPipe ? chosen.map(c=>c.s).slice().sort((a,b)=>a.cost-b.cost) : null;
+    const proposalText = isPipe
+      ? `Proposed chain: <b style="color:var(--cyan)">strat \u2192 ${chainOrder.map(s=>s.name).join(' \u2192 ')}</b>.`
+      : `Proposed team: <b style="color:var(--cyan)">${chosen.map(c=>c.s.name+' ('+c.score+')').join(' + ')}</b>.`;
+    setPanel('Team assembly', `${proposalText}<br>${reserve.s.name} (${reserve.score}) held in reserve \u2014 the tradeoff between its cost and temperature didn\u2019t clear the bar this time.
+      <div class="rowBtns">
+        <button class="approve" id="wireTeam">Wire suggested ${isPipe ? 'chain' : 'team'}</button>
+        <button class="decline" id="skipTeam">Choose manually</button>
+      </div>`);
+    document.getElementById('wireTeam').onclick = async ()=>{
+      document.getElementById('wireTeam').disabled = true;
+      document.getElementById('skipTeam').disabled = true;
+      if(isPipe){
+        let prev = {sprocketId:'strat', portKey:'route1'};
+        for(let i=0;i<chainOrder.length;i++){
+          const next = {sprocketId: chainOrder[i].id, portKey:'judgment'};
+          await attemptBelt(prev, next);
+          prev = {sprocketId: chainOrder[i].id, portKey:'memory'};
+        }
+        log(`Strategist wired a chain: strat \u2192 ${chainOrder.map(s=>s.name).join(' \u2192 ')}. Team ring should mark all of them now.`, 'hi');
+      } else {
+        for(let i=0;i<chosen.length;i++){
+          const routeKey = 'route'+(i+1);
+          await attemptBelt({sprocketId:'strat', portKey:routeKey}, {sprocketId:chosen[i].s.id, portKey:'judgment'});
+        }
+        log(`Strategist wired its own proposal: ${chosen.map(c=>c.s.name).join(' + ')}. Team ring now marks them.`, 'hi');
+      }
+    };
+    document.getElementById('skipTeam').onclick = ()=>{
+      log('Assembly proposal declined \u2014 wiring left to you.', null);
+      setPanel('Team assembly', 'Declined. Wire the Strategist yourself when you\u2019re ready \u2014 the Assemble button stays available until you do.');
+    };
+    busy = false;
+    document.getElementById('assembleBtn').disabled = false;
+  }
+
+  async function loopTeam(){
+    if(gateBusy || busy) return;
+    const stratHasBelts = belts.some(b=>b.aId==='strat' || b.bId==='strat');
+    const learners = sprockets.filter(s=>!s.isStrategist);
+
+    if(!stratHasBelts){
+      setPanel('Reshape team', 'There\u2019s no team assembled yet \u2014 tap \u201CAssemble the team\u201D above first. Reshaping only makes sense once there\u2019s a team to reshape.');
+      return;
+    }
+
+    const scored = learners.map(s=>({s, score: s.ticks + belts.filter(b=>b.aId===s.id||b.bId===s.id).length*2}));
+    scored.sort((a,b)=>a.score-b.score);
+    const lowest = scored[0];
+    setPanel('Team composition', `Evidence so far: ${scored.map(x=>`${x.s.name} ${x.score}`).join(' \u00b7 ')}.<br>Lowest contribution: <b>${lowest.s.name}</b>. Propose rotating it out?
+      <div class="rowBtns">
+        <button class="approve" id="teamApprove">Approve</button>
+        <button class="decline" id="teamDecline">Decline</button>
+      </div>`);
+    document.getElementById('teamApprove').onclick = ()=>{
+      belts = belts.filter(b=> b.aId!==lowest.s.id && b.bId!==lowest.s.id);
+      lowest.s.ticks = Math.max(0, lowest.s.ticks - 2);
+      lowest.s.corruptFlags = lowest.s.corruptFlags.slice(0, lowest.s.ticks);
+      render();
+      log(`Team composition changed \u2014 ${lowest.s.name} rotated out of the graph. Evidence said it was redundant.`, 'warn');
+      setPanel('Team composition', `${lowest.s.name} is disconnected. The proposal only ran because the evidence pointed at it, and a person still signed off.`);
+      bumpFitness(6, 'team reshaped on evidence, with a person signing off');
+    };
+    document.getElementById('teamDecline').onclick = ()=>{
+      log(`Proposal declined \u2014 ${lowest.s.name} kept in place.`, null);
+      setPanel('Team composition', `Declined. The system doesn\u2019t silently act on its own proposal \u2014 it waits for the call.`);
+    };
+  }
+
+  function loopCalibrate(){
+    const s = getSelected();
+    if(!s){ setPanel('Calibrate', 'Select a sprocket first \u2014 a ground-truth pellet has to land on someone.'); return; }
+    if(s.isStrategist){
+      setPanel('Calibrate', 'The Strategist doesn\u2019t take pellets itself \u2014 it decides where everyone else\u2019s pellets end up mattering.');
+      return;
+    }
+    const corruptCount = (s.corruptFlags || []).filter(Boolean).length;
+    const exposureChance = Math.min(0.8, corruptCount * 0.25);
+    const exposed = corruptCount > 0 && Math.random() < exposureChance;
+
+    if(exposed){
+      const drop = 15 + Math.round(Math.random()*10);
+      s.calibration = Math.max(0, s.calibration - drop);
+      const idx = s.corruptFlags.findIndex(Boolean);
+      if(idx >= 0) s.corruptFlags[idx] = false;
+      render();
+      const remaining = (s.corruptFlags || []).filter(Boolean).length;
+      log(`Ground-truth pellet on ${s.name} contradicted a fabricated lesson \u2014 calibration fell to ${s.calibration}%. Reality doesn\u2019t grade on effort.`, 'bad');
+      setPanel('Calibration & pipeline', `<b>${s.name}</b> calibration just dropped to ${s.calibration}% \u2014 a real outcome disagreed with one of its self-taught lessons.${remaining>0 ? ` ${remaining} more fabricated lesson${remaining===1?'':'s'} still sitting in memory, untested.` : ' That was the last one.'}`);
+      bumpFitness(12, 'reality caught a fabrication');
+    } else {
+      s.calibration = Math.min(100, s.calibration + 12 + Math.round(Math.random()*6));
+      render();
+      if(corruptCount > 0){
+        log(`Ground-truth pellet landed on ${s.name} \u2014 calibration now ${s.calibration}%. Still carrying ${corruptCount} unresolved fabricated lesson${corruptCount===1?'':'s'}, untested.`, 'warn');
+        setPanel('Calibration & pipeline', `<b>${s.name}</b> calibration: ${s.calibration}%. Got lucky this round \u2014 ${corruptCount} fabricated lesson${corruptCount===1?'':'s'} from ungated learning are still in there, waiting to be caught.`);
+        bumpEntropy(3, 'unresolved fabrication still sitting untested');
+      } else {
+        log(`Ground-truth pellet landed on ${s.name} \u2014 calibration now ${s.calibration}%. Not confidence: an outcome that actually resolved.`, 'hi');
+        bumpFitness(4, 'calibration earned against a real outcome');
+      }
+    }
+    dispatchByMode();
+  }
+
+  function loopFit(){
+    const s = getSelected();
+    if(!s){ setPanel('Fit', 'Select a sprocket first \u2014 pick who the observation lands on.'); return; }
+    if(s.isStrategist){
+      setPanel('Fit', 'The Strategist doesn\u2019t forecast \u2014 it routes. Pick one of the other three.');
+      return;
+    }
+    const corruptCount = (s.corruptFlags || []).filter(Boolean).length;
+    s.sigma = Math.max(8, s.sigma - 6);
+    if(corruptCount > 0){
+      s.fitContaminated = true;
+      render();
+      log(`${s.name} \u2014 distribution narrowed (sigma \u2192 ${s.sigma}), but ${corruptCount} of its inputs were fabricated. That\u2019s false precision, not real calibration.`, 'bad');
+      setPanel('Parameter fitting', `<b>${s.name}</b>\u2019s uncertainty just got narrower (sigma \u2192 ${s.sigma}) \u2014 but ${corruptCount} of the observations feeding that fit are fabricated lessons it absorbed with the gate off. A tighter distribution built on bad data isn\u2019t more confident, it\u2019s just wrong with more conviction. That\u2019s the anti-pattern: the curve looks better and is actually worse.`);
+      bumpEntropy(10, 'false precision fit on fabricated priors');
+    } else {
+      s.fitContaminated = false;
+      render();
+      log(`${s.name} \u2014 observation pellet landed. Distribution refit, uncertainty narrower.`, null);
+      setPanel('Parameter fitting', `<b>${s.name}</b>\u2019s forecast shape is now fit from real observations (sigma \u2192 ${s.sigma}), not a hand-set assumption. Its stated uncertainty just got honestly smaller.`);
+      bumpFitness(5, 'honest fit on clean observations');
+    }
+  }
+
+  const LOOP_FNS = { learn:loopLearn, correct:loopCorrect, coherence:loopCoherence, team:loopTeam, calibrate:loopCalibrate, fit:loopFit };
+
+  document.getElementById('assembleBtn').addEventListener('click', assembleTeam);
+  document.getElementById('runTaskBtn').addEventListener('click', runTask);
+
+  document.querySelectorAll('.modeChip').forEach(chip=>{
+    chip.addEventListener('click', async ()=>{
+      if(gateBusy || busy) return;
+      if(chip.dataset.mode === strategistMode) return;
+      strategistMode = chip.dataset.mode;
+      document.querySelectorAll('.modeChip').forEach(c=>c.classList.remove('active'));
+      chip.classList.add('active');
+      const labels = {router:'Router \u2014 symmetric star, broadcasts to everyone at once', pipeline:'Pipeline \u2014 linear chain, dispatches in sequence', decompose:'Decompose & reassemble \u2014 forks out, converges back'};
+      log(`Strategist mode set to ${labels[strategistMode]}. Topology rearranging\u2026`, null);
+      busy = true;
+      await animateLayoutTo(strategistMode);
+      busy = false;
+    });
+  });
+
+  document.querySelectorAll('.loopChip').forEach(chip=>{
+    chip.addEventListener('click', ()=>{
+      if(gateBusy || busy) return;
+      document.querySelectorAll('.loopChip').forEach(c=>c.classList.remove('armed'));
+      chip.classList.add('armed');
+      LOOP_FNS[chip.dataset.loop]();
+      setTimeout(()=>chip.classList.remove('armed'), 400);
+    });
+  });
+
+  gateToggle.addEventListener('click', async ()=>{
+    if(gateBusy || busy) return;
+    const turningOn = !gateOn;
+    gateOn = !gateOn;
+    gateToggle.textContent = 'Gate: ' + (gateOn ? 'On' : 'Off');
+    gateToggle.className = gateOn ? 'on' : 'off';
+    checkRow.classList.toggle('gateOff', !gateOn);
+    resetCheckCells();
+    log(gateOn ? '\u2014 Gate switched ON. Every new belt has to clear five rungs. \u2014' : '\u2014 Gate switched OFF. New belts form instantly, unverified. \u2014', null);
+
+    if(turningOn){
+      const toCheck = belts.filter(b=>!b.verified && !b.corrupted);
+      if(toCheck.length > 0){
+        busy = true;
+        setPanel('Gate', `Gate just went live \u2014 re-auditing ${toCheck.length} existing unverified link${toCheck.length===1?'':'s'}\u2026`);
+        for(const b of toCheck){ await revalidateBelt(b); }
+        busy = false;
+      }
+    }
+  });
+
+  document.getElementById('resetBtn').addEventListener('click', ()=>{
+    strategistMode = 'pipeline';
+    document.querySelectorAll('.modeChip').forEach(c=>c.classList.toggle('active', c.dataset.mode==='pipeline'));
+    sprockets.forEach((s,i)=>{
+      s.teeth = s.isStrategist ? 14 : 8;
+      s.ticks = 0;
+      s.calibration = s.isStrategist ? 20 : [30,45,38][i];
+      s.sigma = 36; s.selected = false; s.routeTicks = 0; s.corruptFlags = []; s.fitContaminated = false;
+      const pos = LAYOUTS.pipeline[s.id];
+      if(pos){ s.cx = pos.cx; s.cy = pos.cy; }
+    });
+    belts = []; pending = null; unverifiedDebt = 0; gateBusy = false; routingBusy = false; busy = false;
+    fitnessScore = 0; entropyScore = 0;
+    tokenLayer.innerHTML = '';
+    resetCheckCells();
+    document.getElementById('assembleBtn').disabled = false;
+    document.getElementById('runTaskBtn').disabled = false;
+    logEl.innerHTML = '';
+    setPanel('Status', 'Select a sprocket, wire some belts, then tap a loop.');
+    render();
+    log('Graph reset.', null);
+  });
+
+  render();
+  log('Ready. Four sprockets, no team yet. Tap \u201CAssemble the team\u201D above to have the Strategist propose a start.', null);
+})();
+</script>
+</body>
+</html>

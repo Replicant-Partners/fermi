@@ -136,17 +136,30 @@ impl SnapshotManager {
                 .fetch_one(self.store.pool())
                 .await?;
 
-        // Get previous version for this agent
-        let previous_version: Option<(i32,)> =
-            sqlx::query_as("SELECT MAX(version) FROM ontology_snapshots WHERE agent_id = $1")
+        // Next version for this agent.
+        //
+        // `MAX(version)` with no GROUP BY always returns exactly one row, and
+        // that row is NULL when the agent has no snapshots yet. The previous
+        // form decoded it into `(i32,)` rather than `(Option<i32>,)`, so the
+        // NULL failed to decode, `?` propagated the error, and the FIRST
+        // snapshot for any agent always failed.
+        //
+        // Since the first snapshot always failed, no agent ever reached a
+        // second, so `create_snapshot` never once succeeded on this platform.
+        // The single row in `ontology_snapshots` carries
+        // `git_commit_sha = 'seed-034'` — inserted by migration 034, not
+        // created here. That is why ontologies never developed, and why the
+        // dream narrator's `UPDATE ontology_snapshots` had nothing to update.
+        //
+        // `fetch_optional` also hid it: it reads as "there may be no row",
+        // which is the plausible-but-wrong mental model for an aggregate.
+        let previous_version: Option<i32> =
+            sqlx::query_scalar("SELECT MAX(version) FROM ontology_snapshots WHERE agent_id = $1")
                 .bind(agent_id)
-                .fetch_optional(self.store.pool())
+                .fetch_one(self.store.pool())
                 .await?;
 
-        let version = match previous_version {
-            Some((v,)) => v + 1,
-            None => 1,
-        };
+        let version = previous_version.unwrap_or(0) + 1;
 
         let git_repository = github_url.unwrap_or("local");
         let git_path = "ontology.mermaid".to_string();

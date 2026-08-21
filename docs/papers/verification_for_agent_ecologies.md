@@ -217,12 +217,21 @@ graph LR
         L --> I1["invoke → verify"]
         I1 --> I2["invoke → verify"]
         I2 --> I3["invoke → verify ..."]
+        I1 -.-> SW["standing sweep:<br/>did any of that<br/>actually get written?"]
+        I2 -.-> SW
+        I3 -.-> SW
     end
 ```
 
 The shapes differ in where the validation sits. Compiled AI validates a thing that will
 then be run many times. An ecology must validate each run, because each run is a fresh
 sample.
+
+The dotted arrows have no counterpart on the left, and they are not decoration. A compiled
+artifact's verification machinery is *part of the artifact* — if it did not run, the build did
+not happen. An ecology's is a separate population of code observing a separate population of
+agents, and nothing about a successful invocation establishes that anything observing it ran.
+That gap is §3.1, and where it sits in the schedule is §4.1.
 
 ---
 
@@ -252,13 +261,16 @@ graph TD
 Each rung is a **contract**: a hand-declared manifest in code, paired with a check that
 enforces it. The manifest is the design commitment; the check is the proof it is kept.
 
-| Rung | Question | Substrate | Catches |
-|---|---|---|---|
-| **Presence** | Does the declared object exist? | live schema catalogue, at boot | a renamed column, a dropped view |
-| **Liveness** | Does the writer ever run? | sink count vs. **opportunity count** | a ledger nothing has ever written |
-| **Truth** | Does the stored value equal its source of truth? | aggregate query against real rows | a counter that disagrees with reality |
-| **Grounding** | Could this value have come from any available tool? | field → tool map, per agent | a fabricated measurement |
-| **Binding** | Does the invocation match the declared interface? | declared ports vs. actual request | prose sent to a structured-only port |
+| Rung | Question | Clock | Substrate | Catches |
+|---|---|---|---|---|
+| **Presence** | Does the declared object exist? | boot, then sweep | live schema catalogue | a renamed column, a dropped view |
+| **Liveness** | Does the writer ever run? | sweep only | sink count vs. **opportunity count** | a ledger nothing has ever written |
+| **Truth** | Does the stored value equal its source of truth? | CI, and on demand | aggregate query against real rows | a counter that disagrees with reality |
+| **Grounding** | Could this value have come from any available tool? | admission, then per invocation | field → tool map, per agent | a fabricated measurement |
+| **Binding** | Does the invocation match the declared interface? | per request | declared ports vs. actual request | prose sent to a structured-only port |
+
+The clock column is not scheduling trivia. It is doing more work than it looks like, and §4.1
+is about what it is doing.
 
 ### 3.1 Why liveness is not a special case of truth
 
@@ -477,6 +489,7 @@ sequenceDiagram
         B->>S: anomaly event (kind = grounding)
     end
     B->>S: episode + raw response (audit trail)
+    Note over S: every write above is a sink<br/>every dispatch is an opportunity<br/>— both counted, neither checked here
     B-->>C: cleaned document
 ```
 
@@ -501,14 +514,23 @@ historical record silently changed whenever the parser did — and that there wa
 from which to induce what an agent actually produces. Retention is a precondition for every
 later form of verification, and it accrues only from the moment you start.
 
-### 4.1 Two gates, two clocks
+And one thing is load-bearing by its **absence**. Three of the five rungs appear above;
+presence and liveness do not, and no rearrangement of the diagram would put them there. A
+request path can ask whether *this* document is grounded and whether *this* invocation is
+bound. It cannot ask whether a table exists or whether a writer has ever fired, because
+neither question is about the request. Those two rungs run somewhere else, on a schedule
+nothing in this diagram waits for — which is the subject of the next section and, we now
+think, the explanation for §1.
 
-Verification happens on two independent schedules, and conflating them is a mistake.
+### 4.1 Three clocks, and only two of them are gates
+
+Verification happens on three independent schedules. Conflating them is a mistake, and the
+asymmetry between them turns out to explain the longest-lived defect in §1.
 
 ```mermaid
 graph TD
-    subgraph AUTH["Authoring time — slow clock"]
-        N["new / edited agent"] --> P1["presence: required fields"]
+    subgraph AUTH["Admission gate — slow clock · blocks publish"]
+        N["new / edited agent"] --> P1["card presence: required fields"]
         P1 --> P2["typing: ports resolve to registered types"]
         P2 --> P3["grounding: every output field maps to a tool"]
         P3 --> ADM{"admit?"}
@@ -516,13 +538,21 @@ graph TD
         ADM -->|yes| CAT["catalogue"]
     end
 
-    subgraph RUN["Invocation time — fast clock"]
+    subgraph RUN["Invocation gate — fast clock · blocks the response"]
         CAT --> INV["invoke"]
         INV --> BIND["bind check"]
         BIND --> DISP["dispatch"]
         DISP --> GR["grounding enforcement"]
-        GR --> AUD["audit + anomaly"]
+        GR --> AUD["audit + anomaly + claims"]
         AUD --> QU["queue: pending tool / pending human"]
+    end
+
+    subgraph STAND["Standing clock — boot and sweep · blocks nothing"]
+        SP["schema presence:<br/>does the declared object exist?"]
+        LV["liveness:<br/>sink count vs. opportunity count"]
+        TR["truth:<br/>recompute from source, compare"]
+        SP --- LV --- TR
+        LV --> VD{"Ok / Silent / Inert"}
     end
 
     subgraph LEDGER["Slow feedback"]
@@ -531,16 +561,53 @@ graph TD
         AGG --> RATCH["burn-down ratchet"]
         RATCH -.->|"tightens"| ADM
     end
+
+    AUD -.->|"writes the sinks,<br/>counts the opportunities"| LV
+    VD --> AGG
+    TR --> AGG
 ```
 
-The authoring gate is where **enforcement by default** actually lives: a new agent cannot
-enter the catalogue with an untyped or ungrounded interface. The invocation gate catches
-what the authoring gate cannot know — that this particular output, on this particular run,
-contains something no tool could have supplied.
+The **admission gate** is where *enforcement by default* actually lives: a new agent cannot
+enter the catalogue with an untyped or ungrounded interface. It is slow, it blocks, and it
+runs once per authored card.
+
+The **invocation gate** catches what admission cannot know — that this particular output, on
+this particular run, contains something no tool could have supplied. It is fast, it blocks,
+and it runs once per request.
+
+The **standing clock** blocks nothing. There is no request to refuse and no publish to
+withhold; schema presence, liveness and truth can only report. That is not a scheduling
+detail, and stating it plainly costs the paper its tidiest sentence:
+
+**A check that gates something has a moment that forces it to exist.** Somebody is waiting
+for a verdict, and an absent verdict is an outage. A check on the standing clock has no such
+moment. Nothing stalls when it is missing, nothing turns red, and the system behaves in every
+observable way exactly as it would if the check had run and passed.
+
+This is the answer to the question §1 leaves open — why the *cheapest* rung was the one
+missing longest. It was not overlooked for being hard, and not for being unimagined. It was
+overlooked because **liveness is the only rung with nothing downstream that would notice its
+absence.** Grounding and binding sit in a path; presence at least fails loudly at boot when a
+column vanishes. Liveness sits beside the path, watching, and a watcher that is not itself
+watched is the defect class of §1 wearing the machinery built to prevent it. The remedy is
+not a better check. It is a worse hiding place: the standing clock has to surface on one of
+the other two clocks' schedules, or it is indistinguishable from a clock that has stopped.
+
+One coupling in that diagram is easy to get backwards, and it is the useful part. The
+invocation gate does not *run* liveness. It **manufactures the opportunity count that makes
+liveness interpretable.** Every dispatch that should have written an episode, an anomaly event
+or a claim is an opportunity, whether or not the write occurred. Without the fast clock,
+`count(*) = 0` on the standing clock reads as *Inert* and cannot be escalated; with it, the
+same zero reads as *Silent* and can. The two clocks are not merely independent — **the fast
+one is the slow one's control group**, which is the same insight as the positive controls in
+§3.1, arriving from the other direction.
 
 The ledger closes the loop, and it is the piece most systems omit. Without it you cannot
 answer "is this getting better?", and a verification system that cannot report its own
-trend gets quietly disabled.
+trend gets quietly disabled. Note which arrows reach it: the queue's outcomes on one side,
+and the standing clock's verdicts on the other. A ledger fed only by the gates reports on
+every rung that already had something waiting for it, and is silent about the two that did
+not.
 
 The queue between them is what makes the loop more than reporting. An enforcement step that
 only strips produces a cleaner document and no new knowledge; one that routes produces work
@@ -756,6 +823,13 @@ that its removal reads as completion rather than regression.
 code that has not shipped. The consequence is identical — the signal does not exist — so the
 verdict does not guess, but the remedy differs and a human has to decide which it is.
 
+**The standing clock is not self-enforcing, and nothing in the architecture makes it so.**
+The admission and invocation gates are held in place by the thing they block. The standing
+clock is held in place only by somebody choosing to look, which is the same kind of
+arrangement that produced the defects in §1. We surface it in CI and in the burn-down
+ledger; that is a convention, not a property, and a convention is what the rest of this paper
+is about distrusting.
+
 **A verification queue can rot, and rotting looks like success.** The pending tier converts
 unverified data from a deletion into a work item, which only helps if the work is done. A
 year-old pending value behind a mild badge is functionally trusted. That needs an owner and a
@@ -842,9 +916,15 @@ the state we found ours in and the state most declarative agent frameworks curre
 - A verdict must name a **mechanism that was actually used**. Two values of equal strength are
   not the same claim, and collapsing them to a tier is a misattribution that no strength check
   can see.
-- Verification runs on two clocks: an admission gate that is the real meaning of
-  "enforcement by default", and a per-invocation gate that catches what admission cannot
-  know.
+- Verification runs on **three clocks and only two gates**: an admission gate that is the
+  real meaning of "enforcement by default", a per-invocation gate that catches what admission
+  cannot know, and a standing clock — presence, liveness, truth — that blocks nothing and can
+  only report.
+- That asymmetry is why the cheapest rung went missing longest. **A check that gates
+  something has a moment that forces it to exist**; a check on the standing clock does not,
+  and its absence is observationally identical to its passing. The fast clock is the standing
+  clock's control group: it supplies the opportunity count that separates *Silent* from
+  *Inert*.
 - The whole thing is worthless without a ledger showing whether it is improving, and a
   metric that deletion cannot fake.
 
