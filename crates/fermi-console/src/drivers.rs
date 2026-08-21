@@ -68,6 +68,75 @@ pub fn driver_is_unspecified(driver: &DriverStmt) -> bool {
     }
 }
 
+/// Which driver an agent's stated judgement belongs to.
+///
+/// See [`bind_judgement_to_driver`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JudgementBinding {
+    /// Unambiguous: the agent named the driver, or it covers only one.
+    Bound(String),
+    /// The agent stated an adjustment and covers several drivers without
+    /// saying which it meant. Carries the candidates so the operator can pick.
+    Ambiguous(Vec<String>),
+    /// The agent is bound to no driver at all.
+    NoDriver,
+}
+
+/// Decide which driver a single stated judgement applies to.
+///
+/// # The case this exists for
+///
+/// An agent bound to N drivers states ONE `[MULTIPLIER]`. That is not an
+/// oversight in the cards — it is what they specify: `weather_oracle`'s card
+/// says "the last two key_findings MUST use these exact formats" and names one
+/// `[MULTIPLIER]` line. Measured over the production episode table: 31 episodes
+/// carrying a multiplier, **31 distinct triples**, and not one episode holding
+/// two different ones.
+///
+/// So the broker pattern — one complex agent responsible for several drivers,
+/// resolving the relationships between them internally — produces one number
+/// for many drivers, and the number cannot honestly be split. Applying it to
+/// every ref compounds it (a 1.25 across five drivers is 3.05, not 1.25); that
+/// is what `agent_params_hook` does. Applying it to `driver_refs.first()` picks
+/// one arbitrarily and says nothing; that is what the console did, and it is
+/// why four of five drivers on a broker-driven forecast never moved while the
+/// first one did.
+///
+/// Neither is defensible, so neither is offered. When the target cannot be
+/// determined the judgement is not bound and the candidates are returned, which
+/// leaves a human to make the choice that was always being made silently.
+///
+/// # Resolution order
+///
+/// 1. `hint` matching a ref wins — the agent said so. Compared with `-`/`_`
+///    folded and case ignored, because cards spell driver names both ways.
+/// 2. A single ref is unambiguous whether or not anything was hinted.
+/// 3. Otherwise ambiguous.
+///
+/// No agent populates `target_hint` today (0 of 64 stored assertions), so arm 1
+/// is currently unreachable. It is the arm that makes the broker pattern work
+/// properly once an agent names its target, which is the point: the fix is for
+/// the agent to say, and this is what will listen when it does.
+pub fn bind_judgement_to_driver(hint: Option<&str>, driver_refs: &[String]) -> JudgementBinding {
+    let fold = |s: &str| s.trim().to_ascii_lowercase().replace('-', "_");
+
+    if driver_refs.is_empty() {
+        return JudgementBinding::NoDriver;
+    }
+
+    if let Some(h) = hint.map(fold).filter(|h| !h.is_empty()) {
+        if let Some(hit) = driver_refs.iter().find(|d| fold(d) == h) {
+            return JudgementBinding::Bound(hit.clone());
+        }
+    }
+
+    if driver_refs.len() == 1 {
+        return JudgementBinding::Bound(driver_refs[0].clone());
+    }
+
+    JudgementBinding::Ambiguous(driver_refs.to_vec())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,5 +241,90 @@ mod tests {
             stddev: Expression::Number(0.0),
         });
         assert!(!driver_is_unspecified(&d));
+    }
+
+    // ── Binding a judgement to a driver ──────────────────────────────────
+
+    fn refs(names: &[&str]) -> Vec<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_single_driver_ref_needs_no_hint() {
+        assert_eq!(
+            bind_judgement_to_driver(None, &refs(&["ensemble_spread"])),
+            JudgementBinding::Bound("ensemble_spread".into())
+        );
+    }
+
+    /// The weather broker: one agent, five drivers, one stated multiplier.
+    ///
+    /// The console used to take `driver_refs.first()`, so `ensemble_spread`
+    /// moved and the other four silently did not. The server hook applies the
+    /// same triple to all five, which compounds a 1.25 into 3.05. Neither is
+    /// offered; the candidates come back for a human to choose from.
+    #[test]
+    fn one_judgement_across_several_drivers_is_ambiguous_not_the_first_one() {
+        let drivers = refs(&[
+            "ensemble_spread",
+            "model_cluster",
+            "urban_heat_island",
+            "synoptic_pattern",
+            "climate_trend",
+        ]);
+        let bound = bind_judgement_to_driver(None, &drivers);
+
+        assert_eq!(
+            bound,
+            JudgementBinding::Ambiguous(drivers.clone()),
+            "picking the first driver is a choice being made silently on the \
+             operator's behalf, and it is wrong four times out of five"
+        );
+        match bound {
+            JudgementBinding::Ambiguous(c) => assert_eq!(
+                c.len(),
+                5,
+                "every candidate must be offered, or the operator cannot choose"
+            ),
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_named_target_resolves_the_ambiguity() {
+        let drivers = refs(&["ensemble_spread", "model_cluster", "climate_trend"]);
+        assert_eq!(
+            bind_judgement_to_driver(Some("model_cluster"), &drivers),
+            JudgementBinding::Bound("model_cluster".into())
+        );
+    }
+
+    /// Cards spell driver names with hyphens and with underscores.
+    #[test]
+    fn a_hint_matches_across_hyphen_and_case_spelling() {
+        let drivers = refs(&["urban_heat_island", "climate_trend"]);
+        assert_eq!(
+            bind_judgement_to_driver(Some("Urban-Heat-Island"), &drivers),
+            JudgementBinding::Bound("urban_heat_island".into())
+        );
+    }
+
+    /// A hint naming something the agent is not bound to does not silently win.
+    #[test]
+    fn a_hint_for_an_unbound_driver_falls_back_rather_than_inventing_a_target() {
+        let drivers = refs(&["ensemble_spread", "model_cluster"]);
+        assert_eq!(
+            bind_judgement_to_driver(Some("sea_surface_temp"), &drivers),
+            JudgementBinding::Ambiguous(drivers),
+            "an unrecognised hint is no information, not permission to guess"
+        );
+    }
+
+    #[test]
+    fn an_agent_bound_to_nothing_binds_nothing() {
+        assert_eq!(
+            bind_judgement_to_driver(Some("anything"), &[]),
+            JudgementBinding::NoDriver
+        );
     }
 }

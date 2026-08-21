@@ -372,6 +372,45 @@ static MULTIPLIER_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::n
     .expect("MULTIPLIER_RE")
 });
 
+/// Has this exact judgement already been recovered from the same response?
+///
+/// # Why this is needed
+///
+/// `extract_from_prose` scans the whole `raw_response`, and an agent states its
+/// conclusion in more than one place: once in the `key_findings` array, again in
+/// the prose body, and again in a JSON restatement. Each appearance matched, and
+/// each was recorded as a separate `Assertion` with its own `assertion_id`.
+///
+/// Measured over the production episode table: **64 multiplier rows across 31
+/// episodes, and 31 distinct triples** — every episode holds exactly one
+/// judgement, and 33 of the 64 rows (52%) are that judgement counted again.
+/// Not one episode contains two different multipliers.
+///
+/// That mattered beyond storage. The count is what a caller uses to decide
+/// whether an agent bound to N drivers said N things: a broker agent covering
+/// five drivers and stating one adjustment looked, at the binding site, like an
+/// agent that had stated three. Anything pairing assertions with `driver_refs`
+/// would have stamped one number onto several drivers and compounded it.
+///
+/// # Why keyed on the value and not the text
+///
+/// The restatements are not byte-identical — `raw` differs by surrounding
+/// markdown — but the triple is what gets bound, and two identical triples are
+/// indistinguishable downstream. `target_hint` is part of the key so that when
+/// an agent does start naming its target, the same number offered for two
+/// different drivers survives as two claims. No agent populates it today, so
+/// that arm is unreachable and deliberately so: it is the shape this becomes
+/// correct in, not a guess about the present.
+fn is_restatement(
+    seen: &[Assertion],
+    kind: AssertionKind,
+    value: &Spread,
+    target_hint: Option<&str>,
+) -> bool {
+    seen.iter()
+        .any(|a| a.kind == kind && a.value == *value && a.target_hint.as_deref() == target_hint)
+}
+
 /// Every multiplier an agent stated in prose.
 ///
 /// Returns **all** matches rather than the first. `agent_params_hook` took the
@@ -386,7 +425,7 @@ static MULTIPLIER_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::n
 /// one, and silently repairing it would put a number into a forecast that no
 /// agent asserted.
 pub fn extract_from_prose(text: &str) -> (Vec<Assertion>, Vec<String>) {
-    let mut out = Vec::new();
+    let mut out: Vec<Assertion> = Vec::new();
     let mut rejected = Vec::new();
 
     for caps in MULTIPLIER_RE.captures_iter(text) {
@@ -400,6 +439,9 @@ pub fn extract_from_prose(text: &str) -> (Vec<Assertion>, Vec<String>) {
                 "{why} (from {:?})",
                 caps.get(0).map(|m| m.as_str())
             ));
+            continue;
+        }
+        if is_restatement(&out, AssertionKind::Multiplier, &value, None) {
             continue;
         }
         out.push(Assertion {
@@ -488,7 +530,7 @@ static PROBABILITY_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::
 /// multipliers: a probability outside `[0,1]` is broken rather than merely
 /// surprising, and repairing it would put a number into a forecast no agent stated.
 pub fn extract_probabilities_from_prose(text: &str) -> (Vec<Assertion>, Vec<String>) {
-    let mut out = Vec::new();
+    let mut out: Vec<Assertion> = Vec::new();
     let mut rejected = Vec::new();
 
     for caps in PROBABILITY_RE.captures_iter(text) {
@@ -502,6 +544,9 @@ pub fn extract_probabilities_from_prose(text: &str) -> (Vec<Assertion>, Vec<Stri
                 "{why} (from {:?})",
                 caps.get(0).map(|m| m.as_str())
             ));
+            continue;
+        }
+        if is_restatement(&out, AssertionKind::Probability, &value, None) {
             continue;
         }
         out.push(Assertion {
@@ -911,6 +956,64 @@ mod tests {
         let (found, _) = extract_from_prose(&text);
         assert_eq!(found.len(), 3);
         assert_ne!(found[0].assertion_id, found[1].assertion_id);
+    }
+
+    /// One judgement stated three times is one judgement.
+    ///
+    /// An agent repeats its conclusion: once in `key_findings`, again in the prose
+    /// body, again in a JSON restatement. `extract_from_prose` reads the whole
+    /// `raw_response`, so every appearance matched and every appearance was stored
+    /// as its own `Assertion` with its own id.
+    ///
+    /// Measured over the production episode table before this landed: 64 multiplier
+    /// rows across 31 episodes, 31 distinct triples. 33 rows — 52% — were the same
+    /// number counted again, and not one episode held two different multipliers.
+    ///
+    /// The count is load-bearing, which is why this is a correctness bug and not
+    /// housekeeping: a binder deciding whether an agent bound to five drivers said
+    /// five things would have read three restatements as three judgements.
+    #[test]
+    fn one_judgement_restated_is_recovered_once() {
+        let line = "[MULTIPLIER] Suggested p50: 0.99 (p5: 0.97, p95: 1.00)";
+        let text = format!(
+            "key_findings: {line}\n\nIn summary, {line}\n\n{{\"assessment\": \"{line}\"}}"
+        );
+
+        let (found, rejected) = extract_from_prose(&text);
+        assert_eq!(
+            found.len(),
+            1,
+            "the same triple appearing three times is one judgement, not three"
+        );
+        assert!(rejected.is_empty(), "a restatement is not a malformed claim");
+        assert_eq!(found[0].value.p50, 0.99);
+    }
+
+    /// Deduplication must not swallow a genuinely different second judgement.
+    ///
+    /// The guard against over-correcting: `football_analyst` stating three distinct
+    /// factor adjustments must still yield three, which is what
+    /// `three_factor_findings_yield_three_assertions_not_one` asserts from the
+    /// other side. This pins the near-miss — same p50, different interval.
+    #[test]
+    fn two_different_judgements_both_survive() {
+        let text = "[MULTIPLIER] Suggested p50: 1.20 (p5: 1.00, p95: 1.40)\n\
+                    [MULTIPLIER] Suggested p50: 1.20 (p5: 0.80, p95: 1.60)";
+        let (found, _) = extract_from_prose(text);
+        assert_eq!(
+            found.len(),
+            2,
+            "same centre, different interval — that is a different claim about \
+             confidence and must not be folded away"
+        );
+    }
+
+    /// The probability channel had the same duplication and gets the same rule.
+    #[test]
+    fn a_restated_probability_is_also_recovered_once() {
+        let line = "[PROBABILITY] Calibrated p50: 0.35 (p5: 0.20, p95: 0.50)";
+        let (found, _) = extract_probabilities_from_prose(&format!("{line}\n\n{line}"));
+        assert_eq!(found.len(), 1);
     }
 
     #[test]

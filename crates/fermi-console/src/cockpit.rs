@@ -314,6 +314,20 @@ pub struct CockpitState {
     // ── Evidence Affordances ──────────────────────────────────────
     /// Pending p50 adjustment suggestions from agents, awaiting user accept/reject.
     pub pending_suggestions: Vec<EvidenceSuggestion>,
+    /// Why the next persisted revision happened, when the cause is known.
+    ///
+    /// `run_simulation` persists a new probability and cannot see what
+    /// prompted it, so it sent `agent_id: None, evidence_added: None` for every
+    /// revision — including the ones caused by accepting an agent's suggestion,
+    /// which the server then recorded as `revision_trigger = 'manual'`. That is
+    /// the whole reason the trajectory can show that a forecast moved and not
+    /// what moved it.
+    ///
+    /// Set by `accept_suggestion`, taken by the persist. `Option` and `take()`
+    /// rather than a persistent field: an attribution is true of exactly one
+    /// revision, and leaving it set would credit the next unrelated sim to the
+    /// same agent.
+    pub pending_attribution: Option<fermi_console::wire::RevisionAttribution>,
     /// Evidence IDs that are collapsed in the UI (default: all collapsed).
     pub collapsed_evidence: HashSet<String>,
 
@@ -1188,6 +1202,7 @@ impl CockpitState {
             evidence_source_input,
             evidence_summary_input,
             pending_suggestions: Vec::new(),
+            pending_attribution: None,
             collapsed_evidence: HashSet::new(),
             pm_event_id: None,
             pm_market_id: None,
@@ -4456,12 +4471,59 @@ impl CockpitState {
                 let all_text = format!("{} {}", summary_text, findings_list.join(" "));
 
                 if let Some(suggested) = extract_suggested_p50(&all_text) {
-                    let driver_name = self
+                    // Which driver did the agent mean?
+                    //
+                    // This was `driver_refs.first()`. An agent bound to five
+                    // drivers states ONE multiplier — that is what the cards
+                    // specify, and the production episode table confirms it: 31
+                    // episodes with a multiplier, 31 distinct triples. So the
+                    // broker pattern silently moved driver #1 and left the other
+                    // four untouched, with nothing anywhere saying so.
+                    let refs = self
                         .program
                         .agent(agent_id)
-                        .and_then(|a| a.driver_refs.first().cloned());
+                        .map(|a| a.driver_refs.clone())
+                        .unwrap_or_default();
+                    // `target_hint` is the field for the agent to name its
+                    // target. Nothing populates it yet, so this is None today
+                    // and the binder falls to arity.
+                    let binding = fermi_console::drivers::bind_judgement_to_driver(None, &refs);
 
-                    if let Some(dn) = driver_name {
+                    let dn_opt = match binding {
+                        fermi_console::drivers::JudgementBinding::Bound(d) => Some(d),
+                        fermi_console::drivers::JudgementBinding::Ambiguous(candidates) => {
+                            // Refuse to choose on the operator's behalf. Applying
+                            // it to all of them compounds the adjustment; applying
+                            // it to one picks arbitrarily. Say what happened and
+                            // name the candidates.
+                            log::warn!(
+                                "[evidence] {} stated p50 {:.3} but covers {} drivers \
+                                 and named none",
+                                agent_id,
+                                suggested,
+                                candidates.len()
+                            );
+                            self.messages.push(AssistantMessage {
+                                node: format!("agent:{}", base_id),
+                                kind: MessageKind::Warning,
+                                text: format!(
+                                    "{} suggests p50 {:.2} but is bound to {} drivers \
+                                     ({}) and did not say which it meant. Not applied \
+                                     — one adjustment cannot be split across several \
+                                     drivers without compounding it. Bind the agent to \
+                                     a single driver, or have it name the target.",
+                                    base_id,
+                                    suggested,
+                                    candidates.len(),
+                                    candidates.join(", ")
+                                ),
+                            });
+                            None
+                        }
+                        fermi_console::drivers::JudgementBinding::NoDriver => None,
+                    };
+
+                    if let Some(dn) = dn_opt {
                         // Read the driver's current center across all the
                         // distribution shapes our templates use (not just
                         // Triangular). Two layers:
@@ -4537,6 +4599,14 @@ impl CockpitState {
                 // ids — attribute the message to the ABW id, not to this
                 // program's bound name.
                 let agent = base_id.clone();
+                // ...but keep the bound name and the drivers it covers, so the
+                // message can still be joined back to the model. See `meta`.
+                let bound_name_for_log = agent_id.to_string();
+                let drivers_for_log: Vec<String> = self
+                    .program
+                    .agent(agent_id)
+                    .map(|a| a.driver_refs.clone())
+                    .unwrap_or_default();
                 let summary = result
                     .get("evidence")
                     .and_then(|v| v.as_array())
@@ -4549,10 +4619,21 @@ impl CockpitState {
                     .get("evidence")
                     .cloned()
                     .unwrap_or(serde_json::json!([]));
+                // `bound_name` and `drivers` are carried alongside the ABW id.
+                //
+                // Attributing the message itself to the ABW id is right — the
+                // workspace log is an ABW-side view. But the bound name is the
+                // only thing that encodes WHICH driver this agent was hired
+                // for, and dropping it here meant the timeline could show that
+                // an agent ran and never which part of the model it ran for.
+                // The sender stays the ABW id; the join keys ride in metadata,
+                // where they cost nothing and answer the question.
                 let meta = serde_json::json!({
                     "cost_class": "event_append",
                     "fermi_action": "add_evidence",
                     "agent_id": agent,
+                    "bound_name": bound_name_for_log,
+                    "drivers": drivers_for_log,
                     "evidence_count": count,
                 });
                 tokio::spawn(async move {
@@ -7086,6 +7167,18 @@ impl CockpitState {
             _ => None,
         };
 
+        // Record the cause before either path runs. Both end in
+        // `run_simulation`, which is what persists the new probability and has
+        // no way of knowing why it was asked to.
+        self.pending_attribution = Some(fermi_console::wire::RevisionAttribution {
+            agent_id: sug.agent_base_id.clone(),
+            bound_name: sug.agent_name.clone(),
+            driver: sug.driver_name.clone(),
+            evidence_id: sug.evidence_id.clone(),
+            previous_p50: sug.current_p50,
+            updated_p50: sug.suggested_p50,
+        });
+
         if let Some((p5_name, p50_name, p95_name)) = param_names {
             // ── Path A: parameterized → write through to workspace params
             self.apply_suggestion_to_workspace_params(sug, &p5_name, &p50_name, &p95_name, cx);
@@ -9059,16 +9152,27 @@ impl CockpitState {
                     // the headline reads "recomposing…" and saving is blocked
                     // — a save can then never disagree with the settled sim.
                     self.recomposing = true;
-                    let reason = format!(
-                        "Local Monte Carlo simulation: mean={:.4}, p5={:.4}, p95={:.4} ({} iterations)",
-                        results.mean, results.p5, results.p95, results.iterations
-                    );
+                    // Attribute the revision when the cause is known.
+                    //
+                    // `take()`: an attribution belongs to one revision. A later
+                    // sim run for an unrelated reason must not inherit it, which
+                    // is a worse failure than no attribution — a false claim
+                    // about which agent moved the forecast would corrupt the
+                    // very signal this is being added to produce.
+                    let attribution = self.pending_attribution.take();
+                    let reason = match &attribution {
+                        Some(a) => a.reason(),
+                        None => format!(
+                            "Local Monte Carlo simulation: mean={:.4}, p5={:.4}, p95={:.4} ({} iterations)",
+                            results.mean, results.p5, results.p95, results.iterations
+                        ),
+                    };
                     cx.spawn(async move |this, cx| {
                         let req = crate::api::client::UpdateProbabilityRequest {
                             new_probability: new_prob,
                             reason: Some(reason),
-                            agent_id: None,
-                            evidence_added: None,
+                            agent_id: attribution.as_ref().map(|a| a.agent_id.clone()),
+                            evidence_added: attribution.as_ref().map(|a| a.evidence_delta()),
                         };
                         // Run the HTTP call on the tokio runtime. GPUI's
                         // executor doesn't drive tokio's I/O reactor, so

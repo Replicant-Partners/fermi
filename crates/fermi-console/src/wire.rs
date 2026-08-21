@@ -66,6 +66,67 @@ pub fn clamp_wire_interval_bound(v: Option<f64>) -> Option<f64> {
     }
 }
 
+/// What caused a forecast revision, in the shape the timeline reads.
+///
+/// # Why the trajectory could not answer "what changed my mind"
+///
+/// `forecast_spacetime` has carried `triggering_agent` and `evidence_delta`
+/// since migration 140, and `forecast_timeline_handler` projects both. The
+/// console never sent them: the post-simulation persist built
+/// `UpdateProbabilityRequest { agent_id: None, evidence_added: None, .. }` with
+/// a reason string naming only Monte Carlo statistics.
+///
+/// The server derives `revision_trigger = if agent_id.is_some() { "agent_correction" }
+/// else { "manual" }`, so accepting an agent's multiplier and re-simulating was
+/// recorded as a *manual* edit by *nobody*, citing no evidence. Every column
+/// needed to answer "how did research move my inside view" existed and was NULL
+/// on the only path that fills them.
+///
+/// This is the payload for the case where the cause is known. A sim run for any
+/// other reason still sends `None`, because inventing an attribution is worse
+/// than admitting there isn't one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RevisionAttribution {
+    /// The agent's ABW id — what the server keys `triggering_agent` on.
+    pub agent_id: String,
+    /// The agent's bound FPL name, which encodes the driver it was hired for.
+    pub bound_name: String,
+    pub driver: String,
+    pub evidence_id: String,
+    pub previous_p50: f64,
+    pub updated_p50: f64,
+}
+
+impl RevisionAttribution {
+    /// The `evidence_added` body.
+    ///
+    /// Deliberately the same key set the BayesOps accept path already writes
+    /// (`kind`, plus the before/after pair), so the timeline has one shape to
+    /// render rather than two. `kind` distinguishes them.
+    pub fn evidence_delta(&self) -> serde_json::Value {
+        serde_json::json!({
+            "kind": "agent_suggestion_accepted",
+            "agent_id": self.agent_id,
+            "bound_name": self.bound_name,
+            "driver_name": self.driver,
+            "evidence_id": self.evidence_id,
+            "previous_p50": self.previous_p50,
+            "updated_p50": self.updated_p50,
+        })
+    }
+
+    /// The human-readable revision reason.
+    ///
+    /// Replaces "Local Monte Carlo simulation: mean=…", which described the
+    /// arithmetic and not the cause.
+    pub fn reason(&self) -> String {
+        format!(
+            "Accepted {}'s suggestion for {}: p50 {:.3} \u{2192} {:.3}",
+            self.agent_id, self.driver, self.previous_p50, self.updated_p50
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,5 +250,68 @@ mod tests {
                 "clamp_wire_probability({raw}) = {out} violates the wire contract"
             );
         }
+    }
+
+    // ── Revision attribution ─────────────────────────────────────────────
+
+    fn attribution() -> RevisionAttribution {
+        RevisionAttribution {
+            agent_id: "weather_oracle".into(),
+            bound_name: "weather_oracle_ensemble_spread".into(),
+            driver: "ensemble_spread".into(),
+            evidence_id: "weather_oracle_ensemble_spread_0".into(),
+            previous_p50: 1.0,
+            updated_p50: 1.25,
+        }
+    }
+
+    /// The delta names the driver, the agent, and the evidence that carried it.
+    ///
+    /// These three are what the trajectory needs to answer "how did research
+    /// change my inside view". They were all discoverable at the accept site and
+    /// none of them was sent.
+    #[test]
+    fn the_evidence_delta_carries_the_join_keys() {
+        let d = attribution().evidence_delta();
+
+        assert_eq!(d["kind"], "agent_suggestion_accepted");
+        assert_eq!(d["agent_id"], "weather_oracle");
+        assert_eq!(
+            d["driver_name"], "ensemble_spread",
+            "without the driver the timeline can say a number moved but not \
+             which part of the model moved it"
+        );
+        assert_eq!(
+            d["evidence_id"], "weather_oracle_ensemble_spread_0",
+            "the evidence id is the only link back to what the agent actually said"
+        );
+        assert_eq!(d["previous_p50"], 1.0);
+        assert_eq!(d["updated_p50"], 1.25);
+    }
+
+    /// The bound name is retained, because it is the agent-to-driver join key.
+    ///
+    /// `process_agent_evidence` deliberately drops it when writing the workspace
+    /// log ("attribute the message to the ABW id, not to this program's bound
+    /// name"), which is right for that log and wrong as a reason to lose it
+    /// everywhere. Both identifiers travel here.
+    #[test]
+    fn both_the_abw_id_and_the_bound_name_survive() {
+        let d = attribution().evidence_delta();
+        assert_eq!(d["agent_id"], "weather_oracle");
+        assert_eq!(d["bound_name"], "weather_oracle_ensemble_spread");
+    }
+
+    /// The reason states the cause, not the arithmetic.
+    #[test]
+    fn the_reason_names_the_agent_and_the_driver() {
+        let r = attribution().reason();
+        assert!(r.contains("weather_oracle"), "{r}");
+        assert!(r.contains("ensemble_spread"), "{r}");
+        assert!(
+            !r.contains("Monte Carlo"),
+            "the old reason described how the number was computed, which was \
+             never the question: {r}"
+        );
     }
 }
