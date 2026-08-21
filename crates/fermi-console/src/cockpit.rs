@@ -14891,33 +14891,15 @@ fn render_driver_card(
         DriverType::Discrete => theme::PURPLE,
     };
 
-    let summary = match driver.driver_type {
-        DriverType::Continuous => {
-            if let Some(Distribution::Triangular {
-                ref p5,
-                ref p50,
-                ref p95,
-            }) = driver.distribution
-            {
-                let unit = driver.unit.as_deref().unwrap_or("");
-                format!(
-                    "{:.1} – {:.1} – {:.1} {}",
-                    expr_to_f64(p5),
-                    expr_to_f64(p50),
-                    expr_to_f64(p95),
-                    unit
-                )
-            } else {
-                "no distribution".into()
-            }
-        }
-        DriverType::Binary => {
-            let p = driver.probability.unwrap_or(0.0);
-            let m = driver.impact_multiplier.unwrap_or(1.0);
-            format!("{:.0}% (×{:.1})", p * 100.0, m)
-        }
-        _ => "—".into(),
-    };
+    // Every shape describes itself.
+    //
+    // This was a Triangular-only match whose else-arm read "no distribution"
+    // for a driver that had one, and whose `_` arm rendered every discrete
+    // driver as "—". `driver_summary` names the family and its parameters, and
+    // prints `<param_name>` rather than a fabricated 0.0 for a parameterised
+    // driver — `expr_to_f64` reads a non-literal as 0.0, so the old line showed
+    // "0.0 – 0.0 – 0.0" for every World Cup driver.
+    let summary = fermi_console::plot::curve::driver_summary(&driver);
 
     // Count messages for this driver
     let driver_node = format!("driver:{}", driver.name);
@@ -15181,22 +15163,41 @@ fn render_driver_card(
                         .min_w(ui::s(0.0))
                         .child(summary),
                 )
-                // Distribution sparkline for continuous drivers
-                .when(driver.driver_type == DriverType::Continuous, |el| {
-                    if let Some(Distribution::Triangular {
-                        ref p5,
-                        ref p50,
-                        ref p95,
-                    }) = driver.distribution
-                    {
-                        let v5 = expr_to_f64(p5);
-                        let v50 = expr_to_f64(p50);
-                        let v95 = expr_to_f64(p95);
-                        if v95 > v5 {
+                // Distribution curve.
+                //
+                // Was gated on `Continuous` AND `Triangular`, with both else-arms
+                // returning the element untouched — so `normal`, `lognormal`,
+                // `uniform`, `beta` and every `discrete` driver rendered no curve
+                // at all, silently. The reference forecast's two most important
+                // drivers are a `normal` and a bimodal `discrete`; neither was
+                // visible.
+                //
+                // `driver_curve` samples through the same per-family samplers the
+                // executor runs, so this is a picture of what will be drawn rather
+                // than a sketch through three percentiles. It returns `None` for a
+                // parameterised driver, whose values live in `workspace_params` —
+                // declining to draw is right there, because `expr_to_f64` reads a
+                // non-literal as 0.0 and would render every such driver as an
+                // identical spike at the origin.
+                .when(
+                    matches!(
+                        driver.driver_type,
+                        DriverType::Continuous | DriverType::Discrete
+                    ),
+                    |el| {
+                        if let Some((density, (v5, v50, v95))) =
+                            fermi_console::plot::curve::driver_curve(&driver, 96)
+                        {
                             let ev_count = evidence_items.len();
                             let spread = v95 - v5;
-                            let skew = (v50 - v5) / spread - 0.5;
-                            let shape_label = if skew.abs() < 0.08 {
+                            let skew = if spread > 0.0 {
+                                (v50 - v5) / spread - 0.5
+                            } else {
+                                0.0
+                            };
+                            let shape_label = if driver.driver_type == DriverType::Discrete {
+                                "discrete"
+                            } else if skew.abs() < 0.08 {
                                 "symmetric"
                             } else if skew > 0.0 {
                                 "right-skewed"
@@ -15225,9 +15226,11 @@ fn render_driver_card(
                             // to re-emit and it no longer needs to be
                             // told the card's background colour, since
                             // it simply doesn't paint one.
-                            el.child(crate::viz::distribution::DistributionPlot::sparkline(
-                                v5, v50, v95,
-                            ))
+                            el.child(
+                                crate::viz::distribution::DistributionPlot::sparkline_from_density(
+                                    density, v5, v50, v95,
+                                ),
+                            )
                             .child(
                                 div()
                                     .text_size(ui::TEXT_XS)
@@ -15238,10 +15241,8 @@ fn render_driver_card(
                         } else {
                             el
                         }
-                    } else {
-                        el
-                    }
-                })
+                    },
+                )
                 .when(msg_count > 0, |el| {
                     el.child(
                         div()

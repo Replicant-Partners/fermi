@@ -37,6 +37,7 @@
 //!   the layout, the scales, and the pixel→data inversion each chart's
 //!   painter and hit-tester both consult.
 
+pub mod curve;
 pub mod density;
 pub mod distribution;
 pub mod events;

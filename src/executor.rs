@@ -874,24 +874,18 @@ impl Executor {
         }
     }
 
-    /// Sample from a categorical (discrete) distribution
-    /// Uses inverse transform sampling with cumulative weights
+    /// Sample from a categorical (discrete) distribution.
+    ///
+    /// Delegates to [`crate::distributions::sample_categorical`] so the console
+    /// can draw a discrete driver's shape from the same implementation this
+    /// runs on. Preserves the previous panic-on-empty behaviour at the call
+    /// site by unwrapping — a discrete driver with no values never reaches
+    /// here, and returning a silent 0.0 would be worse than the panic it
+    /// replaces.
     #[allow(clippy::ptr_arg)]
     fn sample_categorical(&mut self, values: &[f64], weights: &[f64]) -> f64 {
-        // Generate random number between 0 and 1
-        let r = self.rng.gen::<f64>();
-
-        // Compute cumulative sum
-        let mut cumulative = 0.0;
-        for (i, &weight) in weights.iter().enumerate() {
-            cumulative += weight;
-            if r < cumulative {
-                return values[i];
-            }
-        }
-
-        // Fallback to last value (handles floating-point rounding)
-        values[values.len() - 1]
+        crate::distributions::sample_categorical(&mut self.rng, values, weights)
+            .expect("discrete driver has at least one value and matching weights")
     }
 }
 

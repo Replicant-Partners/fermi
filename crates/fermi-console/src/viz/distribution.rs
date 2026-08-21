@@ -115,6 +115,26 @@ impl DistributionPlot {
         s
     }
 
+    /// A sparkline over a density that was built from real draws.
+    ///
+    /// [`Self::sparkline`] is hard-wired to `Density::from_quantiles`, which the
+    /// density module labels a sketch — `shape_is_real()` is false for it,
+    /// because a two-sided Gaussian through three percentiles cannot show skew,
+    /// a bound, or a second mode. It was also the only sparkline constructor,
+    /// so the driver card could draw nothing but a Triangular driver, and four
+    /// of the five distribution types the engine samples rendered as blank.
+    ///
+    /// This takes a `Density` the caller has already built — in practice from
+    /// `plot::curve::driver_curve`, which draws through the same per-family
+    /// samplers the executor uses, so the picture is of what will actually be
+    /// sampled.
+    pub fn sparkline_from_density(density: Density, p5: f64, p50: f64, p95: f64) -> Self {
+        let mut s = Self::new(density).size(120.0, 24.0).caption_source(false);
+        s.spec.chrome = Chrome::Bare;
+        s.spec.percentiles = Percentiles::new(p5, p50, p95);
+        s
+    }
+
     pub fn size(mut self, width: f32, height: f32) -> Self {
         self.spec.width = width as f64;
         self.spec.height = height as f64;

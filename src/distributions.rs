@@ -162,6 +162,91 @@ pub fn sample_beta<R: Rng>(rng: &mut R, alpha: f64, beta: f64, min: f64, max: f6
     min + sample * (max - min)
 }
 
+/// Inverse-transform sample from a categorical (discrete) distribution.
+///
+/// Extracted from `Executor::sample_categorical`, which now delegates here, so
+/// that anything wanting to show a discrete driver draws from the same
+/// implementation the simulation runs on. A second copy for display would be a
+/// picture that can disagree with the model.
+///
+/// `None` when there is nothing to draw from or the inputs disagree in length.
+pub fn sample_categorical<R: Rng>(rng: &mut R, values: &[f64], weights: &[f64]) -> Option<f64> {
+    if values.is_empty() || values.len() != weights.len() {
+        return None;
+    }
+    let r = rng.gen::<f64>();
+    let mut cumulative = 0.0;
+    for (i, &weight) in weights.iter().enumerate() {
+        cumulative += weight;
+        if r < cumulative {
+            return Some(values[i]);
+        }
+    }
+    // Fallback to the last value, which absorbs floating-point rounding in the
+    // weights rather than returning nothing for a well-formed driver.
+    values.last().copied()
+}
+
+/// Draw one sample from a distribution whose parameters are numeric literals.
+///
+/// # Why this exists
+///
+/// `Executor::sample_distribution` evaluates `Expression` parameters against a
+/// live `EvaluationContext`, so it can only be called mid-simulation. Anything
+/// wanting to *show* a driver — a curve on a driver card, a preview in an
+/// editor — has a `Distribution` and no context, and had no way to sample it.
+///
+/// The consequence in the console: `render_driver_card` could only draw a
+/// Triangular driver, because Triangular is the one shape whose p5/p50/p95 can
+/// be read straight off the AST and handed to a quantile sketch. `normal`,
+/// `lognormal`, `uniform` and `beta` fell through an else-arm and rendered
+/// nothing at all — silently, with the text summary reading "no distribution"
+/// for a driver that had one.
+///
+/// This delegates to the same per-family samplers the executor uses, so a curve
+/// drawn from it is a picture of what the simulation will actually draw. It
+/// returns `None` rather than a default when a parameter is not a literal —
+/// a parameterised driver like `triangular(socio_p5, socio_p50, socio_p95)`
+/// genuinely cannot be sampled without the workspace params, and substituting
+/// zeros would draw a confident picture of a distribution nobody declared.
+pub fn sample_literal<R: Rng>(rng: &mut R, dist: &crate::ast::Distribution) -> Option<f64> {
+    use crate::ast::Distribution as D;
+    use crate::ast::Expression;
+
+    fn lit(e: &Expression) -> Option<f64> {
+        match e {
+            Expression::Number(n) => Some(*n),
+            _ => None,
+        }
+    }
+    fn lit_or(e: &Option<Expression>, default: f64) -> Option<f64> {
+        match e {
+            Some(expr) => lit(expr),
+            None => Some(default),
+        }
+    }
+
+    let v = match dist {
+        D::Triangular { p5, p50, p95 } => sample_triangular(rng, lit(p5)?, lit(p50)?, lit(p95)?),
+        D::Normal { mean, stddev } => sample_normal(rng, lit(mean)?, lit(stddev)?),
+        D::Lognormal { median, sigma } => sample_lognormal(rng, lit(median)?, lit(sigma)?),
+        D::Uniform { low, high } => sample_uniform(rng, lit(low)?, lit(high)?),
+        D::Beta {
+            alpha,
+            beta,
+            min,
+            max,
+        } => sample_beta(
+            rng,
+            lit(alpha)?,
+            lit(beta)?,
+            lit_or(min, 0.0)?,
+            lit_or(max, 1.0)?,
+        ),
+    };
+    v.is_finite().then_some(v)
+}
+
 /// Calculate statistics from a sample of values
 ///
 /// Returns (mean, stddev, p10, p50, p90) from a Monte Carlo sample.
