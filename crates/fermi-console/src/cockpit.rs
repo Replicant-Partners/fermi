@@ -4458,6 +4458,43 @@ impl CockpitState {
                 run.evidence_count = count;
             }
 
+            // ── Does the agent's measured base rate match the declared one? ──
+            //
+            // Both numbers are estimates of the same frequency: the FPL's
+            // `historical_frequency` and the value `weather_climatology`
+            // computed by counting ERA5 observations. Nothing had ever
+            // compared them, so a forecast could carry 12.0% while the agent
+            // that ran for it measured 5.9% and neither said a word.
+            //
+            // Reported rather than applied. The measurement has a reference
+            // class too, and a bucket-width error puts both numbers wrong
+            // together — so this names the disagreement and leaves the
+            // judgement where it belongs.
+            if let Some(measured) = fermi_console::calibration::extract_measured_base_rate(result) {
+                let declared = self
+                    .program
+                    .question()
+                    .and_then(|q| q.base_rate.as_ref())
+                    .map(|br| br.historical_frequency);
+                if let Some(declared) = declared {
+                    let verdict =
+                        fermi_console::calibration::base_rate_agreement(declared, Some(measured));
+                    if let Some(msg) = verdict.message() {
+                        log::warn!(
+                            "[base_rate] declared {:.4} vs measured {:.4} ({})",
+                            declared,
+                            measured,
+                            base_id
+                        );
+                        self.messages.push(AssistantMessage {
+                            node: "question".into(),
+                            kind: MessageKind::Warning,
+                            text: msg,
+                        });
+                    }
+                }
+            }
+
             // ── Extract parameter suggestions from evidence ───────
             // Agents include "Suggested p50: X.XX" in their findings.
             // Parse these into pending suggestions for user accept/reject.
@@ -7676,12 +7713,41 @@ impl CockpitState {
         let br_json = parse(reasoning).or_else(|| parse(evidence_summary));
 
         let Some(br) = br_json else {
+            // Distinguish "the agent said nothing" from "the agent measured it
+            // and we cannot use the answer".
+            //
+            // `update_outside_rate` routes this to a declared specialist, and
+            // for weather that is `weather_oracle` — whose card mandates a
+            // response shape containing neither `base_rate` nor
+            // `historical_frequency`. So the routing worked, the tool counted
+            // ERA5 observations, and the extractor above returned None. The
+            // operator was told "no parseable base rate", which reads as the
+            // agent having failed.
+            //
+            // The measured value still is not applied, and deliberately: a
+            // base rate needs a `reference_class` and a `sample_size` to say
+            // WHY it is what it is, the response carries neither, and
+            // inventing them would produce exactly the confidently-displayed
+            // unverifiable number this work exists to remove. Naming the gap
+            // points at the card, which is where it can actually be closed.
+            let measured = fermi_console::calibration::extract_measured_base_rate(result);
+            let text = match measured {
+                Some(m) => format!(
+                    "Base-rate update: the agent measured {:.1}% from climatology, \
+                     but its response carries no reference_class or sample_size \
+                     — both required for a base rate to be checkable. Not \
+                     applied; existing base rate preserved. The card's output \
+                     shape is where to fix this.",
+                    m * 100.0
+                ),
+                None => "Base-rate update: no parseable base rate in response. \
+                         Existing base rate preserved."
+                    .to_string(),
+            };
             self.messages.push(AssistantMessage {
                 node: "question".into(),
                 kind: MessageKind::Info,
-                text: "Base-rate update: no parseable base rate in response. \
-                       Existing base rate preserved."
-                    .into(),
+                text,
             });
             cx.notify();
             return;

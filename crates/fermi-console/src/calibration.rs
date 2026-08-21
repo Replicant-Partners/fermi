@@ -23,6 +23,172 @@
 //!
 //! GPUI-free so it can be tested in seconds. See the crate docs.
 
+/// The empirical counterpart to the structural checks below.
+///
+/// # Why this module gained a semantic check after all
+///
+/// The doc above says these checks are deliberately structural — they ask
+/// questions with defensible answers rather than judging whether a reference
+/// class is wise. That still holds for `critique_base_rate`. This is different:
+/// it does not judge the claim, it compares the claim against a MEASUREMENT of
+/// the same quantity that the platform computed itself.
+///
+/// `weather_climatology` counts ERA5 observations over a calendar window and
+/// applies an OLS warming trend, and `weather_oracle` reports the result as
+/// `stages.calibration.climatology_base_rate`. The FPL separately declares
+/// `historical_frequency`. Nothing had ever compared the two, even though a
+/// disagreement means one of them is wrong about a question of fact.
+///
+/// Measured across the live weather forecasts at the time this was written:
+///
+/// | question              | declared | measured | gap    | relative |
+/// |-----------------------|----------|----------|--------|----------|
+/// | Chicago 78-79F        | 8.3%     | 13.5%    | 5.2pp  | 38%      |
+/// | Miami 92-93F          | 12.0%    | 5.9%     | 6.1pp  | 103%     |
+/// | Houston 74-75F low    | 12.0%    | 10.0%    | 2.0pp  | 20%      |
+/// | London 32C            | 0.8%     | 1.04%    | 0.24pp | 23%      |
+#[derive(Debug, Clone, PartialEq)]
+pub enum BaseRateAgreement {
+    /// No measurement to compare against. Not a pass.
+    Unmeasured,
+    /// Close enough that the difference is not worth an operator's attention.
+    Agrees { declared: f64, measured: f64 },
+    /// The two numbers are claims about the same frequency and they differ.
+    Disagrees {
+        declared: f64,
+        measured: f64,
+        /// Absolute difference in percentage points.
+        gap_pp: f64,
+        /// Difference relative to the measurement.
+        relative: f64,
+    },
+}
+
+/// Minimum absolute gap before a disagreement is worth raising, in pp.
+///
+/// Without a floor, two estimates of a rare event that round to "about 1%"
+/// (London: 0.8% against 1.04%) would be reported as a 23% error. True, and not
+/// useful: at that magnitude the reference classes differ by a day or two of
+/// window and neither number is doing damage.
+pub const AGREEMENT_MIN_GAP_PP: f64 = 1.0;
+
+/// Minimum relative difference, against the measurement.
+///
+/// A pp threshold alone cannot work across base rates that span 0.8% to 33%:
+/// 2pp is a rounding difference on one and a doubling on the other. Calibrated
+/// against the four live forecasts so that the two which are materially wrong
+/// fire and the two which are close stay quiet — Houston at 20% is the nearest
+/// miss, and it is a genuine near-miss rather than a tuned exclusion: both its
+/// numbers share the same bucket-width error, so they agree with each other
+/// while both being wrong. This check cannot see that, and should not pretend to.
+pub const AGREEMENT_MIN_RELATIVE: f64 = 0.25;
+
+/// Does the declared base rate agree with the one the platform measured?
+///
+/// `measured` is the reference, so the relative difference is taken against it:
+/// it came from counting observations, and the declared value is what someone
+/// or something asserted.
+pub fn base_rate_agreement(declared: f64, measured: Option<f64>) -> BaseRateAgreement {
+    let Some(measured) = measured.filter(|m| m.is_finite() && *m > 0.0) else {
+        return BaseRateAgreement::Unmeasured;
+    };
+    if !declared.is_finite() {
+        return BaseRateAgreement::Unmeasured;
+    }
+
+    let gap_pp = (declared - measured).abs() * 100.0;
+    let relative = (declared - measured).abs() / measured;
+
+    if gap_pp >= AGREEMENT_MIN_GAP_PP && relative >= AGREEMENT_MIN_RELATIVE {
+        BaseRateAgreement::Disagrees {
+            declared,
+            measured,
+            gap_pp,
+            relative,
+        }
+    } else {
+        BaseRateAgreement::Agrees { declared, measured }
+    }
+}
+
+impl BaseRateAgreement {
+    /// Operator-facing sentence, or `None` when there is nothing to say.
+    ///
+    /// Phrased so the action is obvious: the two numbers are named, and so is
+    /// the fact that they are answers to the same question. Deliberately does
+    /// not say which is right — the measurement has a reference class too, and
+    /// a bucket-width error puts both of them wrong together.
+    pub fn message(&self) -> Option<String> {
+        match self {
+            BaseRateAgreement::Disagrees {
+                declared,
+                measured,
+                gap_pp,
+                relative,
+            } => Some(format!(
+                "Base rate disagreement: this forecast declares {:.1}% but the \
+                 agent measured {:.1}% from climatology — {:.1}pp apart ({:.0}% \
+                 relative). Both are estimates of the same frequency, so one of \
+                 them is wrong. Check the reference class and the bucket bounds \
+                 before treating any gap to the market as an edge.",
+                declared * 100.0,
+                measured * 100.0,
+                gap_pp,
+                relative * 100.0
+            )),
+            _ => None,
+        }
+    }
+}
+
+/// Pull the measured climatology base rate out of an agent response.
+///
+/// # Why the declared path is tried first and is not the only path
+///
+/// `grounding_trust::FIELD_CONTRACTS` declares this field at
+/// `stages.calibration.climatology_base_rate`, sourced from the
+/// `weather_climatology` tool's `base_rates.trend_adjusted_base_rate`. That is
+/// the shape to honour.
+///
+/// A bare recursive search is kept as a fallback for the same reason the
+/// weather cross-checks had to stop requiring the response to BE a JSON object:
+/// the model wraps a correct document in prose and a fence, and nests it one
+/// level deeper than asked, often enough that a strict reader returns nothing
+/// and reports clean. An inert check is not a passing one.
+///
+/// This is the field `apply_base_rate_only`'s extractor could not read at all —
+/// it accepts only `{"base_rate": {...}}` or a bare `historical_frequency`,
+/// neither of which `weather_oracle`'s card ever emits. So the specialist was
+/// routed to, ran, measured the number, and had its answer discarded.
+pub fn extract_measured_base_rate(response: &serde_json::Value) -> Option<f64> {
+    fn as_rate(v: &serde_json::Value) -> Option<f64> {
+        v.as_f64().filter(|f| f.is_finite() && (0.0..=1.0).contains(f))
+    }
+
+    let declared_path = response
+        .get("stages")
+        .and_then(|s| s.get("calibration"))
+        .and_then(|c| c.get("climatology_base_rate"))
+        .and_then(as_rate);
+    if declared_path.is_some() {
+        return declared_path;
+    }
+
+    fn search(v: &serde_json::Value) -> Option<f64> {
+        match v {
+            serde_json::Value::Object(map) => {
+                if let Some(hit) = map.get("climatology_base_rate").and_then(as_rate) {
+                    return Some(hit);
+                }
+                map.values().find_map(search)
+            }
+            serde_json::Value::Array(items) => items.iter().find_map(search),
+            _ => None,
+        }
+    }
+    search(response)
+}
+
 /// How loudly to complain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
@@ -358,5 +524,144 @@ mod tests {
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].severity, Severity::Note);
         assert!(f[0].message.contains("95% interval"));
+    }
+
+    // ── Base-rate agreement against a measurement ────────────────────────
+
+    fn gap(a: &BaseRateAgreement) -> f64 {
+        match a {
+            BaseRateAgreement::Disagrees { gap_pp, .. } => *gap_pp,
+            other => panic!("expected Disagrees, got {other:?}"),
+        }
+    }
+
+    /// The four live weather forecasts, with the numbers they actually carried.
+    ///
+    /// Two are materially wrong and two are close. A check that fires on all
+    /// four is wallpaper; one that fires on none is inert. This pins which.
+    #[test]
+    fn the_two_forecasts_that_were_wrong_fire_and_the_two_that_were_close_do_not() {
+        // Chicago 78-79F: declared 8.3%, ERA5 measured 13.5%.
+        let chicago = base_rate_agreement(0.083, Some(0.135));
+        assert!(
+            matches!(chicago, BaseRateAgreement::Disagrees { .. }),
+            "38% low on the most load-bearing number in the model: {chicago:?}"
+        );
+        assert!((gap(&chicago) - 5.2).abs() < 0.05, "{chicago:?}");
+
+        // Miami 92-93F: declared 12.0%, measured 5.9% — declared is 2x.
+        let miami = base_rate_agreement(0.12, Some(0.059));
+        assert!(
+            matches!(miami, BaseRateAgreement::Disagrees { .. }),
+            "a doubled base rate doubles every driver's effect: {miami:?}"
+        );
+
+        // Houston 74-75F low: 12.0% vs 10.0%. A genuine near-miss at 20%
+        // relative — and both numbers share the same bucket-width error, so
+        // they agree with each other while both being wrong. This check cannot
+        // see that and must not pretend to.
+        assert!(matches!(
+            base_rate_agreement(0.12, Some(0.10)),
+            BaseRateAgreement::Agrees { .. }
+        ));
+
+        // London 32C: 0.8% vs 1.04%. 23% relative but a quarter of a point
+        // absolute — at this magnitude the reference classes differ by a day of
+        // window and neither number is doing damage.
+        assert!(matches!(
+            base_rate_agreement(0.008, Some(0.0104)),
+            BaseRateAgreement::Agrees { .. }
+        ));
+    }
+
+    /// A missing measurement is not a pass.
+    ///
+    /// The failure this whole line of work keeps finding: a check whose input is
+    /// absent reporting clean. `Unmeasured` is a distinct state so a caller
+    /// cannot mistake "nothing to compare" for "compared and agreed".
+    #[test]
+    fn no_measurement_is_unmeasured_rather_than_agreement() {
+        assert_eq!(base_rate_agreement(0.083, None), BaseRateAgreement::Unmeasured);
+        assert_eq!(
+            base_rate_agreement(0.083, Some(f64::NAN)),
+            BaseRateAgreement::Unmeasured
+        );
+        assert_eq!(
+            base_rate_agreement(0.083, Some(0.0)),
+            BaseRateAgreement::Unmeasured,
+            "a measured zero is a degenerate reference class, not a frequency"
+        );
+    }
+
+    #[test]
+    fn only_a_disagreement_produces_a_message() {
+        assert!(base_rate_agreement(0.12, Some(0.059)).message().is_some());
+        assert!(base_rate_agreement(0.12, Some(0.10)).message().is_none());
+        assert!(base_rate_agreement(0.12, None).message().is_none());
+    }
+
+    /// The message names both numbers, so it can be acted on without a query.
+    #[test]
+    fn the_message_names_both_numbers_and_neither_as_correct() {
+        let m = base_rate_agreement(0.12, Some(0.059)).message().unwrap();
+        assert!(m.contains("12.0%"), "{m}");
+        assert!(m.contains("5.9%"), "{m}");
+        assert!(
+            m.contains("bucket bounds"),
+            "the measurement has a reference class too — a bucket-width error \
+             puts both numbers wrong together, and the message must point there: {m}"
+        );
+    }
+
+    // ── Reading the measurement out of the response ──────────────────────
+
+    /// The shape the contract declares, and the shape the agent actually sends.
+    #[test]
+    fn the_declared_contract_path_is_read() {
+        let r = serde_json::json!({
+            "stages": {
+                "calibration": {
+                    "agent": "weather_calibrator",
+                    "predictive_sd": 5.0,
+                    "climatology_base_rate": 0.0305,
+                    "calibrated_probability": 0.031
+                }
+            }
+        });
+        assert_eq!(extract_measured_base_rate(&r), Some(0.0305));
+    }
+
+    /// Nested one level deeper than asked, which is how it often arrives.
+    ///
+    /// The weather cross-checks were permanently inert for exactly this reason:
+    /// they required the response to BE the document, and the model wraps it.
+    /// A strict reader here would return None and the comparison would silently
+    /// never run — an inert check reporting clean, which is the failure mode
+    /// this whole effort exists to remove.
+    #[test]
+    fn a_measurement_nested_deeper_than_declared_is_still_found() {
+        let r = serde_json::json!({
+            "result": { "output": { "stages": {
+                "calibration": { "climatology_base_rate": 0.135 }
+            }}}
+        });
+        assert_eq!(extract_measured_base_rate(&r), Some(0.135));
+    }
+
+    #[test]
+    fn an_out_of_range_measurement_is_not_a_base_rate() {
+        let r = serde_json::json!({ "climatology_base_rate": 13.5 });
+        assert_eq!(
+            extract_measured_base_rate(&r),
+            None,
+            "13.5 is a percentage written as a number; treating it as a \
+             probability would make every comparison fire"
+        );
+    }
+
+    #[test]
+    fn a_response_with_no_measurement_yields_none() {
+        let r = serde_json::json!({ "stages": { "calibration": { "predictive_sd": 5.0 } } });
+        assert_eq!(extract_measured_base_rate(&r), None);
     }
 }
