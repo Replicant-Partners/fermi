@@ -710,9 +710,16 @@ pub struct ConsolidateQuery {
 /// agents with no episodes left to retry with. A scheduler repeating that on a
 /// timer is worse than no scheduler.
 ///
-/// `CONSOLIDATION_SWEEP_SECS=0` disables it.
+/// # Opt-in
+///
+/// Off unless `CONSOLIDATION_SWEEP_SECS` is set. Every other sweeper in this
+/// codebase defaults on because the worst case is a wasted query; this one
+/// debits wallets and calls a paid model, and a scheduler that starts spending
+/// the moment it is deployed is not a default anyone consented to. Setting the
+/// variable is the consent.
 pub fn spawn_consolidation_sweeper(state: AppState) {
-    const DEFAULT_SWEEP_SECS: u64 = 6 * 3600;
+    /// Suggested value when switching it on, not a default.
+    const SUGGESTED_SWEEP_SECS: u64 = 6 * 3600;
     /// Below this there is nothing for clustering to find, so a cycle would
     /// spend a credit to produce nothing.
     const MIN_EPISODES: i64 = 10;
@@ -723,10 +730,15 @@ pub fn spawn_consolidation_sweeper(state: AppState) {
     let interval_secs = std::env::var("CONSOLIDATION_SWEEP_SECS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(DEFAULT_SWEEP_SECS);
+        .unwrap_or(0);
 
     if interval_secs == 0 {
-        println!("[loop1] consolidation sweeper disabled (CONSOLIDATION_SWEEP_SECS=0)");
+        println!(
+            "[loop1] dreaming sweeper OFF. Loop 1 runs only when someone calls \
+             /consolidate or /dream. Set CONSOLIDATION_SWEEP_SECS={SUGGESTED_SWEEP_SECS} \
+             to turn it on — it is agent-funded and bounded by \
+             dreaming_budget_credits."
+        );
         return;
     }
     println!(

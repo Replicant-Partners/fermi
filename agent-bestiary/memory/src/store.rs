@@ -3104,7 +3104,7 @@ impl MemoryStore {
         if accepted {
             // Fetch the version to get member_agent_ids + member_weights
             let row = sqlx::query(
-                "SELECT workspace_id, member_agent_ids, member_weights \
+                "SELECT workspace_id, member_agent_ids, member_weights, member_delta \
                  FROM composition_versions WHERE composition_version_id = $1",
             )
             .bind(version_id)
@@ -3114,6 +3114,8 @@ impl MemoryStore {
             let workspace_id: Uuid = row.try_get("workspace_id")?;
             let member_agent_ids: Option<Vec<Uuid>> =
                 row.try_get("member_agent_ids").unwrap_or(None);
+            let member_delta: Option<serde_json::Value> =
+                row.try_get("member_delta").unwrap_or(None);
             let member_weights: Option<serde_json::Value> =
                 row.try_get("member_weights").unwrap_or(None);
 
@@ -3192,6 +3194,81 @@ impl MemoryStore {
             // smuggled in under a bug fix. Readers that want the weights for
             // an accepted composition should read the accepted version row.
             let _ = member_weights;
+
+            // Delta form (migration 212). Applied against membership as it is
+            // *now*, not as it was when the proposal was filed — a Loop 4
+            // proposal can sit pending for weeks, and an absolute roster
+            // applied late evicts whoever was hired in between.
+            //
+            // Scoped to current members, so a name that no longer matches
+            // anyone on the team removes nothing and is reported rather than
+            // guessed at. There is no mass DELETE on this path.
+            if let Some(delta) = member_delta {
+                let remove: Vec<String> = delta
+                    .get("remove")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|s| s.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let add: Vec<String> = delta
+                    .get("add")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|s| s.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let mut tx = self.pool.begin().await?;
+                let mut changed = 0usize;
+
+                for name in &add {
+                    let n = sqlx::query(
+                        "INSERT INTO workspace_agents \
+                           (workspace_id, agent_id, added_by, relationship) \
+                         SELECT $1, a.agent_id, $2, 'hired' FROM agents a \
+                          WHERE a.agent_name = $3 \
+                         ON CONFLICT DO NOTHING",
+                    )
+                    .bind(workspace_id)
+                    .bind(resolved_by)
+                    .bind(name)
+                    .execute(&mut *tx)
+                    .await?;
+                    changed += n.rows_affected() as usize;
+                }
+
+                for name in &remove {
+                    // The coordination strategist is exempt for the same reason
+                    // it is on the absolute path: it lives on
+                    // `teams.coordination_strategist_id`, and evicting the
+                    // author of a proposal as a side effect of accepting it
+                    // would be a surprising way to lose it.
+                    let n = sqlx::query(
+                        "DELETE FROM workspace_agents wa \
+                          USING agents a \
+                          WHERE wa.workspace_id = $1 \
+                            AND wa.agent_id = a.agent_id \
+                            AND a.agent_name = $2 \
+                            AND wa.agent_id IS DISTINCT FROM ( \
+                                  SELECT t.coordination_strategist_id \
+                                    FROM teams t WHERE t.id = $1 \
+                                )",
+                    )
+                    .bind(workspace_id)
+                    .bind(name)
+                    .execute(&mut *tx)
+                    .await?;
+                    changed += n.rows_affected() as usize;
+                }
+
+                tx.commit().await?;
+                applied = CompositionOutcome::RosterApplied { members: changed };
+            }
         } else {
             applied = CompositionOutcome::Rejected;
             sqlx::query(

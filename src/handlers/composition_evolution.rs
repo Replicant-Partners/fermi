@@ -411,14 +411,35 @@ pub async fn materialise_composition_proposal_handler(
     .await
     .unwrap_or(1);
 
+    // What this proposal actually asks for, as a delta (migration 212).
+    //
+    // Only the drop kinds name something to apply; `keep_synergy` is an
+    // observation about a pair that is working and has no roster change in it,
+    // so it contributes nothing here rather than being forced into one.
+    //
+    // Without this the proposal was prose only: accepting it stamped
+    // `accepted_by` and changed no membership, while the API reported
+    // "accepted". Loop 4 could generate proposals indefinitely and apply none.
+    let remove: Vec<String> = proposals
+        .iter()
+        .filter(|p| p.kind == "drop_negative" || p.kind == "drop_redundant")
+        .map(|p| p.subject.clone())
+        .collect();
+    let member_delta = if remove.is_empty() {
+        None
+    } else {
+        Some(serde_json::json!({ "remove": remove, "add": [] }))
+    };
+
     sqlx::query(
         "INSERT INTO composition_versions
-             (workspace_id, version_number, diff_summary, proposed_by, created_at)
-         VALUES ($1, $2, $3, 'attribution_loop4', NOW())",
+             (workspace_id, version_number, diff_summary, member_delta, proposed_by, created_at)
+         VALUES ($1, $2, $3, $4, 'attribution_loop4', NOW())",
     )
     .bind(workspace_id)
     .bind(next_version)
     .bind(&summary)
+    .bind(&member_delta)
     .execute(&state.db)
     .await
     .map_err(|e| {
