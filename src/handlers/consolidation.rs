@@ -680,6 +680,217 @@ pub struct ConsolidateQuery {
     pub allow_degraded: bool,
 }
 
+/// Turn Loop 1 without a human.
+///
+/// The architecture states a dreaming cadence of "hours to days". Nothing
+/// implemented it: consolidation ran when somebody called
+/// `POST /api/agents/:id/consolidate` or `POST /api/creatures/:id/dream`, and
+/// otherwise never. Agents accumulated episodes and learned nothing from them,
+/// which is invisible from outside because an agent that has not learned looks
+/// exactly like one that had nothing to learn. Same discovery as the resolution
+/// and observability sweepers, and this is the fourth.
+///
+/// # Who pays
+///
+/// The HTTP handler charges `gas_fees.consolidation_cycle` to the invoking
+/// user's wallet. A sweeper has no invoking user, so this charges the **agent's
+/// own wallet** and refuses any agent whose `dreaming_budget_credits` are
+/// exhausted. That budget is the dial the owner already sets, and an agent with
+/// none is skipped — so autonomous dreaming can only spend inside consent that
+/// has already been given, and setting the budget to zero switches it off for
+/// that agent without touching this scheduler.
+///
+/// # What it refuses to do
+///
+/// It never runs degraded. The HTTP path allows `?allow_degraded=true` because
+/// a human can weigh that trade; unattended, a cycle with no extractor consumes
+/// its episodes, debits a credit, completes the job and produces nothing —
+/// reporting success while learning nothing. Two batch runs did exactly that
+/// here, burning 91 cycles over ~1,500 episodes for zero rules and leaving 62
+/// agents with no episodes left to retry with. A scheduler repeating that on a
+/// timer is worse than no scheduler.
+///
+/// `CONSOLIDATION_SWEEP_SECS=0` disables it.
+pub fn spawn_consolidation_sweeper(state: AppState) {
+    const DEFAULT_SWEEP_SECS: u64 = 6 * 3600;
+    /// Below this there is nothing for clustering to find, so a cycle would
+    /// spend a credit to produce nothing.
+    const MIN_EPISODES: i64 = 10;
+    /// Hard cap per pass. Each agent costs a credit and an LLM call; a sweeper
+    /// that can drain a fleet in one tick is a billing incident.
+    const MAX_AGENTS_PER_PASS: usize = 5;
+
+    let interval_secs = std::env::var("CONSOLIDATION_SWEEP_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_SWEEP_SECS);
+
+    if interval_secs == 0 {
+        println!("[loop1] consolidation sweeper disabled (CONSOLIDATION_SWEEP_SECS=0)");
+        return;
+    }
+    println!(
+        "[loop1] dreaming sweep every {interval_secs}s, \
+         max {MAX_AGENTS_PER_PASS} agent(s)/pass, agent-funded"
+    );
+
+    tokio::spawn(async move {
+        // Stagger well past boot: this one spends money, so it should never
+        // race a half-warm registry or an unmigrated schema.
+        tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+        loop {
+            match sweep_consolidation_once(&state, MIN_EPISODES, MAX_AGENTS_PER_PASS).await {
+                Ok(0) => {}
+                Ok(n) => println!("[loop1] dreamed {n} agent(s)"),
+                Err(e) => eprintln!("[loop1] sweep failed: {e}"),
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
+        }
+    });
+}
+
+/// One pass. Separated from the timer so it can be driven from a test or an
+/// admin endpoint without waiting six hours.
+pub async fn sweep_consolidation_once(
+    state: &AppState,
+    min_episodes: i64,
+    max_agents: usize,
+) -> Result<usize, String> {
+    // Refuse before spending anything if no extractor can be resolved.
+    // Checked once per pass rather than per agent: the credential is
+    // platform-wide, so a failure here means every agent in this pass would
+    // have produced an empty cycle.
+    let Some(llm) = build_extraction_llm(state).await else {
+        eprintln!(
+            "[loop1] no extraction model available — skipping the pass rather than \
+             running cycles that would consume episodes and extract nothing"
+        );
+        return Ok(0);
+    };
+
+    // Overdue and funded, worst backlog first. Budget is filtered in SQL so an
+    // agent with none is never even considered.
+    let rows: Vec<(uuid::Uuid, String, i64)> = sqlx::query_as(
+        "SELECT a.agent_id, a.agent_name, count(e.episode_id)::bigint AS backlog \
+           FROM agents a \
+           JOIN episodes e ON e.agent_id = a.agent_id AND NOT e.consolidated \
+          WHERE a.dreaming_budget_credits > a.dreaming_credits_used \
+          GROUP BY a.agent_id, a.agent_name \
+         HAVING count(e.episode_id) >= $1 \
+          ORDER BY count(e.episode_id) DESC \
+          LIMIT $2",
+    )
+    .bind(min_episodes)
+    .bind(max_agents as i64)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| format!("selecting overdue agents: {e}"))?;
+
+    let mut dreamed = 0usize;
+    for (agent_uuid, agent_name, backlog) in rows {
+        match dream_one_agent(state, agent_uuid, &agent_name, backlog, llm.clone()).await {
+            Ok(()) => dreamed += 1,
+            Err(e) => eprintln!("[loop1] {agent_name}: {e}"),
+        }
+    }
+    Ok(dreamed)
+}
+
+/// Charge the agent, open a job, and run one cycle to completion.
+///
+/// Synchronous rather than spawned: the sweeper is already off the request
+/// path, and awaiting here is what bounds concurrency to one cycle at a time.
+/// Spawning per agent would let a slow extractor stack passes on top of each
+/// other, each holding credits.
+async fn dream_one_agent(
+    state: &AppState,
+    agent_uuid: uuid::Uuid,
+    agent_name: &str,
+    backlog: i64,
+    llm: Arc<dyn LLMProvider>,
+) -> Result<(), String> {
+    let episodes = state
+        .memory_store
+        .get_unconsolidated_episodes(agent_uuid)
+        .await
+        .map_err(|e| format!("fetching episodes: {e}"))?;
+    if episodes.is_empty() {
+        return Ok(());
+    }
+
+    // The agent pays for its own dreaming. `dreaming_budget_credits` was
+    // already checked in the selection query; this is the actual debit.
+    let wallet = get_or_create_wallet(&state.db, "agent", &agent_uuid.to_string())
+        .await
+        .map_err(|e| format!("agent wallet: {e}"))?;
+
+    charge_gas(
+        &state.db,
+        wallet.wallet_id,
+        state.gas_fees.consolidation_cycle,
+        "gas_fee",
+        &format!("Scheduled dreaming cycle for agent {agent_name}"),
+        None,
+    )
+    .await
+    .map_err(|e| format!("charging agent wallet: {}", e.1))?;
+
+    let job_id = uuid::Uuid::new_v4();
+    state
+        .memory_store
+        .create_consolidation_job_with_id(
+            job_id,
+            agent_uuid,
+            episodes[0].episode_id,
+            episodes[episodes.len() - 1].episode_id,
+        )
+        .await
+        .map_err(|e| format!("creating job: {e}"))?;
+
+    let extractor_name = dream_member(state, "semantic-rules", "ontologist");
+    let extractor_db = resolve_agent(state, &extractor_name).await.ok();
+    let extractor_identity = extractor_db.as_ref().map(|e| e.agent_id);
+    let extractor_guidance = match &extractor_db {
+        Some(e) => agent_bestiary_memory::extractor_self_knowledge(&state.db, e.agent_id, 5).await,
+        None => None,
+    };
+
+    let pool = Arc::new(state.db.clone());
+    let lock = Arc::new(ConsolidationLock::new(pool, format!("sweep-{job_id}")));
+    let worker = ConsolidationWorker::with_llm(
+        state.memory_store.clone(),
+        lock,
+        state.embedder.clone(),
+        llm,
+        format!("sweep-{job_id}"),
+    )
+    .with_extractor_guidance(extractor_guidance)
+    .with_extractor_identity(extractor_identity)
+    // Migration 203. Same oracle as every other construction site: the rules
+    // this writes are injected into other agents' prompts as Learned
+    // Knowledge, so they have to record how well-grounded their sources were.
+    // `provenance_floor_coverage` fails the build if this is omitted.
+    .with_provenance_oracle(Some(Arc::new(
+        fermi::provenance_oracle::DbProvenanceOracle::new(state.db.clone()),
+    )));
+
+    let outcome = worker
+        .consolidate_agent_with_job(agent_uuid, 0.5, 2, Some(job_id))
+        .await;
+
+    match outcome {
+        Ok(r) => {
+            println!(
+                "[loop1] {agent_name}: backlog {backlog}, {} episode(s) processed, \
+                 {} rule(s) extracted",
+                r.episodes_processed, r.rules_extracted
+            );
+            Ok(())
+        }
+        Err(e) => Err(format!("cycle failed: {e}")),
+    }
+}
+
 pub async fn consolidate_agent_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,

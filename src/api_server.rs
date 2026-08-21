@@ -80,6 +80,11 @@ pub(crate) use fermi::agent_economics;
 // reachable from `cargo test`. Handlers use `crate::grounding_trust::*`.
 pub(crate) use fermi::grounding_trust;
 
+// Same re-export, same reason: the liveness sweeper is spawned from this file
+// and read by `handlers::admin`, and both must resolve to the one runner in the
+// library rather than to a second copy of the arithmetic.
+pub(crate) use fermi::liveness_trust;
+
 // Episode construction moved to `fermi::episodes` (lib) so the in-library
 // delegation tools in `agent_backend::tools_legacy` can build episodes
 // through the same constructor the HTTP handlers use, instead of keeping a
@@ -2437,6 +2442,31 @@ async fn main() {
     // Disable with OBSERVABILITY_SCAN_SECS=0.
     handlers::live_observability::spawn_observability_sweeper(state.clone());
 
+    // The standing clock — does each declared write path ever actually run?
+    //
+    // The third loop in this file to have gone cold for the same reason as the
+    // two above: nothing was waiting on it. Presence runs at boot and Binding
+    // runs per request because a request path forces them to exist; liveness
+    // gates nothing, so no caller ever noticed it was missing. It had a module,
+    // a contract list, a test file and a shell script, and executed only when a
+    // human typed the script's name.
+    //
+    // Read-only: every contract query is a bare SELECT, asserted by
+    // `liveness_trust::tests::every_query_is_read_only`.
+    // Disable with LIVENESS_SWEEP_SECS=0.
+    fermi::liveness_trust::spawn_liveness_sweeper(state.db.clone());
+
+    // Loop 1 — dreaming. The architecture states a cadence of hours to days and
+    // nothing implemented it, so agents accumulated episodes and learned
+    // nothing from them. Unlike the three sweepers above, this one SPENDS: it
+    // charges each agent's own wallet and skips any agent whose
+    // `dreaming_budget_credits` are exhausted, so it can only spend inside a
+    // budget the owner already set. It also refuses to run degraded, because a
+    // cycle with no extractor consumes its episodes and produces nothing while
+    // reporting success.
+    // Disable with CONSOLIDATION_SWEEP_SECS=0.
+    handlers::consolidation::spawn_consolidation_sweeper(state.clone());
+
     // Spawn rate limiter cleanup task (every 5 min)
     let rl_clone = state.rate_limits.clone();
     tokio::spawn(async move {
@@ -4318,6 +4348,13 @@ async fn main() {
             "/api/admin/schema-health",
             get(handlers::admin::admin_schema_health_handler),
         )
+        // The standing clock's read surface. Reports what the liveness sweeper
+        // last found; `status: never_run` until the first sweep completes,
+        // because absence must not read as a pass.
+        .route(
+            "/api/admin/liveness",
+            get(handlers::admin::admin_liveness_handler),
+        )
         .route(
             "/api/admin/waitlist",
             get(handlers::admin::admin_list_waitlist_handler)
@@ -6168,6 +6205,49 @@ pub(crate) fn stamp_input_binding(
         if c != tag {
             episode.tags.push("ibind:claim-disagreed".to_string());
         }
+    }
+}
+
+/// Record what the grounding contract found, on the episode itself.
+///
+/// The generic execute path never ran grounding. Enforcement lived in six
+/// bespoke creature handlers and in the agent-to-agent delegation hop, which
+/// covered four of the nine agents that have a written field contract — the
+/// other five (`football_analyst`, `weather_oracle`, `hud_field_scout`,
+/// `harvest_advisor`, `forage_scout`) were checked only when another agent
+/// called them, never when a person did.
+///
+/// This is deliberately a stamp rather than a rewrite. The raw response stays
+/// verbatim, because retention is a precondition for every later form of
+/// verification and a digest is not a record. What changes is that the episode
+/// now carries the verdict, so the consolidation worker and anything else
+/// reading it downstream can tell a checked document from an unchecked one —
+/// which, before this, they could not.
+pub(crate) fn stamp_grounding(episode: &mut Episode, report: &fermi::grounding_trust::Report) {
+    if report.is_clean() && report.provenance.is_empty() {
+        // No contract for this agent, or nothing to say. Deliberately not
+        // tagged as clean: an agent with no contract has not been found
+        // compliant, and marking it so would be the original defect.
+        return;
+    }
+
+    episode.tags.push(if report.is_clean() {
+        "grounding:enforced".to_string()
+    } else {
+        "grounding:violations".to_string()
+    });
+
+    for (block, provenance) in &report.provenance {
+        episode
+            .tags
+            .push(format!("prov:{}-{}", block.replace(':', "-"), provenance));
+    }
+
+    if !report.is_clean() {
+        episode.tags.push(format!(
+            "grounding:count-{}",
+            report.violations.len().min(99)
+        ));
     }
 }
 

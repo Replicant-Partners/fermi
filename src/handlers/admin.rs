@@ -1912,6 +1912,53 @@ pub async fn admin_schema_health_handler(
     Ok(Json(verdict.to_health_json()))
 }
 
+// ─── Liveness: does the write path ever actually run? ──────────
+//
+// The standing clock's read surface. Until this existed the only way to learn
+// whether a declared write path had ever executed was to run a shell script by
+// hand; nothing scheduled it and CI did not run it either. A rung with no
+// endpoint and no schedule is indistinguishable from a rung that passes, which
+// is the exact defect `liveness_trust` was written to catch.
+//
+// Two things this deliberately does NOT do:
+//
+//   * It does not run the sweep on request. The sweep touches `episodes`, and
+//     an endpoint that runs it is an endpoint that can be used to load the
+//     database. It reports what the sweeper last found.
+//   * It does not report `never_run` as healthy. `status` is `never_run` until
+//     the first sweep completes — absence is not a verdict.
+pub async fn admin_liveness_handler(
+    State(_state): State<AppState>,
+    principal: AuthPrincipal,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    require_admin(&principal)?;
+
+    let Some(report) = crate::liveness_trust::latest() else {
+        return Ok(Json(serde_json::json!({
+            "status": "never_run",
+            "detail": "No sweep has completed since boot. This is not a pass: an inert \
+                       check and a passing check are indistinguishable from outside.",
+            "contracts_declared": crate::liveness_trust::LIVENESS_CONTRACTS.len(),
+        })));
+    };
+
+    let status = if report.is_healthy() {
+        "healthy"
+    } else if !report.has_positive_control() {
+        // 0 live cannot distinguish "every path is broken" from "the sweep is
+        // broken", so it gets its own name rather than being folded into
+        // `degraded`.
+        "no_positive_control"
+    } else {
+        "degraded"
+    };
+
+    Ok(Json(serde_json::json!({
+        "status": status,
+        "report": report,
+    })))
+}
+
 // v0.11.0: legacy inline check body removed — the shared module in
 // crate::schema_trust is the single source of truth. If you need the
 // pre-v0.11.0 body for reference, see commit history for admin.rs

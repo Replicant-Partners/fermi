@@ -83,16 +83,38 @@ pub async fn accept_composition_version_handler(
     require_workspace_owner_or_admin(&state, &principal, workspace_id).await?;
 
     let user_id = principal.user_id();
-    state
+    let outcome = state
         .memory_store
         .resolve_composition_version(version_id, &user_id, true, None)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // "accepted" and "applied" are different facts and the response now says
+    // which one happened. A proposal raised by `propose_composition_change`
+    // deliberately carries no roster — the tool refuses to name members because
+    // that is the owner's call — so accepting it records agreement and changes
+    // nothing. That is a legitimate outcome; reporting it as though the team had
+    // been rebuilt is not, and it is the difference between a loop that closes
+    // and one that only appears to.
+    let (members_applied, detail) = match outcome {
+        agent_bestiary_memory::store::CompositionOutcome::RosterApplied { members } => (
+            true,
+            format!("workspace roster reconciled to {members} member(s)"),
+        ),
+        _ => (
+            false,
+            "accepted as a recommendation — this proposal named no roster, so \
+             membership is unchanged and the change is still yours to make"
+                .to_string(),
+        ),
+    };
+
     Ok(Json(json!({
         "version_id": version_id,
         "status": "accepted",
         "accepted_by": user_id,
+        "members_applied": members_applied,
+        "detail": detail,
     })))
 }
 
@@ -120,8 +142,16 @@ pub async fn reject_composition_version_handler(
 
     // Store the rejection as an episode in the strategist's memory so the
     // next dreaming cycle learns from this feedback.
-    if let Some(note) = &body.note {
-        if !note.is_empty() {
+    //
+    // Unconditional. This was gated on `body.note` being present and non-empty,
+    // which made Loop 4's feedback edge opt-in per rejection: a bare reject
+    // updated the row and taught the strategist nothing, so it could regenerate
+    // the same proposal indefinitely and the owner had no way to stop it except
+    // by typing a reason every time. The note is useful context; it is not the
+    // signal. The signal is that a human said no.
+    {
+        let note = body.note.as_deref().unwrap_or("");
+        {
             // Look up the workspace's coordination_strategist_id
             if let Ok(Some(row)) =
                 sqlx::query("SELECT coordination_strategist_id FROM teams WHERE id = $1")
@@ -140,11 +170,22 @@ pub async fn reject_composition_version_handler(
                         agent_id: sid,
                         timestamp_ref: Utc::now(),
                         query: format!(
-                            "Composition proposal {} rejected by workspace owner.",
-                            version_id
+                            "Composition proposal {} rejected by workspace owner{}.",
+                            version_id,
+                            if note.is_empty() {
+                                " without a stated reason"
+                            } else {
+                                ""
+                            }
                         ),
+                        // `note_given` is kept separate from the note itself so
+                        // consolidation can distinguish "rejected, and here is
+                        // why" from "rejected, reason unknown". Those support
+                        // different inferences, and an empty string silently
+                        // standing in for the second is how the two get merged.
                         context: serde_json::json!({
                             "rejection_note": note,
+                            "note_given": !note.is_empty(),
                             "version_id": version_id,
                             "workspace_id": workspace_id,
                             "correction_type": "composition_proposal_rejection",

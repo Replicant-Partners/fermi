@@ -797,11 +797,25 @@ pub async fn post_workspace_message_handler(
 
             let principle_scores =
                 serde_json::to_value(&snapshot.principle_scores).unwrap_or(json!({}));
+            // Same classification as the on-demand path. This is the one that
+            // runs automatically, so if only one of the two recorded the
+            // incoherence type, the trend would be built from whichever
+            // sessions someone happened to evaluate by hand.
+            let assessment = coherence_core::classify_incoherence(
+                &snapshot.principle_scores,
+                snapshot.global_coherence.score,
+            );
             let health_indicators = json!({
                 "feedback_action": serde_json::to_value(&snapshot.feedback_action).unwrap_or(json!("unknown")),
                 "converged": snapshot.global_coherence.converged,
                 "accepted_count": snapshot.global_coherence.accepted_count,
                 "rejected_count": snapshot.global_coherence.rejected_count,
+                "incoherence_type": assessment.incoherence_type.as_str(),
+                "tension_band": assessment.band.as_str(),
+                "productive": assessment.incoherence_type.is_productive(),
+                "should_remedy": assessment.incoherence_type.should_remedy(),
+                "homophily_risk": assessment.homophily_risk,
+                "incoherence_rationale": assessment.rationale,
             });
 
             let eval = CoherenceEvaluation {

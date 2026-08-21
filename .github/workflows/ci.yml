@@ -237,6 +237,32 @@ jobs:
       - name: Grounding contract — ungrounded output fields
         run: cargo test --lib -p fermi grounding_trust
 
+      # Grounding coverage. Offline and blocking, a source scan.
+      #
+      # `grounding_trust` declares contracts for nine agents; enforcement used
+      # to reach four of them. The five with a written contract and no call
+      # site on the generic execute path were checked when another agent
+      # called them and unchecked when a person did. This fails if any execute
+      # boundary stops enforcing, or a new one is added that never started.
+      - name: Grounding — every execute boundary enforces
+        run: cargo test --test grounding_execute_coverage
+
+      # Liveness contracts. Offline and blocking: this asserts the contracts
+      # are well-formed, read-only, and that `inert` cannot be spelled `pass`.
+      #
+      # It is here because until now nothing ran this rung at all. It had a
+      # module, a contract list, a test file and a shell script, and executed
+      # only when a human typed the script's name — the cheapest rung on the
+      # ladder, and the only one with no schedule, no endpoint and no CI step.
+      # A check nobody runs is indistinguishable from a check that passes.
+      #
+      # The live tier (`scripts/liveness_contract_live.sh`, which needs
+      # DATABASE_URL) is what actually answers "has this write path ever run";
+      # the server now also sweeps it on a timer and serves the verdict at
+      # GET /api/admin/liveness.
+      - name: Liveness contract — the checks are well-formed
+        run: cargo test --lib -p fermi liveness_trust
+
       # Port binding parity. `scripts/port_census.py` reports the port-typing
       # burn-down; `src/port_trust.rs` enforces at both execute boundaries.
       # If the two rules drift, the scoreboard stops describing the gate —

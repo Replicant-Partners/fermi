@@ -93,6 +93,38 @@ const AGENT_COLUMNS: &str = r#"
     valence, output_contract, taxonomy
 "#;
 
+/// What resolving a composition version actually did.
+///
+/// `resolve_composition_version` used to return `Result<()>`, so a caller could
+/// not tell an accept that reconciled the roster from one that changed nothing.
+/// Both reported success, and the HTTP layer answered `"status": "accepted"`
+/// either way.
+///
+/// This matters because a proposal legitimately may carry no roster. The
+/// `propose_composition_change` tool deliberately refuses to name members —
+/// "Do NOT specify which agent to add; that is the owner's decision" — so its
+/// proposals are prose for a human to act on. Advisory and applied are both
+/// valid outcomes. What is not valid is reporting them identically, which is
+/// how an owner comes to believe a team changed when it did not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompositionOutcome {
+    /// The accepted version named a roster and `workspace_agents` was
+    /// reconciled to it.
+    RosterApplied { members: usize },
+    /// Accepted, but the version named no roster, so membership is unchanged.
+    /// The proposal stands as a recommendation the owner must still act on.
+    AdvisoryOnly,
+    /// Rejected. Membership untouched by definition.
+    Rejected,
+}
+
+impl CompositionOutcome {
+    /// Did the workspace roster actually change?
+    pub fn changed_membership(&self) -> bool {
+        matches!(self, CompositionOutcome::RosterApplied { .. })
+    }
+}
+
 pub struct MemoryStore {
     pool: PgPool,
 }
@@ -3064,7 +3096,11 @@ impl MemoryStore {
         resolved_by: &str,
         accepted: bool,
         rejection_note: Option<&str>,
-    ) -> Result<()> {
+    ) -> Result<CompositionOutcome> {
+        // Starts as the honest default. Only the branch that actually touches
+        // `workspace_agents` may upgrade it.
+        let mut applied = CompositionOutcome::AdvisoryOnly;
+
         if accepted {
             // Fetch the version to get member_agent_ids + member_weights
             let row = sqlx::query(
@@ -3147,6 +3183,7 @@ impl MemoryStore {
                 .await?;
 
                 tx.commit().await?;
+                applied = CompositionOutcome::RosterApplied { members: ids.len() };
             }
 
             // `member_weights` stays on the `composition_versions` row it was
@@ -3156,6 +3193,7 @@ impl MemoryStore {
             // an accepted composition should read the accepted version row.
             let _ = member_weights;
         } else {
+            applied = CompositionOutcome::Rejected;
             sqlx::query(
                 "UPDATE composition_versions \
                  SET rejected_by = $1, rejection_note = $2 \
@@ -3168,7 +3206,7 @@ impl MemoryStore {
             .await?;
         }
 
-        Ok(())
+        Ok(applied)
     }
 
     // ========================================================================

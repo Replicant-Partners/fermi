@@ -134,6 +134,16 @@ pub async fn evaluate_coherence_handler(
     let principle_scores: serde_json::Value =
         serde_json::to_value(&snapshot.principle_scores).unwrap_or(json!({}));
 
+    // Which *kind* of incoherence this is — the half of Loop 3's signal that
+    // used to exist only as English inside an LLM prompt, on a path that ran
+    // when someone paid for `depth=recommendations`. Γ alone cannot separate a
+    // team arguing productively about evidence from one talking past itself,
+    // and a metric that cannot make that separation rewards homophily.
+    let assessment = coherence_core::classify_incoherence(
+        &snapshot.principle_scores,
+        snapshot.global_coherence.score,
+    );
+
     // Build health indicators
     let health_indicators = json!({
         "feedback_action": serde_json::to_value(&snapshot.feedback_action).unwrap_or(json!("unknown")),
@@ -142,6 +152,15 @@ pub async fn evaluate_coherence_handler(
         "rejected_count": snapshot.global_coherence.rejected_count,
         "evidence_density": snapshot.utterance_stats.evidence_density(),
         "explanation_density": snapshot.utterance_stats.explanation_density(),
+        "incoherence_type": assessment.incoherence_type.as_str(),
+        "tension_band": assessment.band.as_str(),
+        // Three of the four kinds must be preserved. Anything acting on this
+        // record — a brief, a composition proposal, a burn-down — must branch
+        // on `productive` rather than on the score.
+        "productive": assessment.incoherence_type.is_productive(),
+        "should_remedy": assessment.incoherence_type.should_remedy(),
+        "homophily_risk": assessment.homophily_risk,
+        "incoherence_rationale": assessment.rationale,
     });
 
     // Store evaluation
@@ -237,9 +256,15 @@ pub async fn evaluate_coherence_handler(
                         "Coherence score: {:.0}% ({}). Principle scores: {:?}. Health indicators: {:?}.\n\n\
                          Recent conversation:\n{}\n\n\
                          Run Stage 2 (Diagnose) and Stage 3 (Coordinate): identify which TEC principles \
-                         are weak, classify any incoherence as destructive vs productive, and provide \
-                         specific actionable recommendations for improving workspace coherence. \
-                         Distinguish productive tension (protect it) from destructive incoherence (fix it).",
+                         are weak and provide specific actionable recommendations.\n\n\
+                         The incoherence has ALREADY been classified from the principle scores \
+                         (`incoherence_type` in the health indicators above) - do not re-derive it and \
+                         do not contradict it. If it is one of the three `productive_*` kinds, your job \
+                         is to say how to PROTECT that tension, not reduce it: a team optimised into \
+                         agreement has lost the friction that improves its calibration, and members \
+                         sharing a base model will agree for reasons that are not corroboration. Only \
+                         `destructive` should be remedied. If `homophily_risk` is true, treat the high \
+                         score itself as the problem to report.",
                         eval.global_score * 100.0, eval.quality_label,
                         principle_scores, health_indicators, msg_summary,
                     )

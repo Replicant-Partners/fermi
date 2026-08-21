@@ -309,6 +309,36 @@ pub async fn execute_agent_handler(
         }
     }
 
+    // 3.6 Grounding contract — could any tool this agent has have supplied
+    // what it just claimed?
+    //
+    // This path never ran it. `grounding_trust::enforce` was wired into six
+    // creature handlers and the delegation hop, which between them cover four
+    // of the nine agents holding a field contract; the remaining five were
+    // enforced only when another agent called them and never when a person
+    // did. A contract that applies on one route and not another is not a
+    // contract, it is a convention.
+    //
+    // `enforce` is a pure function over the document and returns an empty
+    // report for any agent without a contract, so this is a no-op for most of
+    // the catalogue and cannot fail a run.
+    let grounding_report = match output
+        .raw_response
+        .as_deref()
+        .and_then(fermi::agent_backend::envelope::extract_json)
+    {
+        Some(mut doc) => fermi::grounding_trust::enforce(&agent_id, &mut doc),
+        None => fermi::grounding_trust::Report::default(),
+    };
+    if !grounding_report.is_clean() {
+        tracing::warn!(
+            agent = %agent_id,
+            episode = %episode_id,
+            violations = grounding_report.violations.len(),
+            "grounding contract violated on the execute path — fields with no possible source"
+        );
+    }
+
     // 4. Record stats in registry
     let _ = state.registry.record_execution(&agent_id, &output);
 
@@ -321,6 +351,9 @@ pub async fn execute_agent_handler(
     if let Some(ref inv) = body.invocation {
         crate::stamp_invocation(&mut episode, inv);
     }
+    // And what the grounding contract made of the answer, so a consumer of
+    // this episode can tell a checked document from an unchecked one.
+    crate::stamp_grounding(&mut episode, &grounding_report);
     // And check the asking against what the agent advertises — server-side,
     // from the resolved card, rather than believing the caller's account of
     // it. `bind_input` shipped in v0.16.0 and was wired only into the

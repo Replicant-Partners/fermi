@@ -283,6 +283,85 @@ pub struct HitlActionRequest {
     pub justification: Option<String>,
 }
 
+/// Assemble what the agent currently believes, for the coherence gate.
+///
+/// Two kinds of node, and the difference matters:
+///
+/// * **episodes** — things the agent observed. `grounded: true`, so they enter
+///   settling as `Evidence` and carry Thagard's Data Priority.
+/// * **semantic rules** — things it concluded, via `source_episode_cluster`.
+///   `grounded: false`: a distilled rule is a claim however well-sourced its
+///   inputs were, which is the same extraction ceiling the provenance oracle
+///   enforces.
+///
+/// The `derived_from` links are what make the gate's answer depend on *which*
+/// belief is being overturned. Correct an episode three rules rest on and the
+/// contradiction propagates to all three; correct a stray observation and
+/// nothing else moves.
+///
+/// Bounded at 40 episodes and 40 rules: settling is O(n²) in edges and this runs
+/// synchronously inside a reviewer's request. A gate slow enough to time out is
+/// a gate someone will route around.
+async fn build_agent_world_model(
+    db: &sqlx::PgPool,
+    agent_id: uuid::Uuid,
+    target_episode: Option<uuid::Uuid>,
+) -> agent_bestiary_coherence_gate::gate::WorldModel {
+    use agent_bestiary_coherence_gate::gate::{WorldModel, WorldNode};
+
+    let episodes: Vec<(uuid::Uuid, String)> = sqlx::query_as(
+        "SELECT episode_id, COALESCE(response_text, '') FROM episodes \
+          WHERE agent_id = $1 ORDER BY created_at DESC LIMIT 40",
+    )
+    .bind(agent_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    let rules: Vec<(String, Option<Vec<uuid::Uuid>>)> = sqlx::query_as(
+        "SELECT rule_content, source_episode_cluster FROM semantic_rules \
+          WHERE agent_id = $1 AND is_active ORDER BY created_at DESC LIMIT 40",
+    )
+    .bind(agent_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    let mut nodes: Vec<WorldNode> = Vec::with_capacity(episodes.len() + rules.len());
+    let mut index_of: std::collections::HashMap<uuid::Uuid, usize> =
+        std::collections::HashMap::new();
+
+    for (id, text) in &episodes {
+        index_of.insert(*id, nodes.len());
+        nodes.push(WorldNode {
+            id: id.to_string(),
+            text: text.chars().take(400).collect(),
+            grounded: true,
+            derived_from: Vec::new(),
+        });
+    }
+
+    for (content, sources) in rules {
+        // Only the sources we actually loaded can be linked. A rule whose
+        // episodes have aged out of the window keeps its node but loses those
+        // edges, which understates its support rather than inventing any.
+        let derived_from = sources
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|e| index_of.get(e).copied())
+            .collect();
+        nodes.push(WorldNode {
+            id: format!("rule:{}", nodes.len()),
+            text: content.chars().take(400).collect(),
+            grounded: false,
+            derived_from,
+        });
+    }
+
+    let target = target_episode.and_then(|e| index_of.get(&e).copied());
+    WorldModel { nodes, target }
+}
+
 pub async fn record_hitl_action_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
@@ -387,9 +466,17 @@ pub async fn record_hitl_action_handler(
         other => (StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
     })?;
 
-    // Step 3 — Coherence gate.
+    // Step 3 — Coherence gate, against the agent's actual world model.
+    //
+    // Previously this called `gate.check(&encoded)`, which built a throwaway
+    // two-node system out of the literal string "existing agent response" and
+    // the correction, and never loaded anything about the agent. That could not
+    // score above 0.01 against a threshold of 0.5, so every agent-wide
+    // intervention was refused for arithmetic reasons — taking the two-reviewer
+    // consensus path, which sits downstream, with it.
+    let world = build_agent_world_model(&state.db, event.agent_id, event.episode_id).await;
     let gate = CoherenceGate::default();
-    let gate_outcome = gate.check(&encoded).map_err(|e| match e {
+    let gate_outcome = gate.check_against(&encoded, &world).map_err(|e| match e {
         GateError::Blocked {
             gamma,
             threshold,
@@ -397,12 +484,27 @@ pub async fn record_hitl_action_handler(
         } => (
             StatusCode::UNPROCESSABLE_ENTITY,
             format!(
-                "coherence gate blocked: gamma={:.3} < threshold={:.3}, tensions={:?}",
+                "coherence gate blocked: the agent's world model rejects this correction \
+                 (gamma={:.3}, threshold={:.3}, tensions={:?}). Correcting a belief that \
+                 others rest on needs those to be revised too.",
                 gamma, threshold, tensions
             ),
         ),
         other => (StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
     })?;
+
+    // An `Undetermined` verdict is not an approval. It means the agent has too
+    // little recorded history to settle a correction against, so the gate
+    // declines to have an opinion and the human controls below carry the whole
+    // weight. Said out loud, because a verdict nobody records is one that gets
+    // read as a pass.
+    if gate_outcome.verdict == agent_bestiary_coherence_gate::GateVerdict::Undetermined {
+        tracing::warn!(
+            agent_id = %event.agent_id,
+            world_nodes = world.nodes.len(),
+            "coherence gate UNDETERMINED — insufficient world model; proceeding on human review alone"
+        );
+    }
 
     // Step 4a — AgentWide: two-reviewer consensus required.
     if scope == CorrectionScope::AgentWide {

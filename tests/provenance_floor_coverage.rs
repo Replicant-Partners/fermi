@@ -11,12 +11,27 @@
 //!
 //! There were three production construction sites for `ConsolidationWorker`
 //! and the first pass wired one of them. The one that was missed —
-//! `handlers/creatures/agent_modules.rs` — is the highest-volume rule writer
-//! on the platform, because creature dreams run on a timer while the HTTP
-//! handler runs when somebody asks. Wiring the path you are looking at and
-//! missing the path that runs by itself is the normal shape of this mistake,
-//! and it does not announce itself: the rules still get written, they just
-//! arrive ungraded.
+//! `handlers/creatures/agent_modules.rs` — is the higher-volume rule writer of
+//! the two. Wiring the path you are looking at and missing the other one is the
+//! normal shape of this mistake, and it does not announce itself: the rules
+//! still get written, they just arrive ungraded.
+//!
+//! **Correction.** This comment used to say the creature path "runs on a timer
+//! while the HTTP handler runs when somebody asks". That is not true of this
+//! repository and was never checked. `creature_dream_handler` is reached only
+//! from `POST /api/creatures/:creature_id/dream`; grep for a scheduler and
+//! there is none, for either path. Both run when somebody asks.
+//!
+//! The error is left visible rather than quietly edited because it is this
+//! project's own defect class applied to itself: a plausible mechanism, written
+//! confidently in a place readers trust, never checked against the running
+//! system. It also mattered — "runs by itself" is precisely the property that
+//! made this path worth a coverage test, and the property is imaginary. The
+//! test is still worth having; the reason given for it was wrong.
+//!
+//! That nothing schedules Loop 1 at all is now tracked as a liveness contract
+//! (`consolidation_jobs (Loop 1 cadence)` in `src/liveness_trust.rs`) rather
+//! than left as an assumption in a doc comment.
 //!
 //! # Why a source scan
 //!
@@ -88,6 +103,7 @@ fn every_consolidation_worker_is_given_a_provenance_oracle() {
     let definition = root.join("agent-bestiary/memory/src/consolidation.rs");
 
     let mut unwired: Vec<String> = Vec::new();
+    let mut nulled: Vec<String> = Vec::new();
     let mut wired = 0usize;
     let mut exercised_exemptions: Vec<&str> = Vec::new();
 
@@ -109,16 +125,57 @@ fn every_consolidation_worker_is_given_a_provenance_oracle() {
             .to_string_lossy()
             .replace('\\', "/");
 
+        // A scanner must not scan itself. This file names the strings it looks
+        // for — in the needles, and in the failure message that quotes them — so
+        // without this it reports itself as a violation, which is what it did
+        // on the first two runs after the check was tightened.
+        if rel.ends_with("provenance_floor_coverage.rs") {
+            continue;
+        }
+
         if let Some((path, _why)) = EXEMPT.iter().find(|(p, _)| *p == rel) {
             exercised_exemptions.push(path);
             continue;
         }
-        if src.contains(".with_provenance_oracle(") {
+        // `Some(`, not merely the call.
+        //
+        // This checked `src.contains(".with_provenance_oracle(")` — presence of
+        // the call, nothing about its argument — so `.with_provenance_oracle(None)`
+        // satisfied it completely. A worker wired that way writes exactly the
+        // ungraded rules this test exists to prevent, and the scan reported it
+        // green. Verified by sabotage: passing `None` at the sweeper site left
+        // the suite passing.
+        //
+        // Which is this repository's own defect class, in the check built to
+        // catch it: a spec-shaped artifact that is not spec-enforcing. The
+        // remedy is the same one it prescribes elsewhere — assert the thing you
+        // actually care about, not a proxy that is cheaper to satisfy.
+        //
+        // The needles are assembled with `concat!` so this file does not match
+        // itself. It did, on the first run: the scan reads source, this source
+        // now discusses the strings it looks for, and it duly reported itself
+        // as a violation. Left as a note because the same trap is waiting for
+        // anyone who adds an example to a scanner.
+        const NULL_ORACLE: &str = concat!(".with_provenance", "_oracle(None)");
+        const REAL_ORACLE: &str = concat!(".with_provenance", "_oracle(Some(");
+
+        if src.contains(NULL_ORACLE) {
+            nulled.push(rel);
+        } else if src.contains(REAL_ORACLE) {
             wired += 1;
         } else {
             unwired.push(rel);
         }
     }
+
+    assert!(
+        nulled.is_empty(),
+        "these files call `.with_provenance_oracle(None)`, which satisfies the \
+         letter of the contract and none of it — the worker still writes rules \
+         with an UNKNOWN grounding floor:\n  {}\n\nPass a real oracle, or add \
+         the file to EXEMPT with a reason someone can argue with.",
+        nulled.join("\n  ")
+    );
 
     assert!(
         unwired.is_empty(),

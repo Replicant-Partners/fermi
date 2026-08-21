@@ -18,12 +18,40 @@
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;background:var(--ink);color:var(--schematic);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-    -webkit-tap-highlight-color:transparent;overflow-x:hidden;}
-  .app{max-width:460px;margin:0 auto;padding:14px 14px 28px;
+    -webkit-tap-highlight-color:transparent;overflow-x:clip;}
+  .app{max-width:1300px;margin:0 auto;padding:14px 14px 28px;
     background:linear-gradient(var(--line) 1px, transparent 1px) 0 0/100% 22px,
       linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0/22px 100%, var(--ink);
     background-blend-mode:overlay;min-height:100vh;}
   header{padding:6px 2px 12px;border-bottom:1px solid var(--line);margin-bottom:12px;}
+  header .sub{max-width:760px;}
+
+  /* ---- layout: everything that moves must be visible at the same time ---- */
+  .grid{display:grid;gap:0 16px;grid-template-columns:1fr;
+    grid-template-areas:"inst" "ctrl" "read";}
+  .colCtrl{grid-area:ctrl;min-width:0;}
+  .colInst{grid-area:inst;min-width:0;}
+  .colRead{grid-area:read;min-width:0;}
+
+  /* Narrow: drop out of grid entirely. A sticky grid item is confined to its
+     own grid area, so it cannot actually stick — in block flow its containing
+     block is the whole column, and the instrument cluster stays on screen
+     while you scroll the controls and read the narration. DOM order is
+     already inst → ctrl → read, so no reordering is needed. */
+  @media (max-width:1039px){
+    .grid{display:block;}
+    .colInst{position:sticky;top:0;z-index:30;background:var(--ink);
+      box-shadow:0 8px 16px -8px rgba(0,0,0,.95);padding-bottom:6px;
+      border-bottom:1px solid var(--line);}
+    .stage{max-height:232px;}
+    .colCtrl{padding-top:12px;}
+  }
+  @media (min-width:1040px){
+    .grid{grid-template-columns:294px minmax(360px,1fr) 336px;
+      grid-template-areas:"ctrl inst read";align-items:start;}
+    .colInst{position:sticky;top:12px;}
+    .colRead .log{height:180px;}
+  }
   .eyebrow{font-family:"Courier New",monospace;font-size:11px;letter-spacing:.16em;
     color:var(--brass);text-transform:uppercase;margin-bottom:4px;}
   h1{font-size:21px;letter-spacing:.02em;margin:0 0 5px;font-weight:800;
@@ -34,8 +62,9 @@
   .hint b{color:var(--brass);}
 
   .sectionLbl{font-family:"Courier New",monospace;font-size:9px;letter-spacing:.14em;
-    color:var(--schematic-dim);text-transform:uppercase;margin:14px 0 6px;
-    display:flex;justify-content:space-between;align-items:baseline;gap:8px;}
+    color:var(--schematic-dim);text-transform:uppercase;margin:12px 0 6px;
+    display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;}
+  .sectionLbl:first-child{margin-top:0;}
   .sectionLbl em{font-style:normal;font-size:8.6px;color:var(--brass-dim);letter-spacing:.04em;
     text-transform:none;text-align:right;}
 
@@ -87,7 +116,7 @@
   .ctl:disabled{opacity:.4;cursor:default;}
 
   /* ---- stage ---- */
-  .stage{position:relative;width:100%;aspect-ratio:340/300;
+  .stage{position:relative;width:100%;aspect-ratio:340/300;max-height:430px;margin-inline:auto;
     background:radial-gradient(ellipse at 50% 30%, #1A222A 0%, #0F1418 75%);
     border:1px solid var(--line);border-radius:6px;overflow:hidden;margin-bottom:10px;}
   .stage svg{position:absolute;inset:0;width:100%;height:100%;}
@@ -169,8 +198,8 @@
     background:var(--cyan-dim);color:var(--cyan);cursor:pointer;font-weight:700;margin-bottom:10px;}
   .runTaskBtn:disabled{opacity:.5;}
 
-  .modeChips{display:flex;gap:5px;margin-bottom:10px;}
-  .modeChip{flex:1;text-align:center;font-family:"Courier New",monospace;font-size:9.5px;
+  .modeChips{display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap;}
+  .modeChip{flex:1 1 44%;text-align:center;font-family:"Courier New",monospace;font-size:9.5px;
     letter-spacing:.02em;padding:7px 2px;border-radius:4px;border:1px solid var(--line);
     background:var(--panel);color:var(--schematic-dim);cursor:pointer;min-width:0;}
   .modeChip .mid{display:block;font-size:6.4px;color:var(--brass-dim);margin-top:2px;
@@ -178,8 +207,8 @@
   .modeChip.active{background:var(--route-dim);border-color:var(--route);color:var(--route);font-weight:700;}
   .modeChip.active .mid{color:var(--route);opacity:.8;}
 
-  .loopRow{display:flex;gap:4px;margin-bottom:10px;}
-  .loopChip{flex:1 1 0;min-width:0;font-family:"Courier New",monospace;font-size:8.6px;
+  .loopRow{display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap;}
+  .loopChip{flex:1 1 30%;min-width:0;font-family:"Courier New",monospace;font-size:8.6px;
     letter-spacing:0;text-transform:uppercase;padding:7px 3px;border-radius:4px;
     border:1px solid var(--line);background:var(--panel);color:var(--schematic-dim);
     white-space:nowrap;cursor:pointer;text-align:center;overflow:hidden;}
@@ -198,6 +227,24 @@
   .meterTrack{height:8px;border-radius:4px;background:var(--panel-2);border:1px solid var(--line);
     overflow:hidden;margin-top:6px;}
   .meterFill{height:100%;transition:width .5s ease, background .5s ease;}
+
+  /* ---- TEC principle strip (Loop 3) ---- */
+  .princRow{display:flex;gap:3px;margin:8px 0 4px;}
+  .princ{flex:1;text-align:center;min-width:0;}
+  .princ .pbar{height:26px;background:var(--panel-2);border:1px solid var(--line);
+    border-radius:2px;position:relative;overflow:hidden;}
+  .princ .pfill{position:absolute;left:0;right:0;bottom:0;background:var(--cyan);
+    transition:height .45s ease, background .45s ease;}
+  .princ.low .pfill{background:var(--amber);}
+  .princ.key .pbar{border-color:var(--brass);}
+  .princ .plab{font-family:"Courier New",monospace;font-size:6.6px;color:var(--schematic-dim);
+    margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .princ.key .plab{color:var(--brass);}
+  .bandRow{position:relative;height:8px;border-radius:4px;background:var(--panel-2);
+    border:1px solid var(--line);margin-top:6px;}
+  .bandOpt{position:absolute;top:0;bottom:0;background:rgba(79,214,208,.18);
+    border-left:1px solid var(--cyan-dim);border-right:1px solid var(--cyan-dim);}
+  .bandMark{position:absolute;top:-3px;width:2px;height:14px;background:var(--schematic);}
   .rowBtns{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;}
   .rowBtns button{flex:1;min-width:96px;font-family:"Courier New",monospace;font-size:10px;
     text-transform:uppercase;padding:8px 4px;border-radius:4px;border:1px solid var(--line);
@@ -271,6 +318,9 @@
     <button class="ctl tour" id="tourBtn">▶ Show me what goes wrong</button>
   </div>
 
+  <div class="grid">
+  <!-- ============ CENTRE: the live instrument cluster ============ -->
+  <div class="colInst">
   <div class="sectionLbl">Three clocks<em>only two of them block anything</em></div>
   <div class="clockRow">
     <div class="clock" id="clock-admission">
@@ -283,41 +333,6 @@
       <div class="cname">Sweep</div><div class="cblocks">blocks nothing</div>
     </div>
   </div>
-
-  <div class="metersBlock">
-    <div class="meterRow">
-      <div class="meterName fit">Grounded</div>
-      <div class="meterTrack2"><div class="meterFillFit" id="fitnessFill"></div></div>
-      <div class="meterNum" id="fitnessNum">0</div>
-    </div>
-    <div class="meterRow">
-      <div class="meterName ent">Unexamined</div>
-      <div class="meterTrack2"><div class="meterFillEnt" id="entropyFill"></div></div>
-      <div class="meterNum" id="entropyNum">0</div>
-    </div>
-  </div>
-  <div class="netStatus" id="netStatus">Grounded counts claims traced to a source. Deleting things cannot raise it.</div>
-
-  <div class="ctlRow">
-    <button class="ctl on" id="gateToggle">Gates: On</button>
-    <button class="ctl sweep" id="sweepBtn">Run sweep</button>
-    <button class="ctl honest" id="honestBtn">Show what ran</button>
-  </div>
-
-  <div class="legend">
-    <span><i style="background:#4FD6D0"></i>Perception</span>
-    <span><i style="background:#9B8CE8"></i>Judgment</span>
-    <span><i style="background:#E8A63D"></i>Memory</span>
-    <span><i style="background:#E88CC5"></i>Route (universal)</span>
-  </div>
-  <div class="legend" style="margin-top:-4px;margin-bottom:10px">
-    <span><i style="background:none;border:1.4px dashed #E88CC5;width:8px;height:8px;border-radius:50%"></i>Dashed ring = on the team</span>
-    <span><i style="background:#4FD6D0"></i>tick = sourced lesson</span>
-    <span><i style="background:#9B8CE8"></i>inference</span>
-    <span><i style="background:#E1476B"></i>lesson built on a fabrication</span>
-  </div>
-
-  <p class="hint">Tap a <b>port</b>, then a port <b>of the same colour</b> on another agent. Same colour means the two labels resolve to the same registered type — that's a seam. Different colours are two strings that merely look like they match.</p>
 
   <div class="stage" id="stage">
     <svg viewBox="0 0 340 300" id="svgRoot">
@@ -343,9 +358,48 @@
     <div class="checkCell" data-check="binding"><div class="name">Binding</div><div class="tag">A·I</div><div class="dot"></div></div>
   </div>
   <div class="ladderNote" id="ladderNote">Nothing has run yet.</div>
+  </div><!-- /colInst -->
+
+  <!-- ============ LEFT: everything you can press ============ -->
+  <div class="colCtrl">
+  <div class="sectionLbl">Scoreboard<em>deletion cannot raise the first one</em></div>
+  <div class="metersBlock">
+    <div class="meterRow">
+      <div class="meterName fit">Grounded</div>
+      <div class="meterTrack2"><div class="meterFillFit" id="fitnessFill"></div></div>
+      <div class="meterNum" id="fitnessNum">0</div>
+    </div>
+    <div class="meterRow">
+      <div class="meterName ent">Unexamined</div>
+      <div class="meterTrack2"><div class="meterFillEnt" id="entropyFill"></div></div>
+      <div class="meterNum" id="entropyNum">0</div>
+    </div>
+  </div>
+  <div class="netStatus" id="netStatus">Grounded counts claims traced to a source. Deleting things cannot raise it.</div>
+
+  <div class="ctlRow">
+    <button class="ctl on" id="gateToggle">Gates: On</button>
+    <button class="ctl sweep" id="sweepBtn">Run sweep</button>
+    <button class="ctl honest" id="honestBtn">What ran?</button>
+  </div>
 
   <button class="assembleBtn" id="assembleBtn">Assemble a team — the strategist proposes</button>
   <button class="runTaskBtn" id="runTaskBtn">Run a task through the team</button>
+
+  <p class="hint">Tap a <b>port</b>, then a port <b>of the same colour</b> on another agent. Same colour means the two labels resolve to the same registered type — that's a seam. Different colours are two strings that only look like they match.</p>
+
+  <div class="legend">
+    <span><i style="background:#4FD6D0"></i>Perception</span>
+    <span><i style="background:#9B8CE8"></i>Judgment</span>
+    <span><i style="background:#E8A63D"></i>Memory</span>
+    <span><i style="background:#E88CC5"></i>Route (universal)</span>
+  </div>
+  <div class="legend" style="margin-top:-4px;margin-bottom:10px">
+    <span><i style="background:none;border:1.4px dashed #E88CC5;width:8px;height:8px;border-radius:50%"></i>Dashed ring = on the team</span>
+    <span><i style="background:#4FD6D0"></i>sourced lesson</span>
+    <span><i style="background:#9B8CE8"></i>inference</span>
+    <span><i style="background:#E1476B"></i>built on a fabrication</span>
+  </div>
 
   <div class="sectionLbl">Who is coordinating<em>real strategist agents</em></div>
   <div class="modeChips">
@@ -355,7 +409,7 @@
     <div class="modeChip" data-mode="debate">Debate<span class="mid">debate_strat</span></div>
   </div>
 
-  <div class="sectionLbl">Five feedback loops<em>each has a gate — except the last, deliberately</em></div>
+  <div class="sectionLbl">Five feedback loops<em>each has a gate — bar the last</em></div>
   <div class="loopRow" id="loopRow">
     <div class="loopChip" data-loop="learn">1 Learn<span class="gate">ceiling</span></div>
     <div class="loopChip" data-loop="correct">2 Correct<span class="gate">Γ(C) ≥ .5</span></div>
@@ -364,7 +418,12 @@
     <div class="loopChip" data-loop="calibrate">5a Calib<span class="gate">outcome</span></div>
     <div class="loopChip" data-loop="fit">5b Fit<span class="gate">none ⚠</span></div>
   </div>
+  <button class="reset" id="resetBtn">Reset everything</button>
+  </div><!-- /colCtrl -->
 
+  <!-- ============ RIGHT: what just happened, and what is owed ============ -->
+  <div class="colRead">
+  <div class="sectionLbl">Readout<em>what the system will say about itself</em></div>
   <div class="panel" id="actionPanel">
     <div class="plabel">Status</div>
     <div class="ptext" id="actionText">Three agents, no team yet. Press <b>Show me what goes wrong</b> for the guided version, or assemble a team and start wiring.</div>
@@ -374,7 +433,8 @@
   <div class="queueBox" id="queueBox"></div>
 
   <div class="log" id="log"></div>
-  <button class="reset" id="resetBtn">Reset everything</button>
+  </div><!-- /colRead -->
+  </div><!-- /grid -->
 </div>
 
 <script>
@@ -461,7 +521,8 @@
       valence:50, temperature:30, cognition:60, cost:3,
       declared:2, sourceable:2, fabRate:0.05, isStrategist:true, tool:'get_agent_calibration',
       fields:['selected_member','rationale'],
-      ports:[{key:'route1',angle:-135,cls:'route'},{key:'route2',angle:-45,cls:'route'},{key:'route3',angle:90,cls:'route'}]}
+      // route3 sits at 135°, not straight down — 90° collides with the name label
+      ports:[{key:'route1',angle:-135,cls:'route'},{key:'route2',angle:-45,cls:'route'},{key:'route3',angle:135,cls:'route'}]}
   ];
 
   // per-agent mutable state
@@ -474,6 +535,8 @@
     s.rejected = 0;        // claims checked and found wrong
     s.checked = 0;         // claims checked at all
     s.fitContaminated = false;
+    s.admissionRefused = false;
+    s.admitOverride = false;
     s.baseCal = s.calibration;
   });
 
@@ -503,9 +566,23 @@
   const LAYOUTS = {
     router:    { strat:{cx:170,cy:150}, s1:{cx:70,cy:65},  s2:{cx:270,cy:65}, s3:{cx:170,cy:235} },
     pipeline:  { strat:{cx:42,cy:150},  s1:{cx:126,cy:150},s2:{cx:210,cy:150},s3:{cx:298,cy:150} },
-    decompose: { strat:{cx:170,cy:55},  s1:{cx:60,cy:215}, s2:{cx:170,cy:240},s3:{cx:280,cy:215} },
-    debate:    { strat:{cx:170,cy:52},  s1:{cx:62,cy:200}, s2:{cx:278,cy:200},s3:{cx:170,cy:255} }
+    decompose: { strat:{cx:170,cy:55},  s1:{cx:60,cy:212}, s2:{cx:170,cy:228},s3:{cx:280,cy:212} },
+    debate:    { strat:{cx:170,cy:50},  s1:{cx:62,cy:178}, s2:{cx:278,cy:178},s3:{cx:170,cy:232} }
   };
+
+  // A linear pipeline only uses a band of the canvas; giving it the whole
+  // square wastes half the height that the stage is competing for.
+  const VIEWS = {
+    pipeline:  {vb:'-8 86 356 140', ar:'356 / 140'},
+    router:    {vb:'0 0 340 300',   ar:'340 / 300'},
+    decompose: {vb:'0 0 340 300',   ar:'340 / 300'},
+    debate:    {vb:'0 0 340 300',   ar:'340 / 300'}
+  };
+  function applyView(mode){
+    const v = VIEWS[mode] || VIEWS.router;
+    document.getElementById('svgRoot').setAttribute('viewBox', v.vb);
+    document.getElementById('stage').style.aspectRatio = v.ar;
+  }
 
   // ---------------------------------------------------------------- helpers
   function getSprocket(id){ return sprockets.find(s=>s.id===id); }
@@ -1057,14 +1134,30 @@
     const chips = Object.keys(counts).filter(k=>counts[k]>0)
       .map(k=>provChip(k) + '×' + counts[k]).join(' ') || '<span class="prov unknown">no lessons yet</span>';
 
+    const override = (s.admissionRefused && !s.admitOverride)
+      ? `<div class="rowBtns"><button class="decline" id="ovrAdmit">Publish it anyway — this is what shipped</button></div>`
+      : (s.admitOverride ? `<br><b style="color:var(--crimson)">Admission was overridden for this agent.</b>` : '');
+
     setPanel('Agent card · ' + s.agentId,
       `${s.blurb}<br><br>` +
-      `<code>declares ${s.declared} fields · ${s.sourceable} have a tool behind them</code><br>` +
+      `<code>declares ${s.declared} fields · ${s.sourceable} have a tool behind them` +
+        (s.inferrer ? ' · 1 declared as judgement' : '') + `</code><br>` +
       `Says about itself: <b style="color:var(--cyan)">calibration ${s.calibration}%</b><br>` +
       `Measured by others: <b style="color:${rejPct===null?'var(--schematic-dim)':'var(--crimson)'}">` +
         (rejPct===null ? 'no claims checked yet' : `${rejPct}% refuted (${s.rejected}/${s.checked})`) + `</b><br>` +
       `Write path: <code>${live}</code><br>` +
-      `What it has learned: ${chips}`);
+      `What it has learned: ${chips}` + override);
+
+    const ob = document.getElementById('ovrAdmit');
+    if(ob) ob.onclick = async ()=>{
+      ob.disabled = true;
+      s.admitOverride = true;
+      log(`Admission OVERRIDDEN for ${s.name}. It is on the team with fields nothing can source.`, 'bad');
+      await attemptBelt({sprocketId:'strat', portKey:'route2'}, {sprocketId:s.id, portKey:'judgment'});
+      setPanel('Override',
+        `<b>${s.name}</b> is in. Nothing about it changed — it still declares ${s.declared} fields with ${s.sourceable} tool behind them.<br><br>` +
+        `What changed is where the problem now surfaces: not at publish, but on every single invocation, one field at a time, into the queue. That is strictly worse and strictly more expensive, and it is the state most agent platforms are in right now.`);
+    };
   }
 
   // ---------------------------------------------------------------- ADMISSION
@@ -1147,9 +1240,14 @@
     if(!typesMatch(a, b)){
       failAt = 'binding';
       reason = `<code>${a.portKey}</code> and <code>${b.portKey}</code> are two different types. They are both strings, so they look composable — but nothing registered says they mean the same thing. Across our real catalogue, 499 of 513 port labels can't form a seam with anything.`;
-    } else if(sb.sourceable < sb.declared && Math.random() < 0.45){
+    } else if(!sb.inferrer && sb.sourceable < sb.declared && !sb.admitOverride){
+      // Deterministic, because it is the paper's opening story. The agent that
+      // declares four blocks and has a tool for one does not get in quietly.
       failAt = 'grounding';
-      reason = `<b>${sb.name}</b> declares ${sb.declared} output fields and has a tool for ${sb.sourceable}. The rest have <i>no possible source</i>. That is refused at publish, not discovered later by a user.`;
+      sb.admissionRefused = true;
+      reason = `<b>${sb.name}</b> declares ${sb.declared} output fields and has a tool for ${sb.sourceable}. The other ${sb.declared - sb.sourceable} have <i>no possible source</i> — nothing it could call would ever produce them.<br><br>` +
+        `This is refused at publish rather than discovered later by a user. Before this gate existed, that agent shipped, and thirteen invented profiles were cached and served.<br><br>` +
+        `<span style="color:var(--schematic-dim)">Tap <b>${sb.name}</b> on the diagram — its card offers the override that was effectively in force before the ladder.</span>`;
     }
 
     let prevX = posA.x, prevY = posA.y, stopped = false;
@@ -1188,7 +1286,10 @@
       trial.remove(); cpEls.forEach(c=>c.remove()); token.remove();
       belts.push({aId:a.sprocketId, aPort:a.portKey, bId:b.sprocketId, bPort:b.portKey, shared:0, verified:true});
       log(`Seam admitted: ${sa.name} ↔ ${sb.name}.`, 'hi');
-      setPanel('Admitted', `<b>${sa.name} ↔ ${sb.name}</b> cleared presence, binding and grounding <i>before</i> either could learn anything from the other.<br><br>Note what admission still cannot know: whether either side's writer has ever actually run. No request-time check can ask that.`);
+      const inferNote = sb.inferrer
+        ? `<br><br><b>${sb.name} passed, and that is not an oversight.</b> It also declares a field no database holds — a predation risk rating. But its contract declares that field as <i>judgement</i>, not retrieval, so grounding has nothing to object to. A rating it was commissioned to make is not a fabricated measurement, and a checker that flagged both would be indistinguishable from a broken one.`
+        : '';
+      setPanel('Admitted', `<b>${sa.name} ↔ ${sb.name}</b> cleared presence, binding and grounding <i>before</i> either could learn anything from the other.` + inferNote + `<br><br>Note what admission still cannot know: whether either side's writer has ever actually run. No request-time check can ask that.`);
       note('Admitted. Presence · binding · grounding cleared. Liveness and truth were not asked — admission cannot see them.');
       pulseScore('grounded');
     }
@@ -1657,40 +1758,147 @@
     }));
     render();
   }
+  // Thagard's seven, in the order the paper lists them.
+  const PRINCIPLES = [
+    {k:'P1', name:'Symmetry'},     {k:'P2', name:'Explanation'},
+    {k:'P3', name:'Analogy'},      {k:'P4', name:'Data priority'},
+    {k:'P5', name:'Contradiction'},{k:'P6', name:'Competition'},
+    {k:'P7', name:'Acceptability'}
+  ];
+
+  // σ(P1..P7) from what the composition has actually done. Low is not bad:
+  // which principle is low is the whole diagnosis.
+  function principleScores(){
+    const team = learners().filter(s=>computeReachableFromStrat().has(s.id));
+    const pool = team.length ? team : learners();
+    const verified = belts.filter(b=>b.verified && !b.corrupted).length;
+    const risky = belts.filter(b=>!b.verified || b.corrupted).length;
+    const allLessons = pool.reduce((n,s)=> n + s.lessons.length, 0);
+    const sourced = pool.reduce((n,s)=> n + s.lessons.filter(L=>L.grade==='sourced').length, 0);
+    const bad = pool.reduce((n,s)=> n + s.lessons.filter(L=>L.grade==='bad').length, 0);
+    const refuted = pool.reduce((n,s)=> n + s.rejected, 0);
+    const shared = belts.reduce((n,b)=> n + (b.shared||0), 0);
+
+    const sd = arr => {
+      if(!arr.length) return 0;
+      const m = arr.reduce((a,b)=>a+b,0)/arr.length;
+      return Math.sqrt(arr.reduce((a,v)=>a+(v-m)*(v-m),0)/arr.length);
+    };
+    // Two spreads, two different signals. Valence homophily is the trap the
+    // paper names; calibration spread is live competition about who is right.
+    const valSpread = sd(pool.map(s=>s.valence));
+    const calSpread = sd(pool.map(s=>s.calibration));
+
+    const clamp = v => Math.max(0.05, Math.min(0.95, v));
+    const kinds = new Set(pool.map(s=> s.inferrer ? 'judge' : (s.sourceable>=s.declared ? 'retrieve' : 'mixed')));
+
+    return {
+      P1: clamp(0.4 + Math.min(shared,6)*0.08),                       // reciprocal engagement
+      P2: clamp(0.25 + verified*0.16 - risky*0.10 - bad*0.07),        // explanations that connect
+      P3: clamp(0.9 - (kinds.size-1)*0.22),                           // one framework = high; many = low
+      P4: clamp(0.2 + (allLessons ? sourced/allLessons : 0)*0.8       // engagement with evidence
+                    - bad*0.06),
+      P5: clamp(0.9 - refuted*0.17 - bad*0.04),                       // low = contradictions present
+      P6: clamp(0.95 - calSpread/22 - valSpread/70),                  // low = live competition
+      P7: clamp(0.75 - bad*0.12 - risky*0.06),                        // acceptability
+      _homophily: valSpread
+    };
+  }
+
+  // The taxonomy. Productive incoherence is characterised by HIGH evidence
+  // engagement (P4) despite low scores elsewhere. Destructive incoherence is
+  // low evidence engagement alongside low coherence. Same Γ, opposite verdicts.
+  function classifyIncoherence(p){
+    if(p.P4 < 0.45 && p.P7 < 0.5 && p.P2 < 0.55){
+      return {type:'Destructive', key:['P2','P7'], value:'negative', color:'var(--crimson)',
+        why:`Low σ(P2) and low σ(P7): poor explanation, low acceptability. Utterances are not engaging with each other at all.`,
+        worth:`This is the only kind worth removing. It reduces group performance outright — nobody is reasoning about anybody else's evidence.`};
+    }
+    const lows = [{k:'P6',v:p.P6},{k:'P3',v:p.P3},{k:'P5',v:p.P5}].sort((a,b)=>a.v-b.v);
+    const lowest = lows[0];
+    if(lowest.v > 0.62){
+      return {type:'Coherent', key:[], value:'neutral', color:'var(--cyan)',
+        why:`No principle is depressed. Everyone is explaining, everyone is engaging with the same data, nobody is competing.`,
+        worth:`Agreement — which is not automatically the goal. See the band below.`};
+    }
+    if(lowest.k === 'P6'){
+      return {type:'Productive — Competitive', key:['P6','P2'], value:'positive', color:'var(--amber)',
+        why:`Low σ(P6) with moderate σ(P2): competing explanations that both engage with the evidence.`,
+        worth:`Positive. It forces evidence to be evaluated rather than assumed. Suppress this and the team stops testing anything.`};
+    }
+    if(lowest.k === 'P3'){
+      return {type:'Productive — Analogical', key:['P3','P2'], value:'positive', color:'var(--amber)',
+        why:`Low σ(P3) with high σ(P2): they are reasoning from different frameworks while engaging with shared data.`,
+        worth:`Positive. Different frameworks over the same data is what reveals an assumption nobody stated.`};
+    }
+    return {type:'Productive — Contradictory', key:['P5','P4'], value:'positive', color:'var(--amber)',
+      why:`Low σ(P5) with high σ(P4): direct contradiction, grounded in evidence.`,
+      worth:`Positive. A contradiction anchored in data sharpens the hypothesis space; the same contradiction unanchored would be noise.`};
+  }
+
+  const GAMMA_BAND = [0.45, 0.75];   // the optimal tension range, not a maximum
+
+  function principleStrip(p, keys){
+    return '<div class="princRow">' + PRINCIPLES.map(pr=>{
+      const v = p[pr.k];
+      const cls = 'princ' + (v < 0.5 ? ' low' : '') + (keys.indexOf(pr.k) >= 0 ? ' key' : '');
+      return `<div class="${cls}"><div class="pbar"><div class="pfill" style="height:${Math.round(v*100)}%"></div></div>` +
+             `<div class="plab">${pr.k}</div></div>`;
+    }).join('') + '</div>';
+  }
+  function bandStrip(gamma){
+    const lo = GAMMA_BAND[0]*100, hi = GAMMA_BAND[1]*100;
+    return `<div class="bandRow"><div class="bandOpt" style="left:${lo}%;width:${hi-lo}%"></div>` +
+           `<div class="bandMark" style="left:${Math.round(gamma*100)}%"></div></div>`;
+  }
+
   async function loopCoherence(){
     if(gateBusy || busy) return;
     if(belts.length < 2){ setPanel('Loop 3 · Cohere','Wire at least two seams — coherence only means something across a real composition.'); return; }
     busy = true;
-    setPanel('Loop 3 · Workspace coherence','Pulses settling across the graph…');
+    setPanel('Loop 3 · Workspace coherence','ECHO network settling across the graph…');
     await animateCoherencePulses();
 
-    const verified = belts.filter(b=>b.verified && !b.corrupted).length;
-    const risky = belts.length - verified;
-    const badLessons = learners().reduce((n,s)=> n + s.lessons.filter(L=>L.grade==='bad').length, 0);
-    const gamma = Math.max(0.05, Math.min(0.95, 0.32 + verified*0.16 - risky*0.14 - badLessons*0.07 + Math.random()*0.08));
+    const p = principleScores();
+    // Γ(C) is the mean positive activation across the network
+    const gamma = PRINCIPLES.reduce((a,pr)=>a+p[pr.k],0) / PRINCIPLES.length;
+    const cls = classifyIncoherence(p);
+    const homophily = p._homophily < 9;
 
-    // The type of disagreement matters more than the amount. Naive coherence
-    // optimisation drives a team toward agreement and deletes its best property.
-    let label, color, body;
-    if(gamma > 0.68){
-      label = 'Converged'; color = 'var(--cyan)';
-      body = `Agreement, and it is grounded in shared evidence rather than shared habit.<br><br>` +
-        `<b>The caveat that keeps this honest:</b> every member here runs on the same base model. When agents that share a model agree, some of that agreement is an artefact of the sharing. High coherence is a good sign and never on its own a verdict — which is why the debate strategist exists.`;
-    } else if(gamma > 0.42){
-      label = 'Productive disagreement'; color = 'var(--amber)';
-      body = `They disagree, and the disagreement has structure: competing explanations, both anchored to evidence.<br><br>` +
-        `This scores <i>lower</i> than convergence and is often worth more. A system tuned to maximise coherence would flatten exactly this, and lose the diversity that makes a group outperform its best member.`;
+    // The band, not the maximum. Above it is its own failure.
+    let bandVerdict, bandNote;
+    if(gamma > GAMMA_BAND[1]){
+      bandVerdict = 'above the band';
+      bandNote = `Γ is <b>above</b> the optimal range. That is not a better score — it is the homophily trap: a team optimised into agreement has stopped generating the friction that improves its calibration. ` +
+        `Every member here also shares a base model, so some of this agreement is an artefact of the sharing rather than corroboration.`;
+    } else if(gamma < GAMMA_BAND[0]){
+      bandVerdict = 'below the band';
+      bandNote = `Γ is <b>below</b> the optimal range — there is not enough shared ground for the disagreement to be about anything.`;
     } else {
-      label = 'Destructive drift'; color = 'var(--crimson)';
-      body = `This is not healthy disagreement. Utterances are not engaging with each other's evidence at all — the group has stopped sharing a world.` +
-        (badLessons ? `<br><br>${badLessons} lesson(s) in this team were built on fabrications. Nothing marks them, so they pull on every agreement they are part of.` : '');
+      bandVerdict = 'inside the band';
+      bandNote = `Γ sits <b>inside</b> the optimal range. This is the target: enough coherence to be talking about the same thing, enough incoherence to still be testing it.`;
     }
+    if(homophily && cls.type !== 'Destructive'){
+      bandNote += `<br><br><b style="color:var(--amber)">Valence homophily detected.</b> The members' dispositions are clustered (spread ${p._homophily.toFixed(1)}). ` +
+        `A team that feels the same way about everything is not three perspectives, it is one perspective with three voices — and it will keep producing coherence that means nothing.`;
+    }
+
+    const keyTxt = cls.key.length ? cls.key.join(' + ') + ' are the signature' : 'no depressed principle';
     setPanel('Loop 3 · Workspace coherence',
-      `<code>Γ(C) = ${gamma.toFixed(2)} — ${label}</code>` +
-      `<div class="meterTrack"><div class="meterFill" style="width:${Math.round(gamma*100)}%;background:${color}"></div></div>` +
-      `<div style="margin-top:8px">${body}</div>`);
-    log(`Coherence: ${label} (Γ(C) ${gamma.toFixed(2)}) across ${verified} verified / ${risky} risky seams.`,
-        gamma>0.68?'hi':(gamma>0.42?'warn':'bad'));
+      `<code>Γ(C) = ${gamma.toFixed(2)} — ${bandVerdict}</code>` +
+      principleStrip(p, cls.key) +
+      bandStrip(gamma) +
+      `<div style="margin-top:9px"><b style="color:${cls.color}">${cls.type}</b> · <span style="color:var(--schematic-dim)">${keyTxt}</span><br>` +
+      `${cls.why}<br><br>${cls.worth}<br><br>${bandNote}<br><br>` +
+      `<span style="color:var(--schematic-dim)">Coordination brief issued to the team; the pattern is also written to the strategist, where Loop 4 will read it if it keeps recurring.</span></div>`);
+
+    log(`Coherence: ${cls.type} — Γ(C) ${gamma.toFixed(2)}, ${bandVerdict}. ${keyTxt}.`,
+        cls.value==='negative' ? 'bad' : (bandVerdict==='inside the band' ? 'hi' : 'warn'));
+
+    // inner loop writes a brief; outer loop accumulates in the strategist (→ Loop 4)
+    const strat = getSprocket('strat');
+    strat.lessons.push({grade:'inference'});
+    strat.sinks++;
     busy = false;
     render();
   }
@@ -1904,6 +2112,11 @@
     if(wt) wt.click();
     await wait(7400);
 
+    await say('2b · One of them did not get in',
+      `<b>GENOME_PROFILER</b> was refused. It declares four blocks of data and has a tool for one — the other three have no possible source, so there is nothing it could ever call to produce them.<br><br>` +
+      `<b>ENEMY_SENSOR</b> passed, and that is not inconsistency. It also declares a field no database holds, but its contract calls that field <i>judgement</i> rather than retrieval. A rating it was commissioned to make is not a fabricated measurement, and a checker that flagged both would be indistinguishable from a broken one.<br><br>` +
+      `Tap <b>GENOME_PROFILER</b> on the diagram afterwards: its card offers the override that was effectively in force before this gate existed.`, 6000);
+
     await say('3 · Invocation — the gate that cannot say no',
       'Now run work through it. This gate does not block the answer. It makes the answer <b>state what it is made of</b> — and anything it cannot vouch for goes to the queue instead of the bin.', 3600);
     await runTask();
@@ -1915,7 +2128,7 @@
     await wait(2400);
     honestMode = true; honestEverUsed = true;
     honestBtn.classList.add('on');
-    honestBtn.textContent = 'Showing what ran';
+    honestBtn.textContent = 'Showing';
     paintSweepRungs();
     await say('4 · The rung nobody ran',
       `Now they read <b>inert</b>.<br><br>Nothing about the system changed — only the display. Which is the finding: a gate that reports green because it never ran looks exactly like a gate that passed, and it is worse than no gate, because it absorbs the attention that would otherwise have noticed.<br><br>This was the cheapest rung to build and the last one we added.`, 6000);
@@ -1971,7 +2184,7 @@
   honestBtn.addEventListener('click', ()=>{
     honestMode = !honestMode;
     honestBtn.classList.toggle('on', honestMode);
-    honestBtn.textContent = honestMode ? 'Showing what ran' : 'Show what ran';
+    honestBtn.textContent = honestMode ? 'Showing' : 'What ran?';
     paintSweepRungs();
     if(honestMode && !honestEverUsed){
       honestEverUsed = true;
@@ -2013,6 +2226,7 @@
       chip.classList.add('active');
       const id = STRAT_IDENTITY[strategistMode];
       getSprocket('strat').agentId = id.agentId;
+      applyView(strategistMode);
       log(`Strategist is now ${id.agentId} — ${id.note}.`, null);
       setPanel('Strategist swapped',
         `<code>${id.agentId}</code><br><br>${id.note}.<br><br>` +
@@ -2042,6 +2256,7 @@
       s.lessons = []; s.routeTicks = 0; s.selected = false;
       s.sinks = 0; s.opportunities = 0; s.rejected = 0; s.checked = 0;
       s.calibration = s.baseCal; s.sigma = 36; s.fitContaminated = false;
+      s.admissionRefused = false; s.admitOverride = false;
       const pos = LAYOUTS.pipeline[s.id];
       if(pos){ s.cx = pos.cx; s.cy = pos.cy; }
     });
@@ -2050,9 +2265,10 @@
     gateBusy = false; routingBusy = false; busy = false;
     hiddenDebt = 0; sweepRuns = 0;
     honestMode = false; honestEverUsed = false;
-    honestBtn.classList.remove('on'); honestBtn.textContent = 'Show what ran';
+    honestBtn.classList.remove('on'); honestBtn.textContent = 'What ran?';
     gateOn = true; gateToggle.textContent = 'Gates: On'; gateToggle.className = 'ctl on';
     tokenLayer.innerHTML = ''; routeLayer.innerHTML = ''; logEl.innerHTML = '';
+    applyView('pipeline');
     ladderReset(); paintSweepRungs(); refreshSweepClock();
     note('Nothing has run yet.');
     setPanel('Status','Reset. Three agents, no team. Tap an agent to read its card.');
@@ -2061,6 +2277,7 @@
   });
 
   // ---------------------------------------------------------------- boot
+  applyView(strategistMode);
   refreshSweepClock();
   ladderReset();
   paintSweepRungs();

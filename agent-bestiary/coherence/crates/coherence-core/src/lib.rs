@@ -6,6 +6,7 @@
 //! Thagard (1989) TEC adaptation for multi-party conversation analysis.
 
 pub mod error;
+pub mod incoherence;
 pub mod principles;
 pub mod relations;
 pub mod relevance;
@@ -14,6 +15,9 @@ pub mod types;
 
 // Re-export primary types for convenience
 pub use error::CoreError;
+pub use incoherence::{
+    classify as classify_incoherence, IncoherenceAssessment, IncoherenceType, TensionBand,
+};
 pub use principles::{Principle, PrincipleScore, PrincipleScores};
 pub use relations::{CoherenceRelation, IncoherenceRelation, RelationStrength};
 pub use relevance::{content_tokens, is_relevant, overlap, relevance};

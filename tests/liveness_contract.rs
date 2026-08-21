@@ -21,9 +21,16 @@
 //!   that went unnoticed for eight releases.
 
 use fermi::liveness_trust::{
-    classify, known_silent, Expectation, LivenessContract, Status, LIVENESS_CONTRACTS,
+    column_exists, evaluate_one, known_silent, Expectation, Status, LIVENESS_CONTRACTS,
 };
 use sqlx::{PgPool, Row};
+
+// The runner used to live here, and only here — which is why the only way to
+// learn whether a write path had ever run was for a human to invoke this file.
+// It now lives in `fermi::liveness_trust` so the scheduled sweeper, the admin
+// endpoint and this test all execute the same arithmetic. Two implementations
+// of one trust calculation eventually disagree, and the one that gets believed
+// is the one nearest the writer.
 
 async fn pool() -> PgPool {
     let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
@@ -32,44 +39,6 @@ async fn pool() -> PgPool {
         .connect(&url)
         .await
         .expect("connect")
-}
-
-async fn column_exists(pool: &PgPool, table: &str, column: &str) -> bool {
-    sqlx::query_scalar::<_, i64>(
-        "SELECT count(*)::bigint FROM information_schema.columns \
-          WHERE table_name = $1 AND column_name = $2",
-    )
-    .bind(table)
-    .bind(column)
-    .fetch_one(pool)
-    .await
-    .unwrap_or(0)
-        > 0
-}
-
-/// Run one contract. Returns the status and the two counts for the report.
-async fn evaluate(pool: &PgPool, c: &LivenessContract) -> (Status, i64, i64) {
-    if let Some((table, column)) = c.requires {
-        if !column_exists(pool, table, column).await {
-            return (Status::NotDeployed, -1, -1);
-        }
-    }
-
-    let read = |sql: &'static str, col: &'static str| async move {
-        sqlx::query(sql)
-            .fetch_one(pool)
-            .await
-            .ok()
-            .and_then(|r| r.try_get::<i64, _>(col).ok())
-    };
-
-    let writes = read(c.sink_sql, "writes").await;
-    let opportunities = read(c.opportunity_sql, "opportunities").await;
-
-    match (writes, opportunities) {
-        (Some(w), Some(o)) => (classify(w, o), w, o),
-        _ => (Status::Unrunnable, -1, -1),
-    }
 }
 
 #[tokio::test]
@@ -90,14 +59,8 @@ async fn every_declared_write_path_has_run_at_least_once() {
     println!("  {}", "-".repeat(72));
 
     for c in LIVENESS_CONTRACTS {
-        let (status, w, o) = evaluate(&pool, c).await;
-        let label = match status {
-            Status::Ok => "OK",
-            Status::Silent => "SILENT",
-            Status::Inert => "INERT",
-            Status::NotDeployed => "NOT DEPLOYED",
-            Status::Unrunnable => "UNRUNNABLE",
-        };
+        let (status, w, o) = evaluate_one(&pool, c).await;
+        let label = status.label();
         println!("  {:<38} {:>8} {:>8}  {}", c.sink, w, o, label);
 
         match status {

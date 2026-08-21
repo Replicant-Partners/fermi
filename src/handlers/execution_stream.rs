@@ -262,6 +262,31 @@ pub async fn execute_agent_stream_handler(
                 if let Some(ref inv) = invocation {
                     crate::stamp_invocation(&mut episode, inv);
                 }
+                // Grounding, for the same reason the bind check is here: both
+                // execute endpoints must check, or the unchecked one becomes
+                // the one callers use. `enforce` is a no-op for agents with no
+                // field contract.
+                {
+                    let report = match output
+                        .raw_response
+                        .as_deref()
+                        .and_then(fermi::agent_backend::envelope::extract_json)
+                    {
+                        Some(mut doc) => {
+                            fermi::grounding_trust::enforce(&agent_id_clone, &mut doc)
+                        }
+                        None => fermi::grounding_trust::Report::default(),
+                    };
+                    if !report.is_clean() {
+                        tracing::warn!(
+                            agent = %agent_id_clone,
+                            episode = %minted_episode_id,
+                            violations = report.violations.len(),
+                            "grounding contract violated on the streaming execute path"
+                        );
+                    }
+                    crate::stamp_grounding(&mut episode, &report);
+                }
                 // Verify the asking against the card — see execution.rs. Both
                 // execute endpoints must check, or the unchecked one becomes
                 // the one callers use.

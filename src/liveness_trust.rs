@@ -157,6 +157,87 @@ pub fn known_silent(sink: &str) -> Option<&'static str> {
 /// "nothing has happened yet".
 pub const LIVENESS_CONTRACTS: &[LivenessContract] = &[
     LivenessContract {
+        sink: "consolidation_jobs (Loop 1 cadence)",
+        writer: "handlers::consolidation::spawn_consolidation_sweeper \
+                 (every 6h, agent-funded), plus the HTTP handler on demand",
+        // Completed in the last 7 days, not "ever". Loop 1's claim is a
+        // *cadence*, so a single successful run in 2024 satisfies "has this
+        // path ever executed" while telling you nothing about whether the loop
+        // is turning. This is the one contract here where liveness's usual
+        // binary reading is too generous, and the window is how it is narrowed
+        // without turning the rung into a "does this number look plausible"
+        // check.
+        sink_sql: "SELECT count(*)::bigint AS writes FROM consolidation_jobs \
+                    WHERE status = 'completed' AND completed_at > NOW() - INTERVAL '7 days'",
+        // An agent sitting on unconsolidated episodes is an agent whose
+        // dreaming cycle is overdue. Ten is the floor the handler itself needs
+        // before clustering produces anything, so below that there is no
+        // missed opportunity to report.
+        opportunity_sql: "SELECT count(*)::bigint AS opportunities FROM ( \
+                            SELECT agent_id FROM episodes \
+                             WHERE NOT consolidated \
+                             GROUP BY agent_id HAVING count(*) >= 10 \
+                          ) overdue",
+        expectation: Expectation::EveryOpportunity,
+        requires: Some(("consolidation_jobs", "completed_at")),
+        why: "Loop 1 is the only path by which an agent's own experience changes \
+              how it reasons — episodes cluster into semantic rules and \
+              `kg_context` injects those rules into the next prompt. The \
+              architecture states a cadence of hours to days, and for a long \
+              time nothing implemented one: agents accumulated episodes and \
+              learned nothing from them, which is invisible because an agent \
+              that has not learned looks exactly like one that had nothing to \
+              learn. A sweeper now runs every six hours, so this contract has \
+              changed job: it no longer reports a missing scheduler, it reports \
+              whether the scheduler that exists is actually turning.",
+        remediation: "SILENT here means the sweeper is not producing completed \
+                      jobs despite agents being overdue. Check, in order: \
+                      CONSOLIDATION_SWEEP_SECS is not 0; an extraction model \
+                      resolves (the sweep refuses to run degraded, by design, \
+                      because a cycle with no extractor consumes its episodes \
+                      and produces nothing while reporting success); and the \
+                      overdue agents have `dreaming_budget_credits` left, since \
+                      autonomous dreaming is agent-funded and an agent with an \
+                      exhausted budget is skipped rather than charged. The third \
+                      is the expected steady state, not a fault — which is why \
+                      this contract counts completed jobs in a window rather \
+                      than ever.",
+    },
+    LivenessContract {
+        sink: "eval_signals.projection_accuracy (Loop 5b)",
+        writer: "evaluators::ProjectionScoringEvaluator, via handlers::eval::run_eval_cases",
+        sink_sql: "SELECT count(*)::bigint AS writes FROM eval_signals \
+                    WHERE evaluator_name ILIKE '%projection%'",
+        // A real observation carrying a projection_id is a batch that completed
+        // against a prior projection — exactly the event the architecture says
+        // triggers scoring. Migration 130 indexes this lookup, so the
+        // opportunity is both real and cheap to count.
+        opportunity_sql: "SELECT count(*)::bigint AS opportunities FROM sosa_observations \
+                           WHERE extra ? 'projection_id'",
+        expectation: Expectation::EveryOpportunity,
+        requires: Some(("sosa_observations", "extra")),
+        why: "Loop 5b is the hard-verified half of calibration: a physical \
+              measurement scored against what the model projected, which is the \
+              one signal an agent cannot talk its way out of. The reader is \
+              fully wired — `calibration.rs` surfaces projection_accuracy and \
+              the observatory displays it — so from a dashboard the loop looks \
+              closed. The producing edge does not exist: writing a real \
+              observation does not invoke the evaluator, and the arc the \
+              architecture describes as 'real batch completes -> \
+              ProjectionScoringEvaluator' is not present in code.",
+        remediation: "The hook site already exists and already has every value it \
+                      needs in scope, including `projection_id`: see the \
+                      `let _ = (...)` in `simops_tools::execute_simops_write_observation`, \
+                      whose comment calls it 'hooks for an observability path that \
+                      may or may not be live'. It is not live. Either connect it \
+                      to the evaluator registry, or delete the stub and stop \
+                      claiming 5b — a maybe in a comment is how this stayed \
+                      unresolved. Note also that `projection_id` is never placed \
+                      into the eval bundle context, so even a manual eval run \
+                      falls back to the 30-day heuristic rather than matching \
+                      the projection it is scoring.",
+    },
+    LivenessContract {
         sink: "forecast_agent_claims",
         writer: "handlers::workspace::agent_params_hook::apply_agent_multipliers",
         sink_sql: "SELECT count(*)::bigint AS writes FROM forecast_agent_claims",
@@ -372,9 +453,340 @@ pub fn classify(writes: i64, opportunities: i64) -> Status {
     }
 }
 
+impl Status {
+    /// The wire/report name. One spelling, so the runner, the endpoint and the
+    /// log cannot disagree about what a verdict is called.
+    pub fn label(self) -> &'static str {
+        match self {
+            Status::Ok => "OK",
+            Status::Silent => "SILENT",
+            Status::Inert => "INERT",
+            Status::NotDeployed => "NOT DEPLOYED",
+            Status::Unrunnable => "UNRUNNABLE",
+        }
+    }
+
+    /// Is this a verdict a reader may treat as healthy?
+    ///
+    /// Only `Ok`. In particular **`Inert` is not a pass** — a contract watching
+    /// a feature nobody has exercised, reporting healthy, is the original defect
+    /// wearing the machinery built to prevent it.
+    pub fn is_pass(self) -> bool {
+        matches!(self, Status::Ok)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The runner
+// ---------------------------------------------------------------------------
+//
+// This lived in `tests/liveness_contract.rs` and nowhere else, which meant the
+// only way to learn whether a write path had ever run was for a human to type
+// `cargo test --test liveness_contract -- --ignored`. Nothing scheduled it, CI
+// did not run it, and the server could not answer the question at all.
+//
+// It is here rather than duplicated into a worker because of the rule in
+// `verification_for_agent_ecologies.md` §3.4: a trust calculation must have
+// exactly one implementation, and the layer that owns the vocabulary must own
+// the arithmetic. Two copies of this would eventually disagree, and the one
+// that got believed would be whichever sat nearest the writer.
+
+/// One contract's verdict, with the two counts that produced it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ContractOutcome {
+    pub sink: &'static str,
+    pub writer: &'static str,
+    pub status: &'static str,
+    /// `-1` when the query could not run (`NOT DEPLOYED` / `UNRUNNABLE`).
+    pub writes: i64,
+    pub opportunities: i64,
+    /// Set when this sink is a documented exception in [`KNOWN_SILENT`].
+    pub known_silent_reason: Option<&'static str>,
+    pub why: &'static str,
+    pub remediation: &'static str,
+}
+
+/// The result of one sweep across every declared write path.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LivenessReport {
+    pub ran_at: String,
+    pub ok: usize,
+    pub silent: usize,
+    pub inert: usize,
+    pub unrunnable: usize,
+    /// Silent sinks that are **not** in [`KNOWN_SILENT`]. This is the actionable
+    /// list; everything else is context.
+    pub undocumented_silent: Vec<&'static str>,
+    pub outcomes: Vec<ContractOutcome>,
+}
+
+impl LivenessReport {
+    /// Has anything at all been demonstrated to work?
+    ///
+    /// The positive-control question. `0 live` cannot distinguish "every path is
+    /// broken" from "the runner is broken", so a report with no passing contract
+    /// is never healthy regardless of what else it says.
+    pub fn has_positive_control(&self) -> bool {
+        self.ok > 0
+    }
+
+    /// Healthy means: something is proven to run, and nothing is silently
+    /// broken without a written reason.
+    pub fn is_healthy(&self) -> bool {
+        self.has_positive_control() && self.undocumented_silent.is_empty() && self.unrunnable == 0
+    }
+}
+
+/// Does `table.column` exist yet?
+///
+/// Contracts routinely race the deploy of the migration that creates their
+/// sink. Without this the query errors, and "the check could not run" would be
+/// indistinguishable from a finding.
+pub async fn column_exists(pool: &sqlx::PgPool, table: &str, column: &str) -> bool {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT count(*)::bigint FROM information_schema.columns \
+          WHERE table_name = $1 AND column_name = $2",
+    )
+    .bind(table)
+    .bind(column)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0)
+        > 0
+}
+
+/// Evaluate one contract against a live database.
+///
+/// Returns `(status, writes, opportunities)`; the counts are `-1` when a query
+/// could not run, so a caller cannot mistake "did not run" for zero.
+pub async fn evaluate_one(pool: &sqlx::PgPool, c: &LivenessContract) -> (Status, i64, i64) {
+    if let Some((table, column)) = c.requires {
+        if !column_exists(pool, table, column).await {
+            return (Status::NotDeployed, -1, -1);
+        }
+    }
+
+    // Read by the column alias, not positionally: `every_query_aliases_the_
+    // column_the_runner_reads` asserts every contract names `writes` /
+    // `opportunities`, and that assertion is only worth anything if the runner
+    // actually depends on the alias.
+    async fn count(pool: &sqlx::PgPool, sql: &str, col: &str) -> Option<i64> {
+        use sqlx::Row;
+        sqlx::query(sql)
+            .fetch_one(pool)
+            .await
+            .ok()
+            .and_then(|r| r.try_get::<i64, _>(col).ok())
+    }
+
+    match (
+        count(pool, c.sink_sql, "writes").await,
+        count(pool, c.opportunity_sql, "opportunities").await,
+    ) {
+        (Some(w), Some(o)) => (classify(w, o), w, o),
+        _ => (Status::Unrunnable, -1, -1),
+    }
+}
+
+/// Run every contract. Read-only; every query is a bare `SELECT`, asserted by
+/// `every_query_is_read_only`.
+pub async fn sweep(pool: &sqlx::PgPool) -> LivenessReport {
+    let mut outcomes = Vec::with_capacity(LIVENESS_CONTRACTS.len());
+    let (mut ok, mut silent, mut inert, mut unrunnable) = (0, 0, 0, 0);
+    let mut undocumented_silent = Vec::new();
+
+    for c in LIVENESS_CONTRACTS {
+        let (status, writes, opportunities) = evaluate_one(pool, c).await;
+        match status {
+            Status::Ok => ok += 1,
+            Status::Silent => {
+                silent += 1;
+                if known_silent(c.sink).is_none() {
+                    undocumented_silent.push(c.sink);
+                }
+            }
+            // NotDeployed counts with Inert: both mean "proven nothing".
+            Status::Inert | Status::NotDeployed => inert += 1,
+            Status::Unrunnable => unrunnable += 1,
+        }
+        outcomes.push(ContractOutcome {
+            sink: c.sink,
+            writer: c.writer,
+            status: status.label(),
+            writes,
+            opportunities,
+            known_silent_reason: known_silent(c.sink),
+            why: c.why,
+            remediation: c.remediation,
+        });
+    }
+
+    LivenessReport {
+        ran_at: chrono::Utc::now().to_rfc3339(),
+        ok,
+        silent,
+        inert,
+        unrunnable,
+        undocumented_silent,
+        outcomes,
+    }
+}
+
+/// The most recent sweep, for the read endpoint.
+///
+/// `None` until the first sweep completes, and the endpoint reports that as
+/// `never_run` rather than as healthy — the distinction this whole module
+/// exists to make.
+static LATEST: std::sync::OnceLock<std::sync::RwLock<Option<LivenessReport>>> =
+    std::sync::OnceLock::new();
+
+fn latest_cell() -> &'static std::sync::RwLock<Option<LivenessReport>> {
+    LATEST.get_or_init(|| std::sync::RwLock::new(None))
+}
+
+pub fn record_latest(report: LivenessReport) {
+    if let Ok(mut guard) = latest_cell().write() {
+        *guard = Some(report);
+    }
+}
+
+pub fn latest() -> Option<LivenessReport> {
+    latest_cell().read().ok().and_then(|g| g.clone())
+}
+
+/// Run the standing clock on a schedule.
+///
+/// Liveness is the only rung with no gate behind it: nothing waits on it, so
+/// nothing stalls when it is missing and its absence is observationally
+/// identical to its passing. That is precisely why it had no scheduler, no
+/// endpoint and no CI step while the other four did — the same shape as the
+/// resolution sweeper and the observability sweeper before them, and the third
+/// time this repository has had to schedule a loop that had gone cold.
+///
+/// The remedy is not a better check. It is a worse hiding place: a verdict that
+/// is written somewhere a person reads on somebody else's schedule.
+///
+/// `LIVENESS_SWEEP_SECS=0` disables it, matching `OBSERVABILITY_SCAN_SECS`.
+pub fn spawn_liveness_sweeper(db: sqlx::PgPool) {
+    const DEFAULT_SWEEP_SECS: u64 = 3600;
+
+    let interval_secs = std::env::var("LIVENESS_SWEEP_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_SWEEP_SECS);
+
+    if interval_secs == 0 {
+        println!("[liveness] standing sweep disabled (LIVENESS_SWEEP_SECS=0)");
+        return;
+    }
+    println!("[liveness] sweeping declared write paths every {interval_secs}s");
+
+    tokio::spawn(async move {
+        // Stagger past boot so migrations and schema ensures have the pool.
+        tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+        loop {
+            let report = sweep(&db).await;
+
+            // Loud only when it is actionable. A sweep that prints every hour
+            // regardless of outcome is one people filter, and a filtered check
+            // is an unread check.
+            if !report.undocumented_silent.is_empty() {
+                eprintln!(
+                    "[liveness] SILENT: {} — declared write path(s) with opportunities and no rows. \
+                     This signal does not exist.",
+                    report.undocumented_silent.join(", ")
+                );
+            }
+            if report.unrunnable > 0 {
+                eprintln!(
+                    "[liveness] {} contract(s) UNRUNNABLE — a check that cannot run reports \
+                     healthy for ever.",
+                    report.unrunnable
+                );
+            }
+            if !report.has_positive_control() {
+                eprintln!(
+                    "[liveness] 0 live. Nothing has been demonstrated to work, which cannot be \
+                     distinguished from the sweep itself being broken."
+                );
+            } else {
+                println!(
+                    "[liveness] {} ok, {} silent, {} inert, {} unrunnable",
+                    report.ok, report.silent, report.inert, report.unrunnable
+                );
+            }
+
+            record_latest(report);
+            tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn report(ok: usize, silent: Vec<&'static str>, unrunnable: usize) -> LivenessReport {
+        LivenessReport {
+            ran_at: "1970-01-01T00:00:00Z".into(),
+            ok,
+            silent: silent.len(),
+            inert: 0,
+            unrunnable,
+            undocumented_silent: silent,
+            outcomes: Vec::new(),
+        }
+    }
+
+    /// The positive-control rule, as an assertion rather than a comment.
+    ///
+    /// `0 live` cannot distinguish "every path is broken" from "the sweeper is
+    /// broken". A report that has demonstrated nothing must never be able to
+    /// present itself as healthy, however clean the rest of it looks.
+    #[test]
+    fn a_report_with_nothing_proven_is_never_healthy() {
+        let r = report(0, vec![], 0);
+        assert!(!r.has_positive_control());
+        assert!(
+            !r.is_healthy(),
+            "a sweep with no passing contract reported healthy — which is the \
+             defect this module exists to catch, reproduced in the module itself"
+        );
+
+        // ...and the same report becomes healthy the moment one path is proven.
+        assert!(report(1, vec![], 0).is_healthy());
+    }
+
+    /// Silence needs a written reason or it is a finding. An entry in
+    /// `KNOWN_SILENT` is an excuse someone had to type; anything else is not.
+    #[test]
+    fn an_unexplained_silent_sink_fails_the_report() {
+        assert!(!report(1, vec!["some_ledger"], 0).is_healthy());
+        assert!(report(1, vec![], 0).is_healthy());
+    }
+
+    /// An unrunnable check reports healthy for ever, so it must never be
+    /// folded into a pass.
+    #[test]
+    fn an_unrunnable_query_fails_the_report() {
+        assert!(!report(1, vec![], 1).is_healthy());
+    }
+
+    /// Only `Ok` is a pass. In particular `Inert` is not — the whole reason
+    /// the status exists is that a contract watching an unexercised feature
+    /// must not look green.
+    #[test]
+    fn only_ok_is_a_pass() {
+        assert!(Status::Ok.is_pass());
+        for s in [
+            Status::Silent,
+            Status::Inert,
+            Status::NotDeployed,
+            Status::Unrunnable,
+        ] {
+            assert!(!s.is_pass(), "{} must not be a pass", s.label());
+        }
+    }
 
     /// Mutating SQL in a contract would let a check alter the thing it audits.
     /// Same guard as `grounding_trust`'s cross-checks, for the same reason.
