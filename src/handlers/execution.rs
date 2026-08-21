@@ -337,6 +337,58 @@ pub async fn execute_agent_handler(
             violations = grounding_report.violations.len(),
             "grounding contract violated on the execute path — fields with no possible source"
         );
+
+        // Raise it as an anomaly, not just a log line.
+        //
+        // §4's lifecycle diagram says `violations found -> anomaly event
+        // (kind = grounding)`, and migration 200 widened the CHECK constraint
+        // for exactly this kind. Nothing ever wrote one: violations were logged
+        // and the event stream stayed at zero rows since it was created.
+        //
+        // It matters beyond tidiness. `anomaly_events` is Loop 2's only input.
+        // With none, the HITL queue is empty, no reviewer ever intervenes, no
+        // AgentWide correction is ever made, `bump_persona_version` (its sole
+        // caller is coherence-gate's two_write) never fires, every agent stays
+        // at persona_version 1 — and the drift detector skips every entry it
+        // scans, because drift against a previous version is undefined at v1.
+        // Measured: 0 anomaly events against 1,405 timeline entries.
+        //
+        // Loop 2 needed its own output as its input. This is the seed that
+        // breaks the cycle, and it is the honest one: a real defect, detected
+        // by a real contract, on live traffic.
+        //
+        // Non-fatal and spawned: an audit write must never fail the request it
+        // is auditing.
+        let anomaly = agent_bestiary_memory::AnomalyEvent {
+            event_id: uuid::Uuid::new_v4(),
+            agent_id: db_agent.agent_id,
+            episode_id: Some(episode_id),
+            run_id: None,
+            dyad_id: None,
+            kind: "grounding".to_string(),
+            // L1: a reviewable defect in one output, not a fleet-wide safety
+            // event. Severity is what stops the queue from crying wolf.
+            severity: "L1".to_string(),
+            payload: json!({
+                "agent": agent_id,
+                "violations": grounding_report.violations.len(),
+                "fields": grounding_report
+                    .provenance
+                    .iter()
+                    .map(|(block, prov)| json!({ "block": block, "provenance": prov }))
+                    .collect::<Vec<_>>(),
+            }),
+            requires_review: true,
+            resolved_at: None,
+            resolved_by: None,
+            created_at: chrono::Utc::now(),
+        };
+        let store = state.memory_store.clone();
+        tokio::spawn(async move {
+            if let Err(e) = store.create_anomaly_event(&anomaly).await {
+                tracing::warn!(error = %e, "failed to record grounding anomaly");
+            }
+        });
     }
 
     // 4. Record stats in registry
