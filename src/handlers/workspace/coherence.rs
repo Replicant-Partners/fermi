@@ -167,11 +167,56 @@ pub async fn evaluate_coherence_handler(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // For premium tiers, invoke cohere_and_coordinate directly.
+    // Which strategist coordinates this workspace.
+    //
+    // Read from `teams.coordination_strategist_id` rather than hardcoded.
+    // `cohere_and_coordinate`'s card calls it "the default workspace
+    // strategist", and the platform ships three alternatives —
+    // `pipeline_strategist` (ordered stages), `vote_strategist` (consensus),
+    // `debate_strategist` (adversarial crux). Hardcoding the default made all
+    // three unreachable: a workspace could be assigned one and the shelf would
+    // still invoke Cohere & Coordinate.
+    //
+    // That divergence was also a live hazard rather than a missing feature.
+    // `record_coordination_observation` authorises on
+    // `caller == teams.coordination_strategist_id`, so the moment a workspace
+    // was assigned any other strategist, the shelf would invoke the wrong agent
+    // and the coordination cascade would refuse — silently, and precisely when
+    // someone used the feature as designed.
+    //
+    // A lookup failure falls back to the default rather than failing the
+    // evaluation — but it is logged, because an unlogged fallback is how this
+    // class of defect hides. A workspace silently coordinated by the wrong
+    // agent looks identical to one coordinated correctly.
+    let strategist_name: String = match sqlx::query_scalar::<_, String>(
+        "SELECT a.agent_name FROM teams t
+           JOIN agents a ON a.agent_id = t.coordination_strategist_id
+          WHERE t.id = $1",
+    )
+    .bind(ws_uuid)
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(Some(name)) => name,
+        // NULL strategist: mig-211 backfilled all 249 workspaces and both
+        // creation paths now assign one, so this is a workspace created before
+        // that or one whose strategist agent was deleted.
+        Ok(None) => fermi_auth::teams::DEFAULT_COORDINATION_STRATEGIST.to_string(),
+        Err(e) => {
+            eprintln!(
+                "WARN: could not resolve coordination strategist for workspace {ws_uuid}: {e} \
+                 — falling back to '{}'",
+                fermi_auth::teams::DEFAULT_COORDINATION_STRATEGIST
+            );
+            fermi_auth::teams::DEFAULT_COORDINATION_STRATEGIST.to_string()
+        }
+    };
+
+    // For premium tiers, invoke the workspace's strategist directly.
     // This replaces the former coherence_consultant sub-call per
     // docs/architecture/LEARNING_MECHANICS_SIMPLIFICATION.md.
     let consultant_output = if depth == "recommendations" || depth == "dream_notes" {
-        match state.registry.get("cohere_and_coordinate") {
+        match state.registry.get(&strategist_name) {
             Ok(card) => {
                 let msg_summary: String = messages
                     .iter()
@@ -212,7 +257,7 @@ pub async fn evaluate_coherence_handler(
                 };
 
                 let agent_stmt = ast::AgentStmt {
-                    name: "cohere_and_coordinate".to_string(),
+                    name: strategist_name.clone(),
                     agent_type: Some(card.agent_type.clone()),
                     query: query_text,
                     executor: Some(ast::ExecutorType::LLM),
@@ -230,7 +275,7 @@ pub async fn evaluate_coherence_handler(
                 // the platform's env key. `cohere_and_coordinate` is a
                 // platform-service agent, so resolving its DB row funds it
                 // from the `abw-system` principal's store.
-                let strategist = crate::resolve_agent(&state, "cohere_and_coordinate").await;
+                let strategist = crate::resolve_agent(&state, &strategist_name).await;
                 let credentials = match &strategist {
                     Ok(db_agent) => {
                         crate::build_execution_credentials(&state, db_agent, &card).await
@@ -331,10 +376,24 @@ pub async fn evaluate_coherence_handler(
     };
 
     let (sender_id, sender_name) = if consultant_output.is_some() {
-        (
-            "cohere_and_coordinate".to_string(),
-            "Cohere & Coordinate".to_string(),
-        )
+        // Attribute the message to whoever actually ran, so the transcript does
+        // not credit Cohere & Coordinate for a debate_strategist's work.
+        //
+        // Title-cased from the agent name. Cards carry no display-name field,
+        // and deriving one by slicing the description was worse than this:
+        // brittle on punctuation, and silently wrong rather than merely plain.
+        let display = strategist_name
+            .split('_')
+            .map(|w| {
+                let mut c = w.chars();
+                match c.next() {
+                    Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        (strategist_name.clone(), display)
     } else {
         (
             "coherence_evaluator".to_string(),
@@ -1180,3 +1239,67 @@ pub async fn get_workspace_workflow_handler(
 // ---------------------------------------------------------------------------
 // Agent creation wizard helpers
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod strategist_resolution_tests {
+    fn source() -> String {
+        let file = "src/handlers/workspace/coherence.rs";
+        let path = [
+            std::path::PathBuf::from(file),
+            std::path::PathBuf::from("../..").join(file),
+        ]
+        .into_iter()
+        .find(|p| p.exists())
+        .unwrap_or_else(|| panic!("cannot locate {file}"));
+        std::fs::read_to_string(path).unwrap()
+    }
+
+    /// The coherence shelf must resolve the workspace's registered strategist,
+    /// not name one.
+    ///
+    /// The shelf hardcoded `"cohere_and_coordinate"` in four places: the
+    /// registry lookup, the `AgentStmt` name, the credential resolution, and
+    /// the message attribution. That made `pipeline_strategist`,
+    /// `vote_strategist` and `debate_strategist` unreachable — a workspace
+    /// could be assigned one and the shelf would still invoke the default.
+    ///
+    /// Worse than unreachable: `record_coordination_observation` authorises on
+    /// `caller == teams.coordination_strategist_id`. A non-default assignment
+    /// would make the shelf invoke the wrong agent, and the coordination
+    /// cascade would then refuse — with no error anywhere, and precisely when
+    /// the feature was used as designed.
+    ///
+    /// This is a source check because the failure was never a wrong value. It
+    /// was a literal where a lookup belonged, and only the constant may name it.
+    #[test]
+    fn coherence_shelf_does_not_hardcode_a_strategist() {
+        let src = source();
+        for (i, line) in src.lines().enumerate() {
+            let code = line.trim_start();
+            // Comments and this test explain the defect by naming the agent.
+            if code.starts_with("//") || code.starts_with("///") {
+                continue;
+            }
+            assert!(
+                !code.contains("\"cohere_and_coordinate\""),
+                "coherence.rs:{} names the default strategist directly:\n  {}\nResolve it from \
+                 teams.coordination_strategist_id, falling back to \
+                 fermi_auth::teams::DEFAULT_COORDINATION_STRATEGIST",
+                i + 1,
+                code
+            );
+        }
+    }
+
+    /// The lookup itself must be present, so the check above cannot be
+    /// satisfied by deleting the strategist invocation entirely.
+    #[test]
+    fn coherence_shelf_reads_the_registered_strategist() {
+        let src = source();
+        assert!(
+            src.contains("t.coordination_strategist_id"),
+            "coherence.rs no longer reads teams.coordination_strategist_id — the shelf is \
+             back to invoking a strategist the workspace did not register"
+        );
+    }
+}
