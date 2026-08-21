@@ -9309,34 +9309,44 @@ impl CockpitState {
     ///
     /// Kinds rather than a total, so the message can name what went missing.
     /// Comparing totals would report "5 -> 4" and leave an operator guessing.
+    ///
+    /// Every variant is listed explicitly and the match has no wildcard, so
+    /// adding a statement to the language forces a decision here. A `_ =>` arm
+    /// would fold new kinds into a bucket and report `other (2 -> 0)`, which
+    /// says something was lost without saying what — the same silence one level
+    /// up from the one this check exists to break.
+    ///
+    /// `factor`, `param`, `import`, `estimate` and `output` are kinds
+    /// `generate_fpl_text` genuinely cannot write. They are guarded today only
+    /// by `cached_fpl_is_richer_than_ast`, which reads the cached TEXT for
+    /// `param `/`factor `/`estimate ` and so protects a program that arrived
+    /// with them while missing anything just added to the AST — exactly how
+    /// `agent` was lost. Naming them here means the refusal says which.
     fn statement_census(program: &Program) -> Vec<(&'static str, usize)> {
-        let mut q = 0;
-        let mut d = 0;
-        let mut a = 0;
-        let mut e = 0;
-        let mut m = 0;
-        let mut p = 0;
-        let mut other = 0;
+        let mut counts = [0usize; 11];
         for st in &program.statements {
-            match st {
-                Statement::Question(_) => q += 1,
-                Statement::Driver(_) => d += 1,
-                Statement::Agent(_) => a += 1,
-                Statement::Evidence(_) => e += 1,
-                Statement::Model(_) => m += 1,
-                Statement::Param(_) => p += 1,
-                _ => other += 1,
-            }
+            let i = match st {
+                Statement::Question(_) => 0,
+                Statement::Driver(_) => 1,
+                Statement::Agent(_) => 2,
+                Statement::Evidence(_) => 3,
+                Statement::Model(_) => 4,
+                Statement::Simulate(_) => 5,
+                Statement::Factor(_) => 6,
+                Statement::Param(_) => 7,
+                Statement::Import(_) => 8,
+                Statement::Estimate(_) => 9,
+                Statement::Output(_) => 10,
+            };
+            counts[i] += 1;
         }
-        vec![
-            ("question", q),
-            ("driver", d),
-            ("agent", a),
-            ("evidence", e),
-            ("model", m),
-            ("param", p),
-            ("other", other),
+        [
+            "question", "driver", "agent", "evidence", "model", "simulate", "factor", "param",
+            "import", "estimate", "output",
         ]
+        .into_iter()
+        .zip(counts)
+        .collect()
     }
 
     /// Returns true when cached_fpl contains constructs that the
