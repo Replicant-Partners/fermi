@@ -2846,6 +2846,60 @@ impl CockpitState {
                     ),
                 });
 
+                // ── Say when a generalist answered a question a specialist claims ──
+                //
+                // Decomposition is `fermi`'s job and correctly so: it produces
+                // the drivers, the model and the base rate together, and no
+                // specialist does that. But the base rate is the dominant term
+                // — the model is the base rate times a driver product measuring
+                // ~1.0 — and it therefore leaves the generalist's estimate in
+                // the one place a wrong number does the most damage.
+                //
+                // Observed on the live Houston forecast: the domain was detected
+                // as `climate`, `weather_oracle` declares it, and `fermi`
+                // produced 12.0% anyway. `weather_oracle` later measured 32%
+                // from 330 ERA5 observations, and the crowd sat at 27.5%. The
+                // 12% drove a reported 15.5pp "edge" that was entirely the
+                // error.
+                //
+                // Reported rather than re-routed. Firing the specialist here
+                // would spend credits the operator has not agreed to, and the
+                // decomposition flow's own contract is that nothing runs until
+                // it is asked to. The message names the button that does it.
+                let question_text = self
+                    .program
+                    .question()
+                    .map(|q| q.text.clone())
+                    .unwrap_or_default();
+                let domain = detect_domain(&question_text);
+                let roster = self.domain_roster();
+                if let Some(specialist) =
+                    fermi_console::routing::declared_specialist(&domain, &roster, &|a| {
+                        self.agent_is_routable(a)
+                    })
+                {
+                    if specialist != producer {
+                        log::info!(
+                            "[routing] base rate produced by {} but {} declares domain '{}'",
+                            producer,
+                            specialist,
+                            domain
+                        );
+                        self.messages.push(AssistantMessage {
+                            node: "question".into(),
+                            kind: MessageKind::Warning,
+                            text: format!(
+                                "This base rate came from {}, a generalist. {} declares \
+                                 the '{}' domain and can measure it instead — every \
+                                 driver is a multiplier on this number, so an error \
+                                 here scales through the whole model. Press \
+                                 ⟳ Update base rate to route it to {}.",
+                                producer, specialist, domain, specialist
+                            ),
+                        });
+                    }
+                }
+
                 // Persist to the server so this agent-driven base rate
                 // survives a panel-switch / re-open. Every mutation to
                 // q.base_rate MUST flow through persist_base_rate to
@@ -3943,12 +3997,31 @@ impl CockpitState {
                     }
                 }
 
-                // If SSE stream failed, fall back to non-streaming
+                // No result means fall back, whatever the reason.
+                //
+                // This used to be `else if let Some(err) = stream_error`, so the
+                // non-streaming retry ran ONLY when the server had sent an
+                // explicit `error` event. When the stream merely ENDS — the
+                // connection dropped, a proxy timed it out, the server closed it
+                // — both `final_result` and `stream_error` are None, and the
+                // third arm returned a bare error without ever attempting the
+                // recovery that exists for exactly this case.
+                //
+                // That is not the rare path. Observed 2026-08-21: four agents
+                // fired on one forecast; the one that ran alone took 117s and
+                // completed, and three fired within 19s of each other all died
+                // with "SSE stream ended without complete event" at the SAME
+                // wall-clock instant, at 44s, 52s and 63s elapsed respectively.
+                // A shared drop, not a per-request timeout — and the fallback
+                // was skipped on all three, so three paid-for runs produced
+                // nothing and the operator saw drivers that never moved.
                 if let Some(result) = final_result {
                     Ok(result)
-                } else if let Some(err) = stream_error {
-                    // Try non-streaming fallback
-                    log::warn!("[composer] {} SSE failed, trying non-streaming: {}", tracking_id, err);
+                } else {
+                    let why = stream_error.unwrap_or_else(|| {
+                        "stream ended without a complete event".to_string()
+                    });
+                    log::warn!("[composer] {} SSE failed, trying non-streaming: {}", tracking_id, why);
                     let api_fb = api.clone();
                     let bid = base_id.clone();
                     let qfb = q.clone();
@@ -3970,11 +4043,13 @@ impl CockpitState {
                                 "metadata": metadata,
                             }))
                         }
-                        Ok(Err(e)) => Err(format!("ABW API: {}", e)),
-                        Err(e) => Err(format!("Agent task panicked: {}", e)),
+                        // Both errors name the SSE failure as well as their own.
+                        // Reporting only the retry's error hid the fact that a
+                        // stream had dropped first, which is the part that says
+                        // whether the agent or the transport is at fault.
+                        Ok(Err(e)) => Err(format!("ABW API: {} (after SSE {})", e, why)),
+                        Err(e) => Err(format!("Agent task panicked: {} (after SSE {})", e, why)),
                     }
-                } else {
-                    Err("SSE stream ended without complete event".into())
                 }
             } else {
                 // ── Fallback: local registry (dev mode with ANTHROPIC_API_KEY) ──

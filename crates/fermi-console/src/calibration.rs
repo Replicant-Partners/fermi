@@ -165,28 +165,54 @@ pub fn extract_measured_base_rate(response: &serde_json::Value) -> Option<f64> {
         v.as_f64().filter(|f| f.is_finite() && (0.0..=1.0).contains(f))
     }
 
-    let declared_path = response
-        .get("stages")
-        .and_then(|s| s.get("calibration"))
-        .and_then(|c| c.get("climatology_base_rate"))
-        .and_then(as_rate);
-    if declared_path.is_some() {
-        return declared_path;
+    /// The path `grounding_trust::FIELD_CONTRACTS` declares for this value.
+    fn declared_path(v: &serde_json::Value) -> Option<f64> {
+        v.get("stages")
+            .and_then(|s| s.get("calibration"))
+            .and_then(|c| c.get("climatology_base_rate"))
+            .and_then(as_rate)
     }
 
-    fn search(v: &serde_json::Value) -> Option<f64> {
+    /// A JSON document carried inside a string.
+    ///
+    /// This is how the agent's answer actually arrives. The console reads
+    /// `metadata.reasoning`, and the agent's whole document sits in there as
+    /// TEXT — which is why `apply_base_rate_only` has always used
+    /// `serde_json::from_str` on that field rather than walking it. Tolerates a
+    /// ```json fence and surrounding prose by taking the outermost braces, the
+    /// same allowance the weather cross-checks needed in 2d0ed9f6.
+    fn embedded(s: &str) -> Option<serde_json::Value> {
+        let t = s.trim();
+        let (lo, hi) = (t.find('{')?, t.rfind('}')?);
+        if hi <= lo {
+            return None;
+        }
+        serde_json::from_str(&t[lo..=hi]).ok()
+    }
+
+    /// `depth` bounds the descent through nested embedded documents. Two is
+    /// already more nesting than has ever been observed; the bound exists so a
+    /// pathological response cannot recurse without end.
+    fn find(v: &serde_json::Value, depth: u8) -> Option<f64> {
+        if let Some(hit) = declared_path(v) {
+            return Some(hit);
+        }
         match v {
             serde_json::Value::Object(map) => {
                 if let Some(hit) = map.get("climatology_base_rate").and_then(as_rate) {
                     return Some(hit);
                 }
-                map.values().find_map(search)
+                map.values().find_map(|x| find(x, depth))
             }
-            serde_json::Value::Array(items) => items.iter().find_map(search),
+            serde_json::Value::Array(items) => items.iter().find_map(|x| find(x, depth)),
+            serde_json::Value::String(s) if depth > 0 => {
+                embedded(s).and_then(|inner| find(&inner, depth - 1))
+            }
             _ => None,
         }
     }
-    search(response)
+
+    find(response, 2)
 }
 
 /// How loudly to complain.
@@ -657,6 +683,89 @@ mod tests {
             "13.5 is a percentage written as a number; treating it as a \
              probability would make every comparison fire"
         );
+    }
+
+    /// The shape the console actually receives, which defeated the first version.
+    ///
+    /// The agent's document does not arrive as a nested JSON object. It arrives
+    /// as TEXT in `metadata.reasoning` — which is why `apply_base_rate_only` has
+    /// always used `serde_json::from_str` on that field. The original recursive
+    /// search walked `Value::Object` and `Value::Array` and never descended into
+    /// a `Value::String`, so it returned `None` on every real response and the
+    /// comparison silently never ran.
+    ///
+    /// Measured consequence, from the live Houston forecast: `weather_oracle`
+    /// reported `climatology_base_rate = 0.32` while the forecast carried 12.0%,
+    /// a 20pp disagreement in the term that IS the forecast, and the check that
+    /// exists to catch exactly that reported nothing.
+    ///
+    /// An inert check is not a passing one. This is that failure, one level up
+    /// from the one the check was written for.
+    #[test]
+    fn a_document_delivered_as_a_string_is_still_read() {
+        let doc = serde_json::json!({
+            "settlement_target": { "station": "KHOU", "bucket_lo": 76, "bucket_hi": 77 },
+            "stages": {
+                "calibration": {
+                    "agent": "weather_calibrator",
+                    "predictive_sd": 2.25,
+                    "calibrated_probability": 0.32,
+                    "climatology_base_rate": 0.32,
+                    "sd_was_measured": true
+                }
+            },
+            "final_probability": 0.32
+        });
+
+        let response = serde_json::json!({
+            "agent_id": "weather_oracle",
+            "status": "success",
+            "metadata": { "reasoning": serde_json::to_string(&doc).unwrap() },
+            "evidence": [{ "source": "weather_oracle", "summary": "ERA5 climatology" }]
+        });
+
+        assert_eq!(
+            extract_measured_base_rate(&response),
+            Some(0.32),
+            "the measurement is in the response, one string deep"
+        );
+    }
+
+    /// Fenced and wrapped in prose, which is how models actually reply.
+    #[test]
+    fn a_fenced_document_surrounded_by_prose_is_still_read() {
+        let response = serde_json::json!({
+            "metadata": {
+                "reasoning": "Here is my analysis.\n\n```json\n{\"stages\":                     {\"calibration\": {\"climatology_base_rate\": 0.135}}}\n```\n                    Let me know if you need more."
+            }
+        });
+        assert_eq!(extract_measured_base_rate(&response), Some(0.135));
+    }
+
+    /// The live disagreement this was built to surface.
+    ///
+    /// Houston, 2026-08-21: the forecast declared 12.0%; `weather_oracle`
+    /// measured 32% from 330 ERA5 observations in the Aug 16-26 window at KHOU,
+    /// trend-adjusted to 2025. The crowd was at 27.5%. The forecast was wrong by
+    /// a factor of ~2.7 and reported the resulting 15.5pp gap as a possible edge.
+    #[test]
+    fn the_houston_disagreement_is_caught_end_to_end() {
+        let response = serde_json::json!({
+            "metadata": {
+                "reasoning": "{\"stages\": {\"calibration\":                     {\"climatology_base_rate\": 0.32}}}"
+            }
+        });
+        let measured = extract_measured_base_rate(&response);
+        assert_eq!(measured, Some(0.32));
+
+        let verdict = base_rate_agreement(0.12, measured);
+        assert!(
+            matches!(verdict, BaseRateAgreement::Disagrees { .. }),
+            "{verdict:?}"
+        );
+        let msg = verdict.message().expect("a disagreement speaks");
+        assert!(msg.contains("12.0%"), "{msg}");
+        assert!(msg.contains("32.0%"), "{msg}");
     }
 
     #[test]
