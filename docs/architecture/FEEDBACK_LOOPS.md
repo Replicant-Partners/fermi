@@ -1,13 +1,14 @@
 # Feedback Loops in the Agent Bestiary
 
-**Date:** 2026-05-15, revised 2026-06-03, **verified and revised 2026-08-15**, **operational evidence + remaining fixes 2026-08-16**
+**Date:** 2026-05-15, revised 2026-06-03, **verified and revised 2026-08-15**, **operational evidence + remaining fixes 2026-08-16**, **second pass 2026-08-21**
 **Status:** Reference — describes the five adaptive feedback loops, their verified implementation state, what the first deploy actually demonstrated, and BayesOps Loop A (shipped through Phase 3).
-**Verified against:** `main` @ `884daab3`, migrations through `210`.
+**Verified against:** `main` @ `e4a70acf`, migrations through `211`.
 
 > **Read §5 first if you want the short version.** Every loop is wired, and
-> §5 records which ones have been *observed turning* on real data versus which
-> are still waiting for traffic. Those are different claims and this document
-> keeps them apart.
+> §5 records which ones have been *observed turning* on real data, which are
+> still waiting for traffic, and which were reached on every cycle without ever
+> succeeding. Those are three different claims and this document keeps them
+> apart.
 
 ---
 
@@ -59,10 +60,43 @@ kinds of correction were needed, and the third is the one worth internalising:
    because it produces **no error at all** — a permission denial is the system
    working correctly. See §5.
 
+7. **Called ≠ succeeded.** Added 2026-08-21. A hop can have an executing call
+   site, be called on every cycle, and have **never once worked**.
+   `create_snapshot` decoded `SELECT MAX(version)` into `(i32,)` rather than
+   `(Option<i32>,)`, so the *first* snapshot for any agent always errored on the
+   NULL — and since no agent ever reached a second, the function has no
+   successes in the platform's history. What made it invisible is that snapshot
+   failure is *deliberately* non-fatal: it logs a warning and consolidation
+   reports success. A non-fatal failure path plus a bug that only fires on the
+   first call equals a function that has never worked while every layer above
+   reports that it did. Verifying the call site is not verifying the callee.
+
+8. **One dependency, two resolutions.** Added 2026-08-21. When two code paths
+   answer the same question — *how is the extractor funded?* — independently,
+   only the path you happen to test is correct. Creature dreaming built its
+   extraction model from `std::env::var("ANTHROPIC_API_KEY")`; API dreaming
+   resolved the ontologist's card, provider and credential from the owning
+   principal's store. On a deployment that funds agents through the credential
+   store, the env-var answer is always `None`. Both paths reported `completed`.
+   The remedy is not to fix the second copy but to delete it: there must be one
+   function that answers the question.
+
+9. **Gated by data, invoked by a constant.** Added 2026-08-21. The subtlest of
+   the set. `record_coordination_observation` authorises on
+   `caller == teams.coordination_strategist_id` — correctly, from data. The
+   coherence shelf that invokes the strategist hardcoded
+   `"cohere_and_coordinate"` in four places. Two halves of one mechanism, one
+   reading the column and one asserting its value. **This is undetectable while
+   the data equals the constant, which today it does in 260 of 260
+   workspaces** — and it fails as a permission denial the moment anyone uses the
+   configurability the column exists to provide. A constant that agrees with the
+   data is not a bug you can observe; it is a bug you have to look for.
+
 A loop is only called closed here when every hop has an executing call site and
 the surface that reports it reads the tables the loop writes. It is only called
 *turning* when it has been observed to move on real data — see §5. And a gate is
-only closed when something is known to satisfy it.
+only closed when something is known to satisfy it. **A hop is only called
+working when it has been observed to succeed, not merely to be reached.**
 
 ### The deferred-work comment
 
@@ -134,10 +168,13 @@ Worth recording because each cost real time and none is obvious:
 | — Not yet turning | Wiring closed, waiting on traffic or data. Not a defect |
 | ◐ Partial | Closed on one path, broken or absent on another; the break is named |
 | ✖ Broken | Documented as working, verified as not working |
+| ✖ Never succeeded | Reached on every cycle and has no successes in the platform's history — added 2026-08-21 |
 
 The first three are the ones that matter. A loop can be wiring-closed and not
 turning for entirely legitimate reasons, and saying so is more useful than a
-single verdict that hides which.
+single verdict that hides which. The last marker exists because *wiring closed*
+was being read as *working*: `create_snapshot` had an executing call site on
+every consolidation and a zero percent success rate.
 
 ---
 
@@ -351,6 +388,68 @@ a latent no-op — the dream narrator's `UPDATE ontology_snapshots SET
 dream_synopsis` targeted a row nothing ever inserted, and now targets the
 cycle's snapshot by id rather than by a racy `ORDER BY version DESC LIMIT 1`.
 
+**And `create_snapshot` had never once succeeded — found 2026-08-21, fixed.**
+Wiring it onto the API path (above) produced nothing, because the call site was
+right and the callee had never worked:
+
+```sql
+SELECT MAX(version) FROM ontology_snapshots WHERE agent_id = $1
+```
+
+An aggregate with no `GROUP BY` always returns exactly one row, and that row is
+NULL when the agent has no snapshots yet. It was decoded into `(i32,)` rather
+than `(Option<i32>,)`, so the NULL failed to decode, `?` propagated, and the
+**first** snapshot for any agent always errored. No agent ever reached a second,
+so the path never ran at all. `fetch_optional` is what made it read as correct:
+*"there may be no row"* is the plausible mental model for this query and the
+wrong one for an aggregate — the row always exists, only its value is NULL.
+
+The proof is in the data rather than the code. The single row in
+`ontology_snapshots` carries `git_commit_sha = 'seed-034'`; it was inserted by
+migration 034. And across the platform's entire history, **`consolidation_jobs`
+has 0 rows with a non-NULL `ontology_snapshot_id`** — nothing that has ever run
+here produced a snapshot. Seven consolidations completed between the wiring fix
+and this one, each calling it, each failing identically.
+
+Failure was invisible **by design**: snapshot failure is non-fatal, so it logged
+a warning and consolidation reported success. That was a reasonable decision —
+the real output is durable in the knowledge tables — and it is also what let a
+function survive for the platform's whole lifetime with a zero percent success
+rate. See verification note 7.
+
+The regression test needs a database, because this is a decode contract and no
+mock fails the way Postgres does. It asserts both directions: the old `(i32,)`
+shape still errors on a NULL aggregate, and `query_scalar::<Option<i32>>`
+returns `None` and yields version 1.
+
+**Creature dreaming resolved its extractor from an env var nobody sets — found
+2026-08-21, fixed.** `prey_locator` had 93 episodes and no semantic memory at
+all — 0 entities, 0 facts, 0 rules — after three *completed* dreaming cycles
+reporting 77, 10 and 6 episodes processed. None of the 93 was consumed.
+
+The creature path built its extraction model from
+`std::env::var("ANTHROPIC_API_KEY")` with a hardcoded haiku model. The API path
+resolves the ontologist's card, its provider, and a credential from the owning
+principal's store. Two definitions of how the extractor is funded, and on a
+deployment that funds agents through the credential store the env-var one always
+resolves to `None`. Every creature dream therefore ran with no extractor:
+nothing learned, episodes correctly left unconsolidated by the data-loss guard,
+a dreaming credit debited, job marked `completed`. Indistinguishable from a
+healthy cycle.
+
+The evidence is unusually clean because the two paths ran side by side. Every
+API-path consolidation since 2026-08-16 extracted rules — `sentiment_analyzer`,
+`macro_forecaster`, `fermi`, `ar_cartographer`, `coherence_consultant`,
+`weather_oracle`, `football_analyst`. Every creature-path one extracted 0,
+across all three of its agents.
+
+Both paths now call `build_extraction_llm`, so there is one answer to that
+question rather than two (verification note 8). The creature path also now
+**refuses rather than running** when it resolves `None`: the guard already
+prevents the data loss, but a cycle that cannot learn still costs a credit and
+reports success, and the API path has refused for exactly this reason since the
+91-cycle incident. This path was the one that did not.
+
 **Read-path defect — found 2026-08-15, fixed.** The loop was succeeding and
 reporting zero. `handlers/ontology.rs::get_ontology`, which backs both the
 agent Knowledge tab and the `/agent/:id/ontology` viewer, read **only**
@@ -494,9 +593,10 @@ Workspace messages accumulate
 
     → User triggers via Coherence shelf at Recommendations or Dream Notes tier
       (workspace/coherence.rs)
-      → cohere_and_coordinate executed via registry.execute_agent(...)
-      → NO ToolContext is constructed, therefore NO tools are available
-      → Stage 0 (intention map) and Stage 3 (write brief) cannot execute
+      → the workspace's registered coordination_strategist_id is resolved
+        and executed through ToolAwareExecutor with a full ToolContext
+        (was: cohere_and_coordinate, hardcoded, via registry.execute_agent,
+         which builds no ToolContext — so Stages 0 and 3 could not execute)
 ```
 
 **Correction path (outer — across sessions):**
@@ -575,6 +675,39 @@ And the two that blocked it from running at all:
    only files under `context/`; `_coordination/brief.md` is outside that
    prefix. This no longer matters for closure, because the brief is not the
    mechanism — but it is why treating it as one never worked.
+
+**A fourth, found 2026-08-21: the shelf invoked a strategist the workspace
+never registered.** `evaluate_coherence_handler` hardcoded
+`"cohere_and_coordinate"` in four places — the registry lookup, the `AgentStmt`
+name, the credential resolution, and the transcript attribution — and never read
+`teams.coordination_strategist_id`, which is the column the rest of Loop 3
+authorises on.
+
+Two consequences, and the second is why this is recorded rather than filed as a
+minor cleanup. The platform ships `pipeline_strategist` (ordered stages),
+`vote_strategist` (consensus) and `debate_strategist` (adversarial crux); all
+three were unreachable, because a workspace could be assigned one and the shelf
+would still invoke the default.
+
+The second is a live hazard. Defect 0 above gates
+`record_coordination_observation` on *the caller must be this workspace's
+registered strategist* — deliberately, because writing into another agent's
+memory is a poisoning primitive. So assigning any non-default strategist would
+make the shelf invoke the wrong agent and the coordination cascade then refuse.
+No error anywhere: a permission denial is the system working correctly. The
+failure would be triggered **by using the feature as designed**, and only then.
+
+Measured today: 260 of 260 workspaces are on the default, so the constant and
+the column agree everywhere and the divergence has never manifested. That is not
+reassurance, it is the reason it survived — see verification note 9.
+
+The shelf now resolves the registered strategist, falls back to
+`DEFAULT_COORDINATION_STRATEGIST`, logs a lookup failure rather than degrading
+silently, and attributes the transcript message to whoever actually ran. Locked
+by `strategist_resolution_tests`, which is a source check for the same reason
+`both_workspace_creation_paths_assign_a_strategist` is: the failure was never a
+wrong value, it was a literal where a lookup belonged, and only the constant may
+name the agent.
 
 Also verified working throughout: Γ(C) measurement, per-principle scoring, the
 auto-eval cadence, and the `coherence_update` message.
@@ -1004,7 +1137,7 @@ lines there are stale), `docs/fermi/BAYESOPS_CONTRACT.md`, and
 
 ---
 
-## 5. Operational evidence — first deploy, 2026-08-16
+## 5. Operational evidence — 2026-08-16 and 2026-08-21
 
 Everything above is a claim about wiring. This section records what has actually
 been **observed to move** against the production database, and what has not.
@@ -1104,7 +1237,7 @@ writer at all, and a test that checks values cannot see that.
 |---|---|---|
 | 1 observation | 0 live timeline entries | Newest entry predates the deploy. No agent has been executed since. Needs traffic, not repair. |
 | 1 drift | 0 anomalies | **1,170 of 1,245 timeline entries are at `persona_version = 1`**, which the worker skips by design. Historical eval-run entries written before the stamping fix. Only new live traffic is eligible. |
-| 1 snapshots | Still 1, newest February | `create_snapshot` fires on a consolidation cycle; none has run since deploy. |
+| 1 snapshots | Still 1, newest February | **This reasoning was wrong** — see 2026-08-21 below. Consolidations *had* run and called it; `create_snapshot` had never once succeeded. |
 | 2 | Queue empty | Follows from Loop 1 observation. The mechanism is closed; nothing has reached it. |
 | 4 | 0 proposals | **127 workspaces, none of which has a composition identity** — no mission, no strategist — so there is nothing to version. This is an onboarding gap, not a loop defect. |
 
@@ -1208,6 +1341,66 @@ is the primary source, because the previous wording described the input as
 Retention began with mig-199; 71 episodes have one today. It changes what every
 cycle from here learns, which is the honest scope.
 
+### Second pass — 2026-08-21
+
+Three more defects, all found by asking the same question of a different hop:
+*has this been observed to succeed, or only to be reached?*
+
+**Loop 1's dual memory was half-built, and not the half anyone suspected.** The
+design is episodic (embedded episodes) plus semantic (a developing per-agent
+ontology). Measured:
+
+| Half | State |
+|---|---|
+| Episodic write path | Embedding at **90–95%** over the trailing 48h |
+| Semantic — entities | **1,121 / 1,279 embedded** |
+| Semantic — rules | **209 / 235 embedded** |
+| Semantic — ontology snapshots | **0 ever created** |
+
+The first three are healthy. The fourth is the whole of ontology *development* —
+versioned graphs, Mermaid diagrams, git provenance, the dream synopsis — and it
+had a zero percent success rate since the platform started, for the reason in
+Loop 1 above. The corroborating number is the cleanest in this document:
+`consolidation_jobs` has **0 rows with a non-NULL `ontology_snapshot_id`**,
+across every job ever run.
+
+Also measured while there: **828 episodes are unembedded and unconsolidated**,
+which sounds alarming and is not. 646 are from a June outage and only 4 are from
+August. A historical backlog, not an ongoing defect — the distinction the
+loop-health panel cannot make and a human reading a single count would get
+wrong.
+
+**Loop 1's creature path was learning nothing at all.** `prey_locator`: 93
+episodes, 0 entities, 0 facts, 0 rules, three completed cycles. See Loop 1
+above. Still 0/0 as of this writing — the fix is committed but not deployed, so
+this is the clearest available test of it: the first creature dream after deploy
+either consumes those 93 episodes or the diagnosis was wrong.
+
+**Loop 3's strategist was hardcoded at the point of invocation.** See Loop 3
+above. Two supporting measurements:
+
+| | |
+|---|---|
+| Workspaces with a strategist | **260 / 260** |
+| Distinct strategists in use | **1** |
+
+The first confirms the 2026-08-16 fix is holding: 11 workspaces have been
+created since mig-211 backfilled 249, and all 11 were assigned. The second is
+why the hardcode was invisible — every workspace runs the default, so the
+constant and the column have never disagreed.
+
+**What to check after the next deploy.** These are stated as predictions so they
+can be wrong:
+
+1. `SELECT count(*), max(created_at) FROM ontology_snapshots` — currently 1 row
+   at `seed-034`, 2026-02-15. The first agent to dream should produce version 1.
+2. `SELECT count(*) FROM consolidation_jobs WHERE ontology_snapshot_id IS NOT NULL`
+   — currently 0, and the number that matters more, since it links the snapshot
+   to the cycle that made it.
+3. `prey_locator` entity/fact/rule counts — currently 0/0/0 against 93 episodes.
+4. Loop 1 observation and drift, both still waiting on live traffic rather than
+   repair. 1,170 of 1,245 timeline entries remain at `persona_version = 1`.
+
 ---
 
 ## 6. Loop instrumentation
@@ -1296,12 +1489,15 @@ in CI instead of on the dashboard.
 depends on is part of closing that loop. An instrument that cannot fail loudly
 is not an instrument.
 
-### Open breaks, 2026-08-16
+### Open breaks, 2026-08-16 and 2026-08-21
 
 | # | Break | Loop | Notes |
 |---|---|---|---|
 | 12 | ~~`fermi_forecasts.agents_used` records FPL *statement* names, which calibration readers treat as agent identities~~ | 5a | **Fixed 2026-08-16** — `fermi::attribution::roster` resolves at write time; mig-209 repaired 40 entries. **L5-M03 narrowed on evidence.** Probe now reports MECHANISM SOUND, 9/9 |
 | 13 | ~~Entity extraction returned 0 entities on 12 episodes while rule extraction returned 5~~ | 1 | **Fixed 2026-08-16** — neither extractor read `response_text`; both now share `episode_digest`. Not a failure, an omission |
+| 16 | ~~`create_snapshot` decoded a NULL aggregate into `(i32,)`, so the first snapshot for any agent always errored and the function has never once succeeded~~ | 1 | **Fixed 2026-08-21** — `query_scalar::<Option<i32>>`. Corroborated by 0 consolidation jobs with a snapshot id, ever. DB-backed regression test asserts both decode shapes |
+| 17 | ~~Creature dreaming resolved its extractor from `ANTHROPIC_API_KEY`, which this deployment does not set, so every creature dream ran with no extractor and reported `completed`~~ | 1 | **Fixed 2026-08-21** — both paths call `build_extraction_llm`; the creature path now refuses rather than charging a credit for a cycle that cannot learn |
+| 18 | ~~The coherence shelf hardcoded `cohere_and_coordinate` and never read `teams.coordination_strategist_id`, making three shipped strategists unreachable and any non-default assignment fail as a permission denial~~ | 3a | **Fixed 2026-08-21** — resolves the registered strategist; locked by a source check, since the failure was a literal where a lookup belonged |
 | 14 | 127 workspaces have no composition identity, so Loop 4 has nothing to version | 4 | **Open.** Onboarding gap rather than loop defect |
 | 15 | 73 curated tool declarations remain undispatchable, quarantined in `known_debt` | all | Ratcheting down: 92 → 79 → 73. Breakdown below |
 | 10 | Valence-homophily threshold (spread < 0.25) exists only as prompt text | 3b | Compute it, or stop documenting it as a mechanism |
@@ -1398,6 +1594,12 @@ that worked, and a read path pointing somewhere else.**
 - The strategist wrote a brief; dreaming reads episodes.
 - The router asked for calibration; the tool had no dispatch arm.
 - The panel asked for `detected_at`; the column is `created_at`.
+- Consolidation called `create_snapshot`; it read a NULL as an `i32` and had
+  never once returned.
+- Creature dreaming asked for an API key; this deployment funds agents from the
+  credential store.
+- Loop 3's gate read `coordination_strategist_id`; the shelf that invoked the
+  strategist wrote its name as a literal.
 
 None of these were visible as errors. Four of them were *documented* as working,
 and three were protected by a comment asserting some other component would
@@ -1406,12 +1608,23 @@ than editorial: a ratchet that only shrinks, payload assembly that fails in CI,
 a schema contract that names the columns a loop depends on, and an instrument
 that says `broken` where it used to say `unmeasured`.
 
+The 2026-08-21 pass added a distinction to that list, and it is the one to
+carry forward. The first six above are read paths aimed at the wrong place. The
+last three are hops that were *reached on every cycle and never worked* — a
+call site is evidence that something was invoked, not that it returned. Three
+different mechanisms hid it: a deliberately non-fatal failure, a duplicated
+dependency resolution, and a constant that happened to agree with the data. Each
+one made a broken hop report success, which is why none showed up in the
+2026-08-15 audit that verified call sites.
+
 **What is genuinely unfinished** is honest to state plainly. Every loop is
 wired, four have been observed turning on real data, and the two exceptions
 named in the previous revision are both closed: Loop 5a's attribution now
 resolves at write time and its probe reports `MECHANISM SOUND`, and
 `intention_coordinator`'s six tools dispatch, so Loop 3's Stage 0 exists for the
-first time.
+first time. Ontology development, however, has not yet been observed to work
+even once — the defect is understood and fixed, and §5 states the query that
+will confirm or refute it after the next deploy.
 
 What remains is not loop wiring. 127 workspaces have no composition identity, so
 Loop 4 has nothing to version — an onboarding gap. 73 curated tool declarations
