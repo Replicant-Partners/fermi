@@ -128,18 +128,22 @@ pub enum Status {
 /// shrink**. The live tier additionally asserts that every entry is *still*
 /// silent, so a stale one is flagged rather than becoming a standing excuse
 /// nobody re-examines.
-pub const KNOWN_SILENT: &[(&str, &str)] = &[(
-    "semantic_rules.application_count",
-    "The write (`kg_context::record_rule_retrievals`) is new, spawned off the \
-     hot path, and has not yet been observed firing against this database. \
-     Well over a thousand episodes belong to agents holding retrievable \
-     rules — the runner prints the current figure — so the opportunity is \
-     real and this is not merely unused. Until it fires, \
-     `extraction_utility` cannot distinguish a rule the platform wanted back \
-     from one nobody ever retrieved, which is the entire signal the \
-     ontologist's own Loop 1 runs on. Remove this entry the first time any \
-     rule reaches application_count > 0.",
-)];
+// Empty, and that is a result rather than an oversight.
+//
+// The list held one entry: `semantic_rules.application_count`, excused because
+// `kg_context::record_rule_retrievals` was new, spawned off the hot path, and
+// had never been observed firing. Its own reason set the condition for its
+// removal — "remove this entry the first time any rule reaches
+// application_count > 0" — and the first live run of this suite reported
+// 27 writes against 2,092 opportunities. So it went.
+//
+// The mechanism is worth noting because it is the part that usually rots: the
+// live tier asserts that every excused sink is *still* silent, so the exemption
+// could not quietly outlive its reason. It failed the run that made it
+// obsolete. An exemption list that can only shrink, and that checks its own
+// entries against reality, is the difference between an escape valve and a
+// standing permission nobody re-reads.
+pub const KNOWN_SILENT: &[(&str, &str)] = &[];
 
 /// Is this sink a documented exception?
 pub fn known_silent(sink: &str) -> Option<&'static str> {
