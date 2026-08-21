@@ -137,6 +137,72 @@ pub fn bind_judgement_to_driver(hint: Option<&str>, driver_refs: &[String]) -> J
     JudgementBinding::Ambiguous(driver_refs.to_vec())
 }
 
+/// Record that a piece of evidence supports the drivers an agent researched.
+///
+/// Returns the drivers it was attached to.
+///
+/// # Why this had to be written at all
+///
+/// `DriverStmt.evidence_refs` is parsed, validated by `semantic.rs` (an
+/// unresolvable ref is an error; an empty one with no rationale is an
+/// "unsupported driver" warning) and printed by the CLI report. Nothing ever
+/// WROTE it: every construction site in the console passes `vec![]`, and
+/// `process_agent_evidence` attached evidence to the program and never to the
+/// driver it was researched for.
+///
+/// So the structural driver-to-evidence link did not exist. The only thing
+/// associating a finding with a driver was the `{agent}_{driver}` naming
+/// convention buried in an evidence id — a string convention standing in for a
+/// reference, which is why "show me how research changed my view of THIS
+/// driver" had no query behind it.
+///
+/// # Why evidence goes to every driver and a multiplier does not
+///
+/// [`bind_judgement_to_driver`] refuses to spread one stated multiplier across
+/// several drivers. This function deliberately does the opposite, and the
+/// asymmetry is the point rather than an inconsistency:
+///
+/// * a **multiplier** is a MUTATION. Applying one judgement to five drivers
+///   compounds it — 1.25 across five is 3.05 — and does so silently, inside a
+///   number nobody can see the derivation of.
+/// * **evidence** is a RECORD. An agent hired to research five drivers produced
+///   findings about those five. Attaching all of it to all of them is broader
+///   than ideal, but it is visible, it is reversible, and a human reading the
+///   driver card can judge relevance. Attaching none of it — the previous
+///   behaviour — loses the link entirely.
+///
+/// The costs are not symmetric, so the policies are not either. Anyone tempted
+/// to make these two functions agree should change the evidence format so an
+/// item names its driver, not make one of them wrong to match the other.
+///
+/// Idempotent: `Program::add_evidence` replaces by id, so re-running an agent
+/// reuses `{bound_name}_{index}` and this must not accumulate duplicates.
+pub fn attach_evidence_to_drivers(
+    program: &mut fermi::ast::Program,
+    agent_name: &str,
+    evidence_id: &str,
+) -> Vec<String> {
+    let Some(refs) = program.agent(agent_name).map(|a| a.driver_refs.clone()) else {
+        return Vec::new();
+    };
+
+    let mut attached = Vec::new();
+    for driver_name in refs {
+        let Some(driver) = program.driver_mut(&driver_name) else {
+            // An agent may reference a driver that has since been renamed or
+            // deleted. Skipping is right: pushing the ref anyway would make
+            // `semantic.rs` report an undefined symbol on the DRIVER side of a
+            // link whose real problem is a dangling `driver_refs` entry.
+            continue;
+        };
+        if !driver.evidence_refs.iter().any(|e| e == evidence_id) {
+            driver.evidence_refs.push(evidence_id.to_string());
+        }
+        attached.push(driver_name);
+    }
+    attached
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,5 +392,112 @@ mod tests {
             bind_judgement_to_driver(Some("anything"), &[]),
             JudgementBinding::NoDriver
         );
+    }
+
+    // ── Attaching evidence to the drivers it was researched for ──────────
+
+    fn program_with(agent_drivers: &[&str], drivers: &[&str]) -> fermi::ast::Program {
+        use fermi::ast::{AgentStmt, Program, Statement};
+        let mut p = Program {
+            statements: Vec::new(),
+        };
+        for d in drivers {
+            p.statements.push(Statement::Driver(default_driver(d)));
+        }
+        p.statements.push(Statement::Agent(AgentStmt {
+            name: "weather_oracle_x".into(),
+            agent_type: Some("research".into()),
+            query: "q".into(),
+            executor: None,
+            schedule: None,
+            driver_refs: agent_drivers.iter().map(|s| s.to_string()).collect(),
+            depends_on: vec![],
+            confidence_threshold: None,
+        }));
+        p
+    }
+
+    /// The link that did not exist.
+    #[test]
+    fn evidence_is_recorded_on_the_driver_it_was_researched_for() {
+        let mut p = program_with(&["ensemble_spread"], &["ensemble_spread"]);
+        let attached = attach_evidence_to_drivers(&mut p, "weather_oracle_x", "weather_oracle_x_0");
+
+        assert_eq!(attached, vec!["ensemble_spread".to_string()]);
+        assert_eq!(
+            p.driver("ensemble_spread").unwrap().evidence_refs,
+            vec!["weather_oracle_x_0".to_string()],
+            "every construction site passed vec![] and nothing ever pushed to it"
+        );
+    }
+
+    /// A broker agent's evidence reaches all of its drivers.
+    ///
+    /// The deliberate opposite of `bind_judgement_to_driver`, which refuses to
+    /// spread one multiplier across several. Evidence is a record and a
+    /// multiplier is a mutation; see the doc comment.
+    #[test]
+    fn a_broker_agents_evidence_reaches_every_driver_it_covers() {
+        let names = ["ensemble_spread", "model_cluster", "climate_trend"];
+        let mut p = program_with(&names, &names);
+        let attached = attach_evidence_to_drivers(&mut p, "weather_oracle_x", "weather_oracle_x_0");
+
+        assert_eq!(attached.len(), 3);
+        for n in names {
+            assert_eq!(
+                p.driver(n).unwrap().evidence_refs,
+                vec!["weather_oracle_x_0".to_string()],
+                "{n} was researched by the agent and must carry the finding"
+            );
+        }
+    }
+
+    /// Re-running an agent must not accumulate duplicate refs.
+    ///
+    /// `Program::add_evidence` replaces by id, so a second run of the same agent
+    /// reuses `{bound_name}_0`. Without the guard the driver would collect one
+    /// identical ref per run, and `semantic.rs` would still pass — a growing
+    /// list of the same string reads as growing support.
+    #[test]
+    fn re_running_an_agent_does_not_duplicate_the_reference() {
+        let mut p = program_with(&["ensemble_spread"], &["ensemble_spread"]);
+        for _ in 0..3 {
+            attach_evidence_to_drivers(&mut p, "weather_oracle_x", "weather_oracle_x_0");
+        }
+        assert_eq!(p.driver("ensemble_spread").unwrap().evidence_refs.len(), 1);
+    }
+
+    /// Two findings from one run both land.
+    #[test]
+    fn separate_findings_are_recorded_separately() {
+        let mut p = program_with(&["ensemble_spread"], &["ensemble_spread"]);
+        attach_evidence_to_drivers(&mut p, "weather_oracle_x", "weather_oracle_x_0");
+        attach_evidence_to_drivers(&mut p, "weather_oracle_x", "weather_oracle_x_1");
+        assert_eq!(
+            p.driver("ensemble_spread").unwrap().evidence_refs,
+            vec![
+                "weather_oracle_x_0".to_string(),
+                "weather_oracle_x_1".to_string()
+            ]
+        );
+    }
+
+    /// A dangling `driver_refs` entry is skipped rather than written through.
+    ///
+    /// `semantic.rs` errors on a driver referencing undefined evidence. Pushing
+    /// a ref for a driver that no longer exists would report the fault on the
+    /// driver side of a link whose real problem is the agent's stale ref.
+    #[test]
+    fn a_reference_to_a_deleted_driver_is_skipped() {
+        let mut p = program_with(&["ensemble_spread", "deleted"], &["ensemble_spread"]);
+        let attached = attach_evidence_to_drivers(&mut p, "weather_oracle_x", "weather_oracle_x_0");
+        assert_eq!(attached, vec!["ensemble_spread".to_string()]);
+    }
+
+    #[test]
+    fn an_unknown_agent_attaches_nothing() {
+        let mut p = program_with(&["ensemble_spread"], &["ensemble_spread"]);
+        assert!(attach_evidence_to_drivers(&mut p, "nobody", "e_0").is_empty());
+        assert!(p.driver("ensemble_spread").unwrap().evidence_refs.is_empty());
     }
 }

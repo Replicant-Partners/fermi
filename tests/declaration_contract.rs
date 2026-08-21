@@ -157,14 +157,18 @@ const DRIVER_FIELDS: &[(&str, Consumer)] = &[
     ),
     (
         "evidence_refs",
-        Consumer::NeverPopulated(
-            "READ by semantic.rs (unsupported-driver check) and the CLI report. \
-         WRITTEN nowhere on the console path: all five construction sites pass \
-         vec![], and process_agent_evidence never pushes the id of the evidence \
-         it just attached. So the structural driver-to-evidence link does not \
-         exist and the only association is the `{agent}_{driver}` naming \
-         convention. Closing it: push ev.id onto the driver the agent was bound \
-         to, at the same point the suggestion is staged.",
+        Consumer::ReadBy(
+            "semantic.rs resolves every ref against the symbol table and treats an \
+         empty list plus a missing rationale as an unsupported driver; the CLI \
+         report lists them. WRITTEN by drivers::attach_evidence_to_drivers, \
+         called from process_agent_evidence as each item is added, and emitted \
+         by generate_fpl_text so it survives a save. \
+         \
+         Was NeverPopulated until this was closed: read by two consumers, \
+         written by nothing, all five console construction sites passing vec![]. \
+         The only association between a finding and its driver was the \
+         `{agent}_{driver}` shape of the evidence id — a naming convention \
+         standing in for a reference.",
         ),
     ),
     (

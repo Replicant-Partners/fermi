@@ -32,7 +32,7 @@
 //! _parses`: when the producer is untestable, pin the wire format both sides agree
 //! on.
 
-use fermi::ast::{ExecutorType, Schedule, Statement, TimeUnit};
+use fermi::ast::{AppliesTo, DriverType, ExecutorType, Schedule, Statement, TimeUnit};
 use fermi::{Lexer, Parser};
 
 fn parse(src: &str) -> fermi::ast::Program {
@@ -53,9 +53,24 @@ fn parse(src: &str) -> fermi::ast::Program {
 const EMITTED: &str = r#"question "Will KORD hit 74-75F on Aug 22?"
 
 driver ensemble_spread continuous {
-    distribution: normal(2.0, 0.5)
+    distribution: triangular(1.5, 2.0, 2.6)
     unit: "degrees_f"
     applies_to: quantity
+    evidence_refs: ["weather_oracle_ensemble_spread_0"]
+    rationale: "GEFS spread at lead 1"
+}
+
+driver model_cluster discrete {
+    values: [78.15, 84.2]
+    weights: [0.699, 0.301]
+    unit: "degF"
+    applies_to: quantity
+    evidence_refs: ["weather_oracle_ensemble_spread_0"]
+}
+
+evidence weather_oracle_ensemble_spread_0 {
+    source: "weather_oracle"
+    summary: "103-member ensemble, two clusters"
 }
 
 agent weather_oracle_ensemble_spread {
@@ -67,7 +82,7 @@ agent weather_oracle_ensemble_spread {
     confidence_threshold: 0.7
 }
 
-model: ensemble_spread
+model: ensemble_spread + model_cluster
 
 simulate 10000 iterations
 "#;
@@ -121,8 +136,19 @@ fn emitting_an_agent_does_not_disturb_the_rest_of_the_program() {
     let count = |f: &dyn Fn(&Statement) -> bool| program.statements.iter().filter(|s| f(s)).count();
 
     assert_eq!(count(&|s| matches!(s, Statement::Question(_))), 1);
-    assert_eq!(count(&|s| matches!(s, Statement::Driver(_))), 1);
+    assert_eq!(
+        count(&|s| matches!(s, Statement::Driver(_))),
+        2,
+        "one continuous and one discrete — the discrete arm was `_ => {{}}` and \
+         dropped the statement entirely"
+    );
     assert_eq!(count(&|s| matches!(s, Statement::Agent(_))), 1);
+    assert_eq!(
+        count(&|s| matches!(s, Statement::Evidence(_))),
+        1,
+        "the evidence a driver's `evidence_refs` points at must be emitted too, \
+         or the ref becomes an undefined symbol on reparse"
+    );
     assert_eq!(count(&|s| matches!(s, Statement::Model(_))), 1);
 }
 
@@ -203,4 +229,82 @@ fn an_unknown_cadence_is_rejected_rather_than_silently_meaning_once() {
         msg.contains("daily"),
         "the error must name the token the author actually wrote, got: {msg}"
     );
+}
+
+/// The driver fields the emitter used to drop.
+///
+/// `applies_to`, `evidence_refs` and every `discrete` driver were absent from
+/// `generate_fpl_text`. `applies_to` decides whether
+/// `semantic::check_driver_spaces` can catch a product mixing probability and
+/// quantity ratios; `evidence_refs` is the only structural link from a driver to
+/// the research behind it; a discrete driver is the shape the reference
+/// forecast's bimodal ensemble cluster needs. All three survived exactly until
+/// the next save.
+#[test]
+fn the_driver_fields_the_emitter_writes_parse_back() {
+    let program = parse(EMITTED);
+    let drivers = program.drivers();
+    assert_eq!(drivers.len(), 2, "a discrete driver used to vanish on emit");
+
+    let cont = drivers
+        .iter()
+        .find(|d| d.name == "ensemble_spread")
+        .expect("continuous driver");
+    assert_eq!(
+        cont.applies_to,
+        Some(AppliesTo::Quantity),
+        "`applies_to` is what stops a probability ratio being multiplied by a \
+         temperature ratio"
+    );
+    assert_eq!(
+        cont.evidence_refs,
+        vec!["weather_oracle_ensemble_spread_0".to_string()],
+        "the driver-to-evidence link is the whole answer to 'what changed my \
+         view of this driver'"
+    );
+    assert_eq!(cont.rationale.as_deref(), Some("GEFS spread at lead 1"));
+
+    let disc = drivers
+        .iter()
+        .find(|d| d.name == "model_cluster")
+        .expect("discrete driver survived the emit");
+    assert_eq!(disc.driver_type, DriverType::Discrete);
+    assert_eq!(disc.values.as_deref(), Some([78.15, 84.2].as_slice()));
+    assert_eq!(disc.weights.as_deref(), Some([0.699, 0.301].as_slice()));
+    assert_eq!(disc.applies_to, Some(AppliesTo::Quantity));
+}
+
+/// An evidence_ref must resolve, or the analyser calls it an undefined symbol.
+///
+/// `semantic.rs` errors on a driver referencing evidence that does not exist, so
+/// emitting a ref without emitting the evidence statement beside it would turn a
+/// working forecast into a failing one on save.
+#[test]
+fn an_emitted_evidence_ref_resolves_to_an_emitted_evidence_statement() {
+    let program = parse(EMITTED);
+    let ids: Vec<&str> = program
+        .evidence_items()
+        .iter()
+        .map(|e| e.id.as_str())
+        .collect();
+
+    for d in program.drivers() {
+        for r in &d.evidence_refs {
+            assert!(
+                ids.contains(&r.as_str()),
+                "driver `{}` references `{r}`, which is not among the emitted \
+                 evidence {ids:?} — semantic.rs reports this as an undefined symbol",
+                d.name
+            );
+        }
+    }
+
+    let analysis = fermi::SemanticAnalyzer::new().analyze(&program);
+    let undefined: Vec<String> = analysis
+        .errors
+        .iter()
+        .map(|e| e.to_string())
+        .filter(|e| e.contains("undefined evidence"))
+        .collect();
+    assert!(undefined.is_empty(), "{undefined:?}");
 }

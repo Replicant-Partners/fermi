@@ -4438,8 +4438,9 @@ impl CockpitState {
                     })
                     .unwrap_or_default();
 
+                let this_evidence_id = evidence_id(agent_id, count);
                 self.program.add_evidence(EvidenceStmt {
-                    id: evidence_id(agent_id, count),
+                    id: this_evidence_id.clone(),
                     source: source.to_string(),
                     summary: summary.map(|s| s.to_string()),
                     url: None,
@@ -4448,6 +4449,23 @@ impl CockpitState {
                     strength: relevance,
                     key_findings,
                 });
+
+                // Record the link on the driver, not only in the id.
+                //
+                // `evidence_refs` was read by `semantic.rs` and the CLI and
+                // written by nothing — so the only association between a finding
+                // and the driver it was researched for was the `{agent}_{driver}`
+                // shape of the id above. A naming convention standing in for a
+                // reference is why "what changed my view of THIS driver" had no
+                // query behind it.
+                //
+                // Every driver the agent covers, unlike a multiplier: see
+                // `attach_evidence_to_drivers` for why the two policies differ.
+                fermi_console::drivers::attach_evidence_to_drivers(
+                    &mut self.program,
+                    agent_id,
+                    &this_evidence_id,
+                );
                 count += 1;
             }
             if let Some(run) = self
@@ -9400,6 +9418,7 @@ impl CockpitState {
                 // researches nothing. So the binding itself is checked.
                 let mut lost = lost;
                 lost.extend(Self::agent_bindings_lost(&self.program, &reparsed));
+                lost.extend(Self::driver_links_lost(&self.program, &reparsed));
 
                 if !lost.is_empty() {
                     log::error!(
@@ -9469,6 +9488,49 @@ impl CockpitState {
                 lost.push(format!(
                     "agent `{name}` schedule ({:?} -> {:?})",
                     a.schedule, b.schedule
+                ));
+            }
+        }
+        lost
+    }
+
+    /// Which driver declarations did not survive the emit/reparse cycle.
+    ///
+    /// Checks `evidence_refs` and `applies_to` — the two fields the emitter used
+    /// to drop outright. Both are load-bearing and neither is visible on the
+    /// driver card, which is the combination that lets a loss go unnoticed:
+    /// `applies_to` decides whether `semantic::check_driver_spaces` can catch a
+    /// product mixing probability and quantity ratios, and `evidence_refs` is
+    /// the only structural link from a driver to the research behind it.
+    ///
+    /// Distribution parameters are not compared. The emitter writes continuous
+    /// drivers through `expr_to_f64`, which is lossy for a parameterised
+    /// `triangular(socio_p5, …)` by design, so asserting on them would fire on
+    /// every save of a World Cup forecast — a gate that cries wolf gets ignored,
+    /// and then it protects nothing. That loss is real and recorded as a known
+    /// gap rather than half-guarded here.
+    fn driver_links_lost(before: &Program, after: &Program) -> Vec<String> {
+        let reparsed = after.drivers();
+        let mut lost = Vec::new();
+
+        for d in before.drivers() {
+            let name = sanitize_name(&d.name);
+            let Some(b) = reparsed.iter().find(|b| sanitize_name(&b.name) == name) else {
+                lost.push(format!("driver `{name}` (dropped entirely)"));
+                continue;
+            };
+            let refs: Vec<String> = d.evidence_refs.iter().map(|e| sanitize_name(e)).collect();
+            if b.evidence_refs != refs {
+                lost.push(format!(
+                    "driver `{name}` evidence_refs ({} -> {})",
+                    refs.len(),
+                    b.evidence_refs.len()
+                ));
+            }
+            if b.applies_to != d.applies_to {
+                lost.push(format!(
+                    "driver `{name}` applies_to ({:?} -> {:?})",
+                    d.applies_to, b.applies_to
                 ));
             }
         }
@@ -27044,6 +27106,39 @@ fn generate_fpl_text(program: &Program) -> String {
     // Drivers
     for driver in program.drivers() {
         let safe_name = sanitize_name(&driver.name);
+
+        // Fields common to every driver shape, emitted by all three arms.
+        //
+        // `applies_to` and `evidence_refs` were both dropped here. Neither is
+        // decorative: `semantic::check_driver_spaces` rejects a product mixing
+        // probability and quantity ratios on the strength of `applies_to`, and
+        // `evidence_refs` is the only structural link from a driver to the
+        // research that moved it. Emitting a driver without them means the
+        // declaration survives exactly until the next save — which is how the
+        // `agent` statement was being lost, one level down.
+        let common: Vec<String> = {
+            let mut out = Vec::new();
+            if let Some(a) = driver.applies_to {
+                out.push(format!("    applies_to: {}", a.as_str()));
+            }
+            if !driver.evidence_refs.is_empty() {
+                let refs = driver
+                    .evidence_refs
+                    .iter()
+                    .map(|e| format!("\"{}\"", sanitize_name(e)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.push(format!("    evidence_refs: [{}]", refs));
+            }
+            if let Some(ref rationale) = driver.rationale {
+                out.push(format!(
+                    "    rationale: \"{}\"",
+                    rationale.replace('"', r#"\""#)
+                ));
+            }
+            out
+        };
+
         match driver.driver_type {
             DriverType::Continuous => {
                 lines.push(format!("driver {} continuous {{", safe_name));
@@ -27069,12 +27164,7 @@ fn generate_fpl_text(program: &Program) -> String {
                 if driver.learnable {
                     lines.push("    learnable: true".into());
                 }
-                if let Some(ref rationale) = driver.rationale {
-                    lines.push(format!(
-                        "    rationale: \"{}\"",
-                        rationale.replace('"', r#"\""#)
-                    ));
-                }
+                lines.extend(common);
                 lines.push("}".into());
             }
             DriverType::Binary => {
@@ -27088,15 +27178,50 @@ fn generate_fpl_text(program: &Program) -> String {
                 if driver.learnable {
                     lines.push("    learnable: true".into());
                 }
-                if let Some(ref rationale) = driver.rationale {
-                    lines.push(format!(
-                        "    rationale: \"{}\"",
-                        rationale.replace('"', r#"\""#)
-                    ));
-                }
+                lines.extend(common);
                 lines.push("}".into());
             }
-            _ => {}
+            DriverType::Discrete => {
+                // Was `_ => {}`: every discrete driver vanished on emit.
+                //
+                // The round-trip census added in f82f4562 catches the loss and
+                // refuses to regenerate, so nothing was silently destroyed — but
+                // it froze the cached FPL of any forecast holding one. That was
+                // tolerable while discrete drivers were also invisible in the UI;
+                // now that they render, they have to be writable too.
+                //
+                // `values` and `weights` are the whole content of the shape, and
+                // the reference forecast's bimodal ensemble cluster is one.
+                lines.push(format!("driver {} discrete {{", safe_name));
+                if let Some(ref values) = driver.values {
+                    lines.push(format!(
+                        "    values: [{}]",
+                        values
+                            .iter()
+                            .map(|v| v.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+                if let Some(ref weights) = driver.weights {
+                    lines.push(format!(
+                        "    weights: [{}]",
+                        weights
+                            .iter()
+                            .map(|w| w.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+                if let Some(ref unit) = driver.unit {
+                    lines.push(format!("    unit: \"{}\"", unit));
+                }
+                if driver.learnable {
+                    lines.push("    learnable: true".into());
+                }
+                lines.extend(common);
+                lines.push("}".into());
+            }
         }
         lines.push(String::new());
     }
