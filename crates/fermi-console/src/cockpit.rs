@@ -3508,12 +3508,22 @@ impl CockpitState {
     /// missing card directory says nothing about whether an agent can
     /// run. Gating routing on it demoted every specialist to
     /// `macro_forecaster` on installs without the directory.
-    /// Public wrapper so the chat dispatcher can validate an
-    /// `assign_agent` proposal before mutating the AST. Assigning an
-    /// agent nothing can execute produces a driver that looks researched
-    /// and never will be.
-    pub fn agent_is_routable_pub(&self, agent_id: &str) -> bool {
-        self.agent_is_routable(agent_id)
+    /// Whether `agent_id` may be bound to a driver, and why not if not.
+    ///
+    /// The single gate for every assignment path. The chat dispatcher used to
+    /// carry its own inline routability check while the picker carried its own
+    /// inline port check, so each path enforced half the rules and the picker
+    /// enforced its half as a warning that said "Running it anyway". Two doors
+    /// with different locks is the same as one door with none.
+    ///
+    /// See [`negotiate::admit_assignment`] for what is refused and the roster
+    /// measurement behind it.
+    pub fn admission_for(&self, agent_id: &str) -> negotiate::Admission {
+        negotiate::admit_assignment(
+            agent_id,
+            self.agent_is_routable(agent_id),
+            self.contract_for(agent_id).as_ref(),
+        )
     }
 
     fn agent_is_routable(&self, agent_id: &str) -> bool {
@@ -6123,6 +6133,31 @@ impl CockpitState {
         schedule: Schedule,
         cx: &mut Context<Self>,
     ) {
+        // ── Refuse before anything is mutated, fired or billed ──────────
+        //
+        // Assignment writes an `AgentStmt` into the AST, fires the agent and
+        // charges credits. Every one of those is unrecoverable by the time a
+        // warning has been read, so the gate runs first and returns.
+        let contract = self.contract_for(agent_id);
+        let binding = match self.admission_for(agent_id) {
+            negotiate::Admission::Admit(binding) => binding,
+            refusal => {
+                log::warn!(
+                    "[assign] refused {} -> {}: {}",
+                    agent_id,
+                    driver_name,
+                    refusal.code()
+                );
+                self.messages.push(AssistantMessage {
+                    node: format!("driver:{}", driver_name),
+                    kind: MessageKind::Error,
+                    text: refusal.message().unwrap_or_default().to_string(),
+                });
+                cx.notify();
+                return;
+            }
+        };
+
         // Resolve what to actually send.
         //
         // This used to be `if input.is_empty() { default } else { input }`,
@@ -6133,7 +6168,6 @@ impl CockpitState {
         // else. `resolve_query` re-composes an untouched pre-fill for the
         // agent actually chosen, and never touches text a human edited.
         let task = self.research_task_for(driver_name);
-        let contract = self.contract_for(agent_id);
         let box_text = self.agent_query_input.read(cx).text().to_string();
         let resolved = negotiate::resolve_query(
             &box_text,
@@ -6143,22 +6177,6 @@ impl CockpitState {
             contract.as_ref(),
         );
         let query = resolved.text.clone();
-
-        // Is this agent even declaring that it takes a free-text question?
-        let binding = negotiate::bind_input(contract.as_ref());
-        if let negotiate::InputBinding::NoTextInput(ref declared) = binding {
-            self.messages.push(AssistantMessage {
-                node: format!("driver:{}", driver_name),
-                kind: MessageKind::Warning,
-                text: format!(
-                    "{} declares it accepts {} — none of which is a free-text \
-                     question. Running it anyway; if the reply is unusable, the \
-                     card's `accepts` is the place to look.",
-                    agent_id,
-                    declared.join(", ")
-                ),
-            });
-        }
 
         // Say so when a prompt was swapped. Silently replacing it would
         // trade one invisible mismatch for another.
@@ -9168,7 +9186,157 @@ impl CockpitState {
         if Self::cached_fpl_is_richer_than_ast(&self.cached_fpl) {
             return;
         }
-        self.cached_fpl = generate_fpl_text(&self.program);
+        let regenerated = generate_fpl_text(&self.program);
+
+        // ── Refuse to lose a statement silently ──────────────────────────
+        //
+        // The emitter knows a subset of the language. When the AST contains
+        // something it cannot write, regenerating DELETES that thing, and the save
+        // reports success. That is how every driver assignment on a forecast
+        // without pre-existing `agent` blocks was discarded: added to the AST,
+        // dropped on emit, and the only visible trace was a driver that said "No
+        // agents" the next time it was opened.
+        //
+        // So the round-trip is checked rather than assumed. If reparsing the
+        // emitted text yields fewer statements than the AST holds, the cached text
+        // is left alone — stale is recoverable, silently truncated is not — and the
+        // operator is told which kinds went missing.
+        //
+        // This is the same rule the rest of the platform runs on: a write path that
+        // cannot represent what it was given must say so, not quietly succeed.
+        let before = Self::statement_census(&self.program);
+        match fermi::Lexer::new(&regenerated)
+            .tokenize()
+            .map_err(|e| format!("{e:?}"))
+            .and_then(|t| fermi::Parser::new(t).parse().map_err(|e| format!("{e:?}")))
+        {
+            Ok(reparsed) => {
+                let after = Self::statement_census(&reparsed);
+                let lost: Vec<String> = before
+                    .iter()
+                    .filter_map(|(kind, n)| {
+                        let m = after
+                            .iter()
+                            .find(|(k, _)| k == kind)
+                            .map(|(_, m)| *m)
+                            .unwrap_or(0);
+                        (m < *n).then(|| format!("{kind} ({n} -> {m})"))
+                    })
+                    .collect();
+
+                // A census counts statements; it cannot see an `agent` block
+                // that survived with its `driver_refs` emptied, which is the
+                // same bug one level down — an assignment that persists and
+                // researches nothing. So the binding itself is checked.
+                let mut lost = lost;
+                lost.extend(Self::agent_bindings_lost(&self.program, &reparsed));
+
+                if !lost.is_empty() {
+                    log::error!(
+                        "[fpl] refusing to regenerate: emit would lose {}",
+                        lost.join(", ")
+                    );
+                    self.messages.push(AssistantMessage {
+                        node: "question".into(),
+                        kind: MessageKind::Warning,
+                        text: format!(
+                            "FPL not regenerated — the emitter cannot write {}. \
+                             Your edits are kept in memory; saving would have \
+                             dropped them.",
+                            lost.join(", ")
+                        ),
+                    });
+                    return;
+                }
+            }
+            Err(e) => {
+                log::error!("[fpl] refusing to regenerate: emitted text does not parse: {e}");
+                self.messages.push(AssistantMessage {
+                    node: "question".into(),
+                    kind: MessageKind::Warning,
+                    text: "FPL not regenerated — the emitted text does not parse. \
+                           Kept the previous version."
+                        .into(),
+                });
+                return;
+            }
+        }
+
+        self.cached_fpl = regenerated;
+    }
+
+    /// Which agent-to-driver bindings did not survive the emit/reparse cycle.
+    ///
+    /// Compares `name`, `driver_refs` and `schedule` — the three fields that
+    /// decide whether an assignment does anything. `sanitize_name` is
+    /// idempotent (it emits lowercase alphanumerics and underscores, and its
+    /// output is a fixed point), so applying it here reproduces exactly what
+    /// the emitter wrote and the parser read back.
+    ///
+    /// `query` is deliberately NOT compared. `clean_fpl_string` escapes it,
+    /// folds newlines and truncates at 500 characters, so a long research
+    /// prompt differs by design; asserting on it would make this gate fire on
+    /// every save and freeze the cached text — a check that cries wolf gets
+    /// switched off, and then it protects nothing.
+    fn agent_bindings_lost(before: &Program, after: &Program) -> Vec<String> {
+        let reparsed = after.agents();
+        let mut lost = Vec::new();
+
+        for a in before.agents() {
+            let name = sanitize_name(&a.name);
+            let Some(b) = reparsed.iter().find(|b| b.name == name) else {
+                lost.push(format!("agent `{name}` (dropped entirely)"));
+                continue;
+            };
+            let refs: Vec<String> = a.driver_refs.iter().map(|d| sanitize_name(d)).collect();
+            if b.driver_refs != refs {
+                lost.push(format!(
+                    "agent `{name}` driver_refs ({:?} -> {:?})",
+                    refs, b.driver_refs
+                ));
+            }
+            if b.schedule != a.schedule {
+                lost.push(format!(
+                    "agent `{name}` schedule ({:?} -> {:?})",
+                    a.schedule, b.schedule
+                ));
+            }
+        }
+        lost
+    }
+
+    /// Count statements by kind, for the round-trip loss check.
+    ///
+    /// Kinds rather than a total, so the message can name what went missing.
+    /// Comparing totals would report "5 -> 4" and leave an operator guessing.
+    fn statement_census(program: &Program) -> Vec<(&'static str, usize)> {
+        let mut q = 0;
+        let mut d = 0;
+        let mut a = 0;
+        let mut e = 0;
+        let mut m = 0;
+        let mut p = 0;
+        let mut other = 0;
+        for st in &program.statements {
+            match st {
+                Statement::Question(_) => q += 1,
+                Statement::Driver(_) => d += 1,
+                Statement::Agent(_) => a += 1,
+                Statement::Evidence(_) => e += 1,
+                Statement::Model(_) => m += 1,
+                Statement::Param(_) => p += 1,
+                _ => other += 1,
+            }
+        }
+        vec![
+            ("question", q),
+            ("driver", d),
+            ("agent", a),
+            ("evidence", e),
+            ("model", m),
+            ("param", p),
+            ("other", other),
+        ]
     }
 
     /// Returns true when cached_fpl contains constructs that the
@@ -26749,6 +26917,86 @@ fn generate_fpl_text(program: &Program) -> String {
             }
             _ => {}
         }
+        lines.push(String::new());
+    }
+
+    // Agents
+    //
+    // Emitted because NOT emitting them silently destroyed driver assignments.
+    // `regenerate_cached_fpl_if_safe` rewrites the cached FPL from the AST, and
+    // this function walked question -> drivers -> evidence -> model -> simulate.
+    // An `agent` statement added by `assign_agent_to_driver` therefore survived
+    // exactly until the next save.
+    //
+    // `cached_fpl_is_richer_than_ast` guarded against that by refusing to
+    // regenerate when the TEXT already contained `agent `, which protects a
+    // forecast that arrived with one and cannot protect an assignment just made —
+    // the AST has it and the text does not, so the guard sees nothing to save. The
+    // observable symptom was a driver showing "No agents" and no progress chip
+    // after a reload, while the schedule panel still listed the agent, because
+    // schedules live outside the FPL.
+    for agent in program.agents() {
+        lines.push(format!("agent {} {{", sanitize_name(&agent.name)));
+        if let Some(ref t) = agent.agent_type {
+            lines.push(format!("    type: \"{}\"", clean_fpl_string(t)));
+        }
+        // `query` is the only required field on the parser side.
+        lines.push(format!("    query: \"{}\"", clean_fpl_string(&agent.query)));
+        if let Some(ref ex) = agent.executor {
+            let name = match ex {
+                fermi::ast::ExecutorType::LLM => "llm",
+                fermi::ast::ExecutorType::MCP => "mcp",
+                fermi::ast::ExecutorType::Manual => "manual",
+                fermi::ast::ExecutorType::Skill => "skill",
+            };
+            lines.push(format!("    executor: \"{}\"", name));
+        }
+        if let Some(ref sch) = agent.schedule {
+            // Matches `Parser::parse_schedule`, which now has a spelling for
+            // all three variants. It previously had one for `Every` only:
+            // `Once` existed solely as the value of an absent field and `Cron`
+            // could not be written at all, so this arm had the choice of
+            // dropping the cadence or emitting text that would not reparse.
+            // Both are the defect this whole change is about — a value the AST
+            // holds and the document cannot say.
+            let rendered = match sch {
+                Schedule::Once => "once".to_string(),
+                Schedule::Every { interval, unit } => {
+                    let u = match unit {
+                        fermi::ast::TimeUnit::Minute => "minutes",
+                        fermi::ast::TimeUnit::Hour => "hours",
+                        fermi::ast::TimeUnit::Day => "days",
+                        fermi::ast::TimeUnit::Week => "weeks",
+                        fermi::ast::TimeUnit::Month => "months",
+                    };
+                    format!("every {} {}", interval, u)
+                }
+                Schedule::Cron(expr) => format!("cron \"{}\"", clean_fpl_string(expr)),
+            };
+            lines.push(format!("    schedule: {}", rendered));
+        }
+        if !agent.driver_refs.is_empty() {
+            let refs = agent
+                .driver_refs
+                .iter()
+                .map(|d| format!("\"{}\"", sanitize_name(d)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            lines.push(format!("    driver_refs: [{}]", refs));
+        }
+        if !agent.depends_on.is_empty() {
+            let deps = agent
+                .depends_on
+                .iter()
+                .map(|d| format!("\"{}\"", sanitize_name(d)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            lines.push(format!("    depends_on: [{}]", deps));
+        }
+        if let Some(c) = agent.confidence_threshold {
+            lines.push(format!("    confidence_threshold: {}", c));
+        }
+        lines.push("}".into());
         lines.push(String::new());
     }
 

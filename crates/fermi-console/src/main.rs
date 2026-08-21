@@ -2518,10 +2518,14 @@ impl FermiConsole {
             }
             "assign_agent" => {
                 let (driver, agent) = mu::parse_assign_agent(args)?;
-                if !c.agent_is_routable_pub(&agent) {
-                    return Err(format!(
-                        "`{agent}` isn't in the orchestra — nothing would be able to run it"
-                    ));
+                // Same gate the picker enforces, so a proposal the model makes
+                // is refused for the same reasons and with the same wording.
+                // `assign_agent_to_driver` checks it again and returns; this
+                // call is here so the chat turn reports WHY rather than
+                // silently doing nothing.
+                let admission = c.admission_for(&agent);
+                if let Some(reason) = admission.message() {
+                    return Err(reason.to_string());
                 }
                 // Schedule::Once: attach it for review, don't fire and
                 // bill on a chat click.

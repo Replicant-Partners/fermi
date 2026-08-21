@@ -937,8 +937,26 @@ impl Parser {
         })
     }
 
-    /// Parse schedule
+    /// Parse schedule: `once`, `every <n> <unit>`, or `cron "<expr>"`.
+    ///
+    /// Every [`Schedule`] variant has a surface syntax here because a writer
+    /// must be able to spell what the AST can hold. `Once` and `Cron` had none:
+    /// `Once` was only ever the value of an ABSENT `schedule:` field, and
+    /// `Cron` could not be written at all. So the console's FPL emitter had no
+    /// faithful way to serialise an agent scheduled once — the overwhelmingly
+    /// common case, since that is what every manual assignment produces — and
+    /// emitting `schedule: once` produced a file that would not reparse: the
+    /// fallback returns WITHOUT consuming a token, leaving `once` to be read as
+    /// the next field name and fail on the missing `:`.
+    ///
+    /// An unrecognised identifier is now an error rather than a silent `Once`.
+    /// `schedule: daily` previously meant "once", then failed one token later
+    /// complaining about a colon. Nothing in the corpus writes a bare schedule
+    /// value (118 uses, all `every N <unit>`), so this rejects no program that
+    /// previously parsed.
     fn parse_schedule(&mut self) -> ParseResult<Schedule> {
+        // `every` is a keyword token, not an identifier, so it is unaffected by
+        // the identifier arms below.
         if self.match_token(&TokenType::Every) {
             let interval = self.parse_number()? as u32;
             let unit_str = self.consume_identifier()?;
@@ -958,10 +976,34 @@ impl Parser {
                 }
             };
 
-            Ok(Schedule::Every { interval, unit })
-        } else {
-            Ok(Schedule::Once)
+            return Ok(Schedule::Every { interval, unit });
         }
+
+        if self.check_identifier("once") {
+            self.advance();
+            return Ok(Schedule::Once);
+        }
+
+        if self.check_identifier("cron") {
+            self.advance();
+            return Ok(Schedule::Cron(self.consume_string()?));
+        }
+
+        if let TokenType::Identifier(word) = &self.peek().token_type {
+            return Err(ParseError::InvalidExpression {
+                message: format!(
+                    "Invalid schedule: '{}'. Expected `once`, `every <n> <unit>`, \
+                     or `cron \"<expr>\"`",
+                    word
+                ),
+                line: self.peek().line,
+                column: self.peek().column,
+            });
+        }
+
+        // An absent value still means `once`, which is what every agent block
+        // without a `schedule:` field has always meant.
+        Ok(Schedule::Once)
     }
 
     /// Parse executor type

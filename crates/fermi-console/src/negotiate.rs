@@ -412,6 +412,113 @@ pub fn bind_input(contract: Option<&AgentContract>) -> InputBinding {
     InputBinding::NoTextInput(accepts.to_vec())
 }
 
+/// Whether an agent may be bound to a driver at all.
+///
+/// # Why this is a refusal and not a warning
+///
+/// Both conditions below were already *detected* at the assignment site and
+/// neither stopped anything. `agent_is_routable` was consulted only by the chat
+/// dispatcher, so the picker could attach an agent no executor can run.
+/// `bind_input` was consulted by the picker, which pushed a warning reading
+/// "Running it anyway" and then ran it anyway. A gate that observes and permits
+/// is not a gate; it is a log line, and the operator learns to scroll past it.
+///
+/// The cost of permitting is not zero. Assignment mutates the AST, fires the
+/// agent, and bills credits. What comes back is charged, unusable, and — because
+/// it arrives as evidence like any other — indistinguishable downstream from
+/// research that worked.
+///
+/// # Why these two and not a domain check
+///
+/// Measured against the live roster (111 agents) and every `agent` block in the
+/// tracked corpus (104 resolvable bindings):
+///
+///   * 47 of 111 agents declare input ports and none is text-shaped —
+///     `watermark` takes `image`, `instagram_publisher` takes `caption`,
+///     `weather_calibrator` takes `raw_predictive_distribution`. Handing any of
+///     them a research prompt cannot work.
+///   * 0 of those 47 appear in any existing binding. All 104 live bindings
+///     resolve to `Declared`. So this refuses nothing that currently works.
+///
+/// A domain check was considered and deliberately left out. Only 4 of the 111
+/// declare `metadata.domains` explicitly (3 of them empty), so refusing on an
+/// explicit mismatch would be very nearly inert, and refusing on the *tag*
+/// fallback would reject deliberate human choices on a heuristic written for
+/// search. Domain remains a routing preference, which is where it already lives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Admission {
+    /// Cleared. Carries the resolved binding so the caller need not re-derive it.
+    Admit(InputBinding),
+    /// Refused. `code` is stable for telemetry, `message` is for the operator and
+    /// names the declaration that has to change.
+    Refuse { code: &'static str, message: String },
+}
+
+impl Admission {
+    pub fn is_refused(&self) -> bool {
+        matches!(self, Admission::Refuse { .. })
+    }
+
+    /// Stable label for logs and telemetry.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Admission::Admit(_) => "admit",
+            Admission::Refuse { code, .. } => code,
+        }
+    }
+
+    /// The operator-facing reason, or `None` when admitted.
+    pub fn message(&self) -> Option<&str> {
+        match self {
+            Admission::Admit(_) => None,
+            Admission::Refuse { message, .. } => Some(message),
+        }
+    }
+}
+
+/// Decide whether `agent_id` may be assigned to a driver.
+///
+/// `routable` is the caller's answer to "can anything execute this id" — the
+/// console resolves it against the curated orchestra, the local card directory
+/// and the server roster, none of which belong in this module.
+///
+/// An agent that declares no `accepts` at all is ADMITTED. Absence is not
+/// contradiction, and 10 of the 111 roster agents are in exactly that position;
+/// refusing them would make the gate a card-completeness check rather than a
+/// compatibility one.
+pub fn admit_assignment(
+    agent_id: &str,
+    routable: bool,
+    contract: Option<&AgentContract>,
+) -> Admission {
+    if !routable {
+        return Admission::Refuse {
+            code: "not_routable",
+            message: format!(
+                "`{agent_id}` is not in the orchestra and has no card here — nothing \
+                 would be able to run it. The driver would show an agent attached \
+                 and never receive any research."
+            ),
+        };
+    }
+
+    let binding = bind_input(contract);
+    if let InputBinding::NoTextInput(ref declared) = binding {
+        return Admission::Refuse {
+            code: "no_text_input",
+            message: format!(
+                "`{agent_id}` declares it accepts {} — none of which is a free-text \
+                 question, which is the only thing a driver assignment can send it. \
+                 Not assigned. If that is wrong, the card's `accepts` is the place \
+                 to fix it.",
+                declared.join(", ")
+            ),
+        };
+    }
+
+    Admission::Admit(binding)
+}
+
 /// The record of how one invocation came to be asked the way it was.
 ///
 /// Travels with the run to the server, which stamps it onto the episode. The
@@ -1324,5 +1431,114 @@ mod tests {
                 "blank suggestion {suggested:?} must not read as an override"
             );
         }
+    }
+
+    // ── Admission: the gate that refuses, rather than the one that warns ──
+
+    /// `weather_calibrator` as the roster actually declares it.
+    ///
+    /// Named because it is the case the codebase already knew about: a comment on
+    /// `AgentContract::domains_explicit` records that it "would have been handed a
+    /// raw driver it is explicitly built not to research", and routing was fixed to
+    /// stop choosing it. Manual assignment was never fixed, and until now would
+    /// warn and send it a research prompt regardless.
+    fn calibrator_card() -> JsonValue {
+        json!({
+            "agent_id": "weather_calibrator",
+            "accepts": [
+                "raw_predictive_distribution",
+                "ensemble-diagnostics",
+                "climatology-base-rate"
+            ],
+            "capabilities": {
+                "fermi_contract": { "finding_labels": ["CALIBRATED"] }
+            }
+        })
+    }
+
+    #[test]
+    fn an_agent_with_no_text_port_is_refused_not_warned_about() {
+        let c = AgentContract::from_card(&calibrator_card());
+        let verdict = admit_assignment("weather_calibrator", true, Some(&c));
+
+        assert!(
+            verdict.is_refused(),
+            "weather_calibrator accepts a distribution, diagnostics and a base rate, \
+             and nothing that takes a question — assigning it to a driver spends \
+             credits to produce evidence that cannot be right"
+        );
+        assert_eq!(verdict.code(), "no_text_input");
+
+        let msg = verdict.message().unwrap();
+        assert!(
+            msg.contains("raw_predictive_distribution"),
+            "the refusal must quote the ports the agent actually declared, so the \
+             operator can see whether the card or the choice is wrong: {msg}"
+        );
+        assert!(
+            msg.contains("accepts"),
+            "and must name the card field to change: {msg}"
+        );
+    }
+
+    #[test]
+    fn an_agent_nothing_can_execute_is_refused() {
+        let c = AgentContract::from_card(&sentiment_card());
+        let verdict = admit_assignment("sentiment_analyzer", false, Some(&c));
+
+        assert!(verdict.is_refused());
+        assert_eq!(verdict.code(), "not_routable");
+    }
+
+    /// Routability is checked before the port, because it is the stronger claim.
+    ///
+    /// An unrunnable agent with a perfect contract is still unrunnable, and
+    /// reporting the port mismatch first would send someone to edit `accepts` on a
+    /// card that will never be invoked.
+    #[test]
+    fn unrunnable_is_reported_ahead_of_the_port_mismatch() {
+        let c = AgentContract::from_card(&calibrator_card());
+        assert_eq!(
+            admit_assignment("weather_calibrator", false, Some(&c)).code(),
+            "not_routable"
+        );
+    }
+
+    #[test]
+    fn a_research_agent_declaring_a_question_port_is_admitted() {
+        let c = AgentContract::from_card(&sentiment_card());
+        let verdict = admit_assignment("sentiment_analyzer", true, Some(&c));
+
+        assert_eq!(verdict.code(), "admit");
+        assert_eq!(
+            verdict,
+            Admission::Admit(InputBinding::Declared("query".into())),
+            "the canonical `query` port should be the one reported, not whichever \
+             synonym sorted first"
+        );
+    }
+
+    /// Declaring nothing is not the same as declaring something incompatible.
+    ///
+    /// 10 of the 111 roster agents list no `accepts` at all. Refusing them would
+    /// turn a compatibility gate into a card-completeness gate and lock out agents
+    /// that work fine — the failure mode this whole change is meant to avoid, with
+    /// the sign flipped.
+    #[test]
+    fn an_agent_that_declares_no_ports_is_admitted() {
+        let c = AgentContract::from_card(&json!({
+            "agent_id": "quiet_agent",
+            "capabilities": { "fermi_contract": { "finding_labels": ["X"] } }
+        }));
+        let verdict = admit_assignment("quiet_agent", true, Some(&c));
+
+        assert_eq!(verdict.code(), "admit");
+        assert_eq!(verdict, Admission::Admit(InputBinding::Undeclared));
+    }
+
+    /// No contract at all is also an absence, not a contradiction.
+    #[test]
+    fn an_agent_with_no_contract_is_admitted() {
+        assert_eq!(admit_assignment("unknown", true, None).code(), "admit");
     }
 }

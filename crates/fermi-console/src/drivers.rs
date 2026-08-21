@@ -103,6 +103,7 @@ mod tests {
             constraints: vec![],
             learnable: false,
             feeds_from: None,
+            applies_to: None,
         }
     }
 
