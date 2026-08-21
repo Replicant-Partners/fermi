@@ -73,7 +73,7 @@ use uuid::Uuid;
 use crate::handlers::rabble_workspace;
 use crate::AppState;
 use agent_bestiary_memory::{
-    ConsolidationLock, ConsolidationWorker, LLMProviderConfig, LLMProviderFactory, ProviderType,
+    ConsolidationLock, ConsolidationWorker,
 };
 use fermi::gas::charge_gas;
 use fermi_auth::{get_or_create_wallet, AuthPrincipal};
@@ -1611,15 +1611,37 @@ pub async fn creature_dream_handler(
                 // entities, and facts into the knowledge graph so that
                 // enrich_with_kg_context can surface them on future runs.
                 let active_agents = ["enemy_sensor", "genome_profiler", "prey_locator"];
-                let llm_opt = std::env::var("ANTHROPIC_API_KEY").ok().and_then(|key| {
-                    LLMProviderFactory::create(&LLMProviderConfig {
-                        provider_type: ProviderType::Anthropic,
-                        api_key: key,
-                        model: "claude-haiku-4-5-20251001".to_string(),
-                        base_url: None,
-                    })
-                    .ok()
-                });
+                // Same extractor resolution as the API dreaming path.
+                //
+                // This used to read `ANTHROPIC_API_KEY` from the process
+                // environment with a hardcoded model. On a deployment that
+                // funds agents through the credential store — which this one
+                // does — that always resolved to None, so every creature dream
+                // ran with no extractor: nothing learned, episodes correctly
+                // left unconsolidated by the guard, a dreaming credit debited,
+                // and the job marked `completed`.
+                //
+                // Measured on `prey_locator`: three cycles, 77 + 10 + 6
+                // episodes "processed", 0 entities, 0 facts, 0 rules, 0
+                // episodes consumed. It has 93 episodes and no semantic memory
+                // at all.
+                let llm_opt = crate::handlers::consolidation::build_extraction_llm(&spawn_state).await;
+
+                // Refuse rather than run. The guard already prevents the data
+                // loss (episodes are not consumed), but a cycle that cannot
+                // learn still costs a dreaming credit and reports success,
+                // which is indistinguishable from a healthy cycle on every
+                // surface. The API path refuses for exactly this reason; this
+                // path was the one that did not.
+                if llm_opt.is_none() {
+                    eprintln!(
+                        "[dream] no extraction model resolvable for the ontologist — \
+                         skipping creature {creature_id}'s cycle rather than burning a \
+                         credit to learn nothing. Fund the ontologist's provider \
+                         credential for the platform principal."
+                    );
+                    return;
+                }
 
                 for agent_name in &active_agents {
                     // Look up the agent's DB UUID

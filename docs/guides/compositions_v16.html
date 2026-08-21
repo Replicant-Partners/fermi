@@ -1,0 +1,2073 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Agent ecology — the loops, and the gates on them</title>
+<style>
+  :root{
+    --ink:#0E1216; --panel:#171D24; --panel-2:#1E2630; --line:#2B3540;
+    --schematic:#D9E3E6; --schematic-dim:#7C8B94;
+    --brass:#C9A968; --brass-dim:#8A7647;
+    --cyan:#4FD6D0; --cyan-dim:#26514F;
+    --violet:#9B8CE8; --violet-dim:#3A3560;
+    --amber:#E8A63D; --amber-dim:#5A4620;
+    --crimson:#E1476B; --crimson-dim:#5A2530;
+    --route:#E88CC5; --route-dim:#5A3A4C;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--ink);color:var(--schematic);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    -webkit-tap-highlight-color:transparent;overflow-x:hidden;}
+  .app{max-width:460px;margin:0 auto;padding:14px 14px 28px;
+    background:linear-gradient(var(--line) 1px, transparent 1px) 0 0/100% 22px,
+      linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0/22px 100%, var(--ink);
+    background-blend-mode:overlay;min-height:100vh;}
+  header{padding:6px 2px 12px;border-bottom:1px solid var(--line);margin-bottom:12px;}
+  .eyebrow{font-family:"Courier New",monospace;font-size:11px;letter-spacing:.16em;
+    color:var(--brass);text-transform:uppercase;margin-bottom:4px;}
+  h1{font-size:21px;letter-spacing:.02em;margin:0 0 5px;font-weight:800;
+    text-transform:uppercase;color:var(--schematic);}
+  .sub{font-size:12.5px;color:var(--schematic-dim);line-height:1.45;margin:0;}
+  .sub b{color:var(--schematic);font-weight:600;}
+  .hint{font-size:11.5px;color:var(--schematic-dim);margin:10px 0 8px;line-height:1.45;}
+  .hint b{color:var(--brass);}
+
+  .sectionLbl{font-family:"Courier New",monospace;font-size:9px;letter-spacing:.14em;
+    color:var(--schematic-dim);text-transform:uppercase;margin:14px 0 6px;
+    display:flex;justify-content:space-between;align-items:baseline;gap:8px;}
+  .sectionLbl em{font-style:normal;font-size:8.6px;color:var(--brass-dim);letter-spacing:.04em;
+    text-transform:none;text-align:right;}
+
+  /* ---- three clocks ---- */
+  .clockRow{display:flex;gap:6px;margin-bottom:10px;}
+  .clock{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:4px;
+    padding:6px 5px;text-align:center;transition:all .25s ease;min-width:0;}
+  .clock .cname{font-family:"Courier New",monospace;font-size:8.6px;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--schematic-dim);white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis;}
+  .clock .cblocks{font-family:"Courier New",monospace;font-size:7.2px;color:var(--brass-dim);
+    margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .clock.firing{background:var(--brass-dim);border-color:var(--brass);}
+  .clock.firing .cname{color:#1a1610;font-weight:700;}
+  .clock.firing .cblocks{color:#3a3016;}
+  .clock.nogate{border-style:dashed;}
+  .clock.stalled{border-color:var(--crimson);}
+  .clock.stalled .cname{color:var(--crimson);}
+
+  /* ---- scoreboard ---- */
+  .metersBlock{margin-bottom:6px;}
+  .meterRow{display:flex;align-items:center;gap:8px;margin-bottom:5px;}
+  .meterName{font-family:"Courier New",monospace;font-size:9px;letter-spacing:.08em;
+    text-transform:uppercase;white-space:nowrap;width:82px;}
+  .meterName.fit{color:var(--cyan);}
+  .meterName.ent{color:var(--amber);}
+  .meterNum{font-family:"Courier New",monospace;font-size:9.5px;color:var(--schematic-dim);
+    width:30px;text-align:right;}
+  .meterTrack2{flex:1;height:6px;border-radius:3px;background:var(--panel-2);
+    border:1px solid var(--line);overflow:hidden;}
+  .meterFillFit{height:100%;width:0%;background:var(--cyan);transition:width .5s ease,filter .2s ease;}
+  .meterFillEnt{height:100%;width:0%;background:var(--amber);transition:width .5s ease,filter .2s ease;}
+  .meterFillFit.pulse, .meterFillEnt.pulse{filter:brightness(1.9);}
+  .netStatus{font-family:"Courier New",monospace;font-size:10px;text-align:right;
+    color:var(--schematic-dim);margin-bottom:10px;line-height:1.4;}
+
+  /* ---- controls ---- */
+  .ctlRow{display:flex;gap:6px;margin-bottom:10px;}
+  .ctl{flex:1;font-family:"Courier New",monospace;font-size:10.5px;letter-spacing:.04em;
+    text-transform:uppercase;padding:9px 6px;border-radius:4px;border:1px solid var(--line);
+    background:var(--panel);color:var(--schematic-dim);cursor:pointer;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis;}
+  .ctl.on{background:var(--cyan-dim);border-color:var(--cyan);color:var(--cyan);}
+  .ctl.off{background:var(--panel-2);border-color:var(--line);color:var(--schematic-dim);opacity:.7;}
+  .ctl.sweep{border-color:var(--brass-dim);color:var(--brass);}
+  .ctl.honest{border-color:var(--crimson-dim);color:var(--crimson);}
+  .ctl.honest.on{background:var(--crimson-dim);border-color:var(--crimson);color:#fff;}
+  .ctl.tour{border-color:var(--violet);color:var(--violet);background:var(--violet-dim);font-weight:700;}
+  .ctl:disabled{opacity:.4;cursor:default;}
+
+  /* ---- stage ---- */
+  .stage{position:relative;width:100%;aspect-ratio:340/300;
+    background:radial-gradient(ellipse at 50% 30%, #1A222A 0%, #0F1418 75%);
+    border:1px solid var(--line);border-radius:6px;overflow:hidden;margin-bottom:10px;}
+  .stage svg{position:absolute;inset:0;width:100%;height:100%;}
+  .gearFace{fill:var(--panel-2);stroke:var(--line);stroke-width:1.4;}
+  .gearFace.selected{stroke:var(--brass);stroke-width:2.2;}
+  .gearFace.strategist{fill:#241C22;stroke:var(--route);}
+  .teamRing{fill:none;stroke:var(--route);stroke-width:1.4;stroke-dasharray:3 3;opacity:.75;}
+  .gearHub{fill:var(--ink);stroke:var(--line);stroke-width:1.2;}
+  .sName{font-family:"Courier New",monospace;font-size:7.4px;letter-spacing:.06em;
+    fill:var(--schematic-dim);text-anchor:middle;}
+  .calBarBg{fill:var(--panel);stroke:var(--line);stroke-width:.6;}
+  .calBarFill{fill:var(--cyan);}
+  .calBarFill.suspect{fill:var(--amber);}
+  .rejBarFill{fill:var(--crimson);}
+  .curvePath{fill:none;stroke:var(--violet);stroke-width:1.1;opacity:.8;}
+  .curvePath.contaminated{stroke:var(--crimson);opacity:.85;}
+
+  .portDot{stroke:var(--ink);stroke-width:1;cursor:pointer;}
+  .portDot.perception{fill:var(--cyan);}
+  .portDot.judgment{fill:var(--violet);}
+  .portDot.memory{fill:var(--amber);}
+  .portDot.route{fill:var(--route);}
+  .portDot.pending{stroke:#fff;stroke-width:2;filter:drop-shadow(0 0 4px #fff);}
+  .portHit{fill:transparent;cursor:pointer;}
+
+  .beltLine{stroke-width:2;fill:none;}
+  .beltLine.verified{stroke:var(--cyan);opacity:.75;}
+  .beltLine.unverified{stroke:var(--amber);stroke-dasharray:3 3;opacity:.7;}
+  .beltLine.corrupted{stroke:var(--crimson);opacity:.9;}
+  .beltShared{fill:var(--cyan);}
+  .routeArrow{stroke:var(--route);stroke-width:2;fill:none;marker-end:url(#arrowHead);}
+
+  .tick{stroke-width:.6;}
+  .tick.sourced{fill:var(--cyan-dim);stroke:var(--cyan);}
+  .tick.inference{fill:var(--violet-dim);stroke:var(--violet);}
+  .tick.unknown{fill:#232A32;stroke:var(--schematic-dim);}
+  .tick.bad{fill:var(--crimson-dim);stroke:var(--crimson);stroke-width:.8;}
+  .routeTick{fill:var(--route-dim);stroke:var(--route);stroke-width:.6;}
+  .routeToken{fill:var(--route);stroke:#fff;stroke-width:.8;filter:drop-shadow(0 0 5px var(--route));}
+  .calLabel{font-family:"Courier New",monospace;font-size:8px;fill:var(--route);text-anchor:middle;}
+  .statBar.valence{fill:#F08CA0;}
+  .statBar.temperature{fill:#F2793D;}
+  .statBar.cognition{fill:#5B8DEF;}
+  .statBar.cost{fill:#8A97A3;}
+  .trialBelt{stroke:var(--schematic-dim);stroke-width:1.5;stroke-dasharray:4 3;opacity:.55;fill:none;}
+  .gateCheckpoint{stroke:var(--ink);stroke-width:1;}
+  .ghostToken{fill:var(--schematic-dim);opacity:.85;}
+  .taskToken{fill:#F2C14E;stroke:#000;stroke-width:1;filter:drop-shadow(0 0 6px rgba(242,193,78,.75));}
+
+  /* ---- the ladder ---- */
+  .checkRow{display:flex;gap:4px;margin-bottom:4px;transition:opacity .3s ease;}
+  .checkCell{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:4px;
+    padding:5px 2px 4px;text-align:center;min-width:0;transition:opacity .25s ease;}
+  .checkCell .name{font-family:"Courier New",monospace;font-size:7.2px;letter-spacing:.01em;
+    color:var(--schematic-dim);text-transform:uppercase;white-space:nowrap;}
+  .checkCell .tag{font-family:"Courier New",monospace;font-size:6.2px;color:var(--brass-dim);
+    letter-spacing:.06em;margin-top:1px;}
+  .checkCell .dot{width:9px;height:9px;border-radius:50%;margin:4px auto 0;
+    background:#2A323C;border:1.5px solid transparent;transition:all .25s ease;}
+  .checkCell.na{opacity:.22;}
+  .checkCell.active .dot{background:var(--brass);box-shadow:0 0 8px var(--brass);}
+  .checkCell.pass .dot{background:var(--cyan);box-shadow:0 0 8px var(--cyan);}
+  .checkCell.assumed .dot{background:var(--cyan);box-shadow:0 0 8px var(--cyan);}
+  .checkCell.fail .dot{background:var(--crimson);box-shadow:0 0 8px var(--crimson);}
+  .checkCell.routed .dot{background:var(--amber);box-shadow:0 0 8px var(--amber);}
+  .checkCell.inert .dot{background:transparent;border-color:var(--amber);box-shadow:none;}
+  .checkCell.silent .dot{background:transparent;border-color:var(--crimson);box-shadow:none;}
+  .ladderNote{font-family:"Courier New",monospace;font-size:9px;color:var(--schematic-dim);
+    margin-bottom:10px;line-height:1.5;}
+  .ladderNote b{color:var(--crimson);}
+
+  /* ---- buttons ---- */
+  .assembleBtn{width:100%;font-family:"Courier New",monospace;font-size:11.5px;letter-spacing:.04em;
+    text-transform:uppercase;padding:11px 10px;border-radius:5px;border:1.5px solid var(--route);
+    background:var(--route-dim);color:var(--route);cursor:pointer;font-weight:700;margin-bottom:8px;}
+  .assembleBtn:disabled{opacity:.5;}
+  .runTaskBtn{width:100%;font-family:"Courier New",monospace;font-size:11.5px;letter-spacing:.04em;
+    text-transform:uppercase;padding:11px 10px;border-radius:5px;border:1.5px solid var(--cyan);
+    background:var(--cyan-dim);color:var(--cyan);cursor:pointer;font-weight:700;margin-bottom:10px;}
+  .runTaskBtn:disabled{opacity:.5;}
+
+  .modeChips{display:flex;gap:5px;margin-bottom:10px;}
+  .modeChip{flex:1;text-align:center;font-family:"Courier New",monospace;font-size:9.5px;
+    letter-spacing:.02em;padding:7px 2px;border-radius:4px;border:1px solid var(--line);
+    background:var(--panel);color:var(--schematic-dim);cursor:pointer;min-width:0;}
+  .modeChip .mid{display:block;font-size:6.4px;color:var(--brass-dim);margin-top:2px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .modeChip.active{background:var(--route-dim);border-color:var(--route);color:var(--route);font-weight:700;}
+  .modeChip.active .mid{color:var(--route);opacity:.8;}
+
+  .loopRow{display:flex;gap:4px;margin-bottom:10px;}
+  .loopChip{flex:1 1 0;min-width:0;font-family:"Courier New",monospace;font-size:8.6px;
+    letter-spacing:0;text-transform:uppercase;padding:7px 3px;border-radius:4px;
+    border:1px solid var(--line);background:var(--panel);color:var(--schematic-dim);
+    white-space:nowrap;cursor:pointer;text-align:center;overflow:hidden;}
+  .loopChip .gate{display:block;font-size:6.2px;color:var(--brass-dim);margin-top:2px;
+    text-transform:none;letter-spacing:0;overflow:hidden;text-overflow:ellipsis;}
+  .loopChip.armed{background:var(--brass-dim);border-color:var(--brass);color:#1a1610;font-weight:700;}
+  .loopChip.armed .gate{color:#3a3016;}
+
+  /* ---- panels ---- */
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:4px;
+    padding:10px 12px;margin-bottom:10px;min-height:52px;}
+  .panel .plabel{font-family:"Courier New",monospace;font-size:9px;letter-spacing:.12em;
+    color:var(--schematic-dim);text-transform:uppercase;margin-bottom:4px;}
+  .panel .ptext{font-size:12.3px;line-height:1.45;}
+  .panel .ptext code{font-family:"Courier New",monospace;font-size:11px;color:var(--brass);}
+  .meterTrack{height:8px;border-radius:4px;background:var(--panel-2);border:1px solid var(--line);
+    overflow:hidden;margin-top:6px;}
+  .meterFill{height:100%;transition:width .5s ease, background .5s ease;}
+  .rowBtns{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;}
+  .rowBtns button{flex:1;min-width:96px;font-family:"Courier New",monospace;font-size:10px;
+    text-transform:uppercase;padding:8px 4px;border-radius:4px;border:1px solid var(--line);
+    background:var(--panel-2);color:var(--schematic);cursor:pointer;}
+  .rowBtns button.approve{border-color:var(--cyan);color:var(--cyan);}
+  .rowBtns button.decline{border-color:var(--crimson);color:var(--crimson);}
+  .rowBtns button:disabled{opacity:.4;}
+
+  /* ---- provenance chips ---- */
+  .prov{display:inline-block;font-family:"Courier New",monospace;font-size:9px;
+    padding:1px 5px;border-radius:3px;border:1px solid;margin:1px 2px 1px 0;white-space:nowrap;}
+  .prov.sourced{color:var(--cyan);border-color:var(--cyan-dim);background:rgba(79,214,208,.07);}
+  .prov.inference{color:var(--violet);border-color:var(--violet-dim);background:rgba(155,140,232,.07);}
+  .prov.unknown{color:var(--schematic-dim);border-color:var(--line);}
+  .prov.bad{color:var(--crimson);border-color:var(--crimson-dim);background:rgba(225,71,107,.08);}
+
+  /* ---- queue ---- */
+  .queueBox{background:var(--panel);border:1px solid var(--line);border-radius:4px;
+    padding:8px 10px;margin-bottom:10px;}
+  .qhead{display:flex;justify-content:space-between;font-family:"Courier New",monospace;
+    font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--schematic-dim);
+    margin-bottom:6px;}
+  .qempty{font-family:"Courier New",monospace;font-size:10px;color:var(--schematic-dim);opacity:.7;}
+  .qrow{display:flex;align-items:center;gap:6px;padding:5px 0;border-top:1px solid var(--line);
+    font-family:"Courier New",monospace;font-size:9.4px;}
+  .qrow:first-of-type{border-top:none;}
+  .qrow .qf{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    color:var(--schematic);}
+  .qrow .qa{color:var(--schematic-dim);font-size:8.2px;display:block;}
+  .qrow .qs{font-size:8.4px;padding:1px 4px;border-radius:3px;border:1px solid;white-space:nowrap;}
+  .qrow.tool .qs{color:var(--cyan);border-color:var(--cyan-dim);}
+  .qrow.human .qs{color:var(--amber);border-color:var(--amber-dim);}
+  .qrow.stale .qs{color:var(--crimson);border-color:var(--crimson);}
+  .qrow button{font-family:"Courier New",monospace;font-size:8.4px;text-transform:uppercase;
+    padding:4px 6px;border-radius:3px;border:1px solid var(--line);background:var(--panel-2);
+    color:var(--schematic-dim);cursor:pointer;white-space:nowrap;}
+  .qrow button.cite{border-color:var(--cyan);color:var(--cyan);}
+  .qrow button.sign{border-color:var(--amber-dim);color:var(--amber);}
+  .qfoot{font-family:"Courier New",monospace;font-size:8.6px;color:var(--schematic-dim);
+    margin-top:7px;padding-top:6px;border-top:1px solid var(--line);line-height:1.5;}
+
+  .log{background:var(--panel);border:1px solid var(--line);border-radius:4px;
+    padding:8px 10px;font-family:"Courier New",monospace;font-size:10px;line-height:1.6;
+    color:var(--schematic-dim);height:112px;overflow-y:auto;margin-bottom:10px;}
+  .log .entry.hi{color:var(--cyan);}
+  .log .entry.warn{color:var(--amber);}
+  .log .entry.bad{color:var(--crimson);}
+  .log .entry.tour{color:var(--violet);}
+
+  button.reset{width:100%;font-family:"Courier New",monospace;font-size:11px;
+    padding:8px;border-radius:4px;border:1px solid var(--line);background:var(--panel);
+    color:var(--schematic-dim);cursor:pointer;}
+
+  .legend{display:flex;gap:9px;font-size:9.2px;color:var(--schematic-dim);margin-bottom:8px;
+    flex-wrap:wrap;}
+  .legend span{display:inline-flex;align-items:center;gap:4px;}
+  .legend i{width:8px;height:8px;border-radius:50%;display:inline-block;flex:0 0 auto;}
+  ::-webkit-scrollbar{height:4px;width:4px;}
+  ::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px;}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="eyebrow">Axolotl Partners — ABW, playable</div>
+    <h1>The loops and their gates</h1>
+    <p class="sub">Three agents that have to work together. Five ways the system is allowed to change itself — and a <b>gate on every one of them</b>. Turn the gates off and nothing looks different. That's the whole problem.</p>
+  </header>
+
+  <div class="ctlRow">
+    <button class="ctl tour" id="tourBtn">▶ Show me what goes wrong</button>
+  </div>
+
+  <div class="sectionLbl">Three clocks<em>only two of them block anything</em></div>
+  <div class="clockRow">
+    <div class="clock" id="clock-admission">
+      <div class="cname">Admission</div><div class="cblocks">blocks publish</div>
+    </div>
+    <div class="clock" id="clock-invocation">
+      <div class="cname">Invocation</div><div class="cblocks">blocks the answer</div>
+    </div>
+    <div class="clock nogate" id="clock-sweep">
+      <div class="cname">Sweep</div><div class="cblocks">blocks nothing</div>
+    </div>
+  </div>
+
+  <div class="metersBlock">
+    <div class="meterRow">
+      <div class="meterName fit">Grounded</div>
+      <div class="meterTrack2"><div class="meterFillFit" id="fitnessFill"></div></div>
+      <div class="meterNum" id="fitnessNum">0</div>
+    </div>
+    <div class="meterRow">
+      <div class="meterName ent">Unexamined</div>
+      <div class="meterTrack2"><div class="meterFillEnt" id="entropyFill"></div></div>
+      <div class="meterNum" id="entropyNum">0</div>
+    </div>
+  </div>
+  <div class="netStatus" id="netStatus">Grounded counts claims traced to a source. Deleting things cannot raise it.</div>
+
+  <div class="ctlRow">
+    <button class="ctl on" id="gateToggle">Gates: On</button>
+    <button class="ctl sweep" id="sweepBtn">Run sweep</button>
+    <button class="ctl honest" id="honestBtn">Show what ran</button>
+  </div>
+
+  <div class="legend">
+    <span><i style="background:#4FD6D0"></i>Perception</span>
+    <span><i style="background:#9B8CE8"></i>Judgment</span>
+    <span><i style="background:#E8A63D"></i>Memory</span>
+    <span><i style="background:#E88CC5"></i>Route (universal)</span>
+  </div>
+  <div class="legend" style="margin-top:-4px;margin-bottom:10px">
+    <span><i style="background:none;border:1.4px dashed #E88CC5;width:8px;height:8px;border-radius:50%"></i>Dashed ring = on the team</span>
+    <span><i style="background:#4FD6D0"></i>tick = sourced lesson</span>
+    <span><i style="background:#9B8CE8"></i>inference</span>
+    <span><i style="background:#E1476B"></i>lesson built on a fabrication</span>
+  </div>
+
+  <p class="hint">Tap a <b>port</b>, then a port <b>of the same colour</b> on another agent. Same colour means the two labels resolve to the same registered type — that's a seam. Different colours are two strings that merely look like they match.</p>
+
+  <div class="stage" id="stage">
+    <svg viewBox="0 0 340 300" id="svgRoot">
+      <defs>
+        <marker id="arrowHead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="var(--route)"/>
+        </marker>
+      </defs>
+      <g id="beltLayer"></g>
+      <g id="routeLayer"></g>
+      <g id="sprocketLayer"></g>
+      <g id="portLayer"></g>
+      <g id="tokenLayer"></g>
+    </svg>
+  </div>
+
+  <div class="sectionLbl">The ladder<em>A = admission · I = invocation · S = sweep</em></div>
+  <div class="checkRow" id="checkRow">
+    <div class="checkCell" data-check="presence"><div class="name">Presence</div><div class="tag">A·S</div><div class="dot"></div></div>
+    <div class="checkCell" data-check="liveness"><div class="name">Liveness</div><div class="tag">S</div><div class="dot"></div></div>
+    <div class="checkCell" data-check="truth"><div class="name">Truth</div><div class="tag">S</div><div class="dot"></div></div>
+    <div class="checkCell" data-check="grounding"><div class="name">Grounding</div><div class="tag">A·I</div><div class="dot"></div></div>
+    <div class="checkCell" data-check="binding"><div class="name">Binding</div><div class="tag">A·I</div><div class="dot"></div></div>
+  </div>
+  <div class="ladderNote" id="ladderNote">Nothing has run yet.</div>
+
+  <button class="assembleBtn" id="assembleBtn">Assemble a team — the strategist proposes</button>
+  <button class="runTaskBtn" id="runTaskBtn">Run a task through the team</button>
+
+  <div class="sectionLbl">Who is coordinating<em>real strategist agents</em></div>
+  <div class="modeChips">
+    <div class="modeChip" data-mode="router">Router<span class="mid">moe_router</span></div>
+    <div class="modeChip active" data-mode="pipeline">Pipeline<span class="mid">pipeline_strat</span></div>
+    <div class="modeChip" data-mode="decompose">Split<span class="mid">moe · decompose</span></div>
+    <div class="modeChip" data-mode="debate">Debate<span class="mid">debate_strat</span></div>
+  </div>
+
+  <div class="sectionLbl">Five feedback loops<em>each has a gate — except the last, deliberately</em></div>
+  <div class="loopRow" id="loopRow">
+    <div class="loopChip" data-loop="learn">1 Learn<span class="gate">ceiling</span></div>
+    <div class="loopChip" data-loop="correct">2 Correct<span class="gate">Γ(C) ≥ .5</span></div>
+    <div class="loopChip" data-loop="coherence">3 Cohere<span class="gate">split type</span></div>
+    <div class="loopChip" data-loop="team">4 Evolve<span class="gate">owner</span></div>
+    <div class="loopChip" data-loop="calibrate">5a Calib<span class="gate">outcome</span></div>
+    <div class="loopChip" data-loop="fit">5b Fit<span class="gate">none ⚠</span></div>
+  </div>
+
+  <div class="panel" id="actionPanel">
+    <div class="plabel">Status</div>
+    <div class="ptext" id="actionText">Three agents, no team yet. Press <b>Show me what goes wrong</b> for the guided version, or assemble a team and start wiring.</div>
+  </div>
+
+  <div class="sectionLbl">Unverified work queue<em>routed, not deleted</em></div>
+  <div class="queueBox" id="queueBox"></div>
+
+  <div class="log" id="log"></div>
+  <button class="reset" id="resetBtn">Reset everything</button>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  const svgNS = "http://www.w3.org/2000/svg";
+  const beltLayer   = document.getElementById('beltLayer');
+  const routeLayer  = document.getElementById('routeLayer');
+  const sprocketLayer = document.getElementById('sprocketLayer');
+  const portLayer   = document.getElementById('portLayer');
+  const tokenLayer  = document.getElementById('tokenLayer');
+  const actionText  = document.getElementById('actionText');
+  const actionPanel = document.getElementById('actionPanel');
+  const logEl       = document.getElementById('log');
+  const checkRow    = document.getElementById('checkRow');
+  const ladderNote  = document.getElementById('ladderNote');
+  const queueBox    = document.getElementById('queueBox');
+  const gateToggle  = document.getElementById('gateToggle');
+  const sweepBtn    = document.getElementById('sweepBtn');
+  const honestBtn   = document.getElementById('honestBtn');
+  const tourBtn     = document.getElementById('tourBtn');
+
+  const checkCells = {
+    presence:  document.querySelector('[data-check="presence"]'),
+    liveness:  document.querySelector('[data-check="liveness"]'),
+    truth:     document.querySelector('[data-check="truth"]'),
+    grounding: document.querySelector('[data-check="grounding"]'),
+    binding:   document.querySelector('[data-check="binding"]')
+  };
+  const clockEls = {
+    admission:  document.getElementById('clock-admission'),
+    invocation: document.getElementById('clock-invocation'),
+    sweep:      document.getElementById('clock-sweep')
+  };
+
+  // Which rungs each clock is even able to ask about. This is the whole point of §4.1:
+  // a request path cannot ask whether a writer has ever fired.
+  const CLOCK_RUNGS = {
+    admission:  ['presence','binding','grounding'],
+    invocation: ['binding','grounding'],
+    sweep:      ['presence','liveness','truth']
+  };
+
+  const RUNG_Q = {
+    presence:  'Does the declared thing exist at all?',
+    liveness:  'Has anything ever actually written it?',
+    truth:     'Does the stored value match its source?',
+    grounding: 'Could any tool this agent has have supplied this?',
+    binding:   'Does what arrived match what was declared?'
+  };
+
+  // ---------------------------------------------------------------- agents
+  // The cast is the cast from the papers. One retrieves, one fabricates,
+  // one is *allowed* to guess — and telling the third from the second is
+  // the check that nearly broke the grounding contract (§5.5).
+  const sprockets = [
+    { id:'s1', name:'SPECIES_RESOLVER', agentId:'species_resolver',
+      blurb:'Looks things up in GBIF. Almost everything it says has a record behind it.',
+      cx:126, cy:150, r:22, teeth:8, calibration:52, sigma:36,
+      valence:60, temperature:20, cognition:55, cost:2,
+      declared:4, sourceable:4, fabRate:0.06, tool:'gbif_occurrence',
+      fields:['scientific_name','family','occurrence_count','habitat_note'],
+      ports:[{key:'perception',angle:-90,cls:'perception'},{key:'judgment',angle:35,cls:'judgment'},{key:'memory',angle:155,cls:'memory'}]},
+
+    { id:'s2', name:'GENOME_PROFILER', agentId:'genome_profiler',
+      blurb:'Asked for four blocks of data. Has a tool for one of them. Fills in the rest anyway.',
+      cx:210, cy:150, r:22, teeth:8, calibration:71, sigma:36,
+      valence:45, temperature:35, cognition:88, cost:5,
+      declared:4, sourceable:1, fabRate:0.55, tool:'taxonomy_lookup',
+      fields:['taxonomy','estimated_size_mb','chromosome_count','conservation_status'],
+      ports:[{key:'perception',angle:-90,cls:'perception'},{key:'judgment',angle:35,cls:'judgment'},{key:'memory',angle:155,cls:'memory'}]},
+
+    { id:'s3', name:'ENEMY_SENSOR', agentId:'enemy_sensor',
+      blurb:'Rates predation risk. No database holds that number — it was commissioned to make one up, honestly.',
+      cx:298, cy:150, r:22, teeth:8, calibration:44, sigma:36,
+      valence:50, temperature:30, cognition:70, cost:3,
+      declared:3, sourceable:2, fabRate:0.10, inferrer:true, tool:'h3_proximity',
+      fields:['nearby_predators','distance_m','threat_level'],
+      ports:[{key:'perception',angle:-90,cls:'perception'},{key:'judgment',angle:35,cls:'judgment'},{key:'memory',angle:155,cls:'memory'}]},
+
+    { id:'strat', name:'STRATEGIST', agentId:'pipeline_strategist',
+      blurb:'Decides who does what, in what order. It is an agent too, so it learns from being wrong.',
+      cx:42, cy:150, r:19, teeth:14, calibration:30, sigma:36,
+      valence:50, temperature:30, cognition:60, cost:3,
+      declared:2, sourceable:2, fabRate:0.05, isStrategist:true, tool:'get_agent_calibration',
+      fields:['selected_member','rationale'],
+      ports:[{key:'route1',angle:-135,cls:'route'},{key:'route2',angle:-45,cls:'route'},{key:'route3',angle:90,cls:'route'}]}
+  ];
+
+  // per-agent mutable state
+  sprockets.forEach(s=>{
+    s.lessons = [];        // {grade:'sourced'|'inference'|'unknown'|'bad'}
+    s.routeTicks = 0;
+    s.selected = false;
+    s.sinks = 0;           // rows the writer actually produced
+    s.opportunities = 0;   // times it should have produced one
+    s.rejected = 0;        // claims checked and found wrong
+    s.checked = 0;         // claims checked at all
+    s.fitContaminated = false;
+    s.baseCal = s.calibration;
+  });
+
+  const STRAT_IDENTITY = {
+    router:    {agentId:'moe_router_strategist',  note:'classifies the query, picks one expert, synthesises'},
+    pipeline:  {agentId:'pipeline_strategist',    note:'validates the seams, then runs stages in order'},
+    decompose: {agentId:'moe_router_strategist',  note:'splits the query, checks each part on its own'},
+    debate:    {agentId:'debate_strategist',      note:'assigns opposing positions so agreement has to be earned'}
+  };
+
+  let belts = [];
+  let pending = null;
+  let gateOn = true;
+  let busy = false;
+  let gateBusy = false;
+  let routingBusy = false;
+  let strategistMode = 'pipeline';
+  let sweepRuns = 0;
+  let lastSweep = null;        // real verdicts, so they survive later repaints
+  let honestMode = false;      // "show what actually ran"
+  let honestEverUsed = false;
+  let hiddenDebt = 0;          // ungated hops nobody looked at
+  let queue = [];
+  let qid = 1;
+  let tourRunning = false;
+
+  const LAYOUTS = {
+    router:    { strat:{cx:170,cy:150}, s1:{cx:70,cy:65},  s2:{cx:270,cy:65}, s3:{cx:170,cy:235} },
+    pipeline:  { strat:{cx:42,cy:150},  s1:{cx:126,cy:150},s2:{cx:210,cy:150},s3:{cx:298,cy:150} },
+    decompose: { strat:{cx:170,cy:55},  s1:{cx:60,cy:215}, s2:{cx:170,cy:240},s3:{cx:280,cy:215} },
+    debate:    { strat:{cx:170,cy:52},  s1:{cx:62,cy:200}, s2:{cx:278,cy:200},s3:{cx:170,cy:255} }
+  };
+
+  // ---------------------------------------------------------------- helpers
+  function getSprocket(id){ return sprockets.find(s=>s.id===id); }
+  function learners(){ return sprockets.filter(s=>!s.isStrategist); }
+  function wait(ms){ return new Promise(res=>setTimeout(res, ms)); }
+  function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+
+  function gearPath(cx, cy, outerR, innerR, teeth){
+    let pts = [];
+    const step = Math.PI / teeth;
+    for(let i=0;i<teeth*2;i++){
+      const r = (i % 2 === 0) ? outerR : innerR;
+      const a = i * step;
+      pts.push([cx + r*Math.cos(a), cy + r*Math.sin(a)]);
+    }
+    return "M " + pts.map(p=>p[0].toFixed(1)+","+p[1].toFixed(1)).join(" L ") + " Z";
+  }
+  function portPos(s, angleDeg, dist){
+    const a = angleDeg * Math.PI/180;
+    return {x: s.cx + dist*Math.cos(a), y: s.cy + dist*Math.sin(a)};
+  }
+  function curvePoints(s){
+    const w = 38, h = 8;
+    const cx0 = s.cx - w/2, cy0 = s.cy + s.r + 36;
+    let pts = [];
+    for(let i=0;i<=10;i++){
+      const x = i/10 * w;
+      const dx = x - w/2;
+      const y = h - h*Math.exp(-(dx*dx)/(2*s.sigma*s.sigma/9));
+      pts.push([cx0+x, cy0+y]);
+    }
+    return "M " + pts.map(p=>p[0].toFixed(1)+","+p[1].toFixed(1)).join(" L ");
+  }
+  function log(msg, cls){
+    const div = document.createElement('div');
+    div.className = 'entry' + (cls ? ' '+cls : '');
+    div.textContent = msg;
+    logEl.insertBefore(div, logEl.firstChild);
+    while(logEl.children.length > 44) logEl.removeChild(logEl.lastChild);
+  }
+  function setPanel(label, text){
+    actionPanel.querySelector('.plabel').textContent = label;
+    actionText.innerHTML = text;
+  }
+  function animateEl(el, x0, y0, x1, y1, duration){
+    return new Promise(resolve=>{
+      const start = performance.now();
+      function step(now){
+        const t = Math.min(1, (now-start)/duration);
+        const ease = t<0.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2;
+        el.setAttribute('cx', x0+(x1-x0)*ease);
+        el.setAttribute('cy', y0+(y1-y0)*ease);
+        if(t<1) requestAnimationFrame(step); else resolve();
+      }
+      requestAnimationFrame(step);
+    });
+  }
+  function animateLayoutTo(mode){
+    const target = LAYOUTS[mode];
+    if(!target) return Promise.resolve();
+    const start = {};
+    sprockets.forEach(s=>{ start[s.id] = {cx:s.cx, cy:s.cy}; });
+    const t0 = performance.now(), duration = 550;
+    return new Promise(resolve=>{
+      function step(now){
+        const t = Math.min(1, (now-t0)/duration);
+        const ease = t<0.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2;
+        sprockets.forEach(s=>{
+          const from = start[s.id], to = target[s.id];
+          if(!to) return;
+          s.cx = from.cx + (to.cx-from.cx)*ease;
+          s.cy = from.cy + (to.cy-from.cy)*ease;
+        });
+        render();
+        if(t<1) requestAnimationFrame(step); else resolve();
+      }
+      requestAnimationFrame(step);
+    });
+  }
+  function showLabel(x, y, text, color){
+    const t = document.createElementNS(svgNS,'text');
+    t.setAttribute('x', x); t.setAttribute('y', y-10);
+    t.setAttribute('class','calLabel');
+    if(color) t.setAttribute('fill', color);
+    t.textContent = text;
+    tokenLayer.appendChild(t);
+    setTimeout(()=>{ if(t.parentNode) t.remove(); }, 1100);
+  }
+  function createToken(x, y, cls){
+    const c = document.createElementNS(svgNS,'circle');
+    c.setAttribute('class', cls || 'routeToken');
+    c.setAttribute('r', 5);
+    c.setAttribute('cx', x); c.setAttribute('cy', y);
+    tokenLayer.appendChild(c);
+    return c;
+  }
+
+  // ---------------------------------------------------------------- provenance
+  // §3.3 — the floor is over sources, the ceiling is over operations.
+  const GRADE_RANK = { bad:0, unknown:1, inference:2, sourced:3 };
+  const GRADE_NAME = { bad:'refuted', unknown:'unknown', inference:'inference', sourced:'sourced' };
+
+  // "Unknown is not a rung on the ladder": it poisons a result only when it
+  // could still move it. Nine verified + one bad + one ungradeable floors at bad.
+  function floorOf(grades){
+    if(!grades.length) return 'unknown';
+    if(grades.includes('bad')) return 'bad';
+    if(grades.includes('unknown')) return 'unknown';
+    if(grades.includes('inference')) return 'inference';
+    return 'sourced';
+  }
+  // Reading well-sourced inputs and generalising over them is judgement,
+  // and judgement does not inherit retrieval. Permanently.
+  function ceilingOf(floor){
+    return floor === 'sourced' ? 'inference' : floor;
+  }
+  function provChip(g){
+    return '<span class="prov '+g+'">'+GRADE_NAME[g]+'</span>';
+  }
+
+  // ---------------------------------------------------------------- render
+  function render(){
+    beltLayer.innerHTML = '';
+    belts.forEach(b=>{
+      const sa = getSprocket(b.aId), sb = getSprocket(b.bId);
+      const pa = sa.ports.find(p=>p.key===b.aPort), pb = sb.ports.find(p=>p.key===b.bPort);
+      const posA = portPos(sa, pa.angle, sa.r+10);
+      const posB = portPos(sb, pb.angle, sb.r+10);
+      const line = document.createElementNS(svgNS,'line');
+      line.setAttribute('class','beltLine ' + (b.corrupted ? 'corrupted' : (b.verified ? 'verified' : 'unverified')));
+      line.setAttribute('x1',posA.x); line.setAttribute('y1',posA.y);
+      line.setAttribute('x2',posB.x); line.setAttribute('y2',posB.y);
+      beltLayer.appendChild(line);
+      if(b.shared>0){
+        const dot = document.createElementNS(svgNS,'circle');
+        dot.setAttribute('class','beltShared');
+        dot.setAttribute('cx',(posA.x+posB.x)/2); dot.setAttribute('cy',(posA.y+posB.y)/2);
+        dot.setAttribute('r', 3+Math.min(b.shared,4));
+        beltLayer.appendChild(dot);
+      }
+    });
+
+    sprocketLayer.innerHTML = '';
+    portLayer.innerHTML = '';
+    const teamIds = computeReachableFromStrat();
+    sprockets.forEach(s=>{
+      const g = document.createElementNS(svgNS,'g');
+
+      if(!s.isStrategist && teamIds.has(s.id)){
+        const ring = document.createElementNS(svgNS,'circle');
+        ring.setAttribute('class','teamRing');
+        ring.setAttribute('cx',s.cx); ring.setAttribute('cy',s.cy); ring.setAttribute('r', s.r+5);
+        g.appendChild(ring);
+      }
+
+      const face = document.createElementNS(svgNS,'path');
+      face.setAttribute('class','gearFace'+(s.isStrategist?' strategist':'')+(s.selected?' selected':''));
+      face.setAttribute('d', gearPath(s.cx,s.cy,s.r,s.r*0.8,s.teeth));
+      face.style.cursor = 'pointer';
+      face.addEventListener('click', ()=>selectSprocket(s.id));
+      g.appendChild(face);
+
+      const hub = document.createElementNS(svgNS,'circle');
+      hub.setAttribute('class','gearHub');
+      hub.setAttribute('cx',s.cx); hub.setAttribute('cy',s.cy); hub.setAttribute('r', s.r*0.35);
+      g.appendChild(hub);
+
+      // lesson ticks, coloured by provenance grade
+      const ringR = s.r + 18, cap = 10;
+      s.lessons.slice(0, cap*2).forEach((L,i)=>{
+        const a = (i / cap) * Math.PI*2 - Math.PI/2;
+        const x = s.cx + ringR*Math.cos(a), y = s.cy + ringR*Math.sin(a);
+        const t = document.createElementNS(svgNS,'rect');
+        t.setAttribute('class','tick '+L.grade);
+        t.setAttribute('x', x-2); t.setAttribute('y', y-2);
+        t.setAttribute('width',4); t.setAttribute('height',4);
+        g.appendChild(t);
+      });
+
+      const routeRingR = s.r + 27, routeCap = 8;
+      for(let i=0;i<Math.min(s.routeTicks||0, routeCap*2); i++){
+        const a = (i / routeCap) * Math.PI*2 - Math.PI/2;
+        const rt = document.createElementNS(svgNS,'circle');
+        rt.setAttribute('class','routeTick');
+        rt.setAttribute('cx', s.cx + routeRingR*Math.cos(a));
+        rt.setAttribute('cy', s.cy + routeRingR*Math.sin(a));
+        rt.setAttribute('r',2.3);
+        g.appendChild(rt);
+      }
+
+      const label = document.createElementNS(svgNS,'text');
+      label.setAttribute('class','sName');
+      label.setAttribute('x', s.cx); label.setAttribute('y', s.cy + s.r + 12);
+      label.textContent = s.name;
+      g.appendChild(label);
+
+      const statVals = [
+        {v:s.valence, cls:'valence'}, {v:s.temperature, cls:'temperature'},
+        {v:s.cognition, cls:'cognition'}, {v:Math.min(100, s.cost*11), cls:'cost'}
+      ];
+      const barMaxH = 9, barW2 = 3, gap2 = 2;
+      const totalW = statVals.length*barW2 + (statVals.length-1)*gap2;
+      const rowBaseY = s.cy + s.r + 21;
+      statVals.forEach((sv, i)=>{
+        const bh = Math.max(1.5, (sv.v/100)*barMaxH);
+        const rect = document.createElementNS(svgNS,'rect');
+        rect.setAttribute('class','statBar '+sv.cls);
+        rect.setAttribute('x', s.cx - totalW/2 + i*(barW2+gap2));
+        rect.setAttribute('y', rowBaseY - bh);
+        rect.setAttribute('width', barW2); rect.setAttribute('height', bh);
+        g.appendChild(rect);
+      });
+
+      // two bars: what the agent says about itself (calibration) and what
+      // reality says about it (rejection rate). Only one of them is self-reported.
+      const barW = 38, barH = 3.4, barY = rowBaseY + 4;
+      const bg = document.createElementNS(svgNS,'rect');
+      bg.setAttribute('class','calBarBg');
+      bg.setAttribute('x', s.cx-barW/2); bg.setAttribute('y', barY);
+      bg.setAttribute('width', barW); bg.setAttribute('height', barH); bg.setAttribute('rx',1.6);
+      g.appendChild(bg);
+      const fill = document.createElementNS(svgNS,'rect');
+      const suspect = s.lessons.some(L=>L.grade==='bad');
+      fill.setAttribute('class','calBarFill'+(suspect?' suspect':''));
+      fill.setAttribute('x', s.cx-barW/2); fill.setAttribute('y', barY);
+      fill.setAttribute('width', barW*(s.calibration/100)); fill.setAttribute('height', barH);
+      fill.setAttribute('rx',1.6);
+      g.appendChild(fill);
+
+      if(s.checked > 0){
+        const rY = barY + barH + 1.6;
+        const rbg = document.createElementNS(svgNS,'rect');
+        rbg.setAttribute('class','calBarBg');
+        rbg.setAttribute('x', s.cx-barW/2); rbg.setAttribute('y', rY);
+        rbg.setAttribute('width', barW); rbg.setAttribute('height', barH); rbg.setAttribute('rx',1.6);
+        g.appendChild(rbg);
+        const rf = document.createElementNS(svgNS,'rect');
+        rf.setAttribute('class','rejBarFill');
+        rf.setAttribute('x', s.cx-barW/2); rf.setAttribute('y', rY);
+        rf.setAttribute('width', barW*(s.rejected/s.checked)); rf.setAttribute('height', barH);
+        rf.setAttribute('rx',1.6);
+        g.appendChild(rf);
+      }
+
+      sprocketLayer.appendChild(g);
+
+      if(!s.isStrategist){
+        const curve = document.createElementNS(svgNS,'path');
+        curve.setAttribute('class','curvePath'+(s.fitContaminated?' contaminated':''));
+        curve.setAttribute('d', curvePoints(s));
+        sprocketLayer.appendChild(curve);
+      }
+
+      s.ports.forEach(pt=>{
+        const pos = portPos(s, pt.angle, s.r+10);
+        const hit = document.createElementNS(svgNS,'circle');
+        hit.setAttribute('class','portHit');
+        hit.setAttribute('cx',pos.x); hit.setAttribute('cy',pos.y); hit.setAttribute('r', 12);
+        hit.addEventListener('click', ()=>onPortClick(s.id, pt.key));
+        portLayer.appendChild(hit);
+        const dot = document.createElementNS(svgNS,'circle');
+        const isPending = pending && pending.sprocketId===s.id && pending.portKey===pt.key;
+        dot.setAttribute('class','portDot '+pt.cls+(isPending?' pending':''));
+        dot.setAttribute('cx',pos.x); dot.setAttribute('cy',pos.y); dot.setAttribute('r', 5);
+        dot.addEventListener('click', ()=>onPortClick(s.id, pt.key));
+        portLayer.appendChild(dot);
+      });
+    });
+    renderScore();
+    renderQueue();
+  }
+
+  // ---------------------------------------------------------------- scoreboard
+  // §5.4 — the leading indicator must be one that deletion cannot fake.
+  function groundedCount(){
+    let n = 0;
+    n += belts.filter(b=>b.verified && !b.corrupted).length * 2;
+    n += queue.filter(q=>q.state==='verified').length * 3;
+    sprockets.forEach(s=>{
+      n += s.lessons.filter(L=>L.grade==='sourced').length * 2;
+      n += s.lessons.filter(L=>L.grade==='inference').length;
+      if(s.sinks > 0) n += 2;                 // a write path demonstrated to work
+    });
+    return n;
+  }
+  function unexaminedCount(){
+    let n = 0;
+    n += belts.filter(b=>!b.verified && !b.corrupted).length * 3;
+    n += belts.filter(b=>b.corrupted).length * 5;
+    n += queue.filter(q=>q.state==='pending_tool').length;
+    n += queue.filter(q=>q.state==='pending_human').length * 2;
+    n += queue.filter(q=>q.stale && (q.state==='pending_tool' || q.state==='pending_human')).length * 3;
+    sprockets.forEach(s=>{
+      n += s.lessons.filter(L=>L.grade==='bad').length * 4;
+      n += s.lessons.filter(L=>L.grade==='unknown').length;
+      if(s.opportunities > 0 && s.sinks === 0) n += 4;   // silent writer
+    });
+    // §3.1 — with no path demonstrated to work, "everything is broken" and
+    // "the sweep is broken" are the same picture. That is debt too.
+    if(sweepRuns > 0 && !sprockets.some(s=>s.sinks > 0)) n += 4;
+    n += hiddenDebt * 3;
+    if(sweepRuns === 0) n += 6;   // three rungs have never run
+    return n;
+  }
+  function renderScore(){
+    const gc = groundedCount(), uc = unexaminedCount();
+    const fitFill = document.getElementById('fitnessFill');
+    const entFill = document.getElementById('entropyFill');
+    fitFill.style.width = Math.round(100*(1-Math.exp(-gc/40))) + '%';
+    entFill.style.width = Math.round(100*(1-Math.exp(-uc/40))) + '%';
+    document.getElementById('fitnessNum').textContent = gc;
+    document.getElementById('entropyNum').textContent = uc;
+
+    const net = document.getElementById('netStatus');
+    let msg, color;
+    if(sweepRuns === 0){
+      msg = 'Three of the five rungs have never executed. Press “Run sweep”.';
+      color = 'var(--amber)';
+    } else if(uc === 0 && gc === 0){
+      msg = 'Nothing built yet.'; color = 'var(--schematic-dim)';
+    } else if(gc > uc*2){
+      msg = 'Healthy — most of what this system believes can be traced to something.';
+      color = 'var(--cyan)';
+    } else if(gc > uc){
+      msg = 'Ahead, narrowly. Grounded claims outnumber unexamined ones.';
+      color = 'var(--cyan)';
+    } else if(uc > gc*2){
+      msg = 'Unexamined is running away. Most of what is believed here was never checked.';
+      color = 'var(--crimson)';
+    } else {
+      msg = 'Even. Half of what this system believes is unaudited.';
+      color = 'var(--amber)';
+    }
+    net.textContent = msg;
+    net.style.color = color;
+  }
+  function pulseScore(which){
+    const el = document.getElementById(which==='grounded' ? 'fitnessFill' : 'entropyFill');
+    el.classList.add('pulse');
+    setTimeout(()=>el.classList.remove('pulse'), 350);
+  }
+
+  // ---------------------------------------------------------------- clocks + ladder
+  function fireClock(name, on){
+    Object.keys(clockEls).forEach(k=>{
+      if(on && k===name) clockEls[k].classList.add('firing');
+      else if(!on && k===name) clockEls[k].classList.remove('firing');
+    });
+  }
+  function refreshSweepClock(){
+    clockEls.sweep.classList.toggle('stalled', sweepRuns === 0);
+    clockEls.sweep.querySelector('.cblocks').textContent =
+      sweepRuns === 0 ? 'never run' : 'blocks nothing';
+  }
+
+  function ladderReset(clock){
+    Object.keys(checkCells).forEach(k=>{
+      const c = checkCells[k];
+      c.className = 'checkCell';
+      if(clock && CLOCK_RUNGS[clock].indexOf(k) === -1) c.classList.add('na');
+    });
+  }
+  function setRung(key, state){
+    const c = checkCells[key];
+    c.classList.remove('active','pass','fail','routed','inert','silent','assumed');
+    if(state) c.classList.add(state);
+  }
+  function note(html){ ladderNote.innerHTML = html; }
+
+  // The centrepiece. Until the sweep has run, its three rungs *look* like passes.
+  // "Show what ran" is the only thing that tells them apart — which is the defect.
+  function paintSweepRungs(){
+    ['presence','liveness','truth'].forEach(k=>{
+      if(sweepRuns === 0) setRung(k, honestMode ? 'inert' : 'assumed');
+      else if(lastSweep) setRung(k, lastSweep[k]);
+    });
+  }
+  // Clear whatever the last clock left behind, but keep any verdict the sweep
+  // actually produced — those are findings, not transient animation state.
+  function restoreLadder(){
+    ladderReset();
+    paintSweepRungs();
+  }
+
+  // ---------------------------------------------------------------- queue (§5.6)
+  function enqueue(agent, field, kind, reason){
+    queue.push({
+      id: qid++, agentId: agent.id, agentName: agent.name, field: field,
+      state: kind, reason: reason, tool: agent.tool, age: 0, stale:false
+    });
+  }
+  function ageQueue(){
+    let newlyStale = 0;
+    queue.forEach(q=>{
+      if(q.state==='pending_tool' || q.state==='pending_human'){
+        q.age++;
+        if(q.age >= 5 && !q.stale){ q.stale = true; newlyStale++; }
+      }
+    });
+    if(newlyStale > 0){
+      log(`${newlyStale} queued item(s) have gone stale. A year-old pending value behind a mild badge is functionally trusted.`, 'bad');
+    }
+  }
+  function renderQueue(){
+    const open = queue.filter(q=>q.state==='pending_tool' || q.state==='pending_human');
+    const done = queue.filter(q=>q.state==='verified');
+    const rej  = queue.filter(q=>q.state==='rejected');
+    const signed = queue.filter(q=>q.state==='endorsed');
+
+    let html = '<div class="qhead"><span>Pending ' + open.length + '</span>' +
+      '<span>verified ' + done.length + ' · endorsed ' + signed.length + ' · refuted ' + rej.length + '</span></div>';
+
+    if(open.length === 0){
+      html += '<div class="qempty">Nothing waiting. Unverified claims land here instead of being deleted.</div>';
+    } else {
+      open.slice(0,5).forEach(q=>{
+        const cls = q.state==='pending_tool' ? 'tool' : 'human';
+        const stateTxt = q.state==='pending_tool' ? 'tool · ' + q.tool : 'needs a person';
+        html += '<div class="qrow ' + cls + (q.stale?' stale':'') + '">' +
+          '<span class="qf">' + q.field + '<span class="qa">' + q.agentName + (q.stale?' · STALE':'') + '</span></span>' +
+          '<span class="qs">' + stateTxt + '</span>';
+        if(q.state==='pending_tool'){
+          html += '<button data-q="' + q.id + '" data-act="tool">run tool</button>';
+        } else {
+          html += '<button class="cite" data-q="' + q.id + '" data-act="cite">verify + cite</button>' +
+                  '<button class="sign" data-q="' + q.id + '" data-act="sign">sign off</button>';
+        }
+        html += '</div>';
+      });
+      if(open.length > 5) html += '<div class="qempty" style="margin-top:5px">+ ' + (open.length-5) + ' more</div>';
+    }
+    html += '<div class="qfoot">Presented always, used but marked. A rejection rate is the one quality number an agent cannot report about itself.</div>';
+    queueBox.innerHTML = html;
+
+    queueBox.querySelectorAll('button[data-q]').forEach(btn=>{
+      btn.addEventListener('click', ()=>resolveQueueItem(+btn.dataset.q, btn.dataset.act));
+    });
+  }
+
+  function resolveQueueItem(id, act){
+    const q = queue.find(x=>x.id===id);
+    if(!q) return;
+    const agent = getSprocket(q.agentId);
+    agent.checked++;
+
+    if(act === 'tool'){
+      // the contract already named the tool; run it and believe the answer
+      const ok = Math.random() > (agent.fabRate * 0.9);
+      if(ok){
+        q.state = 'verified';
+        agent.lessons.push({grade:'sourced'});
+        log(`${q.tool} confirmed ${q.field}. Verified — the contract already knew which tool to ask.`, 'hi');
+        setPanel('Routed to a tool', `<code>${q.field}</code> was declared <b>Sourced</b>, so the contract already named the tool that could settle it. No new declaration was needed. ${provChip('sourced')}`);
+      } else {
+        q.state = 'rejected';
+        agent.rejected++;
+        agent.lessons.push({grade:'bad'});
+        log(`${q.tool} contradicted ${q.field}. Refuted — and it counts against ${agent.name}.`, 'bad');
+        setPanel('Refuted', `The tool ran and disagreed. <code>${q.field}</code> is retracted, and <b>${agent.name}</b>'s rejection rate moved. That number is the first thing this platform knows about an agent that the agent didn't tell it. ${provChip('bad')}`);
+      }
+    } else if(act === 'cite'){
+      q.state = 'verified';
+      agent.lessons.push({grade:'sourced'});
+      log(`${q.field} verified by a person, with a citation recorded.`, 'hi');
+      setPanel('Human verification', `A person settled <code>${q.field}</code> <b>and had to record what they checked it against</b>. That is why it ranks with a tool call: someone else can follow the citation to the same source. ${provChip('sourced')}`);
+    } else if(act === 'sign'){
+      q.state = 'endorsed';
+      agent.lessons.push({grade:'inference'});
+      log(`${q.field} signed off without a citation — endorsement, not verification.`, 'warn');
+      setPanel('Endorsement, not verification', `Someone clicked approve on <code>${q.field}</code> with nothing attached. It is kept, and it ranks exactly with a model's own guess — ${provChip('inference')} — because a one-click “verified” is the cheapest possible route from a guess to canon, with a person's name on it.<br><br>The button exists on purpose. Forcing a citation for every judgement just makes reviewers paste a plausible URL, which is worse than an admitted opinion.`);
+    }
+    render();
+  }
+
+  // ---------------------------------------------------------------- graph
+  function buildAdjacency(){
+    const adj = {};
+    sprockets.forEach(s=> adj[s.id] = []);
+    belts.forEach(b=>{ adj[b.aId].push(b.bId); adj[b.bId].push(b.aId); });
+    return adj;
+  }
+  function computeReachableFromStrat(){
+    const adj = buildAdjacency();
+    const visited = new Set(['strat']);
+    const queue2 = ['strat'];
+    while(queue2.length){
+      const cur = queue2.shift();
+      adj[cur].forEach(n=>{ if(!visited.has(n)){ visited.add(n); queue2.push(n); } });
+    }
+    visited.delete('strat');
+    return visited;
+  }
+  function computeTaskPath(){
+    const adj = buildAdjacency();
+    let best = ['strat'];
+    function dfs(node, path, seen){
+      if(path.length > best.length) best = path.slice();
+      adj[node].forEach(n=>{
+        if(seen.has(n)) return;
+        seen.add(n); path.push(n);
+        dfs(n, path, seen);
+        path.pop(); seen.delete(n);
+      });
+    }
+    dfs('strat', ['strat'], new Set(['strat']));
+    return best;
+  }
+  function findBelt(idA, idB){
+    return belts.find(b => (b.aId===idA && b.bId===idB) || (b.aId===idB && b.bId===idA));
+  }
+  function stratConnected(){
+    const ids = new Set();
+    belts.forEach(b=>{
+      if(b.aId==='strat') ids.add(b.bId);
+      if(b.bId==='strat') ids.add(b.aId);
+    });
+    return sprockets.filter(x=>ids.has(x.id));
+  }
+  function drawRouteArrow(fromS, toS){
+    const line = document.createElementNS(svgNS,'line');
+    line.setAttribute('class','routeArrow');
+    const dx = toS.cx-fromS.cx, dy = toS.cy-fromS.cy;
+    const dist = Math.sqrt(dx*dx+dy*dy) || 1;
+    const ux = dx/dist, uy = dy/dist;
+    line.setAttribute('x1', fromS.cx + ux*(fromS.r+6));
+    line.setAttribute('y1', fromS.cy + uy*(fromS.r+6));
+    line.setAttribute('x2', toS.cx - ux*(toS.r+10));
+    line.setAttribute('y2', toS.cy - uy*(toS.r+10));
+    routeLayer.appendChild(line);
+    setTimeout(()=>{ if(line.parentNode) line.remove(); }, 2600);
+  }
+
+  function selectSprocket(id){
+    if(gateBusy || busy) return;
+    sprockets.forEach(s=> s.selected = (s.id===id));
+    render();
+    showAgentCard(getSprocket(id));
+  }
+  function getSelected(){ return sprockets.find(s=>s.selected) || null; }
+
+  // A gesture at the real thing: the agent card, with the two numbers side by side.
+  function showAgentCard(s){
+    const counts = {sourced:0, inference:0, unknown:0, bad:0};
+    s.lessons.forEach(L=>counts[L.grade]++);
+    const rejPct = s.checked ? Math.round(100*s.rejected/s.checked) : null;
+    const live = s.opportunities === 0 ? 'inert (no opportunities yet)'
+               : (s.sinks === 0 ? 'SILENT — ' + s.opportunities + ' opportunities, 0 rows written'
+                                : 'ok — ' + s.sinks + '/' + s.opportunities);
+    const chips = Object.keys(counts).filter(k=>counts[k]>0)
+      .map(k=>provChip(k) + '×' + counts[k]).join(' ') || '<span class="prov unknown">no lessons yet</span>';
+
+    setPanel('Agent card · ' + s.agentId,
+      `${s.blurb}<br><br>` +
+      `<code>declares ${s.declared} fields · ${s.sourceable} have a tool behind them</code><br>` +
+      `Says about itself: <b style="color:var(--cyan)">calibration ${s.calibration}%</b><br>` +
+      `Measured by others: <b style="color:${rejPct===null?'var(--schematic-dim)':'var(--crimson)'}">` +
+        (rejPct===null ? 'no claims checked yet' : `${rejPct}% refuted (${s.rejected}/${s.checked})`) + `</b><br>` +
+      `Write path: <code>${live}</code><br>` +
+      `What it has learned: ${chips}`);
+  }
+
+  // ---------------------------------------------------------------- ADMISSION
+  // Wiring a seam is a publish decision, so the admission gate runs here.
+  async function onPortClick(sprocketId, portKey){
+    if(gateBusy || busy) return;
+    if(!pending){ pending = {sprocketId, portKey}; render(); return; }
+    if(pending.sprocketId === sprocketId){ pending = null; render(); return; }
+
+    const idx = belts.findIndex(b=>
+      (b.aId===pending.sprocketId && b.aPort===pending.portKey && b.bId===sprocketId && b.bPort===portKey) ||
+      (b.bId===pending.sprocketId && b.bPort===pending.portKey && b.aId===sprocketId && b.aPort===portKey)
+    );
+    if(idx >= 0){
+      belts.splice(idx,1);
+      log('Seam removed.', null);
+      pending = null; render();
+      return;
+    }
+    const a = pending, b = {sprocketId, portKey};
+    pending = null; render();
+    await attemptBelt(a, b);
+  }
+
+  function portCls(sid, key){
+    const s = getSprocket(sid);
+    return s.ports.find(p=>p.key===key).cls;
+  }
+  function typesMatch(a, b){
+    const ca = portCls(a.sprocketId, a.portKey), cb = portCls(b.sprocketId, b.portKey);
+    return ca === cb || ca === 'route' || cb === 'route';
+  }
+
+  async function attemptBelt(a, b){
+    gateBusy = true;
+    const sa = getSprocket(a.sprocketId), sb = getSprocket(b.sprocketId);
+    const pa = sa.ports.find(p=>p.key===a.portKey), pb = sb.ports.find(p=>p.key===b.portKey);
+    const posA = portPos(sa, pa.angle, sa.r+10);
+    const posB = portPos(sb, pb.angle, sb.r+10);
+
+    if(!gateOn){
+      const ghost = createToken(posA.x, posA.y, 'ghostToken');
+      await animateEl(ghost, posA.x, posA.y, posB.x, posB.y, 400);
+      ghost.remove();
+      belts.push({aId:a.sprocketId, aPort:a.portKey, bId:b.sprocketId, bPort:b.portKey, shared:0, verified:false});
+      log(`Seam formed with the gates off: ${sa.name} ↔ ${sb.name}. Nobody asked whether it was real.`, 'warn');
+      setPanel('Admission skipped', `<b>${sa.name}</b> and <b>${sb.name}</b> are now coordinating through a seam nobody checked. On the diagram it is identical to a good one. That is the entire difficulty.`);
+      pulseScore('unexamined');
+      render();
+      gateBusy = false;
+      return;
+    }
+
+    fireClock('admission', true);
+    ladderReset('admission');
+    note('Admission gate — a new seam is a publish decision. It runs three of the five rungs, and it can refuse.');
+
+    const trial = document.createElementNS(svgNS,'line');
+    trial.setAttribute('class','trialBelt');
+    trial.setAttribute('x1',posA.x); trial.setAttribute('y1',posA.y);
+    trial.setAttribute('x2',posB.x); trial.setAttribute('y2',posB.y);
+    tokenLayer.appendChild(trial);
+
+    const order = CLOCK_RUNGS.admission;   // presence, binding, grounding
+    const lerp = (p,q,t)=> p+(q-p)*t;
+    const cpT = [0.22, 0.5, 0.78];
+    const cpPos = cpT.map(t=>({x:lerp(posA.x,posB.x,t), y:lerp(posA.y,posB.y,t)}));
+    const cpEls = cpPos.map(p=>{
+      const c = document.createElementNS(svgNS,'circle');
+      c.setAttribute('class','gateCheckpoint');
+      c.setAttribute('cx',p.x); c.setAttribute('cy',p.y); c.setAttribute('r',3.5);
+      c.setAttribute('fill','#2A323C');
+      tokenLayer.appendChild(c);
+      return c;
+    });
+    const token = createToken(posA.x, posA.y);
+
+    // What can actually go wrong at admission, and why.
+    let failAt = null, reason = '';
+    if(!typesMatch(a, b)){
+      failAt = 'binding';
+      reason = `<code>${a.portKey}</code> and <code>${b.portKey}</code> are two different types. They are both strings, so they look composable — but nothing registered says they mean the same thing. Across our real catalogue, 499 of 513 port labels can't form a seam with anything.`;
+    } else if(sb.sourceable < sb.declared && Math.random() < 0.45){
+      failAt = 'grounding';
+      reason = `<b>${sb.name}</b> declares ${sb.declared} output fields and has a tool for ${sb.sourceable}. The rest have <i>no possible source</i>. That is refused at publish, not discovered later by a user.`;
+    }
+
+    let prevX = posA.x, prevY = posA.y, stopped = false;
+    for(let i=0;i<order.length;i++){
+      const key = order[i];
+      await animateEl(token, prevX, prevY, cpPos[i].x, cpPos[i].y, 210);
+      prevX = cpPos[i].x; prevY = cpPos[i].y;
+      setRung(key, 'active');
+      cpEls[i].setAttribute('fill','var(--brass)');
+      await wait(200);
+      if(failAt === key){
+        setRung(key, 'fail');
+        cpEls[i].setAttribute('fill','var(--crimson)');
+        token.setAttribute('fill','var(--crimson)');
+        stopped = true;
+        await wait(300);
+        break;
+      }
+      setRung(key, 'pass');
+      cpEls[i].setAttribute('fill','var(--cyan)');
+      await wait(80);
+    }
+
+    await wait(180);
+    fireClock('admission', false);
+
+    if(stopped){
+      [trial, ...cpEls, token].forEach(el=>{ el.style.transition='opacity .4s ease'; el.style.opacity='0'; });
+      await wait(420);
+      [trial, ...cpEls, token].forEach(el=>{ if(el.parentNode) el.remove(); });
+      log(`Admission refused ${sa.name} ↔ ${sb.name} at ${failAt.toUpperCase()}.`, 'bad');
+      setPanel('Refused at admission', reason + `<br><br>Nothing was published. This is the gate the papers call <i>enforcement by default</i> — the only one that can say no before anything exists.`);
+      note('Admission refused the seam. Nothing entered the catalogue.');
+    } else {
+      await animateEl(token, prevX, prevY, posB.x, posB.y, 240);
+      trial.remove(); cpEls.forEach(c=>c.remove()); token.remove();
+      belts.push({aId:a.sprocketId, aPort:a.portKey, bId:b.sprocketId, bPort:b.portKey, shared:0, verified:true});
+      log(`Seam admitted: ${sa.name} ↔ ${sb.name}.`, 'hi');
+      setPanel('Admitted', `<b>${sa.name} ↔ ${sb.name}</b> cleared presence, binding and grounding <i>before</i> either could learn anything from the other.<br><br>Note what admission still cannot know: whether either side's writer has ever actually run. No request-time check can ask that.`);
+      note('Admitted. Presence · binding · grounding cleared. Liveness and truth were not asked — admission cannot see them.');
+      pulseScore('grounded');
+    }
+    render();
+    setTimeout(restoreLadder, 1500);
+    gateBusy = false;
+  }
+
+  // ---------------------------------------------------------------- INVOCATION
+  // Per §4: bind is recorded, not fatal. Grounding routes rather than deletes.
+  // The output always arrives. What changes is whether it can lie about itself.
+  async function invocationHop(token, posA, posB, belt, producer){
+    fireClock('invocation', true);
+    ladderReset('invocation');
+
+    const lerp = (p,q,t)=> p+(q-p)*t;
+    const cpT = [0.32, 0.68];
+    const cpPos = cpT.map(t=>({x:lerp(posA.x,posB.x,t), y:lerp(posA.y,posB.y,t)}));
+    const cpEls = cpPos.map(p=>{
+      const c = document.createElementNS(svgNS,'circle');
+      c.setAttribute('class','gateCheckpoint');
+      c.setAttribute('cx',p.x); c.setAttribute('cy',p.y); c.setAttribute('r',3.2);
+      c.setAttribute('fill','#2A323C');
+      tokenLayer.appendChild(c);
+      return c;
+    });
+
+    producer.opportunities++;   // a dispatch that should write an episode
+
+    // BIND — recorded, never fatal. Absence is not contradiction.
+    await animateEl(token, posA.x, posA.y, cpPos[0].x, cpPos[0].y, 200);
+    setRung('binding','active'); cpEls[0].setAttribute('fill','var(--brass)');
+    await wait(170);
+    const bindOk = belt.verified && !belt.corrupted;
+    setRung('binding', bindOk ? 'pass' : 'routed');
+    cpEls[0].setAttribute('fill', bindOk ? 'var(--cyan)' : 'var(--amber)');
+
+    // GROUNDING — routes. This is where fabrication is caught and kept.
+    await animateEl(token, cpPos[0].x, cpPos[0].y, cpPos[1].x, cpPos[1].y, 200);
+    setRung('grounding','active'); cpEls[1].setAttribute('fill','var(--brass)');
+    await wait(170);
+
+    let rate = producer.fabRate;
+    if(belt.corrupted) rate = Math.min(0.92, rate + 0.4);
+    else if(!belt.verified) rate = Math.min(0.85, rate + 0.2);
+    rate += 0.06 * producer.lessons.filter(L=>L.grade==='bad').length;
+
+    const flagged = Math.random() < rate;
+    let routed = null;
+    producer.checked++;
+
+    if(flagged){
+      const field = pick(producer.fields);
+      const hasTool = producer.sourceable >= producer.declared || Math.random() < (producer.sourceable/producer.declared);
+      if(producer.inferrer && Math.random() < 0.5){
+        // §5.5 — a judgement it was commissioned to make is not a fabrication.
+        setRung('grounding','pass'); cpEls[1].setAttribute('fill','var(--cyan)');
+        producer.lessons.push({grade:'inference'});
+        routed = {kind:'inferred', field:field};
+      } else if(hasTool){
+        setRung('grounding','routed'); cpEls[1].setAttribute('fill','var(--amber)');
+        enqueue(producer, field, 'pending_tool', 'declared Sourced, arrived with no tool call behind it');
+        routed = {kind:'pending_tool', field:field};
+      } else {
+        setRung('grounding','routed'); cpEls[1].setAttribute('fill','var(--amber)');
+        enqueue(producer, field, 'pending_human', 'no tool exists that could supply this');
+        routed = {kind:'pending_human', field:field};
+      }
+    } else {
+      setRung('grounding','pass'); cpEls[1].setAttribute('fill','var(--cyan)');
+      producer.sinks++;   // an episode really did get written
+      routed = {kind:'clean'};
+    }
+
+    await animateEl(token, cpPos[1].x, cpPos[1].y, posB.x, posB.y, 200);
+    cpEls.forEach(c=>{ c.style.transition='opacity .3s ease'; c.style.opacity='0'; });
+    setTimeout(()=> cpEls.forEach(c=>{ if(c.parentNode) c.remove(); }), 340);
+    fireClock('invocation', false);
+    return routed;
+  }
+
+  async function runTask(){
+    if(gateBusy || busy) return;
+    const path = computeTaskPath();
+    if(path.length < 2){
+      setPanel('No team', 'The strategist is not wired to anyone. Assemble a team, or tap two matching-colour ports.');
+      return;
+    }
+    busy = true;
+    document.getElementById('runTaskBtn').disabled = true;
+    const names = path.map(id=>getSprocket(id).name);
+    log(`Task dispatched: ${names.join(' → ')}${gateOn ? '' : ' (gates off)'}.`, null);
+    setPanel('Task', `Dispatching through ${names.join(' → ')}…`);
+
+    const start = getSprocket(path[0]);
+    const token = createToken(start.cx, start.cy, 'taskToken');
+    token.setAttribute('r', 6);
+    const tally = {clean:0, pending_tool:0, pending_human:0, inferred:0};
+    let ungatedRisk = 0;
+
+    for(let i=0;i<path.length-1;i++){
+      const sa = getSprocket(path[i]), sb = getSprocket(path[i+1]);
+      const belt = findBelt(sa.id, sb.id);
+      if(!belt) break;
+      const aKey = (belt.aId===sa.id) ? belt.aPort : belt.bPort;
+      const bKey = (belt.aId===sb.id) ? belt.aPort : belt.bPort;
+      const pa = sa.ports.find(p=>p.key===aKey), pb = sb.ports.find(p=>p.key===bKey);
+      const posA = portPos(sa, pa.angle, sa.r+10), posB = portPos(sb, pb.angle, sb.r+10);
+      const producer = sb.isStrategist ? sa : sb;
+
+      if(gateOn){
+        const r = await invocationHop(token, posA, posB, belt, producer);
+        tally[r.kind]++;
+      } else {
+        producer.opportunities++;
+        await animateEl(token, posA.x, posA.y, posB.x, posB.y, 360);
+        if(Math.random() < producer.fabRate + (belt.corrupted?0.3:0)){ ungatedRisk++; hiddenDebt++; }
+      }
+      sb.routeTicks++;
+    }
+
+    token.remove();
+    ageQueue();
+    busy = false;
+    document.getElementById('runTaskBtn').disabled = false;
+    render();
+    setTimeout(restoreLadder, 1400);
+
+    const last = names[names.length-1];
+    if(!gateOn){
+      setPanel('Output — ungated',
+        `<b>${last}</b> answered. The document is complete, confident, and carries <i>no marks at all</i>.<br><br>` +
+        (ungatedRisk
+          ? `${ungatedRisk} field(s) in it had nothing behind them. Nothing recorded that. It is now indistinguishable from a good answer — including to the next agent that reads it.`
+          : `Nothing went wrong this run. Nothing would have told you if it had.`));
+      log(`Task completed ungated${ungatedRisk?` — ${ungatedRisk} unsourced field(s) went out unmarked`:' — clean by luck'}.`, 'warn');
+      pulseScore('unexamined');
+      return;
+    }
+
+    const unver = tally.pending_tool + tally.pending_human;
+    const total = tally.clean + tally.inferred + unver;
+    const frac = total ? Math.round(100*unver/total) : 0;
+    setPanel('Output — gated',
+      `<b>${last}</b> answered, and the answer says what it is made of:<br>` +
+      `${provChip('sourced')}×${tally.clean} ${provChip('inference')}×${tally.inferred} ` +
+      (tally.pending_tool?`<span class="prov unknown">pending·tool</span>×${tally.pending_tool} `:'') +
+      (tally.pending_human?`<span class="prov unknown">pending·human</span>×${tally.pending_human} `:'') +
+      `<br><br><b>${frac}% of this answer's evidence is unverified</b> — shown, marked, and used. Nothing was deleted, and nothing was allowed to claim it was checked when it wasn't.` +
+      (unver ? `<br><br>${unver} item(s) went to the queue below.` : ''));
+    log(`Task completed gated — ${tally.clean} sourced, ${tally.inferred} inference, ${unver} routed to the queue.`, 'hi');
+    note('Invocation ran binding and grounding. Presence, liveness and truth were not asked — they are not questions about a request.');
+    pulseScore('grounded');
+  }
+
+  // ---------------------------------------------------------------- SWEEP
+  // Blocks nothing. Which is exactly why it went missing.
+  async function runSweep(){
+    if(gateBusy || busy) return;
+    busy = true;
+    fireClock('sweep', true);
+    ladderReset('sweep');
+    note('Sweep running. Nothing is waiting on it — no request stalls, no publish is held.');
+
+    setRung('presence','active'); await wait(320);
+    setRung('presence','pass');
+
+    setRung('liveness','active'); await wait(420);
+
+    // three-valued verdict, per agent
+    const involved = sprockets.filter(s=>s.opportunities > 0 || s.sinks > 0);
+    const silent = sprockets.filter(s=>s.opportunities > 0 && s.sinks === 0);
+    const controls = sprockets.filter(s=>s.sinks > 0);
+    let verdict;
+    if(involved.length === 0){
+      verdict = 'inert';
+      setRung('liveness','inert');
+    } else if(silent.length > 0){
+      verdict = 'silent';
+      setRung('liveness','silent');
+    } else {
+      verdict = 'ok';
+      setRung('liveness','pass');
+    }
+    await wait(260);
+
+    setRung('truth','active'); await wait(340);
+    const drifted = learners().filter(s=>s.lessons.filter(L=>L.grade==='bad').length >= 2);
+    if(drifted.length){ setRung('truth','fail'); } else { setRung('truth','pass'); }
+
+    sweepRuns++;
+    lastSweep = {
+      presence: 'pass',
+      liveness: (verdict === 'ok' ? 'pass' : verdict),
+      truth: drifted.length ? 'fail' : 'pass'
+    };
+    // the sweep's verdicts stay on the board; only the two rungs it cannot ask
+    // about get cleared back to idle
+    setTimeout(()=>{
+      checkCells.grounding.classList.remove('na');
+      checkCells.binding.classList.remove('na');
+    }, 1600);
+    ageQueue();
+
+    // auto-resolve pending_tool items: the sweep is where the contract's named tool runs
+    const autos = queue.filter(q=>q.state==='pending_tool').slice(0,2);
+    autos.forEach(q=> resolveQueueItem(q.id, 'tool'));
+
+    fireClock('sweep', false);
+    refreshSweepClock();
+    busy = false;
+    render();
+
+    let body;
+    if(verdict === 'inert'){
+      body = `<b>Inert.</b> No writer has had an opportunity yet, so <code>count(*) = 0</code> means nothing. ` +
+             `This is <i>not</i> a pass — a contract watching a feature nobody has exercised, reporting healthy, is the original bug wearing the machinery built to prevent it. Run a task first.`;
+    } else if(verdict === 'silent'){
+      body = `<b>Silent.</b> ${silent.map(s=>s.name).join(', ')} had ${silent[0].opportunities} chance(s) to write and wrote nothing. ` +
+             `Same number as <i>inert</i>, opposite meaning — and only the opportunity count tells them apart. ` +
+             `The verdict does not guess whether the writer is broken or merely undeployed: different fixes, identical consequence.`;
+    } else {
+      body = `<b>Ok.</b> ${controls.length} write path(s) demonstrably run. ` +
+             `That matters beyond the tick: with zero live paths, “everything is broken” and “the sweep itself is broken” look the same. ` +
+             `A working path is the positive control that makes every other verdict readable.`;
+    }
+    if(drifted.length){
+      body += `<br><br>Truth disagreed: <b>${drifted.map(s=>s.name).join(', ')}</b> holds stored values that no longer match their sources.`;
+    }
+    body += `<br><br><i>Nothing was blocked by any of this.</i> The sweep can only report.`;
+    setPanel('Standing sweep · run ' + sweepRuns, body);
+    log(`Sweep #${sweepRuns} — liveness: ${verdict.toUpperCase()}${drifted.length?', truth: FAIL':''}.`,
+        verdict==='ok' && !drifted.length ? 'hi' : (verdict==='silent'||drifted.length ? 'bad':'warn'));
+  }
+
+  // ---------------------------------------------------------------- STRATEGISTS
+  async function dispatchRouter(){
+    if(routingBusy) return;
+    const strat = getSprocket('strat');
+    const eligible = stratConnected();
+    if(!eligible.length){ setPanel('Router','Nobody is wired to the strategist yet.'); return; }
+    routingBusy = true;
+    const spawned = eligible.map(s=>({s, el:createToken(strat.cx, strat.cy)}));
+    await Promise.all(spawned.map(({s,el})=>
+      animateEl(el, strat.cx, strat.cy, s.cx, s.cy - s.r - 16, 460)
+        .then(()=> showLabel(s.cx, s.cy - s.r - 16, s.calibration+'%'))));
+    await wait(560);
+    const best = eligible.reduce((a,b)=> b.calibration>a.calibration ? b : a);
+    spawned.forEach(({s,el})=>{
+      if(s.id !== best.id){ el.style.transition='opacity .4s ease'; el.style.opacity='0';
+        setTimeout(()=>{ if(el.parentNode) el.remove(); }, 400); }
+    });
+    const win = spawned.find(x=>x.s.id===best.id);
+    await animateEl(win.el, best.cx, best.cy - best.r - 16, best.cx, best.cy, 320);
+    win.el.remove();
+    best.routeTicks++;
+    drawRouteArrow(strat, best);
+    render();
+    const rej = best.checked ? Math.round(100*best.rejected/best.checked) : null;
+    setPanel('Router · moe_router_strategist',
+      `Routed to <b style="color:var(--route)">${best.name}</b> on the highest calibration number (${best.calibration}%).<br><br>` +
+      `That number is <i>self-reported</i>. ` +
+      (rej===null
+        ? `Nobody has checked one of its claims yet, so there is no second opinion. Run a task and come back.`
+        : `The number reality gives it is <b style="color:var(--crimson)">${rej}% refuted</b>. Routing on the first and ignoring the second is how a confident agent keeps winning work.`));
+    log(`Router picked ${best.name} (${best.calibration}%) — on the number it reports about itself.`, 'warn');
+    routingBusy = false;
+  }
+
+  async function dispatchDecompose(){
+    if(routingBusy) return;
+    const strat = getSprocket('strat');
+    const parts = stratConnected();
+    if(!parts.length){ setPanel('Split','Nobody is wired to the strategist yet.'); return; }
+    routingBusy = true;
+    const grades = [];
+    for(const part of parts){
+      const belt = findBelt('strat', part.id);
+      if(!belt) continue;
+      const aKey = (belt.aId==='strat') ? belt.aPort : belt.bPort;
+      const bKey = (belt.aId===part.id) ? belt.aPort : belt.bPort;
+      const pa = strat.ports.find(p=>p.key===aKey), pb = part.ports.find(p=>p.key===bKey);
+      const posA = portPos(strat, pa.angle, strat.r+10), posB = portPos(part, pb.angle, part.r+10);
+      const token = createToken(posA.x, posA.y);
+      drawRouteArrow(strat, part);
+      if(gateOn){
+        const r = await invocationHop(token, posA, posB, belt, part);
+        grades.push(r.kind === 'clean' ? 'sourced' : (r.kind === 'inferred' ? 'inference' : 'unknown'));
+      } else {
+        await animateEl(token, posA.x, posA.y, posB.x, posB.y, 300);
+        grades.push('unknown'); hiddenDebt++;
+      }
+      token.remove();
+      part.routeTicks++;
+      render();
+    }
+    routingBusy = false;
+    const fl = floorOf(grades);
+    setPanel('Split · moe_router_strategist · decompose',
+      `Each sub-question was checked on its own: ${grades.map(provChip).join(' ')}<br><br>` +
+      `The reassembled answer is graded <b>${GRADE_NAME[fl]}</b> — the <i>floor</i> over its parts, not the average. ` +
+      `Averaging is what lets nine good pieces launder one invented one.` +
+      (fl==='unknown' ? `<br><br>Note it did not floor at <i>refuted</i>. An ungradeable part is not a bad part — but it is not a clean one either, and calling it clean is how a corpus looks like it is improving while coverage falls.` : ''));
+    log(`Split complete — ${grades.length} parts, floor = ${GRADE_NAME[fl]}.`, fl==='sourced'?'hi':'warn');
+    ageQueue(); render();
+  }
+
+  async function dispatchDebate(){
+    if(routingBusy) return;
+    const strat = getSprocket('strat');
+    const members = stratConnected();
+    if(members.length < 2){
+      setPanel('Debate · debate_strategist','Wire at least two members. A debate needs two positions, and the strategist assigns them rather than asking for volunteers.');
+      return;
+    }
+    routingBusy = true;
+    const a = members[0], b = members[1];
+    setPanel('Debate · debate_strategist', `Crux identified. <b>${a.name}</b> is assigned <i>for</i>; <b>${b.name}</b> is assigned <i>against</i>. Neither volunteered.`);
+    drawRouteArrow(strat, a); drawRouteArrow(strat, b);
+    const t1 = createToken(strat.cx, strat.cy), t2 = createToken(strat.cx, strat.cy);
+    await Promise.all([
+      animateEl(t1, strat.cx, strat.cy, a.cx, a.cy, 460),
+      animateEl(t2, strat.cx, strat.cy, b.cx, b.cy, 460)
+    ]);
+    await wait(420);
+    const mx = (a.cx+b.cx)/2, my = (a.cy+b.cy)/2;
+    await Promise.all([
+      animateEl(t1, a.cx, a.cy, mx, my, 520),
+      animateEl(t2, b.cx, b.cy, mx, my, 520)
+    ]);
+    t1.remove(); t2.remove();
+    routingBusy = false;
+
+    const winner = a.calibration >= b.calibration ? a : b;
+    const loser  = winner === a ? b : a;
+    winner.routeTicks++;
+    loser.lessons.push({grade:'inference'});
+    render();
+    setPanel('Debate · debate_strategist',
+      `<b>${winner.name}</b> carried the argument. But the losing side's strongest objection is kept, attached to the answer, not discarded.<br><br>` +
+      `This exists because both members run on the same base model. When agents that share a model agree, the agreement may be an artefact of the sharing rather than corroboration — so agreement here has to be <i>survived</i>, not just observed. ` +
+      `The objection is stored as ${provChip('inference')}, because it is judgement and judgement never becomes retrieval.`);
+    log(`Debate resolved — ${winner.name} carried it; ${loser.name}'s strongest objection retained.`, 'hi');
+  }
+
+  async function dispatchPipeline(){
+    if(routingBusy) return;
+    const path = computeTaskPath();
+    if(path.length < 2){ setPanel('Pipeline','The strategist is not wired to anyone.'); return; }
+    routingBusy = true;
+    const stages = path.slice(1).map(id=>getSprocket(id).name);
+    setPanel('Pipeline · pipeline_strategist', `Seams validated first, then stages run in order: ${stages.join(' → ')}.`);
+    log(`Pipeline: ${stages.join(' → ')} — seams checked before any stage ran.`, 'hi');
+    const unverified = [];
+    for(let i=0;i<path.length-1;i++){
+      const belt = findBelt(path[i], path[i+1]);
+      if(belt && !belt.verified) unverified.push(getSprocket(path[i+1]).name);
+    }
+    await wait(500);
+    routingBusy = false;
+    if(unverified.length){
+      setPanel('Pipeline · pipeline_strategist',
+        `Stage order: ${stages.join(' → ')}.<br><br><b>Unfilled/unchecked seams before: ${unverified.join(', ')}.</b> ` +
+        `The strategist reports these as typed open slots and stops honestly, rather than inventing the missing stage — which is the failure mode it exists to avoid.`);
+    }
+  }
+
+  function dispatchByMode(){
+    if(strategistMode === 'router') dispatchRouter();
+    else if(strategistMode === 'decompose') dispatchDecompose();
+    else if(strategistMode === 'debate') dispatchDebate();
+    else dispatchPipeline();
+  }
+
+  // ---------------------------------------------------------------- LOOP 1
+  function loopLearn(){
+    const s = getSelected();
+    if(!s){ setPanel('Loop 1 · Learn','Tap an agent first — a lesson has to belong to someone.'); return; }
+
+    // The episodes this lesson is distilled from. What they look like is a
+    // property of the agent, not a coin flip: the one with tools produces
+    // sourced episodes, the one without produces unsourced ones.
+    const n = 3 + Math.floor(Math.random()*2);
+    const sources = [];
+    for(let i=0;i<n;i++){
+      const r = Math.random();
+      if(!gateOn && r < 0.25 + s.fabRate*0.5) sources.push('bad');
+      else if(s.inferrer && r < 0.75) sources.push('inference');
+      else if(r < s.fabRate) sources.push('unknown');
+      else sources.push('sourced');
+    }
+    const fl = floorOf(sources);
+    const ce = ceilingOf(fl);
+    s.lessons.push({grade: ce});
+    if(s.lessons.length % 5 === 0 && s.teeth < 18) s.teeth++;
+    s.sinks++;  // dreaming really did write something
+    render();
+
+    const chips = sources.map(provChip).join(' ');
+    setPanel('Loop 1 · Individual learning',
+      `<code>target: reason better from accumulated experience · signal: eval scores per execution</code><br><br>` +
+      `<b>${s.name}</b> distilled one rule from ${n} episodes: ${chips}<br><br>` +
+      `<b>Floor</b> → ${provChip(fl)} — a conclusion is only as good as the weakest thing under it. Nine solid observations and one guess is a guess.<br>` +
+      `<b>Ceiling</b> → ${provChip(ce)} — <i>and this is the gate.</i> ` +
+      (fl==='sourced'
+        ? `Every source here was sourced, and the lesson <b>still cannot be</b>. Reading verified material and generalising over it is judgement, and judgement does not inherit retrieval. Permanently — not pending better tooling.`
+        : `The floor already sat below retrieval, so the ceiling changes nothing here. Watch what happens when every source is clean.`) +
+      (gateOn ? '' : `<br><br><b style="color:var(--crimson)">Gates are off.</b> Some of those episodes were fabrications, and nothing marked them. The lesson is in memory now, and the next encounter will treat it as established.`));
+    log(`${s.name} dreamed: floor ${GRADE_NAME[fl]} → ceiling ${GRADE_NAME[ce]}.`, ce==='bad'?'bad':(ce==='inference'?'hi':'warn'));
+    pulseScore(ce==='bad' ? 'unexamined' : 'grounded');
+  }
+
+  // ---------------------------------------------------------------- LOOP 2
+  function loopCorrect(){
+    const s = getSelected();
+    if(!s){ setPanel('Loop 2 · Correct','Tap an agent first.'); return; }
+    // Γ(C): does the correction cohere with what the agent already believes?
+    const bad = s.lessons.filter(L=>L.grade==='bad').length;
+    const gamma = Math.max(0.05, Math.min(0.95, 0.78 - bad*0.14 + (Math.random()*0.2 - 0.1)));
+    const passes = gamma >= 0.5;
+
+    if(passes){
+      s.lessons.push({grade:'sourced'});
+      s.lessons.push({grade:'sourced'});
+      s.calibration = Math.min(100, s.calibration + 3);
+      render();
+      setPanel('Loop 2 · Human-gated correction',
+        `<code>Γ(C) = ${gamma.toFixed(2)} ≥ 0.50 — accepted</code><br><br>` +
+        `A person overruled <b>${s.name}</b>. The correction enters at the highest authority weight there is, so it reshapes behaviour now instead of waiting to be outvoted by the next fifty routine cases.<br><br>` +
+        `The signal is human judgement, not another model's. That is the one path an agent cannot learn to game by producing plausible-sounding output.`);
+      log(`Correction accepted into ${s.name} — Γ(C) ${gamma.toFixed(2)}, authority weight 1.0.`, 'hi');
+      pulseScore('grounded');
+    } else {
+      setPanel('Loop 2 · Correction refused',
+        `<code>Γ(C) = ${gamma.toFixed(2)} &lt; 0.50 — refused</code><br><br>` +
+        `The correction would have left <b>${s.name}</b> incoherent with its own world model, so the gate declined it.<br><br>` +
+        `This is the half people forget: the gate is not only there to stop the <i>agent</i> drifting. It is there to stop a mistaken or adversarial human correction becoming policy. A loop with no gate in this direction is a loop anyone can steer.`);
+      log(`Correction into ${s.name} REFUSED — Γ(C) ${gamma.toFixed(2)} below the coherence floor.`, 'warn');
+    }
+  }
+
+  // ---------------------------------------------------------------- LOOP 3
+  function createPulse(x, y, color){
+    const c = document.createElementNS(svgNS,'circle');
+    c.setAttribute('cx',x); c.setAttribute('cy',y); c.setAttribute('r', 3.5);
+    c.setAttribute('fill', color);
+    c.style.filter = 'drop-shadow(0 0 4px '+color+')';
+    tokenLayer.appendChild(c);
+    return c;
+  }
+  async function animateCoherencePulses(){
+    await Promise.all(belts.map(async b=>{
+      const sa = getSprocket(b.aId), sb = getSprocket(b.bId);
+      const pa = sa.ports.find(p=>p.key===b.aPort), pb = sb.ports.find(p=>p.key===b.bPort);
+      const posA = portPos(sa, pa.angle, sa.r+10), posB = portPos(sb, pb.angle, sb.r+10);
+      const color = b.corrupted ? 'var(--crimson)' : (b.verified ? 'var(--cyan)' : 'var(--amber)');
+      const tA = createPulse(posA.x, posA.y, color), tB = createPulse(posB.x, posB.y, color);
+      const midX = (posA.x+posB.x)/2, midY = (posA.y+posB.y)/2;
+      const dur = (b.verified && !b.corrupted) ? 470 : 470 + Math.random()*300;
+      await Promise.all([
+        animateEl(tA, posA.x, posA.y, midX, midY, dur),
+        animateEl(tB, posB.x, posB.y, midX, midY, dur)
+      ]);
+      tA.remove(); tB.remove();
+      if(!b.corrupted) b.shared++;
+    }));
+    render();
+  }
+  async function loopCoherence(){
+    if(gateBusy || busy) return;
+    if(belts.length < 2){ setPanel('Loop 3 · Cohere','Wire at least two seams — coherence only means something across a real composition.'); return; }
+    busy = true;
+    setPanel('Loop 3 · Workspace coherence','Pulses settling across the graph…');
+    await animateCoherencePulses();
+
+    const verified = belts.filter(b=>b.verified && !b.corrupted).length;
+    const risky = belts.length - verified;
+    const badLessons = learners().reduce((n,s)=> n + s.lessons.filter(L=>L.grade==='bad').length, 0);
+    const gamma = Math.max(0.05, Math.min(0.95, 0.32 + verified*0.16 - risky*0.14 - badLessons*0.07 + Math.random()*0.08));
+
+    // The type of disagreement matters more than the amount. Naive coherence
+    // optimisation drives a team toward agreement and deletes its best property.
+    let label, color, body;
+    if(gamma > 0.68){
+      label = 'Converged'; color = 'var(--cyan)';
+      body = `Agreement, and it is grounded in shared evidence rather than shared habit.<br><br>` +
+        `<b>The caveat that keeps this honest:</b> every member here runs on the same base model. When agents that share a model agree, some of that agreement is an artefact of the sharing. High coherence is a good sign and never on its own a verdict — which is why the debate strategist exists.`;
+    } else if(gamma > 0.42){
+      label = 'Productive disagreement'; color = 'var(--amber)';
+      body = `They disagree, and the disagreement has structure: competing explanations, both anchored to evidence.<br><br>` +
+        `This scores <i>lower</i> than convergence and is often worth more. A system tuned to maximise coherence would flatten exactly this, and lose the diversity that makes a group outperform its best member.`;
+    } else {
+      label = 'Destructive drift'; color = 'var(--crimson)';
+      body = `This is not healthy disagreement. Utterances are not engaging with each other's evidence at all — the group has stopped sharing a world.` +
+        (badLessons ? `<br><br>${badLessons} lesson(s) in this team were built on fabrications. Nothing marks them, so they pull on every agreement they are part of.` : '');
+    }
+    setPanel('Loop 3 · Workspace coherence',
+      `<code>Γ(C) = ${gamma.toFixed(2)} — ${label}</code>` +
+      `<div class="meterTrack"><div class="meterFill" style="width:${Math.round(gamma*100)}%;background:${color}"></div></div>` +
+      `<div style="margin-top:8px">${body}</div>`);
+    log(`Coherence: ${label} (Γ(C) ${gamma.toFixed(2)}) across ${verified} verified / ${risky} risky seams.`,
+        gamma>0.68?'hi':(gamma>0.42?'warn':'bad'));
+    busy = false;
+    render();
+  }
+
+  // ---------------------------------------------------------------- LOOP 4
+  function loopTeam(){
+    if(gateBusy || busy) return;
+    if(!belts.some(b=>b.aId==='strat'||b.bId==='strat')){
+      setPanel('Loop 4 · Evolve','No team yet. Assemble one first — you cannot reshape what does not exist.');
+      return;
+    }
+    const scored = learners().map(s=>({s, score: s.lessons.length + belts.filter(b=>b.aId===s.id||b.bId===s.id).length*2}));
+    scored.sort((a,b)=>a.score-b.score);
+    const lowest = scored[0];
+    setPanel('Loop 4 · Composition evolution',
+      `<code>signal: chronic patterns in the strategist's own memory · timescale: weeks</code><br><br>` +
+      `Contribution so far — ${scored.map(x=>`${x.s.name} ${x.score}`).join(' · ')}.<br>` +
+      `The strategist proposes rotating out <b>${lowest.s.name}</b>. It cannot act on its own proposal.
+      <div class="rowBtns">
+        <button class="approve" id="teamApprove">Accept</button>
+        <button class="decline" id="teamDecline">Reject</button>
+      </div>`);
+    document.getElementById('teamApprove').onclick = ()=>{
+      const beforeG = groundedCount(), beforeU = unexaminedCount();
+      belts = belts.filter(b=> b.aId!==lowest.s.id && b.bId!==lowest.s.id);
+      queue = queue.filter(q=> q.agentId !== lowest.s.id || q.state==='verified' || q.state==='rejected');
+      render();
+      const afterG = groundedCount(), afterU = unexaminedCount();
+      setPanel('Loop 4 · Accepted',
+        `${lowest.s.name} is out. Watch the two numbers:<br><br>` +
+        `<b>Unexamined ${beforeU} → ${afterU}.</b> It fell, because unresolved things went away with the agent.<br>` +
+        `<b>Grounded ${beforeG} → ${afterG}.</b> ${afterG >= beforeG ? 'It did not rise.' : 'It fell too.'}<br><br>` +
+        `A scoreboard keyed on the first number would score deleting an agent as progress equal to making one work. It is not equal: one is honesty, the other is capability. Choose the metric where the cheapest action moves nothing.`);
+      log(`${lowest.s.name} rotated out — Unexamined ${beforeU}→${afterU}, Grounded ${beforeG}→${afterG}. Deletion is not progress.`, 'warn');
+    };
+    document.getElementById('teamDecline').onclick = ()=>{
+      const strat = getSprocket('strat');
+      strat.lessons.push({grade:'inference'});
+      strat.sinks++;
+      render();
+      setPanel('Loop 4 · Rejected',
+        `Kept in place — and the rejection is not thrown away. It becomes a correction episode in the <b>strategist's</b> memory, which means the next proposal is made by an agent that has been told it was wrong about this one.<br><br>` +
+        `Stored as ${provChip('inference')}: it is a judgement about a judgement, and it never becomes a fact.`);
+      log(`Proposal rejected — correction episode written into the strategist. Loop 4 closes through Loop 1.`, 'hi');
+    };
+  }
+
+  // ---------------------------------------------------------------- LOOP 5a
+  function loopCalibrate(){
+    const s = getSelected();
+    if(!s){ setPanel('Loop 5a · Calibrate','Tap an agent — a resolved outcome has to land on someone.'); return; }
+    if(s.isStrategist){ setPanel('Loop 5a · Calibrate','The strategist does not take outcomes directly. It reads everyone else\'s. Pick a member.'); return; }
+
+    const badCount = s.lessons.filter(L=>L.grade==='bad').length;
+    const exposed = badCount > 0 && Math.random() < Math.min(0.85, badCount*0.3);
+    s.checked++;
+
+    if(exposed){
+      const drop = 14 + Math.round(Math.random()*10);
+      s.calibration = Math.max(0, s.calibration - drop);
+      s.rejected++;
+      const i = s.lessons.findIndex(L=>L.grade==='bad');
+      if(i>=0) s.lessons[i].grade = 'unknown';
+      render();
+      setPanel('Loop 5a · Calibration',
+        `<code>hard-verified signal — no coherence gate required</code><br><br>` +
+        `A real outcome resolved and disagreed with one of <b>${s.name}</b>'s lessons. Calibration ${s.calibration}%.<br><br>` +
+        `This signal needs no coherence check before it propagates, because it is a fact about the world rather than a judgement about output quality. The ground truth did not know what the agent predicted. It can only be gamed by falsifying the measurement, which costs someone something real.`);
+      log(`${s.name}: a resolved outcome refuted a stored lesson. Calibration → ${s.calibration}%.`, 'bad');
+    } else {
+      s.calibration = Math.min(100, s.calibration + 9 + Math.round(Math.random()*5));
+      s.sinks++;
+      render();
+      setPanel('Loop 5a · Calibration',
+        `<code>hard-verified signal — no coherence gate required</code><br><br>` +
+        `An outcome resolved in <b>${s.name}</b>'s favour. Calibration ${s.calibration}%. Not confidence — a thing that actually happened.` +
+        (badCount ? `<br><br>${badCount} fabricated lesson(s) are still sitting in there untested. Getting away with it is not the same as being right.` : ''));
+      log(`${s.name}: outcome resolved in its favour — calibration ${s.calibration}%.`, 'hi');
+    }
+
+    // Loop 5 closes through Loop 1: the strategist learns from routing outcomes.
+    const strat = getSprocket('strat');
+    strat.lessons.push({grade:'inference'});
+    strat.sinks++;
+    render();
+    log(`Loop 5 → Loop 1: the strategist consolidated a routing lesson (inference — a strategist is an agent too).`, null);
+    dispatchByMode();
+  }
+
+  // ---------------------------------------------------------------- LOOP 5b
+  function loopFit(){
+    const s = getSelected();
+    if(!s){ setPanel('Loop 5b · Fit','Tap an agent first.'); return; }
+    if(s.isStrategist){ setPanel('Loop 5b · Fit','The strategist does not forecast — it routes. Pick a member.'); return; }
+    const badCount = s.lessons.filter(L=>L.grade==='bad').length;
+    s.sigma = Math.max(8, s.sigma - 6);
+    if(badCount > 0){
+      s.fitContaminated = true;
+      render();
+      setPanel('Loop 5b · Parameter fit',
+        `<code>gate: none — and that is the demonstration</code><br><br>` +
+        `<b>${s.name}</b>'s uncertainty just got narrower (σ → ${s.sigma}). The curve looks better.<br><br>` +
+        `${badCount} of the observations behind that fit are fabricated. A tighter distribution on bad data is not more confident — it is <b>wrong with more conviction</b>, and it is the only loop here where the output improving is itself the warning sign.<br><br>` +
+        `Every other loop on this row has a gate. This one shows you what the gates are for.`);
+      log(`${s.name}: σ → ${s.sigma} on ${badCount} fabricated input(s). False precision.`, 'bad');
+      pulseScore('unexamined');
+    } else {
+      s.fitContaminated = false;
+      s.sinks++;
+      render();
+      setPanel('Loop 5b · Parameter fit',
+        `<code>signal: projection accuracy against a physical measurement</code><br><br>` +
+        `<b>${s.name}</b>'s distribution is now fit from real observations (σ → ${s.sigma}) rather than a hand-set assumption. Its stated uncertainty got honestly smaller.<br><br>` +
+        `Same operation as the contaminated case, same shape on screen. The only difference is what was underneath — which is why the difference has to be recorded rather than inferred from the picture.`);
+      log(`${s.name}: honest refit, σ → ${s.sigma}.`, 'hi');
+      pulseScore('grounded');
+    }
+  }
+
+  const LOOP_FNS = { learn:loopLearn, correct:loopCorrect, coherence:loopCoherence,
+                     team:loopTeam, calibrate:loopCalibrate, fit:loopFit };
+
+  // ---------------------------------------------------------------- assemble
+  function suitability(s){
+    return Math.round(s.cognition*0.4 + s.calibration*0.3 + s.valence*0.15 - s.cost*3
+      - (s.checked ? 40*(s.rejected/s.checked) : 0));
+  }
+  async function assembleTeam(){
+    if(gateBusy || busy) return;
+    if(belts.some(b=>b.aId==='strat'||b.bId==='strat')){
+      setPanel('Assembly','A team is already wired. Use Loop 4 · Evolve to change it from here.');
+      return;
+    }
+    busy = true;
+    document.getElementById('assembleBtn').disabled = true;
+    const strat = getSprocket('strat');
+    setPanel('Assembly', 'The strategist is scoring candidates on cognition, calibration, cost — and on how often their claims have been refuted…');
+    const scored = [];
+    for(const s of learners()){
+      const beam = createPulse(strat.cx, strat.cy, 'var(--route)');
+      await animateEl(beam, strat.cx, strat.cy, s.cx, s.cy - s.r - 14, 440);
+      const sc = suitability(s);
+      showLabel(s.cx, s.cy - s.r - 14, 'score '+sc);
+      scored.push({s, score: sc});
+      beam.style.transition='opacity .3s ease'; beam.style.opacity='0';
+      await wait(320); beam.remove();
+    }
+    scored.sort((x,y)=> y.score-x.score);
+    const chain = scored.slice(0,3).map(c=>c.s);
+    setPanel('Assembly',
+      `Proposed chain: <b style="color:var(--cyan)">strategist → ${chain.map(s=>s.name).join(' → ')}</b><br><br>` +
+      `Wiring each seam runs the admission gate. Expect at least one refusal — one of these agents declares more than it can source.
+      <div class="rowBtns">
+        <button class="approve" id="wireTeam">Wire it</button>
+        <button class="decline" id="skipTeam">I'll wire it myself</button>
+      </div>`);
+    busy = false;
+    document.getElementById('assembleBtn').disabled = false;
+
+    document.getElementById('wireTeam').onclick = async ()=>{
+      const wt = document.getElementById('wireTeam'), st = document.getElementById('skipTeam');
+      if(wt) wt.disabled = true; if(st) st.disabled = true;
+      // Each seam is its own publish decision, so any of them can be refused.
+      // When one is, the anchor does not advance — the strategist wires past the
+      // refused member rather than leaving the chain broken behind it.
+      let anchor = {sprocketId:'strat', portKey:'route1'};
+      const wired = [], refused = [];
+      for(const m of chain){
+        const before = belts.length;
+        await attemptBelt(anchor, {sprocketId:m.id, portKey:'judgment'});
+        if(belts.length > before){
+          anchor = {sprocketId:m.id, portKey:'judgment'};
+          wired.push(m.name);
+        } else {
+          refused.push(m.name);
+        }
+      }
+      log(`Chain wired: ${wired.join(' → ') || 'nothing'}${refused.length?`. Refused at admission: ${refused.join(', ')}`:''}.`,
+          refused.length ? 'warn' : 'hi');
+      if(refused.length){
+        setPanel('Assembly — partly refused',
+          `Wired: <b>${wired.join(' → ')}</b>.<br>Refused at admission: <b>${refused.join(', ')}</b>.<br><br>` +
+          `An agent that declares more output than it can source does not get to join a team quietly and be discovered later by a user. ` +
+          `The refusal is also a work item: it names exactly which tool integration would let that agent in.`);
+      }
+    };
+    document.getElementById('skipTeam').onclick = ()=>{
+      setPanel('Assembly','Declined. Tap two ports of the same colour on different agents to wire a seam yourself.');
+    };
+  }
+
+  // ---------------------------------------------------------------- guided tour
+  async function say(label, text, ms){
+    setPanel(label, text);
+    log('▸ ' + label, 'tour');
+    await wait(ms || 2600);
+  }
+  async function runTour(){
+    if(tourRunning) return;
+    tourRunning = true;
+    tourBtn.disabled = true;
+    tourBtn.textContent = '… running';
+
+    await say('1 · Three agents',
+      `One <b>looks things up</b> (species_resolver). One <b>declares four kinds of data and has a tool for one</b> (genome_profiler) — that agent is real, and it served thirteen invented profiles to real users before any of this existed. One is <b>allowed to guess</b> (enemy_sensor): it rates predation risk, which no database holds.<br><br>Telling the second from the third is the hard part. A checker that flags both is indistinguishable from a broken one.`, 5200);
+
+    await say('2 · Admission — the gate that can say no',
+      'Wiring a seam is a publish decision. Watch the top row: the admission clock fires, three rungs run, and at least one seam is going to be refused before it exists.', 3400);
+    await assembleTeam();
+    const wt = document.getElementById('wireTeam');
+    if(wt) wt.click();
+    await wait(7400);
+
+    await say('3 · Invocation — the gate that cannot say no',
+      'Now run work through it. This gate does not block the answer. It makes the answer <b>state what it is made of</b> — and anything it cannot vouch for goes to the queue instead of the bin.', 3600);
+    await runTask();
+    await wait(2600);
+
+    await say('4 · The rung nobody ran',
+      `Look at the ladder. Presence, liveness and truth are showing green.<br><br>They have <b>never executed</b>. Not once. Nothing on this page has run them, and nothing on this page changed to tell you so.<br><br>Press the red button.`, 5000);
+    honestBtn.style.boxShadow = '0 0 12px var(--crimson)';
+    await wait(2400);
+    honestMode = true; honestEverUsed = true;
+    honestBtn.classList.add('on');
+    honestBtn.textContent = 'Showing what ran';
+    paintSweepRungs();
+    await say('4 · The rung nobody ran',
+      `Now they read <b>inert</b>.<br><br>Nothing about the system changed — only the display. Which is the finding: a gate that reports green because it never ran looks exactly like a gate that passed, and it is worse than no gate, because it absorbs the attention that would otherwise have noticed.<br><br>This was the cheapest rung to build and the last one we added.`, 6000);
+    honestBtn.style.boxShadow = '';
+
+    await say('5 · Why it hid for so long',
+      `Admission blocks a publish. Invocation blocks an answer. Somebody is waiting on both, so an absent verdict is an outage and gets fixed.<br><br>The sweep blocks <b>nothing</b>. Nothing stalls when it is missing. That is the whole explanation — not difficulty, not oversight. A check with nothing downstream of it has no moment that forces it to exist.`, 5600);
+    await runSweep();
+    await wait(3000);
+
+    await say('6 · Now turn the gates off',
+      'Everything from here on will look fine. That is the point of the exercise.', 2800);
+    gateOn = false;
+    gateToggle.textContent = 'Gates: Off';
+    gateToggle.className = 'ctl off';
+    const victim = getSprocket('s2');
+    sprockets.forEach(s=> s.selected = (s.id==='s2'));
+    render();
+    for(let i=0;i<3;i++){ loopLearn(); await wait(1500); }
+    await runTask();
+    await wait(2400);
+
+    await say('7 · What it cost',
+      `<b>${victim.name}</b> taught itself three lessons from its own output with nothing checking the sources. They are in memory, they look identical to real ones, and the next encounter will reason from them.<br><br>The last answer went out complete and unmarked. Compare it with the gated one in step 3, which said out loud what fraction of itself was unverified.<br><br>Both look finished. Only one of them can be audited.`, 6000);
+
+    await say('8 · Put them back',
+      'Turn the gates on, run the sweep, and work the queue. Every loop on the row below has a gate on it — the last one, Fit, deliberately does not, so you can see what a loop without a gate does to a curve.', 4200);
+    gateOn = true;
+    gateToggle.textContent = 'Gates: On';
+    gateToggle.className = 'ctl on';
+    await runSweep();
+
+    setPanel('Tour complete',
+      `You now have everything the two papers argue, in the order they argue it:<br><br>` +
+      `• a <b>ladder</b> of five checks, each blind to the one below<br>` +
+      `• on <b>three clocks</b>, only two of which can block anything<br>` +
+      `• unverified work <b>routed rather than deleted</b> — the queue below<br>` +
+      `• a <b>ceiling</b>: an agent's own conclusions never become facts<br>` +
+      `• and five <b>loops</b>, each with a gate, because a system that can rewrite itself without one is not adaptive, it is unmoored.<br><br>` +
+      `Everything is still live. Keep playing.`);
+    log('Tour complete. Everything is still interactive.', 'tour');
+    tourBtn.disabled = false;
+    tourBtn.textContent = '▶ Run the tour again';
+    tourRunning = false;
+  }
+
+  // ---------------------------------------------------------------- wiring
+  document.getElementById('assembleBtn').addEventListener('click', assembleTeam);
+  document.getElementById('runTaskBtn').addEventListener('click', runTask);
+  sweepBtn.addEventListener('click', runSweep);
+  tourBtn.addEventListener('click', runTour);
+
+  honestBtn.addEventListener('click', ()=>{
+    honestMode = !honestMode;
+    honestBtn.classList.toggle('on', honestMode);
+    honestBtn.textContent = honestMode ? 'Showing what ran' : 'Show what ran';
+    paintSweepRungs();
+    if(honestMode && !honestEverUsed){
+      honestEverUsed = true;
+      if(sweepRuns === 0){
+        setPanel('Show what ran',
+          `Three rungs just changed from green to <b>inert</b>. Nothing about the system changed — only whether the board was willing to say so.<br><br>` +
+          `An inert check and a passing check are indistinguishable from outside, and the inert one is worse than nothing: it consumes the attention that would otherwise notice.`);
+        log('Honest mode: three rungs have never executed.', 'bad');
+      } else {
+        setPanel('Show what ran',
+          `Nothing changed — and this time that is correct. The sweep has run, so those three rungs are showing verdicts they actually earned.<br><br>` +
+          `The button only has anything to reveal when a check has never executed. Press <b>Reset</b> and try it before running the sweep to see what it is for.`);
+      }
+    }
+    render();
+  });
+
+  gateToggle.addEventListener('click', ()=>{
+    if(gateBusy || busy) return;
+    gateOn = !gateOn;
+    gateToggle.textContent = 'Gates: ' + (gateOn ? 'On' : 'Off');
+    gateToggle.className = 'ctl ' + (gateOn ? 'on' : 'off');
+    log(gateOn ? '— Gates ON. Admission can refuse; invocation marks and routes. —'
+               : '— Gates OFF. Seams form instantly, answers go out unmarked. —', gateOn?'hi':'warn');
+    if(gateOn && hiddenDebt > 0){
+      setPanel('Gates back on',
+        `${hiddenDebt} hand-off(s) happened while nothing was watching. Turning the gate on does not retroactively check them — <b>the record of what they were simply does not exist</b>.<br><br>` +
+        `Retention is a precondition for every later form of verification, and it accrues only from the moment you start.`);
+    }
+    render();
+  });
+
+  document.querySelectorAll('.modeChip').forEach(chip=>{
+    chip.addEventListener('click', async ()=>{
+      if(gateBusy || busy || tourRunning) return;
+      if(chip.dataset.mode === strategistMode) return;
+      strategistMode = chip.dataset.mode;
+      document.querySelectorAll('.modeChip').forEach(c=>c.classList.remove('active'));
+      chip.classList.add('active');
+      const id = STRAT_IDENTITY[strategistMode];
+      getSprocket('strat').agentId = id.agentId;
+      log(`Strategist is now ${id.agentId} — ${id.note}.`, null);
+      setPanel('Strategist swapped',
+        `<code>${id.agentId}</code><br><br>${id.note}.<br><br>` +
+        `Same team, same seams, same ladder. Only the coordination pattern changed — which is what it means for these to be composable agents rather than modes of one program.`);
+      busy = true;
+      await animateLayoutTo(strategistMode);
+      busy = false;
+      dispatchByMode();
+    });
+  });
+
+  document.querySelectorAll('.loopChip').forEach(chip=>{
+    chip.addEventListener('click', ()=>{
+      if(gateBusy || busy) return;
+      document.querySelectorAll('.loopChip').forEach(c=>c.classList.remove('armed'));
+      chip.classList.add('armed');
+      LOOP_FNS[chip.dataset.loop]();
+      setTimeout(()=>chip.classList.remove('armed'), 500);
+    });
+  });
+
+  document.getElementById('resetBtn').addEventListener('click', ()=>{
+    strategistMode = 'pipeline';
+    document.querySelectorAll('.modeChip').forEach(c=>c.classList.toggle('active', c.dataset.mode==='pipeline'));
+    sprockets.forEach(s=>{
+      s.teeth = s.isStrategist ? 14 : 8;
+      s.lessons = []; s.routeTicks = 0; s.selected = false;
+      s.sinks = 0; s.opportunities = 0; s.rejected = 0; s.checked = 0;
+      s.calibration = s.baseCal; s.sigma = 36; s.fitContaminated = false;
+      const pos = LAYOUTS.pipeline[s.id];
+      if(pos){ s.cx = pos.cx; s.cy = pos.cy; }
+    });
+    getSprocket('strat').agentId = 'pipeline_strategist';
+    belts = []; pending = null; queue = []; qid = 1;
+    gateBusy = false; routingBusy = false; busy = false;
+    hiddenDebt = 0; sweepRuns = 0;
+    honestMode = false; honestEverUsed = false;
+    honestBtn.classList.remove('on'); honestBtn.textContent = 'Show what ran';
+    gateOn = true; gateToggle.textContent = 'Gates: On'; gateToggle.className = 'ctl on';
+    tokenLayer.innerHTML = ''; routeLayer.innerHTML = ''; logEl.innerHTML = '';
+    ladderReset(); paintSweepRungs(); refreshSweepClock();
+    note('Nothing has run yet.');
+    setPanel('Status','Reset. Three agents, no team. Tap an agent to read its card.');
+    render();
+    log('Everything reset.', null);
+  });
+
+  // ---------------------------------------------------------------- boot
+  refreshSweepClock();
+  ladderReset();
+  paintSweepRungs();
+  render();
+  log('Ready. Three agents, no team yet.', null);
+  log('Note the ladder: three rungs are already green. Nothing has run.', 'warn');
+})();
+</script>
+</body>
+</html>

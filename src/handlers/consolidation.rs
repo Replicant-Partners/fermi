@@ -326,7 +326,15 @@ fn dream_member(state: &AppState, produces_label: &str, default_name: &str) -> S
 /// routes to the `abw-system` principal, so the platform funds learning via its
 /// system key. Returns `None` (unresolved / unfunded / unknown provider) so the
 /// worker falls back to pattern-based extraction instead of crashing.
-async fn build_extraction_llm(state: &AppState) -> Option<Arc<dyn LLMProvider>> {
+/// Resolve the extraction model the way SPEC_28 intends: from the `ontologist`
+/// agent's card, funded by its owning principal's credential store.
+///
+/// `pub(crate)` because the creature dreaming path needs the *same* answer.
+/// It used to read `std::env::var("ANTHROPIC_API_KEY")` with a hardcoded model,
+/// which is a second, quieter definition of "how the extractor is funded" — and
+/// on a deployment that funds agents through the credential store rather than a
+/// process env var, that second definition always resolves to None.
+pub(crate) async fn build_extraction_llm(state: &AppState) -> Option<Arc<dyn LLMProvider>> {
     let extractor = dream_member(state, "semantic-rules", "ontologist");
     let card = state.registry.get(&extractor).ok()?;
     let provider = card.capabilities.provider.clone();
