@@ -977,7 +977,25 @@ pub struct CockpitState {
     /// rebuilds the entire driver set from scratch. The base rate is an
     /// index/anchor, not a structural change; conflating the two was the
     /// 'clicked Update base rate, lost all my drivers' bug.
-    pub base_rate_update_in_flight: bool,
+    /// The agent a scoped "Update base rate" run was routed to, while it runs.
+    ///
+    /// `Some` means the same thing the old `base_rate_update_in_flight: bool`
+    /// meant — the next completion is a base-rate refresh and must take the
+    /// scoped path rather than rebuilding the driver set. It additionally
+    /// carries WHO, because three separate places needed that and all three
+    /// guessed "fermi":
+    ///
+    ///   * `apply_base_rate_only` stamped `source` and `generated_by` as
+    ///     "fermi" even when routing had picked a declared specialist, so the
+    ///     provenance recorded on the forecast was false rather than merely
+    ///     stale;
+    ///   * the same function looked the run row up as `"fermi_base_rate"` while
+    ///     `update_outside_rate` had pushed `"{producer}_base_rate"`, so any
+    ///     specialist's row was left spinning forever;
+    ///   * nothing else could tell after the fact which agent had answered.
+    ///
+    /// One field rather than a bool beside a name, so the two cannot disagree.
+    pub base_rate_producer: Option<String>,
     /// Polling interval for PM price updates. None = no polling.
     pub pm_poll_interval: Option<std::time::Duration>,
 
@@ -1357,7 +1375,7 @@ impl CockpitState {
             hovered_trajectory_event: None,
             hovered_trajectory_x: None,
             trajectory_surface: crate::viz::PlotSurface::new(),
-            base_rate_update_in_flight: false,
+            base_rate_producer: None,
         };
 
         // Start SSE polling timer — periodically triggers re-renders
@@ -4122,7 +4140,7 @@ impl CockpitState {
                         // Checked FIRST for the same reason: an agent that happens to
                         // be `macro_forecaster` should still take the scoped path when
                         // the flag is set.
-                        if state.base_rate_update_in_flight {
+                        if state.base_rate_producer.is_some() {
                             // Scoped call: 'Update base rate' pressed. Do NOT
                             // rebuild the driver set — that's the destructive
                             // behavior we're guarding against. Only refresh the
@@ -7660,14 +7678,14 @@ impl CockpitState {
         // Tracked as `<producer>_base_rate` so failures land on the row this
         // pushed rather than on the decomposition run (or nowhere), and so the
         // row names the agent that actually answered.
-        self.base_rate_update_in_flight = true;
+        self.base_rate_producer = Some(producer.clone());
         self.fire_agent(&producer, &tracking, &query, cx);
     }
 
     /// Extract ONLY the base rate from a fermi agent response and update
     /// the program's outside view. Never touches drivers, model, or any
     /// other FPL structure. Called from fire_agent's completion handler
-    /// when base_rate_update_in_flight is set.
+    /// when `base_rate_producer` is set.
     ///
     /// The extraction is defensive: fermi's response format varies (JSON
     /// in reasoning, JSON in evidence[0].summary, narrative prose) so we
@@ -7675,13 +7693,25 @@ impl CockpitState {
     /// message and leave the existing base rate untouched — never
     /// destroy state on a parse failure.
     fn apply_base_rate_only(&mut self, result: &JsonValue, cx: &mut Context<Self>) {
-        self.base_rate_update_in_flight = false;
+        // Who actually ran. `update_outside_rate` routes to whichever agent
+        // declares the question's domain, so this is `weather_oracle` for a
+        // temperature question and `fermi` only when nothing claimed it.
+        let producer = self
+            .base_rate_producer
+            .take()
+            .unwrap_or_else(|| "fermi".to_string());
+        let tracking = format!("{producer}_base_rate");
 
         // Mark the agent-run row completed.
+        //
+        // Was `"fermi_base_rate" || "fermi"`, while `update_outside_rate` pushes
+        // the row as `"{producer}_base_rate"`. For any specialist the lookup
+        // missed and no other site covers a base-rate run, so the row spun
+        // forever — a completed run displayed as still working.
         if let Some(run) = self
             .agent_runs
             .iter_mut()
-            .find(|r| r.agent_name == "fermi_base_rate" || r.agent_name == "fermi")
+            .find(|r| r.agent_name == tracking || r.base_agent_id == producer)
         {
             run.status = AgentRunStatus::Completed;
             run.completed_at = Some(
@@ -7795,9 +7825,26 @@ impl CockpitState {
                 reference_class: reference_class.clone(),
                 historical_frequency,
                 sample_size,
-                source: "fermi".into(),
+                // The agent that actually ran, not a literal.
+                //
+                // These two were `"fermi"` regardless of routing, so a base rate
+                // measured by `weather_oracle` from 525 station-days of ERA5 was
+                // recorded as having come from the generalist. That is a FALSE
+                // provenance claim rather than a stale label: the field says who
+                // is answerable for the number, and it named the wrong agent.
+                //
+                // The prefer-the-response rule matters for `source`: an agent
+                // that cites its own reference ("ERA5 reanalysis via
+                // weather_oracle") knows better than we do what it read. Falling
+                // back to the producer id is honest when it says nothing.
+                source: br
+                    .get("source")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or(&producer)
+                    .to_string(),
                 reasoning: reasoning_text.clone(),
-                generated_by: GeneratedBy::Agent("fermi".into()),
+                generated_by: GeneratedBy::Agent(producer.clone()),
             });
         }
 
@@ -9741,6 +9788,15 @@ impl CockpitState {
                 }
                 // Restore base rate into AST
                 if let Some(br) = state_json.get("base_rate").and_then(|v| v.as_object()) {
+                    // Captured before the overwrite: the FPL parsed a moment ago
+                    // carries a `generated_by` the parser required, and it is a
+                    // better fallback than a literal for a sidecar written before
+                    // this field was persisted.
+                    let previously_generated_by = self
+                        .program
+                        .question()
+                        .and_then(|q| q.base_rate.as_ref())
+                        .map(|b| b.generated_by.clone());
                     if let Some(q) = self.program.question_mut() {
                         q.base_rate = Some(BaseRate {
                             reference_class: br
@@ -9765,7 +9821,28 @@ impl CockpitState {
                                 .get("reasoning")
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string()),
-                            generated_by: GeneratedBy::Agent("fermi".into()),
+                            // Restore the recorded producer, do not invent one.
+                            //
+                            // This was `Agent("fermi")` unconditionally, so every
+                            // open/close cycle rewrote the provenance of every
+                            // base rate to the generalist. The reference
+                            // forecast's honest `generated_by: weather_oracle`
+                            // did not survive one reload.
+                            //
+                            // Falling back to the previously parsed value rather
+                            // than to a literal: the FPL was read moments ago and
+                            // its `generated_by` is required by the parser, so it
+                            // is a better answer than a guess when the sidecar
+                            // predates this field.
+                            generated_by: match br.get("generated_by").and_then(|v| v.as_str()) {
+                                Some("human") => GeneratedBy::Human,
+                                Some(a) if !a.trim().is_empty() => {
+                                    GeneratedBy::Agent(a.to_string())
+                                }
+                                _ => previously_generated_by
+                                    .clone()
+                                    .unwrap_or(GeneratedBy::Human),
+                            },
                         });
                     }
                 }
@@ -14403,11 +14480,32 @@ fn render_outside_view(state: &CockpitState, cx: &mut Context<CockpitState>) -> 
                         .child(br.reasoning.as_deref().unwrap_or("").to_string()),
                 )
             })
+            // Who produced this number, beside what it was read from.
+            //
+            // `generated_by` was required by the parser, emitted by the FPL
+            // writer, persisted into `forecasts.metadata` — and rendered
+            // nowhere. Its only two reads were serialisation. So the one field
+            // that would have exposed a false provenance claim was the one
+            // field an operator could never see, which is precisely how
+            // `apply_base_rate_only` got away with stamping "fermi" over a
+            // specialist's attribution and the local restore got away with
+            // overwriting it on every reload.
+            //
+            // The operator requirement this serves is "I should know why the
+            // base rate is the base rate". Reference class, n and reasoning
+            // say what was counted. This says who is answerable for it.
             .child(
                 div()
                     .text_size(ui::TEXT_XS)
                     .text_color(rgb(theme::FG_MUTED))
-                    .child(format!("Source: {}", br.source)),
+                    .child(format!(
+                        "Source: {} · by {}",
+                        br.source,
+                        match &br.generated_by {
+                            fermi::ast::GeneratedBy::Human => "you".to_string(),
+                            fermi::ast::GeneratedBy::Agent(name) => name.clone(),
+                        }
+                    )),
             )
             .child(
                 div()

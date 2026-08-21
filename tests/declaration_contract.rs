@@ -230,23 +230,20 @@ const BASE_RATE_FIELDS: &[(&str, Consumer)] = &[
     ),
     (
         "generated_by",
-        Consumer::Orphan(
-            "Parsed, REQUIRED by the parser, emitted by the FPL writer, persisted \
-         into forecasts.metadata — and read by nothing that a human or a check \
-         ever sees. Its only two reads are serialisation: the metadata PATCH and \
-         generate_fpl_text. No render function, no report, no validation rule. \
+        Consumer::ReadBy(
+            "Rendered beside `source` in render_outside_view (\"Source: X · by \
+         Y\") and as a labelled line in the markdown report via \
+         extract_base_rate_info; pinned by tests/base_rate_provenance.rs. \
          \
-         That is load-bearing, not cosmetic. apply_base_rate_only hardcodes \
-         source and generated_by to \"fermi\" even when update_outside_rate \
-         routed the work to a declared specialist, and the local state.json \
-         restore overwrites it with Agent(\"fermi\") on every reload. So the one \
-         field that would expose a false provenance claim is the one field never \
-         rendered, and the reference forecast's honest `generated_by: \
-         weather_oracle` does not survive an open/close cycle. \
-         \
-         Closing it: render it beside `source` in render_outside_view, stop \
-         hardcoding it in apply_base_rate_only, and stop overwriting it on \
-         restore.",
+         Was an ORPHAN until this was closed: required by the parser, emitted by \
+         the FPL writer, persisted into forecasts.metadata, and read by nothing \
+         a human or a check ever saw — its only two reads were serialisation. \
+         That is what made a FALSE claim undetectable rather than merely \
+         unhelpful. apply_base_rate_only stamped \"fermi\" over whichever \
+         specialist update_outside_rate had routed to, and the state.json \
+         restore overwrote it with Agent(\"fermi\") on every reload, so the \
+         reference forecast's honest `generated_by: weather_oracle` did not \
+         survive one open/close cycle. Both write sites now carry the producer.",
         ),
     ),
 ];
@@ -414,6 +411,20 @@ fn no_entry_is_a_checkbox() {
     }
 }
 
+/// How many fields these registries currently admit nothing consumes.
+///
+/// Pinned rather than bounded, so movement in EITHER direction has to be
+/// deliberate. An orphan appearing means somebody added a declaration without a
+/// reader; an orphan disappearing means somebody either fixed it or quietly
+/// reclassified it, and the diff has to show which.
+///
+/// It started at 2 — `BaseRate.generated_by` (rendered nowhere, which is what
+/// made two false provenance writes undetectable) and `DriverStmt.evidence_refs`
+/// (read by two consumers, written by none). Both are closed. Zero is not a
+/// claim that the codebase is clean: it is a claim about these two structs,
+/// which are the ones this file covers.
+const EXPECTED_ORPHANS: usize = 0;
+
 /// An orphan must say what closing the gap would take, not merely that it exists.
 ///
 /// The distinction `CROSS_CHECK_EXEMPTIONS` draws: an admission with a route out
@@ -439,9 +450,11 @@ fn every_orphan_names_a_route_out() {
             }
         }
     }
-    assert!(
-        orphans > 0,
-        "no orphans recorded — either the codebase became perfect, or somebody \
-         quietly reclassified one. Both deserve a look at the diff."
+    assert_eq!(
+        orphans, EXPECTED_ORPHANS,
+        "the number of admitted-unconsumed fields changed. If you closed one, \
+         lower EXPECTED_ORPHANS in the same commit and say so in the message. If \
+         you added one, that is a declaration nothing reads — the defect this \
+         whole file exists to make visible."
     );
 }
