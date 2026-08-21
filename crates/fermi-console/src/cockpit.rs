@@ -2629,7 +2629,31 @@ impl CockpitState {
     /// Process the macro_forecaster's structured response.
     /// This is the main co-authoring step — the agent returns a complete
     /// decomposition with estimates that populate the FPL program.
-    fn process_macro_forecaster_result(&mut self, result: &JsonValue, cx: &mut Context<Self>) {
+    /// Absorb a decomposition response: base rate, drivers, model.
+    ///
+    /// `producer` is the agent that ACTUALLY returned this response, and it is a
+    /// parameter because the base rate used to be stamped
+    /// `generated_by: macro_forecaster` from a string literal here — regardless of
+    /// who produced it.
+    ///
+    /// That was a false provenance claim, not a stale label. Measured on the day it
+    /// was found: `fermi` had 9 runs and `macro_forecaster` had not run since
+    /// 2026-08-14, yet every forecast authored that day recorded
+    /// `source: "macro_forecaster"`. The name even resolves — that agent has 140
+    /// historical episodes — so the claim looked plausible to anything checking it,
+    /// and any cross-check keyed on "which agent stated this" resolved to the wrong
+    /// one.
+    ///
+    /// It also hid a real question. Asking "why is a macro agent producing a
+    /// weather base rate?" was unanswerable, because no agent was being SELECTED at
+    /// all: `fermi` answers inline and the console relabelled it. The function name
+    /// preserves a direct-call path that is no longer the normal one.
+    fn process_macro_forecaster_result(
+        &mut self,
+        producer: &str,
+        result: &JsonValue,
+        cx: &mut Context<Self>,
+    ) {
         // DEBUG: log what we received
         log::info!(
             "[composer] Processing result keys: {:?}",
@@ -2764,9 +2788,9 @@ impl CockpitState {
                         reference_class: ref_class.to_string(),
                         historical_frequency: freq,
                         sample_size,
-                        source: "macro_forecaster".into(),
+                        source: producer.to_string(),
                         reasoning: br_reasoning,
-                        generated_by: GeneratedBy::Agent("macro_forecaster".into()),
+                        generated_by: GeneratedBy::Agent(producer.to_string()),
                     });
                 }
                 self.predicted_probability = freq;
@@ -4060,10 +4084,20 @@ impl CockpitState {
                             state.process_agent_evidence(&tracking_id, &result_json);
                         }
 
-                        if base_id == "macro_forecaster" && !is_driver_bound {
-                            log::info!("[composer] → process_macro_forecaster_result");
-                            state.process_macro_forecaster_result(&result_json, cx);
-                        } else if base_id == "fermi" && state.base_rate_update_in_flight {
+                        // The base-rate refresh is identified by its FLAG, not by
+                        // the agent that served it.
+                        //
+                        // This used to read `base_id == "fermi" && flag`, which was
+                        // fine while only Fermi ever answered — and silently wrong
+                        // the moment a declared domain specialist did, because the
+                        // run would fall through to the full decomposition path and
+                        // rebuild the driver set. The flag means "this particular run
+                        // is a base-rate refresh"; who ran it is a separate fact.
+                        //
+                        // Checked FIRST for the same reason: an agent that happens to
+                        // be `macro_forecaster` should still take the scoped path when
+                        // the flag is set.
+                        if state.base_rate_update_in_flight {
                             // Scoped call: 'Update base rate' pressed. Do NOT
                             // rebuild the driver set — that's the destructive
                             // behavior we're guarding against. Only refresh the
@@ -4072,6 +4106,9 @@ impl CockpitState {
                                 "[composer] → apply_base_rate_only (base_rate_update_in_flight)"
                             );
                             state.apply_base_rate_only(&result_json, cx);
+                        } else if base_id == "macro_forecaster" && !is_driver_bound {
+                            log::info!("[composer] → process_macro_forecaster_result");
+                            state.process_macro_forecaster_result(&base_id, &result_json, cx);
                         } else if base_id == "fermi" {
                             // Check multiple locations for the structured JSON decomposition:
                             // 1. metadata.reasoning (local executor path)
@@ -4132,7 +4169,7 @@ impl CockpitState {
                                         });
                                     }
                                     log::info!("[composer] → process_macro_forecaster_result (decomposition found)");
-                                    state.process_macro_forecaster_result(&patched, cx);
+                                    state.process_macro_forecaster_result(&base_id, &patched, cx);
                                     found_decomposition = true;
                                     break;
                                 }
@@ -4172,7 +4209,7 @@ impl CockpitState {
                                                 .unwrap_or(serde_json::json!("unknown"))
                                         }
                                     });
-                                    state.process_macro_forecaster_result(&patched, cx);
+                                    state.process_macro_forecaster_result(&base_id, &patched, cx);
                                 } else {
                                     log::info!("[composer] → process_fermi_recommendation (no decomposition found, even from narrative)");
                                     state.process_fermi_recommendation(&result_json, cx);
@@ -7342,7 +7379,11 @@ impl CockpitState {
     }
 
     /// Update the outside rate (base rate) without resetting drivers.
-    /// Fires Fermi to research the current base rate for the question.
+    ///
+    /// Fires whichever agent DECLARES the question's domain, falling back to Fermi
+    /// when none does. The base rate is the dominant term — the model is the base
+    /// rate times a driver product that measures ~1.0 — so who computes it matters
+    /// more than any other routing decision on the platform.
     ///
     /// The base rate is an INDEX/ANCHOR (like the Polymarket crowd price),
     /// not a structural change. This handler must never rebuild drivers or
@@ -7376,9 +7417,57 @@ impl CockpitState {
             question
         );
 
+        // ── Who should answer a base-rate question? ──────────────────────
+        //
+        // Fermi, unconditionally, until now — and Fermi is a generalist doing
+        // arithmetic on a normal distribution inline. Measured across the stored
+        // temperature questions, that produced base rates clustering at ~12%
+        // whatever the station: Houston 12%, Miami 12% (having been 18% an hour
+        // earlier), because the same mental arithmetic is performed regardless of
+        // the climatology. One of them showed its working — "approximately 12% of
+        // August days fall in this specific 1F band" — for a bucket labelled 74-75,
+        // which denotes the integer SET {74, 75} and is 2F wide. A factor of two,
+        // systematically, in the term that IS the forecast.
+        //
+        // Meanwhile `weather_oracle` declares `domains: [climate, weather,
+        // temperature, ...]` and returns a `climatology_base_rate` measured from
+        // ERA5 over 525 station-days. It was never asked.
+        //
+        // The routing to do this shipped in 67066e4a (`RouteReason::
+        // DeclaredSpecialist`) and was wired only into DRIVER assignment. The base
+        // rate — the dominant term — kept going to the generalist.
+        //
+        // Falls back to Fermi when no agent claims the domain, which is the honest
+        // default: a generalist answer is better than none, and the log line says
+        // which happened.
+        let domain = detect_domain(&question);
+        let producer = {
+            let roster = self.domain_roster();
+            match fermi_console::routing::declared_specialist(&domain, &roster, &|a| {
+                self.agent_is_routable(a)
+            }) {
+                Some(a) => {
+                    log::info!(
+                        "[routing] base rate for domain '{}' → declared specialist {}",
+                        domain,
+                        a
+                    );
+                    a
+                }
+                None => {
+                    log::info!(
+                        "[routing] base rate for domain '{}' → fermi (no agent claims it)",
+                        domain
+                    );
+                    "fermi".to_string()
+                }
+            }
+        };
+        let tracking = format!("{producer}_base_rate");
+
         self.agent_runs.push(AgentExecution {
-            agent_name: "fermi_base_rate".into(),
-            base_agent_id: "fermi".into(),
+            agent_name: tracking.clone(),
+            base_agent_id: producer.clone(),
             status: AgentRunStatus::Running,
             evidence_count: 0,
             confidence: None,
@@ -7402,10 +7491,11 @@ impl CockpitState {
 
         // Latch the guard flag so the completion handler goes through
         // apply_base_rate_only() instead of the full decomposition path.
-        // Tracked as `fermi_base_rate` so failures land on the row this
-        // pushed rather than on the decomposition run (or nowhere).
+        // Tracked as `<producer>_base_rate` so failures land on the row this
+        // pushed rather than on the decomposition run (or nowhere), and so the
+        // row names the agent that actually answered.
         self.base_rate_update_in_flight = true;
-        self.fire_agent("fermi", "fermi_base_rate", &query, cx);
+        self.fire_agent(&producer, &tracking, &query, cx);
     }
 
     /// Extract ONLY the base rate from a fermi agent response and update
