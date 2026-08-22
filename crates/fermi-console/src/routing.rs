@@ -1318,4 +1318,89 @@ mod routing_tests {
             assigned
         );
     }
+
+    // ── The predicate is a routing gate, not just an availability check ──
+
+    /// An agent the assignment gate would refuse is skipped, not returned.
+    ///
+    /// `select_agent_for_driver_declared` takes its availability predicate from
+    /// the caller, and the console passed `agent_is_routable` — "can anything
+    /// execute this id". That is a weaker question than "may this agent be bound
+    /// to a driver", which is what `negotiate::admit_assignment` answers, and the
+    /// gap let auto-assignment bind an agent the MANUAL path would have refused
+    /// outright.
+    ///
+    /// Observed in production: `energy_advisor` — an energy-balance SimOps
+    /// specialist whose `accepts` are `stage_description_json`,
+    /// `resource_description_json`, `process_yaml_json`, none of them a free-text
+    /// port — auto-assigned to `democratic_primary_viability` on a US
+    /// presidential election forecast, staged, and run.
+    ///
+    /// The console now passes `agent_is_assignable`. This pins the consequence:
+    /// a refused candidate is passed over in favour of the next one, so the
+    /// driver still gets an agent rather than none.
+    #[test]
+    fn a_candidate_the_gate_refuses_is_passed_over_for_the_next_one() {
+        let refuses_energy_advisor = |a: &str| a != "energy_advisor";
+
+        let (picked, _reason) = select_agent_for_driver_declared(
+            "democratic_primary_viability",
+            "AOC's progressive brand faces structural headwinds in Democratic primaries",
+            "politics",
+            Some("energy_advisor"),
+            None,
+            &refuses_energy_advisor,
+        );
+
+        assert_ne!(
+            picked, "energy_advisor",
+            "an agent that declares no free-text port must not be routed to a \
+             driver, however confidently it was suggested"
+        );
+        assert!(
+            !picked.is_empty(),
+            "the driver must still get an agent — skipping is the point, \
+             stranding the driver is not"
+        );
+    }
+
+    /// With every candidate refused, the terminal fallback still answers.
+    ///
+    /// `select_agent_for_driver_declared` ends with `unwrap_or_else`, so
+    /// `macro_forecaster` is returned even when the predicate rejects it. That
+    /// is deliberate and worth pinning: a driver with a generalist is
+    /// recoverable, a driver with no agent silently researches nothing.
+    #[test]
+    fn a_universally_refusing_predicate_still_yields_a_fallback() {
+        let refuses_everything = |_: &str| false;
+        let (picked, reason) = select_agent_for_driver_declared(
+            "some_driver",
+            "some rationale",
+            "climate",
+            None,
+            Some("weather_oracle"),
+            &refuses_everything,
+        );
+        assert_eq!(picked, "macro_forecaster");
+        assert_eq!(reason, RouteReason::Default);
+    }
+
+    /// A permissive predicate is unchanged by the tightening.
+    ///
+    /// The guard against over-correcting: the weather specialist must still win
+    /// a climate question, since `weather_oracle` declares `forecast-question`
+    /// and passes the gate.
+    #[test]
+    fn tightening_the_predicate_does_not_disturb_an_admissible_specialist() {
+        let all_ok = |_: &str| true;
+        let (picked, _) = select_agent_for_driver_declared(
+            "ensemble_spread",
+            "GEFS ensemble spread at lead 1",
+            "climate",
+            None,
+            Some("weather_oracle"),
+            &all_ok,
+        );
+        assert_eq!(picked, "weather_oracle");
+    }
 }

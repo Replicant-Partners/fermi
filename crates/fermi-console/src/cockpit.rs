@@ -2875,7 +2875,7 @@ impl CockpitState {
                 let roster = self.domain_roster();
                 if let Some(specialist) =
                     fermi_console::routing::declared_specialist(&domain, &roster, &|a| {
-                        self.agent_is_routable(a)
+                        self.agent_is_assignable(a)
                     })
                 {
                     if specialist != producer {
@@ -3208,7 +3208,7 @@ impl CockpitState {
         let declared_for_domain = {
             let roster = self.domain_roster();
             let picked = fermi_console::routing::declared_specialist(&domain, &roster, &|a| {
-                self.agent_is_routable(a)
+                self.agent_is_assignable(a)
             });
             if let Some(ref a) = picked {
                 log::info!(
@@ -3297,7 +3297,7 @@ impl CockpitState {
                         &domain,
                         suggestion.map(|(a, _)| a.as_str()),
                         declared_for_domain.as_deref(),
-                        &|a| self.agent_is_routable(a),
+                        &|a| self.agent_is_assignable(a),
                     );
 
                 log::info!(
@@ -3605,6 +3605,30 @@ impl CockpitState {
     ///
     /// See [`negotiate::admit_assignment`] for what is refused and the roster
     /// measurement behind it.
+    /// Can this agent be ROUTED to a driver — not merely executed?
+    ///
+    /// The predicate every agent-selection site should use, and the one that
+    /// closes the third door.
+    ///
+    /// `assign_agent_to_driver` and the chat dispatcher both refuse an agent
+    /// that declares no free-text port. Selection did not: it was gated on
+    /// `agent_is_routable`, which asks only "can anything execute this id". So
+    /// auto-assignment during decomposition could bind an agent the manual path
+    /// would have rejected outright, and did — observed in production,
+    /// `energy_advisor` (accepts `stage_description_json`,
+    /// `resource_description_json`, `process_yaml_json`) auto-assigned to
+    /// `democratic_primary_viability` on a US presidential election forecast,
+    /// then staged and run.
+    ///
+    /// Using this in the selector rather than refusing afterwards is what makes
+    /// it recoverable: `select_agent_for_driver_declared` walks its candidates
+    /// in priority order and takes the first that passes, falling back to
+    /// `macro_forecaster`. An inadmissible agent is therefore skipped in favour
+    /// of the next-best one, instead of producing a driver with no agent at all.
+    fn agent_is_assignable(&self, agent_id: &str) -> bool {
+        !self.admission_for(agent_id).is_refused()
+    }
+
     pub fn admission_for(&self, agent_id: &str) -> negotiate::Admission {
         negotiate::admit_assignment(
             agent_id,
@@ -5125,7 +5149,7 @@ impl CockpitState {
         // independent keyword ladders that disagreed.
         let (recommended, _reason) =
             select_agent_for_driver(driver_name, &task.rationale, &domain, None, &|a| {
-                self.agent_is_routable(a)
+                self.agent_is_assignable(a)
             });
 
         // Compose from what the recommended agent declares. Remember which
@@ -6591,6 +6615,59 @@ impl CockpitState {
                             driver_name, q_text
                         )
                     });
+                // Give the driver card something to render.
+                //
+                // This path called `fire_agent` and returned. The card looks
+                // the agent up in `agent_runs` by bound name, found nothing,
+                // and rendered "○ idle" for the entire run — so the operator
+                // pressed ▶ Run Now, the agent ran for two minutes, and the
+                // card never changed. The activity log showed it running; the
+                // place a human actually looks did not.
+                //
+                // Both other run paths push an `AgentExecution` before firing:
+                // `assign_agent_to_driver` and `run_pending_research`. This one
+                // — the button for re-running an already-attached agent, which
+                // is the common case once a forecast exists — did not.
+                //
+                // Reset an existing row rather than pushing a second: the card
+                // takes the FIRST match on bound name, so a duplicate would be
+                // invisible while the stale completed row kept showing
+                // "✓ N findings" throughout the re-run.
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                if let Some(run) = self
+                    .agent_runs
+                    .iter_mut()
+                    .find(|r| r.agent_name == bound_name)
+                {
+                    run.status = AgentRunStatus::Running;
+                    run.started_at = Some(now);
+                    run.completed_at = None;
+                    run.error = None;
+                    run.confidence = None;
+                    run.latest_finding = None;
+                    // This run has produced nothing yet. Carrying the previous
+                    // run's count would show findings that belong to an earlier
+                    // answer; `process_agent_evidence` sets it again on
+                    // completion.
+                    run.evidence_count = 0;
+                } else {
+                    self.agent_runs.push(AgentExecution {
+                        agent_name: bound_name.clone(),
+                        base_agent_id: base_agent_id.to_string(),
+                        status: AgentRunStatus::Running,
+                        evidence_count: 0,
+                        confidence: None,
+                        error: None,
+                        credits_charged: None,
+                        started_at: Some(now),
+                        completed_at: None,
+                        latest_finding: None,
+                    });
+                }
+
                 self.fire_agent(base_agent_id, &bound_name, &query, cx);
                 self.messages.push(AssistantMessage {
                     node: format!("driver:{}", driver_name),
@@ -6945,7 +7022,7 @@ impl CockpitState {
                     &rationale,
                     &detect_domain(&question),
                     None,
-                    &|a| self.agent_is_routable(a),
+                    &|a| self.agent_is_assignable(a),
                 )
                 .0
             });
@@ -7703,7 +7780,7 @@ impl CockpitState {
         let producer = {
             let roster = self.domain_roster();
             match fermi_console::routing::declared_specialist(&domain, &roster, &|a| {
-                self.agent_is_routable(a)
+                self.agent_is_assignable(a)
             }) {
                 Some(a) => {
                     log::info!(
