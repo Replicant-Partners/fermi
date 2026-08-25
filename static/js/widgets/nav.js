@@ -26,7 +26,7 @@ const Nav = {
           <a href="/rounds" class="${current === "rounds" ? "active" : ""}">Rounds</a>
           <a href="/bestiary" class="${current === "bestiary" ? "active" : ""}">Bestiary</a>
           <a href="/observatory" class="${current === "observatory" ? "active" : ""}">Observatory</a>
-          <a href="/gates" class="${current === "gates" ? "active" : ""}">Gates</a>
+          <a href="/loops" class="${current === "loops" ? "active" : ""}">Loops &amp; Gates</a>
           <a href="/ecology" class="${current === "ecology" ? "active" : ""}">Ecology</a>
           <a href="/apps" class="${current === "apps" ? "active" : ""}">Apps</a>
           <a href="/docs" class="${current === "docs" ? "active" : ""}">Docs</a>

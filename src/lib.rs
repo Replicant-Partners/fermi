@@ -306,7 +306,30 @@ pub mod outcome_trust;
 // an admin diagnostic blob and through a 610-line handler giving a second
 // answer to the first one's question, and because nothing anywhere declared
 // the endpoint a person uses to work a human-gated stage.
+// The shape every trust surface has — the door a person uses, and the caveat a
+// green tick needs — declared once so loops, gates and evaluators inherit the
+// rules rather than three copies of them. Answers are never shared; only these
+// two, which are the same idea and the same mistakes in all three domains.
+pub mod surface;
+
 pub mod loop_api;
+
+// The same pattern over gates. Second instance, which is what shows `surface`
+// is a pattern rather than a rename: the door and the caveat are shared, and
+// the model, measurement and interpretation stay with `gate_trust`.
+//
+// `GATE_DOORS` is empty, and that is a finding: nothing anywhere lets a person
+// act on a gate — no review of what it refused, no override, no record that a
+// refusal was wrong. Defensible, and until this list existed there was nowhere
+// to notice it had never been decided.
+pub mod gate_api;
+
+// And over evaluators — third instance. `native_evaluators` already turns
+// counters into sentences with remedies, and was reachable through exactly one
+// admin-scoped diagnostics blob. `EVALUATOR_CAVEATS` is where
+// `loop_stalled_in_code`'s known over-claim is recorded rather than silently
+// fixed: narrowing it flips a live verdict platform-wide.
+pub mod evaluator_api;
 
 // Port trust contract — whether the caller is sending what the agent said it
 // takes. `negotiate::bind_input` in the console answered this correctly and

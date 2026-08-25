@@ -141,6 +141,155 @@ what remains is volume, adoption, and two product decisions:
 
 ---
 
+## `src/surface.rs` — the pattern, extracted
+
+Every trust domain has five parts. Three are **answers** and are never shared;
+two are the same idea and the same mistakes everywhere, and now live in one
+place.
+
+| part | loops | gates | evaluators | shared |
+|---|---|---|---|---|
+| declared model | `loop_model::LOOPS` | `gate_trust::GATES` | `native_evaluators::registry` | no |
+| measurement | rows per stage | approve/refuse counters | verdicts over a snapshot | no |
+| interpretation | `panel_absence::Reading` | `GateAccount::*` | `Verdict` | no |
+| **door** | who acts, and where | | | **yes** |
+| **caveat** | what a green tick does not mean | | | **yes** |
+
+`Door` is keyed by `subject` in each domain's own vocabulary — `loop2.reviewed`,
+`gate.coherence` — because the three do not share a key and forcing one would
+produce a lowest common denominator that fits none. What *is* shared is the rule
+set (`door_problems`, `caveat_problems`) and **one** router scan
+(`doors_missing_from`) instead of three that can drift.
+
+`Caveat` is a required field, not a doc comment: every check here is narrower
+than the claim it serves, and a surface that renders a tick against the claim is
+the over-reading the whole audit is about, committed in the one artifact a
+non-author reads. `caveat_problems` rejects a `does_not_show` that merely
+restates `checked`.
+
+## `GET /api/gates` — the second instance
+
+Which is what shows `surface` is a pattern and not a rename. `gate_api` maps the
+counter pairs onto the same three readings:
+
+| token | reading | why |
+|---|---|---|
+| `refuses_everything` | `fault` | asked, approved nothing. The Γ bug's signature |
+| `never_asked` | `unknown` | **not a pass.** An unwired control and one with nothing to refuse are the same observation |
+| `admits_everything` | `unknown` | reported, never asserted — asserting would assert that violations must exist |
+| `discriminating` | `idle` | has both approved and refused |
+
+`since: boot | ledger` is the field that stops `refused: 0` being read as "never
+in its life" — three of five gates have process-local counters.
+
+**`GATE_DOORS` is empty, and that is a finding.** Nothing anywhere lets a person
+act on a gate: no review of what it refused, no override, no record that a
+refusal was wrong. Defensible — a gate a person can wave through is not much of
+a gate — but nobody had decided it, and until the list existed there was nowhere
+to notice.
+
+## `docs/UX_HANDOFF_trust_surfaces.md`
+
+The handoff. Leads with the one idea (`unknown` is a third thing, not a side),
+then the payload shapes, then — explicitly — what is guaranteed by a failing
+build versus what is not. The "not guaranteed" list says outright that the
+semantics behind some of these endpoints still need work and that most queues are
+empty; the point of the surface is that it says *why* each one is.
+
+## The loop surface — `GET /api/loops`
+
+One shape for *"where does this loop stand, and what can a person do about
+it"*. `src/loop_api.rs` assembles; nothing re-answers anything.
+
+| question | owner |
+|---|---|
+| does the chain produce, stage by stage? | `loop_model` |
+| is an empty thing idle, faulty or unknowable? | `panel_absence` |
+| does what it produces carry the signal the claim needs? | `outcome_trust` |
+| **what can a person do at this stage?** | `loop_api::STAGE_ACTIONS` — new |
+
+```
+GET /api/loops           six loops, first empty link, reading, doors
+GET /api/loops/actions   the doors alone, no database walk — build buttons at startup
+GET /api/loops/:loop_id  one loop, same shape
+```
+
+Not under `/api/admin`: the only honest account of the loops was behind an admin
+scope, which is how it stayed invisible.
+
+**Three contracts the payload makes to a client**, stated in the payload itself:
+never render a bare zero (`measured: false` means show nothing, not `0`); every
+empty panel carries `reading` — `idle` / `fault` / `unknown`, and `unknown` is
+not a pass; and exactly one stage per loop is `is_first_empty`, because
+everything below it is empty *because of* it and highlighting all four turns one
+finding into four.
+
+Live, right now:
+
+```
+6 loop(s): 2 turning · 0 stalled by a code fault · 0 stalled and idle
+           · 4 stopped with no reading available · 0 unreadable
+
+loop2  stalled  Unknown   stops at `anomaly` (unobserved)
+     < anomaly           0  request
+       reviewed          0  manual     POST /api/observatory/hitl/:event_id/action
+       consensus         0  manual     POST /api/observatory/hitl/consensus/:request_id
+       corrected         0  upstream
+       persona_bumped   13  upstream
+```
+
+### `STAGE_ACTIONS` — the part that is genuinely new
+
+Nothing declared where a human's door was. Half these loops are human-gated by
+design — Loop 2's `reviewed` *is* a person acting — and a stalled manual stage
+with no visible door is indistinguishable from a platform defect.
+
+Every entry carries `why_manual`, required: **a stage that cannot argue for being
+manual should be automated**, and a reviewer deciding whether a queue is worth
+working needs the argument, not just the button.
+
+Checked four ways: every action names a real stage in `loop_model`; no action
+sits on a stage the platform drives itself (`Upstream`, `Scheduler`, `None`);
+every `Manual`/`Prompted` stage has a door or is in `NO_DOOR` with the reason its
+door is elsewhere; and **every advertised path exists in the router**.
+
+That last one caught an invented path on its first run: `loop4.accepted` said
+`/api/compositions/:composition_id/accept`, which does not exist. A button that
+404s after a reviewer believes they recorded a correction is worse than no
+button, and `hitl_actions` holds zero rows so no traffic would have told anyone.
+
+The route-ordering claim (`/actions` before `/:loop_id`, or `actions` matches as
+a loop id) was verified by swapping them and watching it go red.
+
+### Two things the build caught in itself
+
+* **My action rule was wrong.** It asserted doors only on `Manual`/`Prompted`,
+  and `loop3.settled` failed — correctly. Its trigger is `Request`, and a request
+  *is* a person pressing something. What must never carry a door is what runs
+  without anyone.
+* **The header was dishonest.** Three buckets printed *"2 turning, 0 stalled, 4
+  unmeasured"* against production — wrong twice. Nothing was unmeasured; every
+  probe ran. And "0 stalled" invites the conclusion that nothing is wrong when
+  four loops have stopped. The words were borrowed from `loop_model`, where
+  `unmeasured` means *a probe did not run*, and used here for *the reason is
+  unknowable* — the two states this codebase most insists on separating. Now
+  five buckets, asserted to partition the set.
+
+### `agent_loops_handler` is still there
+
+`/api/observatory/agents/:agent_id/loops` survives this commit because it is
+per-agent where the new surface is platform-wide. It is still the audit's §9 item
+6 — 610 lines of bespoke SQL, a second answer. Held together by
+`the_two_loop_surfaces_do_not_disagree_about_which_loops_exist` until it is
+repointed; that pin is deliberately the weakest useful one (it cannot compare
+their numbers without an `AppState`) and it catches the shape of the original
+defect, which was hardcoded rows under a live status column.
+
+**Next on this surface:** a per-agent view built from `loop_api` rather than from
+SQL, which is what lets the old handler go.
+
+---
+
 ## Loop 4 — wired end to end, and its seam is now closed
 
 There was nothing to build. The chain is complete: all three console paths chain

@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en" class="theme-hasui">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Loops &amp; Gates — Agent Bestiary</title>
+  <link rel="stylesheet" href="/static/css/variables.css"/>
+  <link rel="stylesheet" href="/static/css/common.css"/>
+  <link rel="stylesheet" href="/static/css/components.css"/>
+  <style>
+  body{font-family:"Berkeley Mono","JetBrains Mono",monospace;line-height:1.5;background:var(--bg0-hard);font-size:13px;margin:0;}
+  a{color:var(--fg3);text-decoration:none;} a:hover{color:var(--yellow);}
+  .wrap{max-width:1060px;margin:0 auto;padding:0 20px 60px;}
+
+  .head{padding:18px 0 10px;}
+  .head h1{font-size:1.05rem;color:var(--yellow);margin:0 0 3px;}
+  .head .sub{font-size:0.74rem;color:var(--fg4);}
+
+  .tabs{display:flex;gap:0;border-bottom:1px solid var(--bg2);margin-bottom:16px;}
+  .tab{padding:6px 16px;font-size:0.78rem;color:var(--fg4);cursor:pointer;background:transparent;
+       border:none;border-bottom:2px solid transparent;font-family:inherit;}
+  .tab:hover{color:var(--fg2);} .tab.active{color:var(--yellow);border-bottom-color:var(--yellow);}
+
+  /* ── The three readings. `unknown` is neither good nor bad and must not
+        borrow either colour: it gets its own hue and a hatched edge. ── */
+  .r-idle   {color:var(--fg3);   border-color:var(--bg3);}
+  .r-fault  {color:var(--red,#fb4934); border-color:var(--red,#fb4934);}
+  .r-unknown{color:var(--purple,#d3869b); border-color:var(--purple,#d3869b);
+             border-style:dashed;}
+  .badge{display:inline-block;font-size:0.62rem;text-transform:uppercase;letter-spacing:0.06em;
+         padding:1px 6px;border:1px solid;}
+
+  /* ── Tally: five buckets, never collapsed ── */
+  .tally{display:flex;flex-wrap:wrap;gap:1px;background:var(--bg2);margin-bottom:8px;}
+  .tb{background:var(--bg0);padding:8px 12px;min-width:112px;}
+  .tb-v{font-size:1.05rem;} .tb-l{font-size:0.61rem;color:var(--fg4);text-transform:uppercase;
+        letter-spacing:0.06em;margin-top:1px;}
+  .tb.neutral .tb-v{color:var(--fg3);}
+  .tb.good .tb-v{color:var(--green);}
+  .tb.bad .tb-v{color:var(--red,#fb4934);}
+  .tb.indet .tb-v{color:var(--purple,#d3869b);}
+  .contract{font-size:0.71rem;color:var(--fg4);font-style:italic;line-height:1.5;margin:6px 0 16px;}
+
+  /* ── Loop card ── */
+  .loop{border:1px solid var(--bg2);margin-bottom:12px;background:var(--bg0);}
+  .loop-h{display:flex;align-items:baseline;gap:9px;padding:10px 12px 6px;}
+  .loop-id{font-size:0.63rem;color:var(--fg4);border:1px solid var(--bg3);padding:1px 5px;}
+  .loop-n{font-size:0.86rem;color:var(--fg2);}
+  .loop-scope{font-size:0.63rem;color:var(--fg4);}
+  .loop-b{margin-left:auto;}
+  .claim{padding:0 12px 8px;font-size:0.74rem;color:var(--fg4);font-style:italic;line-height:1.5;max-width:80ch;}
+  .detail{padding:0 12px 10px;font-size:0.77rem;color:var(--fg3);line-height:1.5;max-width:85ch;}
+
+  /* ── Stage chain ── */
+  .chain{padding:2px 12px 10px;}
+  .stage{display:flex;align-items:flex-start;gap:9px;padding:5px 0;border-top:1px solid var(--bg2);}
+  .stage.consequence{opacity:0.45;}
+  .stage.first-empty{background:rgba(251,73,52,0.06);margin:0 -12px;padding:6px 12px;}
+  .st-rows{width:66px;text-align:right;font-variant-numeric:tabular-nums;font-size:0.76rem;
+           color:var(--fg2);flex-shrink:0;}
+  .st-rows.none{color:var(--fg4);font-style:italic;font-size:0.68rem;}
+  .st-body{flex:1;min-width:0;}
+  .st-what{font-size:0.76rem;color:var(--fg3);}
+  .st-meta{font-size:0.66rem;color:var(--fg4);margin-top:1px;}
+  .st-writer{font-size:0.64rem;color:var(--fg4);}
+  .trig{font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em;padding:0 4px;border:1px solid var(--bg3);color:var(--fg4);}
+  .trig.dead{border-color:var(--red,#fb4934);color:var(--red,#fb4934);}
+  .trig.agent{border-color:var(--purple,#d3869b);color:var(--purple,#d3869b);}
+  .marker{font-size:0.62rem;color:var(--red,#fb4934);text-transform:uppercase;letter-spacing:0.06em;}
+
+  /* ── Doors ── */
+  .door{margin-top:5px;padding:7px 9px;background:var(--bg1);border-left:2px solid var(--aqua);}
+  .door-t{font-size:0.72rem;color:var(--aqua);}
+  .door-does{font-size:0.7rem;color:var(--fg3);margin-top:2px;line-height:1.45;}
+  .door-why{font-size:0.68rem;color:var(--fg4);margin-top:4px;line-height:1.45;
+            padding-left:8px;border-left:1px solid var(--bg3);}
+  .door-path{font-size:0.63rem;color:var(--fg4);margin-top:3px;}
+
+  /* ── Outcomes ── */
+  .outcome{margin:0 12px 10px;padding:8px 10px;border:1px solid var(--bg2);background:var(--bg1);}
+  .oc-h{font-size:0.68rem;color:var(--fg4);text-transform:uppercase;letter-spacing:0.06em;}
+  .oc-p{font-size:0.74rem;color:var(--green);margin-top:3px;line-height:1.45;}
+  .oc-n{font-size:0.73rem;color:var(--fg3);margin-top:5px;line-height:1.5;}
+  .oc-n b{color:var(--yellow);}
+  .oc-gap{font-size:0.71rem;color:var(--fg4);margin-top:6px;line-height:1.5;
+          padding-left:8px;border-left:2px solid var(--yellow);}
+
+  /* ── Gates ── */
+  table{width:100%;border-collapse:collapse;font-size:0.74rem;}
+  th{text-align:left;color:var(--fg4);font-weight:normal;font-size:0.62rem;text-transform:uppercase;
+     letter-spacing:0.06em;padding:5px 8px;border-bottom:1px solid var(--bg3);}
+  td{padding:6px 8px;border-bottom:1px solid var(--bg2);color:var(--fg3);vertical-align:top;}
+  .num{text-align:right;font-variant-numeric:tabular-nums;}
+  .dim{color:var(--fg4);}
+  .since-boot{color:var(--yellow);}
+  .caveat{font-size:0.69rem;color:var(--fg4);line-height:1.45;margin-top:3px;
+          padding-left:8px;border-left:1px solid var(--bg3);}
+  .nodoors{border:1px dashed var(--bg3);padding:10px 12px;font-size:0.73rem;color:var(--fg4);
+           line-height:1.5;margin-top:8px;}
+  .enf{font-size:0.61rem;text-transform:uppercase;letter-spacing:0.05em;padding:1px 5px;border:1px solid;}
+  .e-control{color:var(--green);border-color:var(--green);}
+  .e-metric{color:var(--red,#fb4934);border-color:var(--red,#fb4934);}
+  .e-declared{color:var(--yellow);border-color:var(--yellow);}
+  .e-none{color:var(--fg4);border-color:var(--bg3);}
+  .warn{border-left:3px solid var(--red,#fb4934);background:rgba(251,73,52,0.07);padding:9px 12px;
+        margin-bottom:12px;font-size:0.74rem;color:var(--fg3);line-height:1.5;}
+  .warn b{color:var(--red,#fb4934);}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:0.68rem;color:var(--fg4);margin-bottom:14px;}
+  .empty{padding:16px 8px;font-size:0.76rem;color:var(--fg4);}
+  </style>
+</head>
+<body>
+  <div id="nav-root"></div>
+  <div class="wrap">
+    <div class="head">
+      <h1>Loops &amp; Gates</h1>
+      <div class="sub">A loop is a control cycle. A gate is where it is allowed or refused.</div>
+    </div>
+    <div class="tabs">
+      <button class="tab active" data-tab="loops">Loops</button>
+      <button class="tab" data-tab="gates">Gates</button>
+      <button class="tab" data-tab="enforcement">Enforcement</button>
+    </div>
+    <div class="legend">
+      <span><span class="badge r-idle">idle</span> correctly empty — nothing that should have happened has failed to</span>
+      <span><span class="badge r-fault">fault</span> something should have happened and did not</span>
+      <span><span class="badge r-unknown">unknown</span> no contract can say. Not a pass and not a failure</span>
+    </div>
+    <div id="content"><div class="empty">Loading…</div></div>
+  </div>
+
+  <script src="/static/js/widgets/nav.js"></script>
+  <script src="/static/js/theme.js"></script>
+  <script>
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+  let LOOPS = null, GATES = null, ACTIONS = null, ENF = null, TAB = "loops";
+
+  // An unrecognised reading must render as `unknown`, never as healthy — a new
+  // token falling through to a benign default is how "nothing has been watched"
+  // once displayed as "the system is idle" on every panel backed by a loop.
+  const READINGS = ["idle", "fault", "unknown"];
+  const reading = r => READINGS.includes(r) ? r : "unknown";
+
+  // The tally buckets partition the set. They are never collapsed into one
+  // number: "2 of 6 turning" invites the reader to conclude four are broken,
+  // and "0 stalled" invites the opposite. Both are wrong.
+  const BUCKETS = [
+    ["turning",          "turning",          "good",    "every stage produced"],
+    ["stalled_by_fault", "stopped by fault", "bad",     "stopped, and the reason is in the code"],
+    ["stalled_idle",     "idle",             "neutral", "stopped correctly — nothing has had occasion"],
+    ["no_reading",       "no reading",       "indet",   "stopped, and no contract can say why"],
+    ["unreadable",       "unreadable",       "indet",   "a probe did not run, so no verdict is supported"],
+  ];
+
+  function tally(t, buckets) {
+    return `<div class="tally">${buckets.map(([k, label, tone, title]) =>
+      `<div class="tb ${tone}" title="${esc(title)}">
+         <div class="tb-v">${t[k] ?? 0}</div><div class="tb-l">${esc(label)}</div></div>`).join("")}</div>`;
+  }
+
+  // ── Loops ──────────────────────────────────────────────────────────────
+  function stageRow(s, isConsequence) {
+    // `measured: false` means show nothing, not zero. `rows: -1` is a sentinel
+    // and never a value.
+    const rows = s.measured === false
+      ? `<span class="st-rows none">not read</span>`
+      : `<span class="st-rows">${s.rows}</span>`;
+
+    // `nothing_calls_it` is a finding in its own right, whatever the loop's
+    // own reading says: no code path invokes that writer at all.
+    const dead = s.trigger_label === "nothing_calls_it";
+    const agentDriven = s.trigger_label === "prompted";
+    const trig = `<span class="trig ${dead ? "dead" : agentDriven ? "agent" : ""}">${
+      esc((s.trigger_label || "").replace(/_/g, " "))}</span>`;
+
+    const door = s.action ? `
+      <div class="door">
+        <div class="door-t">▸ ${esc(s.action.does.split(":")[0])}</div>
+        <div class="door-does">${esc(s.action.does)}</div>
+        <div class="door-why">Why a person: ${esc(s.action.why_manual)}</div>
+        <div class="door-path">${esc(s.action.method)} ${esc(s.action.path)}</div>
+      </div>` : "";
+
+    return `<div class="stage ${s.is_first_empty ? "first-empty" : ""} ${isConsequence ? "consequence" : ""}">
+      ${rows}
+      <div class="st-body">
+        <div class="st-what">${esc(s.what)}</div>
+        <div class="st-meta">${trig}
+          ${s.is_first_empty ? `<span class="marker">← stops here</span>` : ""}
+          ${dead ? `<span class="marker">nothing calls this writer</span>` : ""}</div>
+        <div class="st-writer">${esc(s.writer || "")}</div>
+        ${door}
+      </div>
+    </div>`;
+  }
+
+  function outcome(o) {
+    // Every check is narrower than the claim it serves. A tick rendered against
+    // the claim would be a lie, so what the check does NOT establish is shown
+    // beside it, never hidden behind a hover.
+    return `<div class="outcome">
+      <div class="oc-h">Checked at stage <b>${esc(o.stage)}</b></div>
+      <div class="oc-p">✓ ${esc(o.proposition)}</div>
+      <div class="oc-n"><b>Does not show:</b> ${esc(o.does_not_show)}</div>
+      ${o.declared_gap ? `<div class="oc-gap"><b>Known gap, not a failure.</b>
+        ${esc(o.declared_gap)}</div>` : ""}
+    </div>`;
+  }
+
+  function loopCard(l) {
+    const rd = reading(l.reading);
+    // Stages below the first empty one are empty *because of* it. Dimming them
+    // keeps one finding from reading as four, which is how these reports
+    // stopped being read.
+    let seenFirstEmpty = false;
+    const stages = (l.stages || []).map(s => {
+      const row = stageRow(s, seenFirstEmpty);
+      if (s.is_first_empty) seenFirstEmpty = true;
+      return row;
+    }).join("");
+
+    return `<div class="loop">
+      <div class="loop-h">
+        <span class="loop-id">${esc(l.id)}</span>
+        <span class="loop-n">${esc(l.name)}</span>
+        <span class="loop-scope">${esc(l.scope || "")}</span>
+        <span class="loop-b badge r-${rd}">${esc(l.status)}${
+          l.reason ? " · " + esc(l.reason.replace(/_/g, " ")) : ""}</span>
+      </div>
+      <div class="claim">Asserts: ${esc(l.claim)}</div>
+      <div class="detail">${esc(l.detail)}</div>
+      <div class="chain">${stages}</div>
+      ${(l.outcomes || []).map(outcome).join("")}
+    </div>`;
+  }
+
+  function paneLoops() {
+    const d = LOOPS;
+    const orphanDoors = (ACTIONS?.actions || []).filter(a =>
+      !(d.loops || []).some(l => (l.stages || []).some(s => s.action &&
+        s.action.subject === a.subject)));
+
+    return tally(d.tally, BUCKETS)
+      + `<div class="contract">${esc(d.contract || "")}</div>`
+      + (d.loops || []).map(loopCard).join("")
+      + (orphanDoors.length ? `<div class="loop"><div class="loop-h">
+          <span class="loop-n">Other doors</span></div>
+          <div class="detail">Declared actions not attached to a stage above.</div>
+          <div class="chain">${orphanDoors.map(a => `
+            <div class="stage"><span class="st-rows none">—</span><div class="st-body">
+              <div class="st-what">${esc(a.subject)}</div>
+              <div class="door"><div class="door-does">${esc(a.does)}</div>
+              <div class="door-why">Why a person: ${esc(a.why_manual)}</div>
+              <div class="door-path">${esc(a.method)} ${esc(a.path)}</div></div>
+            </div></div>`).join("")}</div></div>` : "");
+  }
+
+  // ── Gates ──────────────────────────────────────────────────────────────
+  const GATE_BUCKETS = [
+    ["discriminating", "discriminating", "good",    "has both approved and refused"],
+    ["inverted",       "inverted",       "bad",     "asked, and approved nothing"],
+    ["never_refused",  "never refused",  "indet",   "run, and refused nothing. Reported, never asserted"],
+    ["unexercised",    "unexercised",    "indet",   "not exercised. Not a pass"],
+  ];
+
+  function paneGates() {
+    const d = GATES;
+    const cav = {};
+    (d.caveats || []).forEach(c => { if (c.token) cav[c.token] = c; });
+
+    const rows = (d.gates || []).map(g => {
+      const rd = reading(g.reading);
+      const c = cav[g.token];
+      // `since: "boot"` in the text, not a tooltip. A gate with boot-scoped
+      // counters and 0 refusals has not "never refused anything" — it has not
+      // refused anything since the last deploy.
+      const since = g.since === "boot"
+        ? `<span class="since-boot">since boot only — resets on deploy</span>`
+        : `<span class="dim">durable ledger</span>`;
+      return `<tr>
+        <td><span style="color:var(--fg2)">${esc(g.id)}</span>
+            <div class="dim" style="font-size:0.66rem">${esc(g.refuses || "")}</div></td>
+        <td class="num">${g.approved}</td>
+        <td class="num">${g.refused}</td>
+        <td>${since}</td>
+        <td><span class="badge r-${rd}">${esc((g.token || "").replace(/_/g, " "))}</span>
+          ${c ? `<div class="caveat"><b>Checked:</b> ${esc(c.checked)}<br/>
+                 <b>Does not show:</b> ${esc(c.does_not_show)}</div>` : ""}
+          ${g.if_never_refuses ? `<div class="caveat">${esc(g.if_never_refuses)}</div>` : ""}
+        </td></tr>`;
+    }).join("");
+
+    return tally(d.tally, GATE_BUCKETS)
+      + `<div class="contract">${esc(d.contract || "")}</div>`
+      + `<table><thead><tr><th>Gate</th><th class="num">Approved</th><th class="num">Refused</th>
+         <th>Counter scope</th><th>Reading</th></tr></thead><tbody>${rows}</tbody></table>`
+      + (!(d.doors || []).length ? `<div class="nodoors">
+          <b style="color:var(--fg3)">No actions available on any gate.</b>
+          There is no endpoint anywhere that lets a person review what a gate refused,
+          override it, or record that a refusal was wrong. That may be correct — a gate
+          a person can wave through is not much of a gate — but nobody has decided it
+          explicitly, and this space is where that decision gets made rather than
+          quietly assumed.</div>` : "");
+  }
+
+  // ── Enforcement ────────────────────────────────────────────────────────
+  function paneEnforcement() {
+    if (!ENF) return `<div class="empty">Enforcement map unavailable.</div>`;
+    const disc = ENF.discarded || [], ung = ENF.ungoverned || [];
+    const warn = disc.length ? `<div class="warn">
+        <b>${disc.length} verb${disc.length === 1 ? "" : "s"} run a gate and discard its verdict.</b>
+        From the caller's side that is indistinguishable from having no gate at all: the
+        gate is asked, it answers, and control flow is identical either way — so the
+        counters on the Gates tab look healthy while nothing is being stopped. No count
+        can reveal this; only a declaration of intended enforcement compared against the
+        call site.</div>` : "";
+    const ungw = ung.length ? `<div class="warn"><b>${ung.length} write(s) no gate can refuse,
+        with no reason recorded:</b> ${ung.map(esc).join(", ")}.</div>` : "";
+
+    const rows = (ENF.commands || []).map(c => {
+      const gates = (c.gates || []).length
+        ? c.gates.map(g => `<div style="margin-bottom:4px">
+            <span class="enf e-${esc(g.enforcement)}">${esc(g.enforcement)}</span>
+            <span style="color:var(--fg2)">${esc(g.gate)}</span>
+            <div class="dim" style="font-size:0.64rem">${esc(g.site)}</div>
+            ${g.why_not_control ? `<div class="caveat">${esc(g.why_not_control)}</div>` : ""}
+          </div>`).join("")
+        : `<span class="enf e-none">none</span>${c.ungated_because
+            ? `<div class="caveat">${esc(c.ungated_because)}</div>` : ""}`;
+      return `<tr><td><span style="color:var(--fg2)">${esc(c.label)}</span>
+        <div class="dim" style="font-size:0.64rem">${esc(c.route)}</div></td>
+        <td class="dim">${esc(c.effect)}</td><td>${gates}</td></tr>`;
+    }).join("");
+
+    return `<div class="contract">Which verbs a gate can actually stop.
+      <b>control</b> runs before the effect and can refuse it; <b>metric</b> runs and the
+      verdict is discarded; <b>declared</b> is typed, persisted and never compared. The
+      check that runs after the write is a metric; the check that runs before it is a
+      control.</div>${warn}${ungw}
+      <table><thead><tr><th>Verb</th><th>Effect</th><th>Gates</th></tr></thead>
+      <tbody>${rows}</tbody></table>`;
+  }
+
+  function render() {
+    document.querySelectorAll(".tab").forEach(b =>
+      b.classList.toggle("active", b.dataset.tab === TAB));
+    const el = document.getElementById("content");
+    try {
+      el.innerHTML = TAB === "loops" ? paneLoops()
+                   : TAB === "gates" ? paneGates()
+                   : paneEnforcement();
+    } catch (e) {
+      el.innerHTML = `<div class="empty">Could not render: ${esc(e.message)}</div>`;
+    }
+  }
+
+  async function boot() {
+    if (window.Nav) Nav.init({ current: "loops" });
+    document.querySelectorAll(".tab").forEach(b =>
+      b.addEventListener("click", () => { TAB = b.dataset.tab; render(); }));
+
+    const get = async u => { const r = await fetch(u); return r.ok ? r.json() : null; };
+    try {
+      // Doors are fetched separately and at startup: the actions are the same
+      // whether or not a loop is turning, and a surface that only showed a door
+      // when the queue was non-empty would hide it precisely when someone
+      // wanted to ask why the queue was empty.
+      [LOOPS, GATES, ACTIONS, ENF] = await Promise.all([
+        get("/api/loops"), get("/api/gates"),
+        get("/api/loops/actions"), get("/api/gates/enforcement"),
+      ]);
+    } catch (e) { /* handled below */ }
+
+    if (!LOOPS) {
+      document.getElementById("content").innerHTML =
+        `<div class="empty">Sign in to see the control surface.
+         <a href="/auth/google">Google</a> · <a href="/auth/github">GitHub</a></div>`;
+      return;
+    }
+    render();
+  }
+
+  boot();
+  </script>
+</body>
+</html>

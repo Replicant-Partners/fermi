@@ -44,28 +44,26 @@
 use crate::loop_model::{self, LoopState, Trigger};
 use crate::outcome_trust;
 use crate::panel_absence::{reading_for_reason, Reading};
+use crate::surface::Door;
 
-// ─── what a person can do ────────────────────────────────────────────────
+// ─── what a person can do ───────────────────────────────────────
+//
+// A [`Door`] from [`crate::surface`], with this domain's own key in `subject`:
+// `loop2.reviewed`. The type and its rules are shared with gates and
+// evaluators, because they are the same idea and the same mistakes; the
+// vocabulary of subjects is not, because the three domains do not share a key.
 
 /// A human action available at one loop stage.
+///
+/// Retains `loop_id` and `stage` alongside the [`Door`] so a client can group
+/// without parsing `subject`, and so [`action_for`] does not have to build a
+/// string to answer a lookup.
 #[derive(Debug, Clone, Copy, serde::Serialize)]
 pub struct StageAction {
     pub loop_id: &'static str,
     pub stage: &'static str,
-    /// HTTP method, as a UI would call it.
-    pub method: &'static str,
-    /// Path template, verbatim from the router so a UI can substitute params.
-    pub path: &'static str,
-    /// What pressing it does. One line, suitable for a button tooltip.
-    pub does: &'static str,
-    /// **Why a person rather than the platform.**
-    ///
-    /// Required. A manual stage that cannot say why it is manual should be
-    /// automated, and the field exists to make that argument happen at
-    /// declaration time rather than never. `loop_model` records that these
-    /// stages are `Manual` or `Prompted`; it does not record why, and "why"
-    /// is what a reviewer needs before deciding the queue is worth working.
-    pub why_manual: &'static str,
+    #[serde(flatten)]
+    pub door: Door,
 }
 
 /// Every human door into a loop.
@@ -76,61 +74,294 @@ pub const STAGE_ACTIONS: &[StageAction] = &[
     StageAction {
         loop_id: "loop2",
         stage: "reviewed",
-        method: "POST",
-        path: "/api/observatory/hitl/:event_id/action",
-        does: "Record a reviewer's decision on one anomaly: correct the \
-               episode, dismiss the event, or escalate it to an agent-wide \
-               intervention.",
-        why_manual: "The correction is a judgement about whether an agent's \
-                     output was actually wrong, which is the one thing the \
-                     platform cannot check about itself — an automated \
-                     reviewer would be the same model grading its own \
-                     homework. `hitl_actions` is the only place a human \
-                     verdict enters Loop 2, and it holds zero rows.",
+        door: Door {
+            subject: "loop2.reviewed",
+            method: "POST",
+            path: "/api/observatory/hitl/:event_id/action",
+            does: "Record a reviewer's decision on one anomaly: correct the episode, dismiss the event, or escalate it to an agent-wide intervention.",
+            why_manual: "The correction is a judgement about whether an agent's output was actually wrong, which is the one thing the platform cannot check about itself — an automated reviewer would be the same model grading its own homework. `hitl_actions` is the only place a human verdict enters Loop 2, and it holds zero rows.",
+        },
     },
     StageAction {
         loop_id: "loop2",
         stage: "consensus",
-        method: "POST",
-        path: "/api/observatory/hitl/consensus/:request_id",
-        does: "Confirm, as a second reviewer, an intervention that would apply \
-               to every run of an agent rather than to one episode.",
-        why_manual: "A fleet-wide change on one reviewer's word is the failure \
-                     mode two-reviewer consensus exists to prevent. The cost of \
-                     being wrong scales with the agent's traffic, and nothing \
-                     downstream would distinguish a considered change from a \
-                     mistaken one.",
+        door: Door {
+            subject: "loop2.consensus",
+            method: "POST",
+            path: "/api/observatory/hitl/consensus/:request_id",
+            does: "Confirm, as a second reviewer, an intervention that would apply to every run of an agent rather than to one episode.",
+            why_manual: "A fleet-wide change on one reviewer's word is the failure mode two-reviewer consensus exists to prevent. The cost of being wrong scales with the agent's traffic, and nothing downstream would distinguish a considered change from a mistaken one.",
+        },
     },
     StageAction {
         loop_id: "loop3",
         stage: "settled",
-        method: "POST",
-        path: "/api/workspaces/:workspace_id/coherence",
-        does: "Measure the workspace's coherence now. At `depth=recommendations` \
-               it also runs the strategist, which is what produces Stage 0 \
-               intentions and the Stage 3 coordination brief.",
-        why_manual: "It costs credits and it interrupts. A sweeper would bill \
-                     every workspace on a cadence nobody asked for; 4 of 267 \
-                     workspaces have ever been evaluated, and that is a \
-                     product fact rather than an outage.",
+        door: Door {
+            subject: "loop3.settled",
+            method: "POST",
+            path: "/api/workspaces/:workspace_id/coherence",
+            does: "Measure the workspace's coherence now. At `depth=recommendations` it also runs the strategist, which is what produces Stage 0 intentions and the Stage 3 coordination brief.",
+            why_manual: "It costs credits and it interrupts. A sweeper would bill every workspace on a cadence nobody asked for; 4 of 267 workspaces have ever been evaluated, and that is a product fact rather than an outage.",
+        },
     },
     StageAction {
         loop_id: "loop4",
         stage: "accepted",
-        method: "POST",
-        // Read from the router, not guessed. The first draft of this entry said
-        // `/api/compositions/:composition_id/accept`, which does not exist, and
-        // `loop_api_contract::every_declared_action_path_exists_in_the_router`
-        // caught it before the surface shipped — which is the case that check
-        // was written for, arriving immediately.
-        path: "/api/workspaces/:workspace_id/composition/versions/:version_id/accept",
-        does: "Apply a proposed roster change to the workspace, as the owner.",
-        why_manual: "Who is on a team is the owner's decision. The platform may \
-                     propose from measured contribution and may not act: an \
-                     agent removed by an automated proposal has no route back \
-                     into the measurement that would have vindicated it.",
+        door: Door {
+            subject: "loop4.accepted",
+            method: "POST",
+        // Read from the router, not guessed. The first draft said
+        // `/api/compositions/:composition_id/accept`, which does not exist, and the
+        // router contract caught it before the surface shipped.
+            path: "/api/workspaces/:workspace_id/composition/versions/:version_id/accept",
+            does: "Apply a proposed roster change to the workspace, as the owner.",
+            why_manual: "Who is on a team is the owner's decision. The platform may propose from measured contribution and may not act: an agent removed by an automated proposal has no route back into the measurement that would have vindicated it.",
+        },
     },
 ];
+
+// ─── what one agent's chain looks like ──────────────────────────────
+//
+// A different question from `loop_model`'s, not a filtered version of it, which
+// is why the SQL is declared here and not there. `loop_model` answers "has this
+// stage produced, platform-wide"; this answers "has it produced *for this
+// agent*", and for eight of the twenty-three stages there is no such question —
+// the table has no agent column and never will.
+//
+// That distinction is the whole point. The handler this replaces rendered
+// platform figures under an agent's name, and its own comment records that two
+// rows of it were hardcoded constants shown in a live status column.
+// `panel_absence` already encodes the principle for panels: *"turning
+// platform-wide does not say whether THIS subject has reached it"*.
+
+/// Whether a stage can be asked about one agent.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(tag = "scope", rename_all = "snake_case")]
+pub enum SubjectScope {
+    /// Counted for one agent. `$1` is the agent id.
+    PerAgent {
+        #[serde(skip)]
+        sql: &'static str,
+    },
+    /// No per-agent answer exists, and why.
+    ///
+    /// **Rendered, never hidden.** A stage omitted because it has no agent
+    /// dimension looks identical to a stage at zero, and the second is a
+    /// finding.
+    Platform { because: &'static str },
+}
+
+/// One entry per stage. Every stage, with no default.
+///
+/// A missing entry would mean "no per-agent answer" by omission, which is the
+/// benign default that turned `unobserved` into an idle system one module over.
+/// `every_stage_declares_its_subject_scope` requires exactly one entry each.
+pub const SUBJECT_SCOPES: &[(&str, &str, SubjectScope)] = &[
+    // ── loop1 ────────────────────────────────────────────────────────────
+    (
+        "loop1",
+        "episodes",
+        SubjectScope::PerAgent {
+            sql: "SELECT count(*)::bigint FROM episodes WHERE agent_id = $1",
+        },
+    ),
+    (
+        "loop1",
+        "consolidated",
+        SubjectScope::PerAgent {
+            sql: "SELECT count(*)::bigint FROM consolidation_jobs WHERE agent_id = $1",
+        },
+    ),
+    (
+        "loop1",
+        "rules",
+        SubjectScope::PerAgent {
+            sql: "SELECT count(*)::bigint FROM semantic_rules WHERE agent_id = $1",
+        },
+    ),
+    (
+        "loop1",
+        "retrieved",
+        SubjectScope::PerAgent {
+            sql: "SELECT count(*)::bigint FROM semantic_rules \
+               WHERE agent_id = $1 AND application_count > 0",
+        },
+    ),
+    // ── loop2 ────────────────────────────────────────────────────────────
+    (
+        "loop2",
+        "anomaly",
+        SubjectScope::PerAgent {
+            sql: "SELECT count(*)::bigint FROM anomaly_events WHERE agent_id = $1",
+        },
+    ),
+    (
+        "loop2",
+        "reviewed",
+        SubjectScope::PerAgent {
+            sql: "SELECT count(*)::bigint FROM hitl_actions WHERE agent_id = $1",
+        },
+    ),
+    (
+        "loop2",
+        "consensus",
+        SubjectScope::PerAgent {
+            sql: "SELECT count(*)::bigint FROM two_reviewer_requests WHERE agent_id = $1",
+        },
+    ),
+    (
+        "loop2",
+        "corrected",
+        SubjectScope::PerAgent {
+            sql: "SELECT count(*)::bigint FROM episode_corrections WHERE agent_id = $1",
+        },
+    ),
+    (
+        "loop2",
+        "persona_bumped",
+        SubjectScope::PerAgent {
+            sql: "SELECT count(*)::bigint FROM agents \
+               WHERE agent_id = $1 AND persona_version > 1",
+        },
+    ),
+    // ── loop3 ────────────────────────────────────────────────────────────
+    (
+        "loop3",
+        "intentions",
+        SubjectScope::PerAgent {
+            sql: "SELECT count(*)::bigint FROM workspace_intentions WHERE agent_id = $1",
+        },
+    ),
+    (
+        "loop3",
+        "settled",
+        SubjectScope::Platform {
+            because: "`coherence_evaluations` is keyed by workspace. Coherence is a \
+                  property of a composition, not of a member — an agent does not \
+                  have a Γ of its own — so there is no per-agent count to give, \
+                  and giving the workspace's would credit one member with the \
+                  whole team's reading.",
+        },
+    ),
+    (
+        "loop3",
+        "brief",
+        SubjectScope::PerAgent {
+            sql: "SELECT count(*)::bigint FROM episodes \
+               WHERE agent_id = $1 AND provenance = 'coordinator_observation'",
+        },
+    ),
+    // ── loop4 ────────────────────────────────────────────────────────────
+    (
+        "loop4",
+        "claims",
+        SubjectScope::PerAgent {
+            sql: "SELECT count(*)::bigint FROM forecast_agent_claims WHERE agent_id = $1",
+        },
+    ),
+    (
+        "loop4",
+        "attributed",
+        SubjectScope::Platform {
+            because: "`forecast_attributions` carries neither an agent nor a \
+                  workspace column. Per-agent credit lives in \
+                  `forecast_agent_credit`, which this stage does not count — so \
+                  the honest answer is that this chain link cannot be narrowed, \
+                  rather than a number from a table that is about forecasts.",
+        },
+    ),
+    (
+        "loop4",
+        "proposed",
+        SubjectScope::Platform {
+            because: "`composition_versions` is keyed by workspace. A roster change \
+                  is a statement about a team; attributing one to a member \
+                  would invert the direction of the loop.",
+        },
+    ),
+    (
+        "loop4",
+        "accepted",
+        SubjectScope::Platform {
+            because: "As `proposed` — the same `composition_versions` table, \
+                      filtered on `accepted_by`, and keyed by workspace. The \
+                      owner who accepts is a person rather than an agent, so \
+                      there is no agent to narrow this to even in principle.",
+        },
+    ),
+    // ── loop5a ───────────────────────────────────────────────────────────
+    (
+        "loop5a",
+        "committed",
+        SubjectScope::Platform {
+            because: "`forecast_commitments` has no agent column. A commitment is \
+                  the forecast's, and which agents contributed to it lives in \
+                  `fermi_forecasts.agents_used` — a JSONB array of names, not a \
+                  join this count can make honestly.",
+        },
+    ),
+    (
+        "loop5a",
+        "resolved",
+        SubjectScope::Platform {
+            because: "`forecast_spacetime` has no agent column, for the same reason: \
+                  the world resolves a forecast, not an agent.",
+        },
+    ),
+    (
+        "loop5a",
+        "scored",
+        SubjectScope::PerAgent {
+            sql: "SELECT count(*)::bigint FROM eval_signals \
+               WHERE agent_id = $1 AND dimension = 'forecast_calibration'",
+        },
+    ),
+    // ── loop5b ───────────────────────────────────────────────────────────
+    (
+        "loop5b",
+        "projected",
+        SubjectScope::Platform {
+            because: "`sosa_observations` records what a sensor or a model runner \
+                  said about the world. No agent is party to it — which is the \
+                  property that makes this loop's signal one an agent cannot \
+                  talk its way out of.",
+        },
+    ),
+    (
+        "loop5b",
+        "anchored",
+        SubjectScope::Platform {
+            because: "`process_projection_commits` is keyed by workspace. As above: \
+                  the anchor is the model's, not an agent's.",
+        },
+    ),
+    (
+        "loop5b",
+        "resolved",
+        SubjectScope::Platform {
+            because: "`process_spacetime` is keyed by workspace. The row records \
+                      a model's projection meeting a sensor reading; neither \
+                      party is an agent, which is the property that makes this \
+                      loop's signal one an agent cannot argue with.",
+        },
+    ),
+    (
+        "loop5b",
+        "scored",
+        SubjectScope::PerAgent {
+            sql: "SELECT count(*)::bigint FROM eval_signals \
+               WHERE agent_id = $1 AND evaluator_name ILIKE '%projection%'",
+        },
+    ),
+];
+
+/// The subject scope for a stage.
+pub fn subject_scope(loop_id: &str, stage: &str) -> Option<&'static SubjectScope> {
+    SUBJECT_SCOPES
+        .iter()
+        .find(|(l, s, _)| *l == loop_id && *s == stage)
+        .map(|(_, _, sc)| sc)
+}
 
 /// The action available at a stage, if any.
 pub fn action_for(loop_id: &str, stage: &str) -> Option<&'static StageAction> {
@@ -346,6 +577,113 @@ pub fn tally(views: &[LoopView]) -> LoopTally {
         }
     }
     t
+}
+
+// ─── the per-agent view ─────────────────────────────────────────────────
+
+/// One stage, narrowed to one agent.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AgentStageView {
+    pub id: &'static str,
+    pub what: &'static str,
+    pub trigger_label: &'static str,
+    /// This agent's count, or `None` when the stage has no per-agent answer.
+    ///
+    /// `None` and `Some(0)` are different states and must render differently:
+    /// the first means the question does not apply, the second means it applies
+    /// and the answer is nothing.
+    pub rows: Option<i64>,
+    #[serde(flatten)]
+    pub scope: SubjectScope,
+    /// The platform-wide count for the same stage, for context.
+    ///
+    /// Carried so a reader can see "nothing here, and nothing anywhere" apart
+    /// from "nothing here, and plenty elsewhere" — which are different
+    /// questions about the same zero. Never rendered as this agent's figure;
+    /// that substitution is the defect this view replaces.
+    pub platform_rows: i64,
+    pub platform_measured: bool,
+    pub action: Option<StageAction>,
+}
+
+/// One loop, narrowed to one agent.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AgentLoopView {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub claim: &'static str,
+    /// How much of this loop can be asked about one agent at all.
+    ///
+    /// `answerable` of `total` stages. A loop where most stages are
+    /// platform-scoped is not a loop this agent can be judged by, and a surface
+    /// that shows four zeroes without saying so implies otherwise.
+    pub answerable: usize,
+    pub total: usize,
+    /// The first stage that is answerable for this agent and reads zero.
+    ///
+    /// Platform-scoped stages are skipped: they cannot be this agent's first
+    /// empty link, because they are not about this agent.
+    pub stops_at: Option<&'static str>,
+    pub stages: Vec<AgentStageView>,
+}
+
+/// Assemble one agent's view of one loop.
+///
+/// Pure over the platform state and this agent's counts, so the shape is
+/// testable without a database — the same split as [`view`].
+pub fn agent_view(state: &LoopState, counts: &[(&'static str, Option<i64>)]) -> AgentLoopView {
+    let stages: Vec<AgentStageView> = state
+        .stages
+        .iter()
+        .map(|s| {
+            let scope = *subject_scope(state.id, s.id).unwrap_or(&SubjectScope::Platform {
+                // Unreachable while `every_stage_declares_its_subject_scope`
+                // holds. Stated rather than `unwrap`ped so a missing
+                // declaration degrades to "no per-agent answer" — the reading
+                // that claims least — instead of panicking a request.
+                because: "This stage declares no subject scope, which is a gap \
+                          in the declaration rather than a fact about the agent.",
+            });
+            AgentStageView {
+                id: s.id,
+                what: s.what,
+                trigger_label: trigger_label(&s.trigger),
+                rows: counts
+                    .iter()
+                    .find(|(id, _)| *id == s.id)
+                    .and_then(|(_, n)| *n),
+                scope,
+                platform_rows: s.rows,
+                platform_measured: s.measured(),
+                action: action_for(state.id, s.id).copied(),
+            }
+        })
+        .collect();
+
+    let answerable = stages
+        .iter()
+        .filter(|s| matches!(s.scope, SubjectScope::PerAgent { .. }))
+        .count();
+
+    // The first answerable stage reading zero. A platform-scoped stage cannot
+    // be this agent\'s first empty link — it is not about this agent — and
+    // treating it as one is how the handler this replaces came to show platform
+    // figures in an agent\'s status column.
+    let stops_at = stages
+        .iter()
+        .filter(|s| matches!(s.scope, SubjectScope::PerAgent { .. }))
+        .find(|s| s.rows == Some(0))
+        .map(|s| s.id);
+
+    AgentLoopView {
+        id: state.id,
+        name: state.name,
+        claim: state.claim,
+        answerable,
+        total: stages.len(),
+        stops_at,
+        stages,
+    }
 }
 
 #[cfg(test)]
@@ -594,36 +932,32 @@ mod tests {
         }
     }
 
-    /// Every action says why a person has to do it.
+    /// Every door satisfies the shared rules.
+    ///
+    /// Delegated to [`crate::surface::door_problems`] rather than restated. The
+    /// rules — an argument for being manual, a real method, an `/api/` path, no
+    /// duplicates — are the same for gates and evaluators, and three copies of
+    /// them would be three chances for one to soften.
     #[test]
-    fn every_action_argues_for_being_manual() {
+    fn every_door_satisfies_the_shared_rules() {
+        let doors: Vec<_> = STAGE_ACTIONS.iter().map(|a| a.door).collect();
+        let problems = crate::surface::door_problems(&doors);
+        assert!(problems.is_empty(), "\n  {}\n", problems.join("\n  "));
+    }
+
+    /// Each door\'s `subject` is its own key, and the key is not decorative.
+    ///
+    /// A client may group by `subject` without parsing, and the router contract
+    /// reports failures by it. A subject that disagreed with the `loop_id` and
+    /// `stage` beside it would send a reader to the wrong stage with a correct
+    /// error message, which is worse than no message.
+    #[test]
+    fn every_doors_subject_matches_the_stage_it_sits_on() {
         for a in STAGE_ACTIONS {
-            assert!(
-                a.why_manual.len() > 100,
-                "{}.{}: a manual stage that cannot say why it is manual should \
-                 be automated",
-                a.loop_id,
-                a.stage
-            );
-            assert!(
-                a.does.len() > 40,
-                "{}.{}: say what pressing it does",
-                a.loop_id,
-                a.stage
-            );
-            assert!(
-                a.path.starts_with("/api/"),
-                "{}.{}: `{}` is not an API path",
-                a.loop_id,
-                a.stage,
-                a.path
-            );
-            assert!(
-                matches!(a.method, "GET" | "POST" | "PATCH" | "DELETE"),
-                "{}.{}: `{}` is not a method",
-                a.loop_id,
-                a.stage,
-                a.method
+            assert_eq!(
+                a.door.subject,
+                format!("{}.{}", a.loop_id, a.stage),
+                "the door\'s subject disagrees with the stage it is declared on"
             );
         }
     }
@@ -694,6 +1028,160 @@ mod tests {
         for (l, s, why) in NO_DOOR {
             assert!(why.len() > 60, "{l}.{s}: say where the door actually is");
         }
+    }
+
+    /// Every stage declares whether it can be asked about one agent.
+    ///
+    /// Exactly one entry each, with no default. A missing entry would mean "no
+    /// per-agent answer" by omission, and the benign default is how `unobserved`
+    /// once came to display as an idle system on every panel backed by a loop.
+    #[test]
+    fn every_stage_declares_its_subject_scope_exactly_once() {
+        let mut missing = Vec::new();
+        for l in loop_model::LOOPS {
+            for s in l.stages {
+                let n = SUBJECT_SCOPES
+                    .iter()
+                    .filter(|(li, si, _)| *li == l.id && *si == s.id)
+                    .count();
+                if n != 1 {
+                    missing.push(format!("{}.{} declared {n} time(s)", l.id, s.id));
+                }
+            }
+        }
+        assert!(missing.is_empty(), "\n  {}\n", missing.join("\n  "));
+
+        // And nothing declared for a stage that does not exist — an entry with
+        // no stage is a query nobody runs and looks like coverage.
+        for (l, st, _) in SUBJECT_SCOPES {
+            assert!(
+                loop_model::LOOPS
+                    .iter()
+                    .any(|lp| lp.id == *l && lp.stages.iter().any(|s| s.id == *st)),
+                "`{l}.{st}` declares a subject scope and is not a stage"
+            );
+        }
+    }
+
+    /// Every per-agent probe is a read of one agent, and every skip says why.
+    #[test]
+    fn every_subject_probe_is_read_only_and_takes_the_agent() {
+        let mut answerable = 0;
+        for (l, st, sc) in SUBJECT_SCOPES {
+            match sc {
+                SubjectScope::PerAgent { sql } => {
+                    answerable += 1;
+                    let q = sql.to_ascii_lowercase();
+                    assert!(q.trim_start().starts_with("select"), "{l}.{st}");
+                    for w in ["insert", "update ", "delete", "drop", "alter", "truncate"] {
+                        assert!(!q.contains(w), "{l}.{st} contains `{w}`");
+                    }
+                    // Without `$1` it counts the whole platform and reports it
+                    // as the agent's — the exact substitution this view exists
+                    // to stop.
+                    assert!(
+                        sql.contains("$1"),
+                        "{l}.{st} is declared per-agent and does not bind the \
+                         agent, so it would report the platform's count as this \
+                         agent's"
+                    );
+                }
+                SubjectScope::Platform { because } => {
+                    assert!(
+                        because.len() > 60,
+                        "{l}.{st}: say why there is no per-agent answer — a bare \
+                         omission reads as a zero"
+                    );
+                }
+            }
+        }
+        assert!(
+            answerable >= 8,
+            "only {answerable} stage(s) can be asked about an agent, which is \
+             too few for a per-agent view to be worth serving"
+        );
+    }
+
+    /// A platform-scoped stage is never this agent's first empty link.
+    ///
+    /// The defect this view replaces, stated as a test: the old handler showed
+    /// platform figures in an agent's status column, and two of its rows were
+    /// hardcoded constants. A stage that is not about this agent cannot be where
+    /// this agent's chain stops.
+    #[test]
+    fn a_platform_scoped_stage_is_not_the_agents_first_empty_link() {
+        // loop5a: committed (platform), resolved (platform), scored (per-agent).
+        let s = state(
+            "loop5a",
+            vec![
+                stage("committed", 1354, Trigger::Request),
+                stage(
+                    "resolved",
+                    2180,
+                    Trigger::Scheduler {
+                        env: "X",
+                        default_on: true,
+                    },
+                ),
+                stage("scored", 239, Trigger::Upstream),
+            ],
+            None,
+            None,
+            "turning",
+        );
+        // This agent has no calibration signal of its own.
+        let v = agent_view(&s, &[("scored", Some(0))]);
+        assert_eq!(
+            v.stops_at,
+            Some("scored"),
+            "the agent's chain stops at the first stage that is about the agent \
+             and reads zero"
+        );
+        assert_eq!(v.answerable, 1, "only `scored` can be asked per agent");
+        assert_eq!(v.total, 3);
+
+        // The platform figures are carried and are not the agent's.
+        let committed = v.stages.iter().find(|x| x.id == "committed").unwrap();
+        assert!(matches!(committed.scope, SubjectScope::Platform { .. }));
+        assert_eq!(
+            committed.rows, None,
+            "a platform-scoped stage must have no agent count at all — `None` \
+             and `Some(0)` are different states"
+        );
+        assert_eq!(committed.platform_rows, 1354);
+    }
+
+    /// `None` and `Some(0)` must not collapse.
+    #[test]
+    fn no_answer_is_distinguishable_from_an_answer_of_zero() {
+        let s = state(
+            "loop1",
+            vec![
+                stage("episodes", 3576, Trigger::Request),
+                stage("consolidated", 213, Trigger::Upstream),
+            ],
+            None,
+            None,
+            "turning",
+        );
+        let v = agent_view(&s, &[("episodes", Some(0)), ("consolidated", None)]);
+        let ep = v.stages.iter().find(|x| x.id == "episodes").unwrap();
+        let co = v.stages.iter().find(|x| x.id == "consolidated").unwrap();
+        assert_eq!(
+            ep.rows,
+            Some(0),
+            "the question applies and the answer is none"
+        );
+        assert_eq!(co.rows, None, "the probe did not run for this agent");
+        // Both are `PerAgent` by declaration, so the difference is only in the
+        // count — which is exactly why the count is an `Option`.
+        assert!(matches!(ep.scope, SubjectScope::PerAgent { .. }));
+        assert!(matches!(co.scope, SubjectScope::PerAgent { .. }));
+        assert_eq!(
+            v.stops_at,
+            Some("episodes"),
+            "a stage whose probe did not run must not be reported as the stop"
+        );
     }
 
     /// The outcome view carries its own limits.

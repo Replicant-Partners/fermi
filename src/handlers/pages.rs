@@ -605,12 +605,17 @@ pub async fn bestiary_view() -> Response {
     app_shell("templates/bestiary.html")
 }
 
-/// Gates — what the platform refused, and what it cannot refuse.
+/// Loops and gates — one surface, three tabs.
 ///
-/// The control-system surface. Rounds owns the personal decision queue; this
-/// owns the register, the enforcement map and the receipt record.
-pub async fn gates_view() -> Response {
-    app_shell("templates/gates.html")
+/// A loop is a control cycle; a gate is the point in it where a correction is
+/// permitted or refused. They are one picture from two sides — `loop_model`
+/// stages carry `gated_by` — so they share a page and a reading vocabulary
+/// rather than competing for two nav slots.
+///
+/// Served at both `/loops` and `/gates`, because both names are ones a reader
+/// will reach for and neither should 404.
+pub async fn loops_view() -> Response {
+    app_shell("templates/loops.html")
 }
 
 /// One specimen, three tabs.

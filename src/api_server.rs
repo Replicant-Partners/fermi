@@ -2820,18 +2820,28 @@ async fn main() {
             "/api/observatory/agents/:agent_id/anomalies",
             get(handlers::observatory::list_agent_anomalies_handler),
         )
-        // Per-agent RSI loop health. Replaces the observatory Loops tab's
-        // client-side assembly, two rows of which were hardcoded constants
-        // rendered under a live status column.
+        // Per-agent loop health. **Repointed** at `handlers::loops`, which
+        // assembles it from `loop_model` + `loop_api` like every other loop
+        // surface. The 610-line `observatory::agent_loops_handler` it replaces
+        // was the audit's §9 item 6 — a second answer to a question the
+        // contracts already answer — and its own comment recorded the defect
+        // this shape exists to prevent: two of its rows were hardcoded
+        // constants rendered under a live status column.
         //
-        // Kept, and now the *second* answer to a question `/api/loops` answers
-        // from the contracts. It is per-agent where the new surface is
-        // platform-wide, which is the only reason it survives this commit;
-        // `loop_api_contract::the_two_loop_surfaces_do_not_disagree` holds them
-        // together until it is repointed.
+        // The new one is narrower on purpose. Fifteen of twenty-three stages
+        // have no agent dimension at all, and it says so per stage instead of
+        // showing the platform's figure under an agent's name.
+        //
+        // Path kept so existing clients do not break; the old handler is
+        // unrouted and `no_unrouted_handler_survives_the_repoint` holds it to
+        // that.
         .route(
             "/api/observatory/agents/:agent_id/loops",
-            get(handlers::observatory::agent_loops_handler),
+            get(handlers::loops::agent_loops_handler),
+        )
+        .route(
+            "/api/agents/:agent_id/coordination-notes",
+            get(handlers::loops::agent_coordination_notes_handler),
         )
         // ── The loop surface ─────────────────────────────────────────────
         //
@@ -2851,6 +2861,22 @@ async fn main() {
         .route(
             "/api/loops/:loop_id",
             get(handlers::loops::get_loop_handler),
+        )
+        // The same pattern over gates. `fermi::surface` declares the two parts
+        // the two domains share — the door a person uses and the caveat a green
+        // tick needs — and each keeps its own model, measurement and reading.
+        //
+        // Beside the loops rather than under the observatory: a reader looking
+        // for "what is stopping things" should not have to know first whether
+        // the answer is a chain or a control.
+        .route("/api/gates", get(handlers::loops::list_gates_handler))
+        // Third instance. `native_evaluators` already turns counters into
+        // sentences with remedies and was reachable through exactly one
+        // admin-scoped diagnostics blob — the `remedy` field existed and nobody
+        // could see it.
+        .route(
+            "/api/evaluators",
+            get(handlers::loops::list_evaluators_handler),
         )
         .route(
             "/api/observatory/agents/:agent_id/scan",
@@ -2892,9 +2918,24 @@ async fn main() {
         // register and the Observatory's register as three separate lists of
         // the same agents.
         .route("/api/bestiary", get(handlers::bestiary::bestiary_handler))
-        // The control surface: the register, the enforcement map, and the
-        // durable record of refusals.
-        .route("/api/gates", get(handlers::gates::gates_handler))
+        // `/api/gates` belongs to `handlers::loops::list_gates_handler`, which is
+        // the contract in docs/UX_HANDOFF_trust_surfaces.md: counters, tokens,
+        // readings, `since`, caveats and doors.
+        //
+        // This endpoint answers a different question and keeps its own path
+        // rather than competing for that one. Theirs: *what have the gates
+        // decided?* This: *what can a gate actually refuse?* — the enforcement
+        // map from `command_registry`, plus the durable receipts. A gate whose
+        // verdict is discarded is asked, answers, and changes nothing, so its
+        // counters look healthy while the caller is ungoverned; no count can
+        // reveal that, only a declaration of intended enforcement compared
+        // against the call site.
+        //
+        // Registering both on `/api/gates` panicked the router at boot.
+        .route(
+            "/api/gates/enforcement",
+            get(handlers::gates::gates_handler),
+        )
         // One specimen, three tabs. Composed server-side so there is one
         // producer per number — the eight-tab page rendered thirteen metrics
         // twice, several under different names.
@@ -3119,7 +3160,8 @@ async fn main() {
         .route("/ecology", get(handlers::pages::ecology_view))
         .route("/rounds", get(handlers::pages::rounds_view))
         .route("/bestiary", get(handlers::pages::bestiary_view))
-        .route("/gates", get(handlers::pages::gates_view))
+        .route("/loops", get(handlers::pages::loops_view))
+        .route("/gates", get(handlers::pages::loops_view))
         .route("/specimen/:agent_name", get(handlers::pages::specimen_view))
         .route(
             "/api/ecology/overview",

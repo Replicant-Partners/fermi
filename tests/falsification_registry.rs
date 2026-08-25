@@ -90,7 +90,9 @@ use fermi::outcome_trust::{
 use fermi::panel_absence::{self as pa, Kind, Panel, Reading, Resolver, Scope};
 // `loop_api` is in `TRUST_MODULES`, so its public decisions must be registered
 // or exempted — the same coverage scan that owns the other ten.
+use fermi::gate_api;
 use fermi::projection_kind as pk;
+use fermi::surface::{caveat_problems, door_problems, router_declares, Caveat, Door};
 use fermi::write_accounting::SinkAccount;
 use std::path::Path;
 
@@ -169,6 +171,34 @@ fn sink_account(attempts: u64, failures: u64) -> SinkAccount {
     }
 }
 
+/// A loop state whose stages are named to match `loop_api::SUBJECT_SCOPES`.
+///
+/// The stage *ids* matter here and the rest does not: `agent_view` looks the
+/// scope up by `(loop_id, stage)`, so a fixture with invented ids would
+/// exercise only the `Platform` fallback and prove nothing.
+fn agent_state(loop_id: &'static str, stages: &[(&'static str, i64)]) -> LoopState {
+    LoopState {
+        id: loop_id,
+        name: "N",
+        scope: "platform",
+        claim: "C",
+        stages: stages
+            .iter()
+            .map(|(id, rows)| StageState {
+                id,
+                what: "w",
+                writer: "a::b",
+                trigger: Trigger::Request,
+                rows: *rows,
+            })
+            .collect(),
+        stops_at: None,
+        reason: None,
+        status: "turning",
+    }
+}
+
+/// A gate account with the two counters that decide its reading.
 fn gate_account(approved: u64, refused: u64) -> GateAccount {
     GateAccount {
         id: "g",
@@ -639,6 +669,125 @@ const FALSIFICATIONS: &[Falsification] = &[
                  would put two different orderings in one column, and a reader \
                  sorting by it would get a sequence that means nothing.",
     },
+    // ── surface — the two parts every trust domain shares ────────────────
+    Falsification {
+        check: "surface::router_declares",
+        owner: "src/surface.rs",
+        // Permissive reading: "this door's path is routed."
+        //
+        // The loud world has the router declaring only the *longer* path and
+        // the door asking for the shorter one. That direction is the one
+        // unquoted matching gets wrong, and the first version of this pair had
+        // it backwards: it asked for the longer path against a router holding
+        // the shorter, where `contains` is false either way. The break came
+        // back green and the pair proved nothing.
+        passes: || router_declares(r#".route("/api/loops", get(h))"#, "/api/loops"),
+        fires: || router_declares(r#".route("/api/loops/actions", get(h))"#, "/api/loops"),
+        models: "`/api/loops` and `/api/loops/actions` are different endpoints, \
+                 and an unquoted substring match declares the *shorter* one \
+                 present because the longer is. A door that 404s is worse than \
+                 a missing one: the reviewer presses it, believes they recorded \
+                 a correction, and the failure arrives after the belief — with \
+                 `hitl_actions` at zero rows there is no traffic whose \
+                 disappearance would say otherwise.",
+    },
+    Falsification {
+        check: "surface::door_problems",
+        owner: "src/surface.rs",
+        // Permissive reading: "this door is well formed."
+        passes: || {
+            door_problems(&[Door {
+                subject: "d.s",
+                method: "POST",
+                path: "/api/x",
+                does: "A sentence long enough to describe what pressing it does.",
+                why_manual: "A reason long enough to be an argument rather than \
+                             a label, which is what the hundred-character floor \
+                             is for.",
+            }])
+            .is_empty()
+        },
+        fires: || {
+            door_problems(&[Door {
+                subject: "d.s",
+                method: "POST",
+                path: "/api/x",
+                does: "A sentence long enough to describe what pressing it does.",
+                why_manual: "because",
+            }])
+            .is_empty()
+        },
+        models: "A manual step that cannot say why it is manual should be \
+                 automated. Half these loops are human-gated by design and the \
+                 argument for each is what a reviewer needs before deciding a \
+                 queue is worth working — without the floor, `why_manual` \
+                 becomes a label and the surface advertises work nobody can \
+                 justify doing.",
+    },
+    Falsification {
+        check: "surface::caveat_problems",
+        owner: "src/surface.rs",
+        // Permissive reading: "this caveat is a caveat."
+        passes: || {
+            caveat_problems(&[Caveat {
+                subject: "d.s",
+                checked: "The narrower proposition that was actually tested.",
+                does_not_show: "A different sentence, long enough to clear the \
+                                floor, saying what a green tick here fails to \
+                                establish about the claim it serves.",
+            }])
+            .is_empty()
+        },
+        fires: || {
+            let same = "One sentence used for both fields, long enough to clear \
+                        the hundred-character floor so that the only thing under \
+                        test is the restatement.";
+            caveat_problems(&[Caveat {
+                subject: "d.s",
+                checked: same,
+                does_not_show: same,
+            }])
+            .is_empty()
+        },
+        models: "Every check in this repository is narrower than the claim it \
+                 serves, and a surface that renders a tick against the claim is \
+                 the over-reading the whole audit is about — committed at the \
+                 last possible moment, in the one artifact a non-author reads. \
+                 A `does_not_show` that paraphrases `checked` satisfies the \
+                 type and closes the gap with nothing.",
+    },
+    // ── evaluator_api ─────────────────────────────────────────────
+    Falsification {
+        check: "evaluator_api::read",
+        owner: "src/evaluator_api.rs",
+        // Permissive reading: "this verdict is a pass."
+        passes: || {
+            fermi::evaluator_api::read(&Verdict::Healthy { detail: "d".into() }).0 == Reading::Idle
+        },
+        fires: || {
+            fermi::evaluator_api::read(&Verdict::Inconclusive { why: "w".into() }).0
+                == Reading::Idle
+        },
+        models: "`Inconclusive` is not a pass, and three of the six evaluators \
+                 are usually in it — most of the counters they read are \
+                 process-local and reset on restart, so a cold snapshot \
+                 honestly concludes nothing. A surface that renders it green \
+                 reports a healthy platform on every fresh boot, which is the \
+                 one moment it is least entitled to.",
+    },
+    // ── gate_api ────────────────────────────────────────────────
+    Falsification {
+        check: "gate_api::read",
+        owner: "src/gate_api.rs",
+        // Permissive reading: "this gate is discriminating."
+        passes: || gate_api::read(&gate_account(3, 1)).0 == Reading::Idle,
+        fires: || gate_api::read(&gate_account(0, 0)).0 == Reading::Idle,
+        models: "`approved: 0, refused: 0` and `approved: 40, refused: 0` are \
+                 both ‘no refusals’ and mean opposite things: a control nobody \
+                 has exercised, and one that has run forty times and stopped \
+                 nothing. The gate audit exists because a surface rendered the \
+                 counters and left a reader to notice, and nobody did.",
+    },
     // ── loop_api ──────────────────────────────────────────────────
     Falsification {
         check: "loop_api::view",
@@ -693,6 +842,32 @@ const FALSIFICATIONS: &[Falsification] = &[
                  with no stall and no reason — and a UI that renders \
                  `reading: idle` over an unread loop shows a green panel for a \
                  measurement that never happened.",
+    },
+    Falsification {
+        check: "loop_api::agent_view",
+        owner: "src/loop_api.rs",
+        // Permissive reading: "this stage is where THIS AGENT's chain stops."
+        //
+        // The quiet world is a per-agent stage at zero, which really is the
+        // agent's first empty link. The loud world is a platform-scoped stage
+        // at zero — `forecast_commitments` has no agent column at all — and
+        // reporting it as the agent's stop is the defect the 610-line handler
+        // had: platform figures under an agent's name, two of them hardcoded.
+        passes: || {
+            let s = agent_state("loop5a", &[("committed", 0), ("scored", 0)]);
+            loop_api::agent_view(&s, &[("scored", Some(0))]).stops_at == Some("scored")
+        },
+        fires: || {
+            let s = agent_state("loop5a", &[("committed", 0), ("scored", 0)]);
+            loop_api::agent_view(&s, &[("scored", Some(0))]).stops_at == Some("committed")
+        },
+        models: "`observatory::agent_loops_handler`, 610 lines of bespoke SQL, \
+                 rendered platform-wide figures in an agent's status column — \
+                 and its own comment records that two of its rows were \
+                 hardcoded constants doing it. Fifteen of twenty-three stages \
+                 have no agent dimension at all; a view that lets one of them \
+                 be an agent's stop is answering a question about forecasts as \
+                 though it were about the agent.",
     },
     // ── outcome_trust ────────────────────────────────────────────────
     Falsification {
@@ -1141,6 +1316,52 @@ const EXEMPT: &[(&str, &str)] = &[
          exempted. `classify_producers`, which consumes it, is registered.",
     ),
     ("outcome_trust::contract_for", ENUMERATOR),
+    // surface
+    (
+        "surface::doors_missing_from",
+        "Filters `router_declares` over a list and formats the offenders. The \
+         judgement is `router_declares`'s, registered above with the prefix \
+         case that motivated it; `a_missing_door_is_reported_with_its_subject` \
+         pins the formatting.",
+    ),
+    // evaluator_api
+    (
+        "evaluator_api::views",
+        "Runs the declared registry over one snapshot and dresses each verdict. \
+         The verdicts are `native_evaluators`', falsified by \
+         `every_evaluator_can_produce_a_finding`; the one judgement added is \
+         `read`, registered above. \
+         `nothing_observed_produces_no_healthy_verdict` pins the case that \
+         matters — a cold snapshot must conclude nothing.",
+    ),
+    (
+        "evaluator_api::tally",
+        "Four counts over tokens `read` already assigned. \
+         `the_buckets_partition_the_evaluators_and_a_notice_is_not_a_finding` \
+         asserts nothing falls through and that a `Notice` is not counted as a \
+         finding, which is the only judgement available to it.",
+    ),
+    // gate_api
+    (
+        "gate_api::view",
+        "Dresses a `GateAccount` for a surface. The one judgement it makes is \
+         `read`'s, registered above; the rest is `gate_trust`'s fields carried \
+         through, and `the_view_says_whether_the_counters_survive_a_restart` \
+         pins the field that matters — whether `0 refusals` may be read as a \
+         lifetime total.",
+    ),
+    (
+        "gate_api::views",
+        "Maps `view` over the live counters. `every_live_gate_account_matches_a_declared_gate` \
+         pins both directions of the join, which is the only thing this adds.",
+    ),
+    (
+        "gate_api::tally",
+        "Four counts over tokens `read` already assigned. \
+         `the_buckets_partition_the_gates` asserts nothing falls through, which \
+         is the only failure available to it — there is no catch-all arm to \
+         silently absorb a new upstream token.",
+    ),
     // loop_api
     (
         "loop_api::views",
@@ -1153,6 +1374,14 @@ const EXEMPT: &[(&str, &str)] = &[
          is the handler's business.",
     ),
     ("loop_api::action_for", ENUMERATOR),
+    (
+        "loop_api::subject_scope",
+        "A lookup into `SUBJECT_SCOPES`, whose completeness is what matters and \
+         is pinned by `every_stage_declares_its_subject_scope_exactly_once` — \
+         one entry per stage, no default, and no entry for a stage that does \
+         not exist. The judgement drawn from it is `agent_view`'s, registered \
+         above with the platform-figure-under-an-agent's-name case.",
+    ),
     (
         "loop_api::tally",
         "Three counts over verdicts `view` already assigned. Registered \
@@ -1272,6 +1501,9 @@ const TRUST_MODULES: &[&str] = &[
     "anomaly_vocabulary",
     "outcome_trust",
     "loop_api",
+    "gate_api",
+    "evaluator_api",
+    "surface",
 ];
 
 // ── assertions ──────────────────────────────────────────────────────────

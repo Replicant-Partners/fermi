@@ -23,21 +23,18 @@
 
 use std::path::Path;
 
+use fermi::evaluator_api::EVALUATOR_DOORS;
+use fermi::gate_api::GATE_DOORS;
 use fermi::loop_api::STAGE_ACTIONS;
 use fermi::loop_model::LOOPS;
 use fermi::panel_absence::Reading;
-
-/// Is `path` declared as a route in this router source?
-///
-/// Extracted so the detector can be shown a known-bad input without a
-/// filesystem. Matches the quoted path exactly: axum routes are written as
-/// string literals, and matching unquoted would let `/api/loops` satisfy
-/// `/api/loops/actions`.
-fn router_declares(router_src: &str, path: &str) -> bool {
-    router_src.contains(&format!("\"{path}\""))
-}
+use fermi::surface::{doors_missing_from, router_declares, Door};
 
 /// The detector must see a path the router does not have.
+///
+/// The matcher itself lives in [`fermi::surface`] and is shared with gates and
+/// evaluators — three copies would be three chances for one to stop matching.
+/// This is the falsification for all of them.
 #[test]
 fn the_scan_sees_a_path_the_router_does_not_have() {
     let router = r#"
@@ -61,9 +58,14 @@ fn the_scan_sees_a_path_the_router_does_not_have() {
     assert!(!router_declares(router, "/api/nothing/here"));
 }
 
-/// Every door a UI is told to use must exist.
+/// Every door a UI is told to use must exist — in every domain.
+///
+/// One scan over every declared door, not one per domain. A gate door added
+/// with a wrong path fails here, and it will fail the day the first one is
+/// added rather than the day someone remembers to write a gate version of this
+/// test.
 #[test]
-fn every_declared_action_path_exists_in_the_router() {
+fn every_declared_door_exists_in_the_router() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
     let router = std::fs::read_to_string(repo.join("src/api_server.rs"))
         .expect("src/api_server.rs is unreadable");
@@ -74,30 +76,29 @@ fn every_declared_action_path_exists_in_the_router() {
         "src/api_server.rs does not look like the router ({} bytes)",
         router.len()
     );
+
+    let mut doors: Vec<Door> = STAGE_ACTIONS.iter().map(|a| a.door).collect();
+    doors.extend(GATE_DOORS.iter().copied());
+    doors.extend(EVALUATOR_DOORS.iter().copied());
     assert!(
-        !STAGE_ACTIONS.is_empty(),
-        "no action is declared, so this check has nothing to verify"
+        !doors.is_empty(),
+        "no door is declared in any domain, so this check has nothing to verify"
     );
 
-    let missing: Vec<String> = STAGE_ACTIONS
-        .iter()
-        .filter(|a| !router_declares(&router, a.path))
-        .map(|a| format!("{}.{} → {} {}", a.loop_id, a.stage, a.method, a.path))
-        .collect();
-
+    let missing = doors_missing_from(&router, &doors);
     assert!(
         missing.is_empty(),
-        "\n{} declared action(s) name a path the router does not:\n  {}\n\n\
-         A UI builds its buttons from `loop_api::STAGE_ACTIONS`. A wrong path \
-         renders a button that 404s after a reviewer believed they had acted, \
-         and `hitl_actions` holds zero rows so there is no traffic whose \
+        "\n{} declared door(s) name a path the router does not:\n  {}\n\n\
+         A UI builds its buttons from these declarations. A wrong path renders \
+         a button that 404s after a reviewer believed they had acted, and \
+         `hitl_actions` holds zero rows so there is no traffic whose \
          disappearance would say so.\n",
         missing.len(),
         missing.join("\n  ")
     );
     println!(
-        "  {} declared door(s), every path present in the router.",
-        STAGE_ACTIONS.len()
+        "  {} declared door(s) across 3 domain(s), every path present.",
+        doors.len()
     );
 }
 
@@ -111,7 +112,14 @@ fn every_declared_action_path_exists_in_the_router() {
 fn the_loop_surface_is_routed() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
     let router = std::fs::read_to_string(repo.join("src/api_server.rs")).expect("router");
-    for path in ["/api/loops", "/api/loops/actions", "/api/loops/:loop_id"] {
+    for path in [
+        "/api/loops",
+        "/api/loops/actions",
+        "/api/loops/:loop_id",
+        "/api/gates",
+        "/api/evaluators",
+        "/api/agents/:agent_id/coordination-notes",
+    ] {
         assert!(
             router_declares(&router, path),
             "`{path}` is not routed, so the loop surface is unreachable — and \
@@ -164,8 +172,24 @@ async fn the_surface_assembles_against_production() {
         "the surface dropped a loop between the model and the view"
     );
     println!(
-        "\n  {} loop(s): {} turning, {} stalled, {} unmeasured\n",
-        tally.total, tally.turning, tally.stalled, tally.unmeasured
+        "\n  {} loop(s): {} turning · {} stalled by a code fault · {} stalled \
+         and idle · {} stopped with no reading available · {} unreadable\n",
+        tally.total,
+        tally.turning,
+        tally.stalled_by_fault,
+        tally.stalled_idle,
+        tally.no_reading,
+        tally.unreadable
+    );
+    assert_eq!(
+        tally.turning
+            + tally.stalled_by_fault
+            + tally.stalled_idle
+            + tally.no_reading
+            + tally.unreadable,
+        tally.total,
+        "a loop fell through the header's buckets, so the count a UI renders \
+         omits it silently"
     );
 
     for v in &views {
@@ -184,7 +208,7 @@ async fn the_surface_assembles_against_production() {
                 rows,
                 s.trigger_label,
                 s.action
-                    .map(|a| format!("  {} {}", a.method, a.path))
+                    .map(|a| format!("  {} {}", a.door.method, a.door.path))
                     .unwrap_or_default()
             );
         }
@@ -230,6 +254,79 @@ async fn the_surface_assembles_against_production() {
         views.iter().any(|v| v.stages.iter().any(|s| s.rows > 0)),
         "not one stage anywhere reported a row, so this ran against an empty \
          database and has shown nothing"
+    );
+}
+
+/// The repoint is real: the 610-line handler is unrouted.
+///
+/// A repoint that leaves the old handler wired is not a repoint — it is two
+/// surfaces with one path, and whichever `.route` axum resolves last wins
+/// silently. The comment in the router claims this; here it is asserted.
+///
+/// `observatory::agent_loops_handler` is left *present* deliberately: deleting a
+/// thousand lines of working SQL in the same commit that repoints the route
+/// makes the change hard to reverse if the new view proves too narrow. What must
+/// not happen is for it to still serve traffic.
+#[test]
+fn no_unrouted_handler_survives_the_repoint() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let router = std::fs::read_to_string(repo.join("src/api_server.rs")).expect("router");
+
+    // The *routed* form, not the bare name. The first version searched for the
+    // name and matched the router comment that explains the repoint — a scan
+    // firing on its own documentation, which is the §5.2 failure and would have
+    // been fixed by deleting the check.
+    assert!(
+        !router.contains("get(handlers::observatory::agent_loops_handler)"),
+        "`observatory::agent_loops_handler` is still routed. The per-agent loop \
+         path is served by `handlers::loops::agent_loops_handler` now, and two \
+         handlers on one path means whichever `.route` resolves last wins — \
+         which is a coin toss between an assembled view and 610 lines of \
+         bespoke SQL."
+    );
+    assert!(
+        router.contains("get(handlers::loops::agent_loops_handler)"),
+        "the per-agent loop path is routed at neither handler, so the repoint \
+         removed the endpoint instead of moving it"
+    );
+    // The path itself must survive, or existing clients 404 on a change that
+    // was supposed to be invisible to them.
+    assert!(
+        router_declares(&router, "/api/observatory/agents/:agent_id/loops"),
+        "the path was dropped rather than repointed; every existing client \
+         breaks on what was meant to be an internal change"
+    );
+}
+
+/// Every stage the per-agent view can probe binds the agent.
+///
+/// The substitution this whole view exists to prevent: a probe declared
+/// per-agent that forgets `$1` counts the platform and reports it as one
+/// agent's. `loop_api`'s own unit test asserts it over the declarations; this
+/// asserts the *handler* binds exactly one parameter to each, by checking it
+/// passes the agent id and nothing else.
+#[test]
+fn the_per_agent_handler_binds_the_agent_to_every_probe() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let handler = std::fs::read_to_string(repo.join("src/handlers/loops.rs")).expect("handler");
+    // One `.bind(agent_id)` per probe, and the probe SQL comes from the
+    // declaration rather than being written here.
+    assert!(
+        handler.contains(".bind(agent_id)"),
+        "the per-agent handler runs the declared probes without binding the \
+         agent, so every count would be the platform's"
+    );
+    // Positive rather than negative. The first version asserted the handler
+    // contained no `SELECT count(*) FROM episodes`, and fired on the
+    // coordination-notes endpoint's platform total in the same file — a
+    // legitimate query, flagged. What is actually wanted is that the per-agent
+    // counts come from the declaration, which is a thing to look *for*.
+    assert!(
+        handler.contains("loop_api::subject_scope"),
+        "the per-agent handler does not read `loop_api::subject_scope`, so its \
+         counts are written here rather than declared — which is how the \
+         610-line handler it replaces came to disagree with the model it was \
+         reporting on"
     );
 }
 
